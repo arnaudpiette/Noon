@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Noon</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <p class="brand-name">NOON</p>
+        <p class="eyebrow">Assistant local</p>
+      </div>
+
+      <section class="side-section">
+        <span class="label">Mode</span>
+        <div class="mode-switch">
+          <button class="mode-btn active" data-mode="DA" type="button">DA</button>
+          <button class="mode-btn" data-mode="DEV" type="button">DEV</button>
+        </div>
+      </section>
+
+      <section class="side-section focus-panel">
+        <span class="label">Focus</span>
+
+        <button
+          id="focusToggle"
+          class="focus-toggle"
+          type="button"
+          aria-expanded="false"
+          aria-controls="focusMenu"
+        >
+          <strong id="focusProject">Aucun projet</strong>
+          <span class="focus-chevron" aria-hidden="true">⌄</span>
+        </button>
+
+        <div id="focusMenu" class="focus-menu" hidden>
+          <div id="focusList" class="focus-list">
+            <span class="focus-loading">Chargement…</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="side-section">
+        <span class="label">Budget API</span>
+        <strong id="budgetValue" class="budget-value">Chargement…</strong>
+        <div class="budget-track" aria-hidden="true">
+          <span id="budgetProgress"></span>
+        </div>
+      </section>
+
+      <section class="side-section budget-mode-panel">
+        <span class="label">Mode budget</span>
+        <div class="focus-row">
+          <strong id="budgetMode">—</strong>
+          <span class="signal-dot" aria-hidden="true"></span>
+        </div>
+      </section>
+
+      <section class="side-section activity-panel">
+        <span class="label">Activité</span>
+        <strong id="activity">En attente.</strong>
+      </section>
+
+      <div class="system-card">
+        <div class="system-title">
+          <span class="status-dot"></span>
+          <strong>Noon actif</strong>
+        </div>
+        <span>100% opérationnel</span>
+        <div class="system-line"></div>
+      </div>
+    </aside>
+
+    <button id="sidebarToggle" class="sidebar-toggle" type="button" aria-label="Replier le menu latéral" aria-expanded="true">
+      <span aria-hidden="true"></span>
+    </button>
+    <button id="sidebarBackdrop" class="sidebar-backdrop" type="button" aria-label="Fermer le menu latéral" tabindex="-1"></button>
+
+    <section class="workspace">
+      <header class="top-tools">
+        <div class="view-switch" aria-label="Changer de vue" hidden>
+          <button class="view-btn active" data-view="core" type="button">Core</button>
+          <button class="view-btn" data-view="chat" type="button">Chat</button>
+        </div>
+
+        <div class="tool-actions">
+          <button class="icon-btn audio-btn" type="button" aria-label="Activité audio">
+            <span class="audio-bars"><i></i><i></i><i></i><i></i></span>
+          </button>
+          <button class="icon-btn" type="button" aria-label="Réglages">
+            <span class="gear-icon" aria-hidden="true"></span>
+          </button>
+          <button class="icon-btn" type="button" aria-label="Statut système">
+            <span class="orange-dot"></span>
+          </button>
+        </div>
+      </header>
+
+      <section id="coreView" class="view core-view active">
+        <div class="core-stage" id="coreStage">
+          <div class="hud-rings" aria-hidden="true">
+            <div class="ring ring-outer"></div>
+            <div class="ring ring-ticks"></div>
+            <div class="ring ring-mid"></div>
+            <div class="ring ring-inner"></div>
+            <span class="marker marker-one"></span>
+            <span class="marker marker-two"></span>
+            <span class="marker marker-three"></span>
+          </div>
+
+          <div class="core-status">
+            <strong><span class="status-dot"></span> Noon actif</strong>
+            <span id="coreStateLabel">À l’écoute</span>
+          </div>
+
+          <canvas id="noonCanvas" aria-label="Animation de particules Noon"></canvas>
+
+          <div class="core-prompt">
+            <span>//</span>
+            <p>Dis-moi ce que tu veux accomplir</p>
+            <span>//</span>
+          </div>
+          <div class="down-arrow" aria-hidden="true">⌄</div>
+          <span id="coreActivity" class="core-activity">Système disponible</span>
+        </div>
+      </section>
+
+      <section id="chatView" class="view chat-view">
+        <header class="chat-header">
+          <div>
+            <span class="label">Conversation</span>
+            <h1 id="conversationTitle">Mode DA</h1>
+          </div>
+          <button id="clearChat" class="ghost-btn" type="button">Nouvelle session</button>
+        </header>
+
+        <section id="conversation" class="conversation">
+          <div class="message noon">
+            <span class="author">Noon</span>
+            <p>Bonjour. Je suis prêt.</p>
+          </div>
+        </section>
+      </section>
+
+      <form id="chatForm" class="composer">
+        <button id="micButton" class="mic-button microphone-btn" type="button" aria-label="Activer le microphone" aria-pressed="false">
+          <svg class="microphone-glyph" viewBox="0 0 64 64" aria-hidden="true">
+            <rect x="22" y="7" width="20" height="34" rx="10" fill="currentColor"></rect>
+            <path d="M14 29v4a18 18 0 0 0 36 0v-4" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"></path>
+            <path d="M32 51v7M22 58h20" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"></path>
+          </svg>
+        </button>
+
+        <div class="input-shell">
+          <textarea id="prompt" placeholder="Demande quelque chose à Noon…" rows="1"></textarea>
+          <button class="composer-icon attach-icon" type="button" aria-label="Joindre un fichier"></button>
+          <button class="composer-icon sliders-icon" type="button" aria-label="Réglages de la requête"></button>
+          <button type="submit" class="send-btn" aria-label="Envoyer"><span aria-hidden="true"></span></button>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <script src="noon-particles.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
