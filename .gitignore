@@ -5,3 +5,4 @@ node_modules/
 usage.json
 conversation-memory.json
 conversation-memory.json.tmp
+web-search-usage.json

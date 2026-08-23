@@ -218,16 +218,25 @@
           <input
             id="fileInput"
             type="file"
-            accept=".txt,.md,.html,.css,.scss,.js,.jsx,.ts,.tsx,.json,.yaml,.yml,.xml,.png,.jpg,.jpeg,.webp,.pdf"
+            multiple
+            accept=".txt,.md,.html,.css,.scss,.js,.jsx,.ts,.tsx,.json,.yaml,.yml,.xml,.png,.jpg,.jpeg,.webp,.pdf,.doc,.docx,.odt,.rtf,.ppt,.pptx,.csv,.tsv,.xls,.xlsx"
             hidden
           >
-          <div id="attachmentPreview" class="attachment-preview" hidden>
-            <span id="attachmentIcon" aria-hidden="true">📄</span>
-            <img id="attachmentThumbnail" class="attachment-thumbnail" alt="" hidden>
-            <span id="attachmentName"></span>
-            <button id="removeAttachmentButton" type="button" aria-label="Supprimer la pièce jointe">×</button>
+          <div id="attachments-preview" class="attachments-preview" hidden>
+            <div id="attachments-list" class="attachments-list"></div>
+            <div class="attachments-footer">
+              <span id="attachments-summary"></span>
+              <button id="clear-attachments-button" class="clear-attachments-button" type="button">
+                Tout retirer
+              </button>
+            </div>
           </div>
           <textarea id="prompt" placeholder="Demande quelque chose à Noon…" rows="1"></textarea>
+          <button id="web-search-button" class="web-search-button" type="button" aria-pressed="false" title="Rechercher sur Internet">
+            <span aria-hidden="true">🌐</span>
+            <span>Internet</span>
+            <span id="web-search-counter" class="web-search-counter">0/10</span>
+          </button>
           <button id="attachButton" class="composer-icon attach-icon" type="button" aria-label="Ajouter un fichier">
             <img class="attachment-glyph" src="assets/noon-icon-attachment.svg" alt="">
           </button>

@@ -50,11 +50,20 @@ const notificationsEnabledInput = document.getElementById(
 const voiceRateSelect = document.getElementById("voiceRate");
 const visualDetailSelect = document.getElementById("visualDetail");
 const attachButton = document.getElementById("attachButton");
+const webSearchButton = document.querySelector("#web-search-button");
+const webSearchCounter = document.querySelector(
+  "#web-search-counter"
+);
 const fileInput = document.getElementById("fileInput");
-const attachmentPreview = document.getElementById("attachmentPreview");
-const attachmentName = document.getElementById("attachmentName");
-const removeAttachmentButton = document.getElementById(
-  "removeAttachmentButton"
+const attachmentsPreview = document.querySelector(
+  "#attachments-preview"
+);
+const attachmentsList = document.querySelector("#attachments-list");
+const attachmentsSummary = document.querySelector(
+  "#attachments-summary"
+);
+const clearAttachmentsButton = document.querySelector(
+  "#clear-attachments-button"
 );
 const composerDropZone = document.getElementById("composerDropZone");
 
@@ -81,16 +90,47 @@ const IMAGE_EXTENSIONS = [
   ".webp",
 ];
 const PDF_EXTENSIONS = [".pdf"];
+const DOCUMENT_EXTENSIONS = [
+  ".doc",
+  ".docx",
+  ".odt",
+  ".rtf",
+  ".ppt",
+  ".pptx",
+];
+const SPREADSHEET_EXTENSIONS = [
+  ".csv",
+  ".tsv",
+  ".xls",
+  ".xlsx",
+];
+const SPREADSHEET_MIME_TYPES = {
+  ".csv": "text/csv",
+  ".tsv": "text/tsv",
+  ".xls": "application/vnd.ms-excel",
+  ".xlsx":
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+};
+const DOCUMENT_MIME_TYPES = {
+  ".doc": "application/msword",
+  ".docx":
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".odt": "application/vnd.oasis.opendocument.text",
+  ".rtf": "application/rtf",
+  ".ppt": "application/vnd.ms-powerpoint",
+  ".pptx":
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+};
 const MAX_TEXT_ATTACHMENT_SIZE = 20 * 1024;
 const MAX_IMAGE_ATTACHMENT_SIZE = 2 * 1024 * 1024;
 const MAX_PDF_ATTACHMENT_SIZE = 3 * 1024 * 1024;
-const attachmentIcon = document.getElementById("attachmentIcon");
-const attachmentThumbnail = document.getElementById(
-  "attachmentThumbnail"
-);
-
-let selectedFile = null;
-let attachmentPreviewUrl = null;
+const MAX_DOCUMENT_ATTACHMENT_SIZE = 3 * 1024 * 1024;
+const MAX_SPREADSHEET_ATTACHMENT_SIZE = 3 * 1024 * 1024;
+let selectedFiles = [];
+let webSearchEnabled = false;
+let remainingWebSearches = 10;
+const MAX_ATTACHMENT_FILES = 3;
+const MAX_ATTACHMENTS_TOTAL_SIZE = 5 * 1024 * 1024;
 
 // Préférences utilisateur persistantes entre deux lancements.
 let voiceEnabled =
@@ -275,34 +315,162 @@ function formatFileSize(size) {
     return `${size} octets`;
   }
 
-  return `${(size / 1024).toFixed(1)} Ko`;
+  if (size < 1024 * 1024) {
+    return `${Math.round(size / 1024)} Ko`;
+  }
+
+  return `${(size / (1024 * 1024)).toFixed(1)} Mo`;
+}
+
+function getAttachmentIcon(file) {
+  const fileName = String(file.name || "");
+  const fileType = String(file.type || "");
+  const extension = fileName.includes(".")
+    ? `.${fileName.split(".").pop().toLowerCase()}`
+    : "";
+
+  if (fileType.startsWith("image/")) return "🖼️";
+  if (extension === ".pdf") return "📕";
+  if (SPREADSHEET_EXTENSIONS.includes(extension)) return "📈";
+  if ([".ppt", ".pptx"].includes(extension)) return "📊";
+  if (DOCUMENT_EXTENSIONS.includes(extension)) return "📘";
+  return "📄";
 }
 
 function clearSelectedFile(showActivity = true) {
-  if (attachmentPreviewUrl) {
-    URL.revokeObjectURL(attachmentPreviewUrl);
-    attachmentPreviewUrl = null;
-  }
-
-  attachmentThumbnail.hidden = true;
-  attachmentThumbnail.removeAttribute("src");
-  attachmentIcon.hidden = false;
-  attachmentIcon.textContent = "📄";
-  selectedFile = null;
+  selectedFiles = [];
   fileInput.value = "";
-  attachmentName.textContent = "";
-  attachmentPreview.hidden = true;
+  renderAttachmentsPreview();
 
   if (showActivity) {
-    updateActivity("Pièce jointe supprimée.");
+    updateActivity("Pièces jointes supprimées.");
   }
+}
+
+function renderAttachmentsPreview() {
+  attachmentsList.replaceChildren();
+
+  if (selectedFiles.length === 0) {
+    attachmentsPreview.hidden = true;
+    attachmentsSummary.textContent = "";
+    return;
+  }
+
+  attachmentsPreview.hidden = false;
+
+  selectedFiles.forEach((file, index) => {
+    const item = document.createElement("div");
+    item.className = "attachment-item";
+
+    const icon = document.createElement("span");
+    icon.className = "attachment-item__icon";
+    icon.textContent = getAttachmentIcon(file);
+
+    const information = document.createElement("div");
+    information.className = "attachment-item__information";
+
+    const name = document.createElement("span");
+    name.className = "attachment-item__name";
+    name.textContent = file.name;
+    name.title = file.name;
+
+    const size = document.createElement("span");
+    size.className = "attachment-item__size";
+    size.textContent = formatFileSize(file.size);
+
+    information.append(name, size);
+
+    const removeButton = document.createElement("button");
+    removeButton.className = "attachment-item__remove";
+    removeButton.type = "button";
+    removeButton.textContent = "×";
+    removeButton.title = `Retirer ${file.name}`;
+    removeButton.setAttribute(
+      "aria-label",
+      `Retirer le fichier ${file.name}`
+    );
+    removeButton.addEventListener("click", () => {
+      removeSelectedFile(index);
+    });
+
+    item.append(icon, information, removeButton);
+    attachmentsList.append(item);
+  });
+
+  const totalSize = selectedFiles.reduce(
+    (total, file) => total + file.size,
+    0
+  );
+
+  attachmentsSummary.textContent =
+    `${selectedFiles.length}/${MAX_ATTACHMENT_FILES} fichier(s)` +
+    ` • ${formatFileSize(totalSize)}`;
+}
+
+function removeSelectedFile(index) {
+  selectedFiles.splice(index, 1);
+  renderAttachmentsPreview();
 }
 
 attachButton.addEventListener("click", () => {
   fileInput.click();
 });
 
-function handleSelectedFile(file) {
+function updateWebSearchButton() {
+  webSearchButton.classList.toggle(
+    "is-active",
+    webSearchEnabled
+  );
+  webSearchButton.setAttribute(
+    "aria-pressed",
+    String(webSearchEnabled)
+  );
+  webSearchButton.title = webSearchEnabled
+    ? "Recherche Internet activée"
+    : "Rechercher sur Internet";
+}
+
+function updateWebSearchUsage(usage) {
+  if (!usage) return;
+
+  const used = Math.max(0, Number(usage.used) || 0);
+  const limit = Math.max(1, Number(usage.limit) || 10);
+
+  remainingWebSearches = Math.max(0, limit - used);
+  webSearchCounter.textContent = `${used}/${limit}`;
+
+  if (remainingWebSearches === 0) {
+    webSearchEnabled = false;
+    updateWebSearchButton();
+    webSearchButton.title = "Limite quotidienne atteinte";
+  }
+
+  updateActionButtons();
+}
+
+webSearchButton.addEventListener("click", () => {
+  if (remainingWebSearches <= 0) {
+    updateActivity(
+      "La limite quotidienne de recherches Internet est atteinte."
+    );
+    return;
+  }
+
+  webSearchEnabled = !webSearchEnabled;
+  updateWebSearchButton();
+});
+
+updateWebSearchButton();
+
+function getFileExtension(fileName) {
+  const lastDot = fileName.lastIndexOf(".");
+
+  return lastDot >= 0
+    ? fileName.slice(lastDot).toLowerCase()
+    : "";
+}
+
+function validateSelectedFile(file) {
   if (!file) return false;
 
   const fileName = file.name.toLowerCase();
@@ -315,7 +483,6 @@ function handleSelectedFile(file) {
     updateActivity(
       "Ce fichier peut contenir des informations secrètes."
     );
-    fileInput.value = "";
     return false;
   }
 
@@ -328,10 +495,21 @@ function handleSelectedFile(file) {
   const isPdfFile = PDF_EXTENSIONS.some((extension) =>
     fileName.endsWith(extension)
   );
+  const isDocumentFile = DOCUMENT_EXTENSIONS.some((extension) =>
+    fileName.endsWith(extension)
+  );
+  const isSpreadsheetFile = SPREADSHEET_EXTENSIONS.some(
+    (extension) => fileName.endsWith(extension)
+  );
 
-  if (!isTextFile && !isImageFile && !isPdfFile) {
+  if (
+    !isTextFile &&
+    !isImageFile &&
+    !isPdfFile &&
+    !isDocumentFile &&
+    !isSpreadsheetFile
+  ) {
     updateActivity("Ce type de fichier n’est pas accepté.");
-    fileInput.value = "";
     return false;
   }
 
@@ -345,8 +523,20 @@ function handleSelectedFile(file) {
     maximumSize = MAX_PDF_ATTACHMENT_SIZE;
   }
 
+  if (isDocumentFile) {
+    maximumSize = MAX_DOCUMENT_ATTACHMENT_SIZE;
+  }
+
+  if (isSpreadsheetFile) {
+    maximumSize = MAX_SPREADSHEET_ATTACHMENT_SIZE;
+  }
+
   if (file.size > maximumSize) {
-    if (isPdfFile) {
+    if (isSpreadsheetFile) {
+      updateActivity("Tableur trop volumineux : maximum 3 Mo.");
+    } else if (isDocumentFile) {
+      updateActivity("Document trop volumineux : maximum 3 Mo.");
+    } else if (isPdfFile) {
       updateActivity("PDF trop volumineux : maximum 3 Mo.");
     } else if (isImageFile) {
       updateActivity("Image trop volumineuse : maximum 2 Mo.");
@@ -356,33 +546,59 @@ function handleSelectedFile(file) {
       );
     }
 
-    fileInput.value = "";
     return false;
   }
 
-  if (attachmentPreviewUrl) {
-    URL.revokeObjectURL(attachmentPreviewUrl);
-    attachmentPreviewUrl = null;
+  return true;
+}
+
+function handleSelectedFiles(fileList) {
+  const incomingFiles = Array.from(fileList || []);
+  const uniqueIncomingFiles = incomingFiles.filter((incomingFile) => {
+    return !selectedFiles.some((selectedFile) => {
+      return (
+        selectedFile.name === incomingFile.name &&
+        selectedFile.size === incomingFile.size &&
+        selectedFile.lastModified === incomingFile.lastModified
+      );
+    });
+  });
+
+  if (uniqueIncomingFiles.length === 0) {
+    updateActivity("Ces fichiers sont déjà sélectionnés.");
+    return false;
   }
 
-  selectedFile = file;
-
-  if (isImageFile) {
-    attachmentPreviewUrl = URL.createObjectURL(file);
-    attachmentThumbnail.src = attachmentPreviewUrl;
-    attachmentThumbnail.hidden = false;
-    attachmentIcon.hidden = true;
-  } else {
-    attachmentThumbnail.hidden = true;
-    attachmentThumbnail.removeAttribute("src");
-    attachmentIcon.hidden = false;
-    attachmentIcon.textContent = isPdfFile ? "📕" : "📄";
+  if (
+    selectedFiles.length + uniqueIncomingFiles.length >
+    MAX_ATTACHMENT_FILES
+  ) {
+    updateActivity("Maximum 3 fichiers par question.");
+    return false;
   }
 
-  attachmentName.textContent =
-    `${file.name} · ${formatFileSize(file.size)}`;
-  attachmentPreview.hidden = false;
-  updateActivity(`Fichier prêt : ${file.name}`);
+  if (!uniqueIncomingFiles.every(validateSelectedFile)) {
+    return false;
+  }
+
+  const newFiles = [...selectedFiles, ...uniqueIncomingFiles];
+  const totalSize = newFiles.reduce(
+    (total, file) => total + file.size,
+    0
+  );
+
+  if (totalSize > MAX_ATTACHMENTS_TOTAL_SIZE) {
+    updateActivity(
+      "La taille totale des fichiers ne doit pas dépasser 5 Mo."
+    );
+    return false;
+  }
+
+  selectedFiles = newFiles;
+  renderAttachmentsPreview();
+  updateActivity(
+    `${selectedFiles.length} fichier(s) prêt(s).`
+  );
   return true;
 }
 
@@ -402,12 +618,90 @@ function fileToDataUrl(file) {
   });
 }
 
+async function fileToDataUrlWithMime(file, mimeType) {
+  const originalDataUrl = await fileToDataUrl(file);
+
+  return originalDataUrl.replace(
+    /^data:[^;]*;base64,/,
+    `data:${mimeType};base64,`
+  );
+}
+
+async function buildAttachment(file) {
+  const extension = getFileExtension(file.name);
+
+  if (
+    ["image/png", "image/jpeg", "image/webp"].includes(
+      file.type
+    )
+  ) {
+    return {
+      kind: "image",
+      name: file.name,
+      mimeType: file.type,
+      dataUrl: await fileToDataUrl(file),
+    };
+  }
+
+  if (extension === ".pdf") {
+    return {
+      kind: "pdf",
+      name: file.name,
+      mimeType: "application/pdf",
+      dataUrl: await fileToDataUrlWithMime(
+        file,
+        "application/pdf"
+      ),
+    };
+  }
+
+  if (SPREADSHEET_EXTENSIONS.includes(extension)) {
+    const mimeType = SPREADSHEET_MIME_TYPES[extension];
+
+    return {
+      kind: "spreadsheet",
+      name: file.name,
+      mimeType,
+      dataUrl: await fileToDataUrlWithMime(file, mimeType),
+    };
+  }
+
+  if (DOCUMENT_EXTENSIONS.includes(extension)) {
+    const mimeType = DOCUMENT_MIME_TYPES[extension];
+
+    return {
+      kind: "document",
+      name: file.name,
+      mimeType,
+      dataUrl: await fileToDataUrlWithMime(file, mimeType),
+    };
+  }
+
+  return {
+    kind: "text",
+    name: file.name,
+    content: await file.text(),
+  };
+}
+
+function createAttachmentMetadata(files) {
+  return files.map((file) => ({
+    name: file.name,
+    type: file.type,
+    size: file.size,
+  }));
+}
+
 fileInput.addEventListener("change", () => {
-  handleSelectedFile(fileInput.files[0]);
+  handleSelectedFiles(fileInput.files);
+  fileInput.value = "";
 });
 
-removeAttachmentButton.addEventListener("click", () => {
-  clearSelectedFile();
+clearAttachmentsButton.addEventListener("click", () => {
+  selectedFiles = [];
+  fileInput.value = "";
+  renderAttachmentsPreview();
+  updateActivity("Pièces jointes supprimées.");
 });
 
 composerDropZone.addEventListener("dragover", (event) => {
@@ -426,14 +720,7 @@ composerDropZone.addEventListener("drop", (event) => {
   event.preventDefault();
   composerDropZone.classList.remove("drag-over");
 
-  const files = event.dataTransfer.files;
-
-  if (files.length > 1) {
-    updateActivity("Ajoute un seul fichier à la fois.");
-    return;
-  }
-
-  handleSelectedFile(files[0]);
+  handleSelectedFiles(event.dataTransfer.files);
 });
 
 window.addEventListener("dragover", (event) => {
@@ -488,11 +775,7 @@ document.addEventListener("paste", (event) => {
     }
   );
 
-  if (selectedFile) {
-    clearSelectedFile(false);
-  }
-
-  if (handleSelectedFile(imageFile)) {
+  if (handleSelectedFiles([imageFile])) {
     updateActivity("Capture d’écran ajoutée.");
     promptInput.focus();
   }
@@ -567,6 +850,7 @@ async function checkNoonConnection() {
         : `Noon prêt · ${data.budgetMode}`;
 
     setConnectionStatus("online", modeLabel);
+    updateWebSearchUsage(data.webSearchUsage);
   } catch {
     setConnectionStatus("server-error", "Serveur local arrêté");
   } finally {
@@ -814,13 +1098,32 @@ function loadSavedMessages() {
   }
 }
 
-function saveConversationMessage(author, text, type) {
+function saveConversationMessage(
+  author,
+  text,
+  type,
+  attachments = [],
+  sources = []
+) {
   const messages = loadSavedMessages();
 
   messages.push({
     author,
     text: String(text).slice(0, MAX_SAVED_MESSAGE_LENGTH),
     type,
+    attachments: attachments.map((attachment) => ({
+      name: String(attachment.name || "").slice(0, 150),
+      type: String(attachment.type || "").slice(0, 100),
+      size: Math.max(0, Number(attachment.size) || 0),
+    })),
+    sources: sources
+      .filter(
+        (source) =>
+          source &&
+          typeof source.url === "string" &&
+          typeof source.title === "string"
+      )
+      .slice(0, 8),
     savedAt: Date.now(),
   });
 
@@ -844,11 +1147,26 @@ function createConversationMarkdown(messages) {
   const exportedAt = new Date().toLocaleString("fr-FR");
   const sections = messages.map((message) => {
     const author = message.type === "user" ? "Vous" : "Noon";
+    const attachmentLines = Array.isArray(message.attachments) &&
+      message.attachments.length > 0
+      ? [
+          "",
+          "Fichiers utilisés :",
+          "",
+          ...message.attachments.map(
+            (attachment) =>
+              `- ${attachment.name} (${formatFileSize(
+                attachment.size || 0
+              )})`
+          ),
+        ]
+      : [];
 
     return [
       `## ${author}`,
       "",
       message.text,
+      ...attachmentLines,
       "",
       "---",
     ].join("\n");
@@ -868,7 +1186,9 @@ function addMessage(
   author,
   text,
   className,
-  shouldSave = true
+  shouldSave = true,
+  attachments = [],
+  sources = []
 ) {
   const message = document.createElement("div");
   const authorLabel = document.createElement("span");
@@ -880,11 +1200,79 @@ function addMessage(
   paragraph.textContent = text;
   message.append(authorLabel, paragraph);
 
+  if (attachments.length > 0) {
+    const attachmentsContainer = document.createElement("div");
+    attachmentsContainer.className = "message-attachments";
+
+    attachments.forEach((attachment) => {
+      const item = document.createElement("div");
+      item.className = "message-attachment";
+
+      const icon = document.createElement("span");
+      icon.className = "message-attachment__icon";
+      icon.textContent = getAttachmentIcon(attachment);
+
+      const information = document.createElement("div");
+      information.className = "message-attachment__information";
+
+      const name = document.createElement("span");
+      name.className = "message-attachment__name";
+      name.textContent = attachment.name;
+      name.title = attachment.name;
+
+      const size = document.createElement("span");
+      size.className = "message-attachment__size";
+      size.textContent = formatFileSize(attachment.size || 0);
+
+      information.append(name, size);
+      item.append(icon, information);
+      attachmentsContainer.append(item);
+    });
+
+    message.append(attachmentsContainer);
+  }
+
+  if (sources.length > 0) {
+    const sourcesContainer = document.createElement("div");
+    sourcesContainer.className = "message-sources";
+
+    const sourcesTitle = document.createElement("strong");
+    sourcesTitle.textContent = "Sources";
+    sourcesContainer.append(sourcesTitle);
+
+    sources.forEach((source) => {
+      try {
+        const url = new URL(source.url);
+
+        if (!["http:", "https:"].includes(url.protocol)) return;
+
+        const link = document.createElement("a");
+        link.href = url.href;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = source.title || url.hostname;
+        sourcesContainer.append(link);
+      } catch {
+        // Une source incorrecte n’est pas affichée.
+      }
+    });
+
+    if (sourcesContainer.childElementCount > 1) {
+      message.append(sourcesContainer);
+    }
+  }
+
   conversation.appendChild(message);
   conversation.scrollTop = conversation.scrollHeight;
 
   if (shouldSave) {
-    saveConversationMessage(author, text, className);
+    saveConversationMessage(
+      author,
+      text,
+      className,
+      attachments,
+      sources
+    );
   }
 }
 
@@ -902,7 +1290,11 @@ function restoreDisplayedConversation() {
       message.author,
       message.text,
       message.type,
-      false
+      false,
+      Array.isArray(message.attachments)
+        ? message.attachments
+        : [],
+      Array.isArray(message.sources) ? message.sources : []
     );
   });
 
@@ -1211,6 +1603,8 @@ function updateActionButtons() {
   sendButton.disabled = disabled;
   attachButton.disabled = disabled;
   micButton.disabled = disabled;
+  webSearchButton.disabled =
+    disabled || remainingWebSearches <= 0;
 }
 
 function setRequestInProgress(inProgress) {
@@ -1277,9 +1671,11 @@ async function sendQuestion(question, options = {}) {
   }
 
   const { displayUserMessage = true } = options;
-  const fileToSend = selectedFile;
+  const filesToSend = [...selectedFiles];
+  const attachmentMetadata =
+    createAttachmentMetadata(filesToSend);
 
-  if (!question && !fileToSend) return;
+  if (!question && filesToSend.length === 0) return;
 
   const finalQuestion =
     question ||
@@ -1287,35 +1683,13 @@ async function sendQuestion(question, options = {}) {
 
   setRequestInProgress(true);
 
-  let attachment = null;
+  let attachments = [];
 
-  if (fileToSend) {
+  if (filesToSend.length > 0) {
     try {
-      const lowerFileName = fileToSend.name.toLowerCase();
-      const isImage = fileToSend.type.startsWith("image/");
-      const isPdf = lowerFileName.endsWith(".pdf");
-
-      if (isImage) {
-        attachment = {
-          kind: "image",
-          name: fileToSend.name,
-          mimeType: fileToSend.type,
-          dataUrl: await fileToDataUrl(fileToSend),
-        };
-      } else if (isPdf) {
-        attachment = {
-          kind: "pdf",
-          name: fileToSend.name,
-          mimeType: "application/pdf",
-          dataUrl: await fileToDataUrl(fileToSend),
-        };
-      } else {
-        attachment = {
-          kind: "text",
-          name: fileToSend.name,
-          content: await fileToSend.text(),
-        };
-      }
+      attachments = await Promise.all(
+        filesToSend.map((file) => buildAttachment(file))
+      );
     } catch {
       updateActivity("Impossible de lire le fichier.");
       setRequestInProgress(false);
@@ -1327,12 +1701,14 @@ async function sendQuestion(question, options = {}) {
   if ("speechSynthesis" in window) window.speechSynthesis.cancel();
   stopSpeechAnimation();
 
-  const displayedQuestion = attachment
-    ? `${finalQuestion}\n📎 ${attachment.name}`
-    : finalQuestion;
-
   if (displayUserMessage) {
-    addMessage("Vous", displayedQuestion, "user");
+    addMessage(
+      "Vous",
+      finalQuestion,
+      "user",
+      true,
+      attachmentMetadata
+    );
   }
   updateFocusFromQuestion(finalQuestion);
   promptInput.value = "";
@@ -1355,8 +1731,9 @@ async function sendQuestion(question, options = {}) {
         focusPath: currentFocusPath,
         mode: currentMode,
         sessionId: currentSessionId,
-        attachment,
+        attachments,
         visualDetail,
+        webSearchEnabled,
       }),
       signal: activeRequestController.signal,
     });
@@ -1380,15 +1757,25 @@ async function sendQuestion(question, options = {}) {
     }
 
     stopActivityPolling();
-    addMessage("Noon", data.answer, "noon");
+    addMessage(
+      "Noon",
+      data.answer,
+      "noon",
+      true,
+      [],
+      Array.isArray(data.sources) ? data.sources : []
+    );
     notifyAnswerReady(data.answer);
+    webSearchEnabled = false;
+    updateWebSearchButton();
+    updateWebSearchUsage(data.webSearchUsage);
     lastFailedQuestion = null;
     retryButton.hidden = true;
     retryButton.disabled = false;
     clearSavedDraft();
     updateActivity("Réponse reçue.");
 
-    if (attachment) {
+    if (attachments.length > 0) {
       clearSelectedFile(false);
     }
 
@@ -1422,6 +1809,10 @@ async function sendQuestion(question, options = {}) {
       saveCurrentDraft();
       lastFailedQuestion = finalQuestion;
 
+      if (error.code === "WEB_SEARCH_DAILY_LIMIT") {
+        updateWebSearchUsage({ used: 10, limit: 10 });
+      }
+
       if (error.retryable) {
         startRateLimitCooldown(error.retryAfter);
       } else {
@@ -1436,6 +1827,8 @@ async function sendQuestion(question, options = {}) {
             "Le plafond de dépenses du projet est atteint.",
           organization_usage_limit_exceeded:
             "La limite d’utilisation de l’organisation est atteinte.",
+          WEB_SEARCH_DAILY_LIMIT:
+            "La limite quotidienne de 10 recherches Internet est atteinte.",
         };
 
         updateActivity(
@@ -1539,7 +1932,7 @@ newConversationButton.addEventListener("click", async () => {
     retryButton.hidden = true;
     retryButton.disabled = false;
 
-    if (selectedFile) {
+    if (selectedFiles.length > 0) {
       clearSelectedFile(false);
     }
 
