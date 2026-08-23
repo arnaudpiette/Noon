@@ -33,14 +33,18 @@ function configureMediaPermissions() {
       requestingOrigin,
       details
     ) => {
-      if (permission !== "media") {
-        return false;
-      }
-
       const origin =
         requestingOrigin ||
         details?.securityOrigin ||
         "";
+
+      if (permission === "notifications") {
+        return isNoonOrigin(origin);
+      }
+
+      if (permission !== "media") {
+        return false;
+      }
 
       const mediaType = details?.mediaType;
 
@@ -61,6 +65,11 @@ function configureMediaPermissions() {
       const origin =
         details?.securityOrigin ||
         webContents.getURL();
+
+      if (permission === "notifications") {
+        callback(isNoonOrigin(origin));
+        return;
+      }
 
       const mediaTypes =
         details?.mediaTypes || [];

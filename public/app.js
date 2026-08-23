@@ -29,7 +29,13 @@ const connectionStatus = document.getElementById("connectionStatus");
 const connectionStatusText = document.getElementById(
   "connectionStatusText"
 );
+const retryButton = document.getElementById("retryButton");
 const micButton = document.getElementById("micButton");
+const sendButton = document.getElementById("sendButton");
+const requestTimer = document.getElementById("requestTimer");
+const stopRequestButton = document.getElementById(
+  "stopRequestButton"
+);
 const modeButtons = document.querySelectorAll(".mode-btn");
 const viewButtons = document.querySelectorAll(".view-btn");
 const views = document.querySelectorAll(".view");
@@ -38,6 +44,9 @@ const sidebarBackdrop = document.getElementById("sidebarBackdrop");
 const settingsButton = document.getElementById("settingsButton");
 const quickSettings = document.getElementById("quickSettings");
 const voiceEnabledInput = document.getElementById("voiceEnabled");
+const notificationsEnabledInput = document.getElementById(
+  "notificationsEnabled"
+);
 const voiceRateSelect = document.getElementById("voiceRate");
 const visualDetailSelect = document.getElementById("visualDetail");
 const attachButton = document.getElementById("attachButton");
@@ -86,6 +95,8 @@ let attachmentPreviewUrl = null;
 // Préférences utilisateur persistantes entre deux lancements.
 let voiceEnabled =
   localStorage.getItem("noonVoiceEnabled") !== "false";
+let notificationsEnabled =
+  localStorage.getItem("noonNotificationsEnabled") === "true";
 let voiceRate =
   Number(localStorage.getItem("noonVoiceRate")) || 1;
 const allowedVisualDetails = ["low", "high"];
@@ -97,6 +108,7 @@ if (!allowedVisualDetails.includes(visualDetail)) {
 }
 
 voiceEnabledInput.checked = voiceEnabled;
+notificationsEnabledInput.checked = notificationsEnabled;
 voiceRateSelect.value = String(voiceRate);
 visualDetailSelect.value = visualDetail;
 
@@ -118,8 +130,19 @@ let currentFocusPath = localStorage.getItem(
 
 const SESSION_STORAGE_KEY = "noonSessionId";
 const CONVERSATION_STORAGE_KEY = "noonDisplayedConversation";
+const DRAFT_STORAGE_KEY = "noonDraft";
 const MAX_SAVED_MESSAGES = 20;
 const MAX_SAVED_MESSAGE_LENGTH = 12_000;
+const MAX_DRAFT_LENGTH = 10_000;
+
+let draftSaveTimer = null;
+let lastFailedQuestion = null;
+let requestInProgress = false;
+let requestTimerInterval = null;
+let requestStartedAt = null;
+let activeRequestController = null;
+let rateLimitCooldownActive = false;
+let rateLimitCooldownTimer = null;
 
 // Une session stable permet au serveur de retrouver la mémoire correspondante.
 let currentSessionId = localStorage.getItem(
@@ -175,6 +198,44 @@ voiceEnabledInput.addEventListener("change", () => {
   } else {
     updateActivity("Voix activée.");
   }
+});
+
+notificationsEnabledInput.addEventListener("change", async () => {
+  if (!("Notification" in window)) {
+    notificationsEnabledInput.checked = false;
+    updateActivity("Notifications indisponibles.");
+    return;
+  }
+
+  if (notificationsEnabledInput.checked) {
+    let permission = Notification.permission;
+
+    if (permission === "default") {
+      permission = await Notification.requestPermission();
+    }
+
+    if (permission !== "granted") {
+      notificationsEnabledInput.checked = false;
+      notificationsEnabled = false;
+      localStorage.setItem(
+        "noonNotificationsEnabled",
+        "false"
+      );
+      updateActivity("Autorisation de notification refusée.");
+      return;
+    }
+  }
+
+  notificationsEnabled = notificationsEnabledInput.checked;
+  localStorage.setItem(
+    "noonNotificationsEnabled",
+    String(notificationsEnabled)
+  );
+  updateActivity(
+    notificationsEnabled
+      ? "Notifications activées."
+      : "Notifications désactivées."
+  );
 });
 
 voiceRateSelect.addEventListener("change", () => {
@@ -440,6 +501,34 @@ document.addEventListener("paste", (event) => {
 function updateActivity(text) {
   activity.textContent = text;
   coreActivity.textContent = text;
+}
+
+function saveCurrentDraft() {
+  const draft = promptInput.value.slice(0, MAX_DRAFT_LENGTH);
+
+  if (draft.trim()) {
+    localStorage.setItem(DRAFT_STORAGE_KEY, draft);
+  } else {
+    localStorage.removeItem(DRAFT_STORAGE_KEY);
+  }
+}
+
+function clearSavedDraft() {
+  localStorage.removeItem(DRAFT_STORAGE_KEY);
+}
+
+function restoreSavedDraft() {
+  const savedDraft = localStorage.getItem(DRAFT_STORAGE_KEY);
+
+  if (!savedDraft || promptInput.value) {
+    return;
+  }
+
+  promptInput.value = savedDraft;
+  promptInput.style.height = "auto";
+  promptInput.style.height =
+    `${Math.min(promptInput.scrollHeight, 100)}px`;
+  updateActivity("Brouillon précédent restauré.");
 }
 
 function setConnectionStatus(state, text) {
@@ -961,6 +1050,28 @@ function prepareTextForSpeech(text) {
   return spokenText;
 }
 
+function notifyAnswerReady(answer) {
+  if (!notificationsEnabled) return;
+  if (!("Notification" in window)) return;
+  if (Notification.permission !== "granted") return;
+
+  // L’alerte est inutile lorsque la fenêtre Noon est déjà consultée.
+  if (!document.hidden && document.hasFocus()) return;
+
+  const spokenPreview = prepareTextForSpeech(answer);
+  const notification = new Notification("Noon — réponse prête", {
+    body:
+      spokenPreview.slice(0, 180) ||
+      "La réponse est disponible.",
+    tag: "noon-answer",
+  });
+
+  notification.addEventListener("click", () => {
+    window.focus();
+    notification.close();
+  });
+}
+
 function speakNoon(text) {
   if (!("speechSynthesis" in window)) {
     updateActivity("Synthèse vocale indisponible.");
@@ -1068,7 +1179,104 @@ function updateFocusFromQuestion(question) {
   setFocus(projectName);
 }
 
-async function sendQuestion(question) {
+// Verrouille les commandes coûteuses et affiche le temps d’attente courant.
+function startRequestTimer() {
+  clearInterval(requestTimerInterval);
+
+  requestStartedAt = Date.now();
+  requestTimer.hidden = false;
+  requestTimer.textContent = "0 s";
+
+  requestTimerInterval = setInterval(() => {
+    const elapsedSeconds = Math.floor(
+      (Date.now() - requestStartedAt) / 1000
+    );
+
+    requestTimer.textContent = `${elapsedSeconds} s`;
+  }, 1000);
+}
+
+function stopRequestTimer() {
+  clearInterval(requestTimerInterval);
+  requestTimerInterval = null;
+  requestStartedAt = null;
+  requestTimer.hidden = true;
+  requestTimer.textContent = "0 s";
+}
+
+function updateActionButtons() {
+  const disabled =
+    requestInProgress || rateLimitCooldownActive;
+
+  sendButton.disabled = disabled;
+  attachButton.disabled = disabled;
+  micButton.disabled = disabled;
+}
+
+function setRequestInProgress(inProgress) {
+  requestInProgress = inProgress;
+  updateActionButtons();
+  stopRequestButton.hidden = !inProgress;
+
+  if (inProgress) {
+    startRequestTimer();
+  } else {
+    stopRequestTimer();
+  }
+}
+
+function startRateLimitCooldown(seconds) {
+  clearInterval(rateLimitCooldownTimer);
+
+  const safeSeconds = Math.min(
+    Math.max(Number(seconds) || 20, 5),
+    300
+  );
+  const jitter = Math.ceil(Math.random() * 2);
+  const cooldownEnd =
+    Date.now() + (safeSeconds + jitter) * 1000;
+
+  rateLimitCooldownActive = true;
+  retryButton.hidden = true;
+  updateActionButtons();
+
+  function updateCooldown() {
+    const remainingSeconds = Math.max(
+      0,
+      Math.ceil((cooldownEnd - Date.now()) / 1000)
+    );
+
+    if (remainingSeconds > 0) {
+      updateActivity(
+        `Limite API atteinte. Réessai possible dans ${remainingSeconds} s.`
+      );
+      return;
+    }
+
+    clearInterval(rateLimitCooldownTimer);
+    rateLimitCooldownTimer = null;
+    rateLimitCooldownActive = false;
+    updateActionButtons();
+    retryButton.hidden = !lastFailedQuestion;
+    updateActivity("Tu peux maintenant réessayer.");
+  }
+
+  updateCooldown();
+  rateLimitCooldownTimer = setInterval(updateCooldown, 1000);
+}
+
+async function sendQuestion(question, options = {}) {
+  if (requestInProgress) {
+    updateActivity("Noon traite déjà une demande.");
+    return;
+  }
+
+  if (rateLimitCooldownActive) {
+    updateActivity("Le délai avant réessai est encore actif.");
+    return;
+  }
+
+  const { displayUserMessage = true } = options;
   const fileToSend = selectedFile;
 
   if (!question && !fileToSend) return;
@@ -1076,6 +1284,8 @@ async function sendQuestion(question) {
   const finalQuestion =
     question ||
     "Analyse ce fichier et explique-moi les points importants.";
+
+  setRequestInProgress(true);
 
   let attachment = null;
 
@@ -1108,6 +1318,7 @@ async function sendQuestion(question) {
       }
     } catch {
       updateActivity("Impossible de lire le fichier.");
+      setRequestInProgress(false);
       return;
     }
   }
@@ -1120,7 +1331,9 @@ async function sendQuestion(question) {
     ? `${finalQuestion}\n📎 ${attachment.name}`
     : finalQuestion;
 
-  addMessage("Vous", displayedQuestion, "user");
+  if (displayUserMessage) {
+    addMessage("Vous", displayedQuestion, "user");
+  }
   updateFocusFromQuestion(finalQuestion);
   promptInput.value = "";
   promptInput.style.height = "auto";
@@ -1129,6 +1342,8 @@ async function sendQuestion(question) {
   startActivityPolling();
 
   try {
+    activeRequestController = new AbortController();
+
     const response = await fetch("/ai", {
       method: "POST",
       headers: {
@@ -1143,15 +1358,34 @@ async function sendQuestion(question) {
         attachment,
         visualDetail,
       }),
+      signal: activeRequestController.signal,
     });
     const data = await response.json();
 
     if (!response.ok) {
-      throw new Error(data.message || "Erreur Noon");
+      const requestError = new Error(
+        data.message || "Erreur Noon"
+      );
+
+      requestError.status = response.status;
+      requestError.code = data.errorCode;
+      requestError.retryable = data.retryable === true;
+      requestError.retryAfter =
+        Number(
+          data.retryAfter ||
+          response.headers.get("Retry-After")
+        ) || 20;
+
+      throw requestError;
     }
 
     stopActivityPolling();
     addMessage("Noon", data.answer, "noon");
+    notifyAnswerReady(data.answer);
+    lastFailedQuestion = null;
+    retryButton.hidden = true;
+    retryButton.disabled = false;
+    clearSavedDraft();
     updateActivity("Réponse reçue.");
 
     if (attachment) {
@@ -1172,10 +1406,69 @@ async function sendQuestion(question) {
     loadBudget();
   } catch (error) {
     stopActivityPolling();
+
+    if (error.name === "AbortError") {
+      updateActivity("Demande interrompue.");
+      promptInput.value = finalQuestion;
+      saveCurrentDraft();
+      lastFailedQuestion = null;
+      retryButton.hidden = true;
+      setVisualState("idle");
+      return;
+    }
+
+    if (error.status === 429) {
+      promptInput.value = finalQuestion;
+      saveCurrentDraft();
+      lastFailedQuestion = finalQuestion;
+
+      if (error.retryable) {
+        startRateLimitCooldown(error.retryAfter);
+      } else {
+        retryButton.hidden = true;
+
+        const messagesByCode = {
+          credit_balance_exhausted:
+            "Les crédits API sont épuisés.",
+          organization_spend_limit_exceeded:
+            "Le plafond de dépenses de l’organisation est atteint.",
+          project_spend_limit_exceeded:
+            "Le plafond de dépenses du projet est atteint.",
+          organization_usage_limit_exceeded:
+            "La limite d’utilisation de l’organisation est atteinte.",
+        };
+
+        updateActivity(
+          messagesByCode[error.code] ||
+          "Limite API atteinte. Vérifie la facturation OpenAI."
+        );
+      }
+
+      setVisualState("idle");
+      return;
+    }
+
     addMessage("Noon", error.message, "noon");
-    updateActivity("Erreur.");
+    lastFailedQuestion = finalQuestion;
+    retryButton.hidden = false;
+    retryButton.disabled = false;
+    updateActivity("Échec de l’envoi. La question est conservée.");
+    promptInput.value = finalQuestion;
+    promptInput.style.height = "auto";
+    promptInput.style.height =
+      `${Math.min(promptInput.scrollHeight, 100)}px`;
+    saveCurrentDraft();
+    promptInput.focus();
+    promptInput.setSelectionRange(
+      promptInput.value.length,
+      promptInput.value.length
+    );
     setVisualState("idle");
     checkNoonConnection();
+  } finally {
+    activeRequestController = null;
+    stopRequestButton.disabled = false;
+    setRequestInProgress(false);
   }
 }
 
@@ -1190,6 +1483,13 @@ viewButtons.forEach((button) => {
 });
 
 newConversationButton.addEventListener("click", async () => {
+  if (requestInProgress) {
+    updateActivity(
+      "Attends la fin de la réponse avant de changer de conversation."
+    );
+    return;
+  }
+
   if (
     mediaRecorder &&
     mediaRecorder.state === "recording"
@@ -1233,7 +1533,11 @@ newConversationButton.addEventListener("click", async () => {
     localStorage.removeItem(CONVERSATION_STORAGE_KEY);
     conversationMessages.replaceChildren();
     promptInput.value = "";
+    clearSavedDraft();
     promptInput.style.height = "auto";
+    lastFailedQuestion = null;
+    retryButton.hidden = true;
+    retryButton.disabled = false;
 
     if (selectedFile) {
       clearSelectedFile(false);
@@ -1279,6 +1583,34 @@ exportConversationButton.addEventListener("click", () => {
   link.remove();
   URL.revokeObjectURL(downloadUrl);
   updateActivity("Conversation exportée en Markdown.");
+});
+
+stopRequestButton.addEventListener("click", () => {
+  if (!activeRequestController) return;
+
+  updateActivity("Interruption de la demande…");
+  stopRequestButton.disabled = true;
+  activeRequestController.abort();
+});
+
+retryButton.addEventListener("click", async () => {
+  if (!lastFailedQuestion) {
+    retryButton.hidden = true;
+    return;
+  }
+
+  if (!navigator.onLine) {
+    updateActivity("Connexion Internet toujours indisponible.");
+    checkNoonConnection();
+    return;
+  }
+
+  retryButton.disabled = true;
+  updateActivity("Nouvelle tentative…");
+
+  await sendQuestion(lastFailedQuestion, {
+    displayUserMessage: false,
+  });
 });
 
 clearChatButton.addEventListener("click", async () => {
@@ -1649,6 +1981,18 @@ micButton.addEventListener("click", async () => {
 promptInput.addEventListener("input", () => {
   promptInput.style.height = "auto";
   promptInput.style.height = `${Math.min(promptInput.scrollHeight, 100)}px`;
+
+  window.clearTimeout(draftSaveTimer);
+  draftSaveTimer = window.setTimeout(() => {
+    saveCurrentDraft();
+  }, 300);
+
+  if (
+    lastFailedQuestion &&
+    promptInput.value.trim() !== lastFailedQuestion.trim()
+  ) {
+    retryButton.hidden = true;
+  }
 });
 
 promptInput.addEventListener("keydown", (event) => {
@@ -1730,6 +2074,7 @@ setSidebar(savedSidebarState === null ? window.innerWidth > 720 : savedSidebarSt
 loadBudget();
 loadLocalProjects();
 restoreDisplayedConversation();
+restoreSavedDraft();
 checkNoonConnection();
 
 window.addEventListener("online", checkNoonConnection);
@@ -1778,3 +2123,7 @@ window.addEventListener(
   "beforeunload",
   stopNoonAudio
 );
+
+window.addEventListener("beforeunload", () => {
+  saveCurrentDraft();
+});

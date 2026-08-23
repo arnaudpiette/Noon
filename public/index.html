@@ -77,6 +77,13 @@
       <section class="side-section activity-panel">
         <span class="label">Activité</span>
         <strong id="activity">En attente.</strong>
+        <span id="requestTimer" class="request-timer" hidden>0 s</span>
+        <button id="stopRequestButton" class="stop-request-button" type="button" hidden>
+          ■ Arrêter
+        </button>
+        <button id="retryButton" class="retry-button" type="button" hidden>
+          ↻ Réessayer
+        </button>
       </section>
 
       <div class="system-card">
@@ -118,6 +125,11 @@
             <label class="setting-line">
               <input id="voiceEnabled" type="checkbox">
               <span>Réponse vocale</span>
+            </label>
+
+            <label class="setting-line">
+              <input id="notificationsEnabled" type="checkbox">
+              <span>Notification quand la réponse est prête</span>
             </label>
 
             <label class="setting-field">
@@ -220,7 +232,7 @@
             <img class="attachment-glyph" src="assets/noon-icon-attachment.svg" alt="">
           </button>
           <button class="composer-icon sliders-icon" type="button" aria-label="Réglages de la requête"></button>
-          <button type="submit" class="send-btn" aria-label="Envoyer"><span aria-hidden="true"></span></button>
+          <button id="sendButton" type="submit" class="send-btn" aria-label="Envoyer"><span aria-hidden="true"></span></button>
         </div>
       </form>
     </section>

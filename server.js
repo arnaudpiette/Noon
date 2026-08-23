@@ -625,7 +625,8 @@ async function askAI(
   history = [],
   sessionId = "noon-local",
   attachment = null,
-  visualDetail = "low"
+  visualDetail = "low",
+  signal = null
 ) {
   setSessionActivity(
     sessionId,
@@ -739,6 +740,12 @@ async function askAI(
 
   // Le nombre de tours diminue automatiquement selon le mode budgétaire.
   for (let turn = 0; turn < limits.maxTurns; turn++) {
+    if (signal?.aborted) {
+      const error = new Error("Demande interrompue.");
+      error.name = "AbortError";
+      throw error;
+    }
+
     const isFinalTurn =
       turn === limits.maxTurns - 1;
 
@@ -765,8 +772,10 @@ async function askAI(
       requestOptions.tool_choice = isFinalTurn ? "none" : "auto";
     }
 
-    const response =
-      await openai.responses.create(requestOptions);
+    const response = await openai.responses.create(
+      requestOptions,
+      signal ? { signal } : undefined
+    );
 
     // Comptabilise chaque appel, y compris les tours demandant un outil.
     trackUsage(response);
@@ -1115,6 +1124,23 @@ function readJsonBody(req, maxBytes = 6 * 1024 * 1024) {
 
 // Crée le serveur HTTP et renvoie toutes les réponses au format JSON.
 
+// Lit indifféremment les en-têtes exposés comme Headers ou comme objet simple.
+function getErrorHeader(error, headerName) {
+  const headers = error?.headers;
+
+  if (!headers) return null;
+
+  if (typeof headers.get === "function") {
+    return headers.get(headerName);
+  }
+
+  return (
+    headers[headerName] ||
+    headers[headerName.toLowerCase()] ||
+    null
+  );
+}
+
 const server = http.createServer(async (req, res) => {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
 
@@ -1371,6 +1397,26 @@ if (req.url.startsWith("/ask")) {
 
 // Confie la question à l'IA, qui peut appeler les outils locaux en lecture seule.
 if (req.method === "POST" && req.url.startsWith("/ai")) {
+  const upstreamController = new AbortController();
+
+  const removeAbortListeners = () => {
+    req.off("aborted", abortUpstream);
+    res.off("close", abortUpstream);
+    res.off("finish", removeAbortListeners);
+  };
+
+  const abortUpstream = () => {
+    if (!res.writableEnded) {
+      upstreamController.abort();
+    }
+
+    removeAbortListeners();
+  };
+
+  req.once("aborted", abortUpstream);
+  res.once("close", abortUpstream);
+  res.once("finish", removeAbortListeners);
+
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (url.pathname !== "/ai") {
@@ -1519,7 +1565,8 @@ if (req.method === "POST" && req.url.startsWith("/ai")) {
       history,
       sessionId,
       attachment,
-      visualDetail
+      visualDetail,
+      upstreamController.signal
     );
 
     rememberConversation(
@@ -1544,13 +1591,55 @@ if (req.method === "POST" && req.url.startsWith("/ai")) {
       )
     );
   } catch (error) {
-    res.writeHead(error.statusCode || 500, {
+    if (upstreamController.signal.aborted) {
+      return;
+    }
+
+    const statusCode =
+      Number(error.status) ||
+      Number(error.statusCode) ||
+      500;
+    const errorCode = error.code || null;
+    const permanentRateLimitCodes = [
+      "credit_balance_exhausted",
+      "organization_spend_limit_exceeded",
+      "project_spend_limit_exceeded",
+      "organization_usage_limit_exceeded",
+    ];
+    const isTemporaryRateLimit =
+      statusCode === 429 &&
+      !permanentRateLimitCodes.includes(errorCode);
+
+    let retryAfter = null;
+
+    if (isTemporaryRateLimit) {
+      const retryAfterHeader =
+        getErrorHeader(error, "retry-after");
+      const parsedRetryAfter = Number(retryAfterHeader);
+
+      retryAfter =
+        Number.isFinite(parsedRetryAfter) &&
+        parsedRetryAfter > 0
+          ? Math.ceil(parsedRetryAfter)
+          : 20;
+    }
+
+    const responseHeaders = {
       "Content-Type": "application/json",
-    });
+    };
+
+    if (retryAfter) {
+      responseHeaders["Retry-After"] = String(retryAfter);
+    }
+
+    res.writeHead(statusCode, responseHeaders);
     return res.end(
       JSON.stringify({
         status: "error",
         message: error.message,
+        errorCode,
+        retryable: isTemporaryRateLimit,
+        retryAfter,
       })
     );
   }
