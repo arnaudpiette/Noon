@@ -21,6 +21,7 @@ const {
 // Tous les chemins manipulés par les outils sont contrôlés par config.js.
 
 const PORT = 3000;
+const HOST = "127.0.0.1";
 const USAGE_FILE = path.join(__dirname, "usage.json");
 const MONTHLY_BUDGET_USD = 28;
 
@@ -111,19 +112,27 @@ function registerWebSearchCalls(numberOfCalls) {
 
 // Charge les compteurs du mois ou initialise un suivi vide.
 function loadUsage() {
-  if (!fs.existsSync(USAGE_FILE)) {
-    return {
-      month: new Date().toISOString().slice(0, 7),
-      inputTokens: 0,
-      outputTokens: 0,
-      requests: 0,
-      transcriptionSeconds: 0,
-      transcriptionRequests: 0,
-      webSearchCalls: 0,
-    };
-  }
+  const emptyUsage = {
+    month: new Date().toISOString().slice(0, 7),
+    inputTokens: 0,
+    outputTokens: 0,
+    requests: 0,
+    transcriptionSeconds: 0,
+    transcriptionRequests: 0,
+    webSearchCalls: 0,
+  };
 
-  return JSON.parse(fs.readFileSync(USAGE_FILE, "utf8"));
+  if (!fs.existsSync(USAGE_FILE)) return emptyUsage;
+
+  try {
+    return {
+      ...emptyUsage,
+      ...JSON.parse(fs.readFileSync(USAGE_FILE, "utf8")),
+    };
+  } catch (error) {
+    console.warn("Compteurs Noon illisibles :", error.message);
+    return emptyUsage;
+  }
 }
 
 // Enregistre les compteurs de consommation dans un fichier local.
@@ -723,7 +732,7 @@ function extractWebSources(response) {
         try {
           const url = new URL(annotation.url);
 
-          if (!["http:", "https:"].includes(url.protocol)) {
+          if (url.protocol !== "https:") {
             continue;
           }
 
@@ -1818,187 +1827,6 @@ if (req.method === "POST" && req.url.startsWith("/ai")) {
 
     const attachments = rawAttachments.map(validateAttachment);
 
-    // Validation historique conservée pour l’ancien champ `attachment`.
-    let attachment = null;
-
-    if (body.attachment?.kind === "spreadsheet") {
-      const fileName =
-        String(body.attachment.name || "").slice(0, 150);
-      const extension = path.extname(fileName).toLowerCase();
-      const allowedSpreadsheets = {
-        ".csv": "text/csv",
-        ".tsv": "text/tsv",
-        ".xls": "application/vnd.ms-excel",
-        ".xlsx":
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      };
-      const expectedMimeType = allowedSpreadsheets[extension];
-      const dataUrl = String(body.attachment.dataUrl || "");
-
-      if (!expectedMimeType) {
-        const error = new Error("Format de tableur non accepté.");
-        error.statusCode = 400;
-        throw error;
-      }
-
-      if (
-        body.attachment.mimeType !== expectedMimeType ||
-        !dataUrl.startsWith(
-          `data:${expectedMimeType};base64,`
-        )
-      ) {
-        const error = new Error(
-          "Le type du tableur est incorrect."
-        );
-        error.statusCode = 400;
-        throw error;
-      }
-
-      if (dataUrl.length > 5 * 1024 * 1024) {
-        const error = new Error(
-          "Le tableur est trop volumineux."
-        );
-        error.statusCode = 413;
-        throw error;
-      }
-
-      attachment = {
-        kind: "spreadsheet",
-        name: fileName,
-        mimeType: expectedMimeType,
-        dataUrl,
-      };
-    } else if (body.attachment?.kind === "document") {
-      const fileName =
-        String(body.attachment.name).slice(0, 150);
-      const extension = path.extname(fileName).toLowerCase();
-      const allowedDocuments = {
-        ".doc": "application/msword",
-        ".docx":
-          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        ".odt": "application/vnd.oasis.opendocument.text",
-        ".rtf": "application/rtf",
-        ".ppt": "application/vnd.ms-powerpoint",
-        ".pptx":
-          "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-      };
-      const expectedMimeType = allowedDocuments[extension];
-      const dataUrl = body.attachment.dataUrl;
-
-      if (
-        !expectedMimeType ||
-        body.attachment.mimeType !== expectedMimeType ||
-        typeof dataUrl !== "string" ||
-        !dataUrl.startsWith(
-          `data:${expectedMimeType};base64,`
-        )
-      ) {
-        const error = new Error(
-          "Le format du document est invalide."
-        );
-        error.statusCode = 400;
-        throw error;
-      }
-
-      if (dataUrl.length > 5 * 1024 * 1024) {
-        const error = new Error(
-          "Le document dépasse la taille autorisée."
-        );
-        error.statusCode = 413;
-        throw error;
-      }
-
-      attachment = {
-        kind: "document",
-        name: fileName,
-        mimeType: expectedMimeType,
-        dataUrl,
-      };
-    } else if (body.attachment?.kind === "pdf") {
-      const dataUrl = body.attachment.dataUrl;
-
-      if (
-        body.attachment.mimeType !== "application/pdf" ||
-        typeof dataUrl !== "string" ||
-        !dataUrl.startsWith("data:application/pdf;base64,")
-      ) {
-        const error = new Error(
-          "Le format du PDF est invalide."
-        );
-        error.statusCode = 400;
-        throw error;
-      }
-
-      if (dataUrl.length > 5 * 1024 * 1024) {
-        const error = new Error(
-          "Le PDF dépasse la taille autorisée."
-        );
-        error.statusCode = 413;
-        throw error;
-      }
-
-      attachment = {
-        kind: "pdf",
-        name: String(body.attachment.name).slice(0, 150),
-        mimeType: "application/pdf",
-        dataUrl,
-      };
-    } else if (body.attachment?.kind === "image") {
-      const allowedMimeTypes = [
-        "image/png",
-        "image/jpeg",
-        "image/webp",
-      ];
-      const mimeType = body.attachment.mimeType;
-      const dataUrl = body.attachment.dataUrl;
-
-      if (
-        !allowedMimeTypes.includes(mimeType) ||
-        typeof dataUrl !== "string" ||
-        !dataUrl.startsWith(`data:${mimeType};base64,`)
-      ) {
-        const error = new Error(
-          "Le format de l’image est invalide."
-        );
-        error.statusCode = 400;
-        throw error;
-      }
-
-      if (dataUrl.length > 3 * 1024 * 1024) {
-        const error = new Error(
-          "L’image dépasse la taille autorisée."
-        );
-        error.statusCode = 413;
-        throw error;
-      }
-
-      attachment = {
-        kind: "image",
-        name: String(body.attachment.name).slice(0, 150),
-        mimeType,
-        dataUrl,
-      };
-    } else if (body.attachment?.kind === "text") {
-      const content = body.attachment.content;
-
-      if (
-        typeof content !== "string" ||
-        content.length > 20 * 1024
-      ) {
-        const error = new Error(
-          "Le fichier texte est invalide ou trop volumineux."
-        );
-        error.statusCode = 413;
-        throw error;
-      }
-
-      attachment = {
-        kind: "text",
-        name: String(body.attachment.name).slice(0, 150),
-        content,
-      };
-    }
-
     const conversationKey = createConversationKey({
       sessionId,
       mode,
@@ -2566,8 +2394,8 @@ if (
   );
 });
 
-server.listen(PORT, () => {
-  console.log(`Noon est actif sur http://localhost:${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`Noon est actif sur http://${HOST}:${PORT}`);
 });
 
 module.exports = server;

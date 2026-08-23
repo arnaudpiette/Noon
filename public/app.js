@@ -54,6 +54,18 @@ const webSearchButton = document.querySelector("#web-search-button");
 const webSearchCounter = document.querySelector(
   "#web-search-counter"
 );
+const webSearchSuggestion = document.querySelector(
+  "#web-search-suggestion"
+);
+const webSearchSuggestionText = document.querySelector(
+  "#web-search-suggestion-text"
+);
+const webSearchSuggestionUse = document.querySelector(
+  "#web-search-suggestion-use"
+);
+const webSearchSuggestionIgnore = document.querySelector(
+  "#web-search-suggestion-ignore"
+);
 const fileInput = document.getElementById("fileInput");
 const attachmentsPreview = document.querySelector(
   "#attachments-preview"
@@ -131,6 +143,18 @@ let webSearchEnabled = false;
 let remainingWebSearches = 10;
 const MAX_ATTACHMENT_FILES = 3;
 const MAX_ATTACHMENTS_TOTAL_SIZE = 5 * 1024 * 1024;
+const WEB_SEARCH_SUGGESTION_PATTERNS = [
+  /\b(aujourd['’]hui|ce soir|cette semaine|ce mois-ci)\b/i,
+  /\b(en ce moment|actuellement|maintenant)\b/i,
+  /\b(actualité|actualités|news|dernière nouvelle)\b/i,
+  /\b(dernier|dernière|derniers|dernières)\s+(résultat|version|mise à jour|annonce|sortie|classement)\b/i,
+  /\b(météo|prévisions météo|température demain)\b/i,
+  /\b(horaires?|résultats?|classement|score|disponibilité)\b/i,
+  /\b(prix|tarif|cours|cotation).*\b(actuel|actuelle|maintenant|aujourd['’]hui)\b/i,
+  /\b(nouveauté|nouveautés|récent|récente|récemment)\b/i,
+  /\b(qui est|quel est|quelle est).*\b(président|premier ministre|ministre|pdg|ceo|directeur)\b/i,
+  /https?:\/\/\S+/i,
+];
 
 // Préférences utilisateur persistantes entre deux lancements.
 let voiceEnabled =
@@ -448,6 +472,29 @@ function updateWebSearchUsage(usage) {
   updateActionButtons();
 }
 
+function shouldSuggestWebSearch(question) {
+  const normalizedQuestion = String(question || "").trim();
+
+  return Boolean(normalizedQuestion) &&
+    WEB_SEARCH_SUGGESTION_PATTERNS.some((pattern) =>
+      pattern.test(normalizedQuestion)
+    );
+}
+
+function showWebSearchSuggestion() {
+  const limitReached = remainingWebSearches <= 0;
+
+  webSearchSuggestion.hidden = false;
+  webSearchSuggestionUse.disabled = limitReached;
+  webSearchSuggestionText.textContent = limitReached
+    ? "Cette question semble nécessiter Internet, mais la limite quotidienne est atteinte."
+    : "Cette question semble nécessiter des informations récentes. Activer Internet ?";
+}
+
+function hideWebSearchSuggestion() {
+  webSearchSuggestion.hidden = true;
+}
+
 webSearchButton.addEventListener("click", () => {
   if (remainingWebSearches <= 0) {
     updateActivity(
@@ -458,6 +505,30 @@ webSearchButton.addEventListener("click", () => {
 
   webSearchEnabled = !webSearchEnabled;
   updateWebSearchButton();
+  hideWebSearchSuggestion();
+});
+
+webSearchSuggestionUse.addEventListener("click", async () => {
+  if (remainingWebSearches <= 0) {
+    updateActivity(
+      "La limite quotidienne de recherches Internet est atteinte."
+    );
+    return;
+  }
+
+  webSearchEnabled = true;
+  updateWebSearchButton();
+  hideWebSearchSuggestion();
+  await sendQuestion(promptInput.value.trim(), {
+    skipWebSuggestion: true,
+  });
+});
+
+webSearchSuggestionIgnore.addEventListener("click", async () => {
+  hideWebSearchSuggestion();
+  await sendQuestion(promptInput.value.trim(), {
+    skipWebSuggestion: true,
+  });
 });
 
 updateWebSearchButton();
@@ -1244,7 +1315,7 @@ function addMessage(
       try {
         const url = new URL(source.url);
 
-        if (!["http:", "https:"].includes(url.protocol)) return;
+        if (url.protocol !== "https:") return;
 
         const link = document.createElement("a");
         link.href = url.href;
@@ -1670,12 +1741,26 @@ async function sendQuestion(question, options = {}) {
     return;
   }
 
-  const { displayUserMessage = true } = options;
+  const {
+    displayUserMessage = true,
+    skipWebSuggestion = false,
+  } = options;
   const filesToSend = [...selectedFiles];
   const attachmentMetadata =
     createAttachmentMetadata(filesToSend);
 
   if (!question && filesToSend.length === 0) return;
+
+  if (
+    !skipWebSuggestion &&
+    !webSearchEnabled &&
+    shouldSuggestWebSearch(question)
+  ) {
+    showWebSearchSuggestion();
+    return;
+  }
+
+  hideWebSearchSuggestion();
 
   const finalQuestion =
     question ||
@@ -1766,6 +1851,7 @@ async function sendQuestion(question, options = {}) {
       Array.isArray(data.sources) ? data.sources : []
     );
     notifyAnswerReady(data.answer);
+    hideWebSearchSuggestion();
     webSearchEnabled = false;
     updateWebSearchButton();
     updateWebSearchUsage(data.webSearchUsage);
@@ -1795,6 +1881,7 @@ async function sendQuestion(question, options = {}) {
     stopActivityPolling();
 
     if (error.name === "AbortError") {
+      hideWebSearchSuggestion();
       updateActivity("Demande interrompue.");
       promptInput.value = finalQuestion;
       saveCurrentDraft();
@@ -1900,6 +1987,7 @@ newConversationButton.addEventListener("click", async () => {
   if (!confirmed) return;
 
   newConversationButton.disabled = true;
+  hideWebSearchSuggestion();
   interruptNoonSpeech();
   updateActivity("Réinitialisation de la conversation…");
 
@@ -2372,6 +2460,7 @@ micButton.addEventListener("click", async () => {
 });
 
 promptInput.addEventListener("input", () => {
+  hideWebSearchSuggestion();
   promptInput.style.height = "auto";
   promptInput.style.height = `${Math.min(promptInput.scrollHeight, 100)}px`;
 

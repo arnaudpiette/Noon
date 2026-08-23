@@ -2,6 +2,7 @@
 const {
   app,
   BrowserWindow,
+  shell,
   session,
   systemPreferences,
 } = require("electron");
@@ -16,7 +17,7 @@ function isNoonOrigin(origin) {
   try {
     return (
       new URL(origin).origin ===
-      "http://localhost:3000"
+      "http://127.0.0.1:3000"
     );
   } catch {
     return false;
@@ -120,6 +121,38 @@ async function requestMicrophoneAccess() {
   return false;
 }
 
+// Seuls les liens HTTPS valides peuvent quitter l’application locale.
+function isSafeExternalUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+
+    return url.protocol === "https:" && Boolean(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+async function openExternalUrl(rawUrl) {
+  if (!isSafeExternalUrl(rawUrl)) {
+    console.warn(
+      "Lien externe bloqué :",
+      String(rawUrl).slice(0, 200)
+    );
+    return false;
+  }
+
+  try {
+    await shell.openExternal(rawUrl);
+    return true;
+  } catch (error) {
+    console.error(
+      "Impossible d’ouvrir le lien externe :",
+      error
+    );
+    return false;
+  }
+}
+
 // Crée une seule fenêtre et attend son rendu avant de l’afficher.
 function createWindow() {
   if (mainWindow) {
@@ -143,8 +176,36 @@ function createWindow() {
     },
   });
 
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    void openExternalUrl(url);
+    return { action: "deny" };
+  });
+
+  mainWindow.webContents.on(
+    "will-navigate",
+    (event, navigationUrl) => {
+      const currentUrl = mainWindow.webContents.getURL();
+
+      try {
+        const current = new URL(currentUrl);
+        const destination = new URL(navigationUrl);
+        const isCurrentApplicationPage =
+          destination.protocol === current.protocol &&
+          destination.host === current.host &&
+          destination.pathname === current.pathname;
+
+        if (isCurrentApplicationPage) return;
+      } catch {
+        // Une adresse incorrecte sera bloquée.
+      }
+
+      event.preventDefault();
+      void openExternalUrl(navigationUrl);
+    }
+  );
+
   mainWindow.loadURL(
-    "http://localhost:3000/app"
+    "http://127.0.0.1:3000/app"
   );
 
   mainWindow.once("ready-to-show", () => {

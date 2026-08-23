@@ -242,6 +242,28 @@
           </button>
           <button class="composer-icon sliders-icon" type="button" aria-label="Réglages de la requête"></button>
           <button id="sendButton" type="submit" class="send-btn" aria-label="Envoyer"><span aria-hidden="true"></span></button>
+          <div
+            id="web-search-suggestion"
+            class="web-search-suggestion"
+            role="status"
+            aria-live="polite"
+            hidden
+          >
+            <div class="web-search-suggestion__content">
+              <span aria-hidden="true">🌐</span>
+              <p id="web-search-suggestion-text">
+                Cette question semble nécessiter des informations récentes.
+              </p>
+            </div>
+            <div class="web-search-suggestion__actions">
+              <button id="web-search-suggestion-use" type="button">
+                Rechercher et envoyer
+              </button>
+              <button id="web-search-suggestion-ignore" type="button">
+                Envoyer sans Internet
+              </button>
+            </div>
+          </div>
         </div>
       </form>
     </section>

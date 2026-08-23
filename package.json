@@ -6,7 +6,7 @@
   "scripts": {
     "start": "electron .",
     "server": "node server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --check server.js && node --check config.js && node --check electron/main.js && node --check public/app.js && node --check public/noon-particles.js"
   },
   "keywords": [],
   "author": "",
