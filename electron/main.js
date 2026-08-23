@@ -1,3 +1,4 @@
+// Processus principal Electron : fenêtre macOS, serveur local et permissions média.
 const {
   app,
   BrowserWindow,
@@ -10,6 +11,7 @@ const path = require("path");
 let mainWindow = null;
 let localServer = null;
 
+// N’autorise les permissions sensibles que pour l’interface locale de Noon.
 function isNoonOrigin(origin) {
   try {
     return (
@@ -81,6 +83,7 @@ function configureMediaPermissions() {
   );
 }
 
+// macOS exige une demande explicite avant tout accès au microphone.
 async function requestMicrophoneAccess() {
   if (process.platform !== "darwin") {
     return true;
@@ -108,6 +111,7 @@ async function requestMicrophoneAccess() {
   return false;
 }
 
+// Crée une seule fenêtre et attend son rendu avant de l’afficher.
 function createWindow() {
   if (mainWindow) {
     mainWindow.focus();
@@ -143,6 +147,7 @@ function createWindow() {
   });
 }
 
+// Charge server.js puis ouvre l’interface lorsque le port local est prêt.
 function startNoon() {
   localServer = require(
     path.join(__dirname, "..", "server.js")

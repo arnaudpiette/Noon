@@ -1,9 +1,12 @@
+// Animation autonome du cœur de Noon sur canvas.
+// L’IIFE évite d’exposer les variables internes dans window.
 (() => {
   const canvas = document.getElementById("noonCanvas");
   const stage = document.getElementById("coreStage");
 
   if (!canvas || !stage) return;
 
+  // Un canvas secondaire sert à échantillonner la forme avant de placer les particules.
   const context = canvas.getContext("2d", { alpha: true });
   const sampleCanvas = document.createElement("canvas");
   const sampleContext = sampleCanvas.getContext("2d", { willReadFrequently: true });

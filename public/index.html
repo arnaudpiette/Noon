@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
+  <!-- Métadonnées et ressources visuelles de l’application locale. -->
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Noon</title>
@@ -11,11 +12,22 @@
 </head>
 <body>
   <main class="app">
+    <!-- Navigation latérale : mode, Focus, budget et activité. -->
     <aside class="sidebar">
       <div class="brand">
         <p class="brand-name">NOON</p>
         <p class="eyebrow">Assistant local</p>
       </div>
+
+      <button id="newConversationButton" class="new-conversation-button" type="button">
+        <span aria-hidden="true">＋</span>
+        Nouvelle conversation
+      </button>
+
+      <button id="exportConversationButton" class="export-conversation-button" type="button">
+        <span aria-hidden="true">↓</span>
+        Exporter la conversation
+      </button>
 
       <section class="side-section">
         <span class="label">Mode</span>
@@ -82,6 +94,7 @@
     </button>
     <button id="sidebarBackdrop" class="sidebar-backdrop" type="button" aria-label="Fermer le menu latéral" tabindex="-1"></button>
 
+    <!-- Espace principal : visualisation de Noon, conversation et composeur. -->
     <section class="workspace">
       <header class="top-tools">
         <div class="view-switch" aria-label="Changer de vue" hidden>
@@ -89,13 +102,44 @@
           <button class="view-btn" data-view="chat" type="button">Chat</button>
         </div>
 
+        <div id="connectionStatus" class="connection-status" data-state="checking" role="status" aria-live="polite">
+          <span class="connection-status__dot" aria-hidden="true"></span>
+          <span id="connectionStatusText">Vérification…</span>
+        </div>
+
         <div class="tool-actions">
           <button class="icon-btn audio-btn" type="button" aria-label="Activité audio">
             <span class="audio-bars"><i></i><i></i><i></i><i></i></span>
           </button>
-          <button class="icon-btn" type="button" aria-label="Réglages">
+          <button id="settingsButton" class="icon-btn" type="button" aria-label="Ouvrir les réglages" aria-expanded="false">
             <span class="gear-icon" aria-hidden="true"></span>
           </button>
+          <div id="quickSettings" class="quick-settings" hidden>
+            <label class="setting-line">
+              <input id="voiceEnabled" type="checkbox">
+              <span>Réponse vocale</span>
+            </label>
+
+            <label class="setting-field">
+              <span>Vitesse de la voix</span>
+              <select id="voiceRate">
+                <option value="0.85">Lente</option>
+                <option value="1">Normale</option>
+                <option value="1.15">Rapide</option>
+              </select>
+            </label>
+
+            <label class="setting-field">
+              <span>Analyse des images et PDF</span>
+              <select id="visualDetail">
+                <option value="low">Économique</option>
+                <option value="high">Détaillée</option>
+              </select>
+              <small class="setting-help">
+                Utilise « Détaillée » pour le petit texte, les schémas ou les maquettes complexes.
+              </small>
+            </label>
+          </div>
           <button class="icon-btn" type="button" aria-label="Statut système">
             <span class="orange-dot"></span>
           </button>
@@ -140,7 +184,7 @@
           <button id="clearChat" class="ghost-btn" type="button">Nouvelle session</button>
         </header>
 
-        <section id="conversation" class="conversation">
+        <section id="conversationMessages" class="conversation">
           <div class="message noon">
             <span class="author">Noon</span>
             <p>Bonjour. Je suis prêt.</p>
@@ -148,6 +192,7 @@
         </section>
       </section>
 
+      <!-- Le composeur accepte le texte, la voix et les pièces jointes. -->
       <form id="chatForm" class="composer">
         <button id="micButton" class="mic-button microphone-btn" type="button" aria-label="Activer le microphone" aria-pressed="false">
           <svg class="microphone-glyph" viewBox="0 0 64 64" aria-hidden="true">
@@ -157,9 +202,23 @@
           </svg>
         </button>
 
-        <div class="input-shell">
+        <div id="composerDropZone" class="input-shell composer-drop-zone">
+          <input
+            id="fileInput"
+            type="file"
+            accept=".txt,.md,.html,.css,.scss,.js,.jsx,.ts,.tsx,.json,.yaml,.yml,.xml,.png,.jpg,.jpeg,.webp,.pdf"
+            hidden
+          >
+          <div id="attachmentPreview" class="attachment-preview" hidden>
+            <span id="attachmentIcon" aria-hidden="true">📄</span>
+            <img id="attachmentThumbnail" class="attachment-thumbnail" alt="" hidden>
+            <span id="attachmentName"></span>
+            <button id="removeAttachmentButton" type="button" aria-label="Supprimer la pièce jointe">×</button>
+          </div>
           <textarea id="prompt" placeholder="Demande quelque chose à Noon…" rows="1"></textarea>
-          <button class="composer-icon attach-icon" type="button" aria-label="Joindre un fichier"></button>
+          <button id="attachButton" class="composer-icon attach-icon" type="button" aria-label="Ajouter un fichier">
+            <img class="attachment-glyph" src="assets/noon-icon-attachment.svg" alt="">
+          </button>
           <button class="composer-icon sliders-icon" type="button" aria-label="Réglages de la requête"></button>
           <button type="submit" class="send-btn" aria-label="Envoyer"><span aria-hidden="true"></span></button>
         </div>
