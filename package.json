@@ -1,21 +1,38 @@
 {
   "name": "noon",
-  "version": "1.0.0",
-  "description": "",
+  "version": "1.0.5",
+  "description": "Assistant personnel local pour macOS",
   "main": "electron/main.js",
   "scripts": {
-    "start": "electron .",
+    "start": "electron-forge start",
     "server": "node server.js",
-    "test": "node --check server.js && node --check config.js && node --check electron/main.js && node --check public/app.js && node --check public/noon-particles.js"
+    "package": "electron-forge package --platform=darwin --arch=x64",
+    "package:mac:x64": "electron-forge package --platform=darwin --arch=x64",
+    "make": "electron-forge make --platform=darwin --arch=x64",
+    "make:mac:x64": "electron-forge make --platform=darwin --arch=x64",
+    "verify:mac": "node scripts/verify-macos-package.js",
+    "icon:mac": "node scripts/generate-macos-icons.js",
+    "install:local": "sh scripts/install-local-macos.sh",
+    "lint": "node --check server.js && node --check forge.config.js && node --check electron/app-core.js && node --check electron/preload.js && node --check electron/main.js && node --check public/ui-utils.js && node --check public/app.js",
+    "build": "npm run lint",
+    "test": "node --check server.js && node --check config.js && node --check forge.config.js && node --check electron/app-core.js && node --check electron/preload.js && node --check electron/main.js && node --check public/ui-utils.js && node --check public/app.js && node --check public/noon-particles.js && node --check public/live-voice-core.js && node --check public/live-voice.js && node --test"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@picovoice/porcupine-node": "4.0.2",
+    "@picovoice/pvrecorder-node": "1.2.9",
     "dotenv": "^17.4.2",
     "openai": "^7.5.0"
   },
   "devDependencies": {
-    "electron": "^43.4.1"
+    "@electron-forge/cli": "^7.11.2",
+    "@electron-forge/maker-dmg": "^7.11.2",
+    "@electron-forge/maker-zip": "^7.11.2",
+    "@electron-forge/plugin-auto-unpack-natives": "7.11.2",
+    "electron": "^43.4.1",
+    "png2icons": "2.0.1",
+    "sharp": "0.34.3"
   }
 }

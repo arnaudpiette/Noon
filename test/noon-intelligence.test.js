@@ -1,0 +1,7 @@
+"use strict";
+const test = require("node:test"); const assert = require("node:assert/strict");
+const { selectModelRoute, trimHistoryByCharacters, updateConversationSummary } = require("../lib/noon-intelligence");
+test("route Luna, Terra et Sol selon la difficulté", () => { assert.equal(selectModelRoute({ question: "Bonjour" }).model, "gpt-5.6-luna"); assert.equal(selectModelRoute({ question: "Explique la hiérarchie visuelle" }).model, "gpt-5.6-terra"); assert.equal(selectModelRoute({ question: "Fais un audit complet" }).model, "gpt-5.6-sol"); });
+test("le budget économie force Luna", () => { assert.equal(selectModelRoute({ question: "Fais un audit complet", budgetMode: "ECO" }).model, "gpt-5.6-luna"); });
+test("borne l’historique en conservant le récent", () => { const h = [{ content: "a".repeat(10) }, { content: "b".repeat(10) }, { content: "c".repeat(10) }]; assert.deepEqual(trimHistoryByCharacters(h, 20), h.slice(1)); });
+test("résume localement les décisions retirées de la fenêtre immédiate", () => { const summary = updateConversationSummary("- Contexte antérieur", [{ role: "user", content: "Le projet Kasa doit rester en lecture seule. Ma prochaine action est de vérifier le router." }, { role: "assistant", content: "Décision validée : conserver React Router." }]); assert.match(summary, /Contexte antérieur/); assert.match(summary, /lecture seule/); assert.match(summary, /React Router/); });

@@ -6,10 +6,18 @@ const os = require("os");
 const HOME = os.homedir();
 
 // Dossiers racines dans lesquels Noon peut rechercher des projets.
-const ALLOWED_DIRECTORIES = [
+const PROJECT_DIRECTORIES = [
+  path.join(HOME, "Noon"),
   path.join(HOME, "Corsaire"),
   path.join(HOME, "Freelance"),
   path.join(HOME, "Lieu commun"),
+];
+
+const ALLOWED_DIRECTORIES = [
+  ...PROJECT_DIRECTORIES,
+  path.join(HOME, "Downloads"),
+  path.join(HOME, "Applications"),
+  "/Applications",
 ];
 
 // Espaces affichés en premier dans le sélecteur Focus.
@@ -38,5 +46,6 @@ module.exports = {
   HOME,
   ALLOWED_DIRECTORIES,
   PRIORITY_DIRECTORIES,
+  PROJECT_DIRECTORIES,
   EXCLUDED_NAMES,
 };

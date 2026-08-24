@@ -4,10 +4,11 @@
   <!-- Métadonnées et ressources visuelles de l’application locale. -->
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* http://localhost:*; media-src 'self' data: blob:; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'self';"
+  />
   <title>Noon</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -15,8 +16,7 @@
     <!-- Navigation latérale : mode, Focus, budget et activité. -->
     <aside class="sidebar">
       <div class="brand">
-        <p class="brand-name">NOON</p>
-        <p class="eyebrow">Assistant local</p>
+        <p class="brand-name">NOO<span class="brand-name__mirrored-letter">N</span></p>
       </div>
 
       <button id="newConversationButton" class="new-conversation-button" type="button">
@@ -24,10 +24,59 @@
         Nouvelle conversation
       </button>
 
-      <button id="exportConversationButton" class="export-conversation-button" type="button">
-        <span aria-hidden="true">↓</span>
-        Exporter la conversation
-      </button>
+      <section class="live-voice-panel" aria-labelledby="liveVoiceTitle">
+        <div class="live-voice-heading">
+          <div>
+            <span class="label">Voix temps réel</span>
+            <strong id="liveVoiceTitle">Conversation Live</strong>
+          </div>
+          <span id="liveVoiceDot" class="live-voice-dot" data-state="disconnected" aria-hidden="true"></span>
+        </div>
+        <button id="liveVoiceButton" class="live-voice-button" type="button">
+          Conversation Live
+        </button>
+        <p id="liveVoiceStatus" class="live-voice-status" role="status" aria-live="polite">
+          Déconnecté
+        </p>
+        <div class="live-voice-controls">
+          <label>
+            <span>Qualité vocale</span>
+            <select id="liveVoiceQuality">
+              <option value="mini">Mini</option>
+              <option value="max">Max</option>
+            </select>
+          </label>
+          <!-- Langue et accent restent pilotables oralement, sans encombrer le panneau. -->
+          <input id="liveVoiceLanguage" type="hidden" value="auto">
+          <input id="liveVoiceAccent" type="hidden" value="none">
+        </div>
+        <div class="live-voice-actions">
+          <button id="liveVoiceMute" type="button" disabled>Couper le micro</button>
+          <button id="liveVoiceEnd" type="button" disabled>Terminer</button>
+        </div>
+        <p class="live-voice-context">
+          <span id="liveVoiceContext">DA · Aucun Focus</span>
+          <span id="liveVoiceCost">0,00 $ / 11 $</span>
+        </p>
+        <audio id="liveVoiceAudio" autoplay hidden></audio>
+      </section>
+
+      <section class="side-section operations-panel">
+        <button class="operations-toggle" type="button" data-panel="integrationsPanel" aria-expanded="false">Intégrations</button>
+        <div id="integrationsPanel" class="operations-content" hidden>
+          <p id="integrationsSecurityStatus">Chargement…</p>
+          <div id="integrationsList"></div>
+        </div>
+        <button class="operations-toggle" type="button" data-panel="approvalsPanel" aria-expanded="false">Actions en attente</button>
+        <div id="approvalsPanel" class="operations-content" hidden><div id="approvalsList">Aucune action.</div></div>
+        <button class="operations-toggle" type="button" data-panel="automationsPanel" aria-expanded="false">Automatisations</button>
+        <div id="automationsPanel" class="operations-content" hidden><div id="automationsList">Chargement…</div></div>
+        <button class="operations-toggle" type="button" data-panel="productionPanel" aria-expanded="false">Production</button>
+        <div id="productionPanel" class="operations-content" hidden>
+          <p>Briefs · Documents · Présentations · Rapports · Moodboards · Images</p>
+          <small>Livrables préparés localement et versionnés avant publication.</small>
+        </div>
+      </section>
 
       <section class="side-section">
         <span class="label">Mode</span>
@@ -38,7 +87,7 @@
       </section>
 
       <section class="side-section focus-panel">
-        <span class="label">Focus</span>
+        <span id="focusCatalogStatus" class="label">Focus</span>
 
         <button
           id="focusToggle"
@@ -55,7 +104,30 @@
           <div id="focusList" class="focus-list">
             <span class="focus-loading">Chargement…</span>
           </div>
+          <button id="refreshProjectsButton" class="refresh-projects-button" type="button">
+            Actualiser les projets
+          </button>
         </div>
+      </section>
+
+      <section id="projectJournalPanel" class="project-journal-panel" hidden>
+        <span class="label">Projet actif</span>
+        <strong id="projectJournalName">—</strong>
+        <dl class="project-journal-summary">
+          <div><dt>État</dt><dd id="projectJournalStatus">—</dd></div>
+          <div><dt>Mode</dt><dd id="projectJournalMode">—</dd></div>
+          <div><dt>Dernière session</dt><dd id="projectJournalDate">—</dd></div>
+          <div><dt>Prochaine action</dt><dd id="projectJournalNext">—</dd></div>
+          <div><dt>Blocages</dt><dd id="projectJournalBlockers">0</dd></div>
+        </dl>
+        <div class="project-journal-actions">
+          <button id="controlProjectButton" type="button">Contrôle projet</button>
+          <button id="endProjectSessionButton" type="button">Fin de session</button>
+        </div>
+        <details id="projectJournalDetails">
+          <summary>Voir le journal</summary>
+          <div id="projectJournalDetailContent"></div>
+        </details>
       </section>
 
       <section class="side-section">
@@ -104,17 +176,23 @@
     <!-- Espace principal : visualisation de Noon, conversation et composeur. -->
     <section class="workspace">
       <header class="top-tools">
-        <div class="view-switch" aria-label="Changer de vue" hidden>
-          <button class="view-btn active" data-view="core" type="button">Core</button>
-          <button class="view-btn" data-view="chat" type="button">Chat</button>
+        <div class="view-switch" aria-label="Choisir le mode d’interaction">
+          <button class="view-btn active" data-view="core" type="button" aria-pressed="true">
+            Assistant vocal
+          </button>
+          <button class="view-btn" data-view="chat" type="button" aria-pressed="false">
+            Chat
+          </button>
+          <button class="view-btn" data-view="brief" type="button" aria-pressed="false">Brief Noon</button>
         </div>
 
-        <div id="connectionStatus" class="connection-status" data-state="checking" role="status" aria-live="polite">
-          <span class="connection-status__dot" aria-hidden="true"></span>
-          <span id="connectionStatusText">Vérification…</span>
-        </div>
+        <div class="top-tools-right">
+          <div id="connectionStatus" class="connection-status" data-state="checking" role="status" aria-live="polite" hidden>
+            <span class="connection-status__dot" aria-hidden="true"></span>
+            <span id="connectionStatusText">Vérification…</span>
+          </div>
 
-        <div class="tool-actions">
+          <div class="tool-actions">
           <button class="icon-btn audio-btn" type="button" aria-label="Activité audio">
             <span class="audio-bars"><i></i><i></i><i></i><i></i></span>
           </button>
@@ -130,6 +208,11 @@
             <label class="setting-line">
               <input id="notificationsEnabled" type="checkbox">
               <span>Notification quand la réponse est prête</span>
+            </label>
+
+            <label class="setting-line">
+              <input id="gmailAutoDrafts" type="checkbox">
+              <span>Créer automatiquement les brouillons Gmail</span>
             </label>
 
             <label class="setting-field">
@@ -151,10 +234,70 @@
                 Utilise « Détaillée » pour le petit texte, les schémas ou les maquettes complexes.
               </small>
             </label>
+            <label class="setting-field">
+              <span>Intelligence de Noon</span>
+              <select id="intelligenceProfile">
+                <option value="economical">Économique</option>
+                <option value="balanced">Équilibré</option>
+                <option value="maximum">Qualité maximale</option>
+              </select>
+              <small class="setting-help">Luna privilégie la rapidité, Terra l’équilibre et Sol les demandes complexes.</small>
+            </label>
+            <fieldset class="brief-settings">
+              <legend>Brief créatif</legend>
+              <label class="setting-line"><input id="creativeBriefEnabled" type="checkbox"><span>Génération automatique</span></label>
+              <label class="setting-field"><span>Heure de génération</span><input id="creativeBriefTime" type="time" value="08:00"></label>
+              <small class="setting-help">Fuseau : Europe/Paris</small>
+              <label class="setting-line"><input id="creativeBriefNotifications" type="checkbox"><span>Notification macOS</span></label>
+              <label class="setting-line"><input id="launchAtLogin" type="checkbox"><span>Lancer Noon à l’ouverture de session</span></label>
+              <button id="testCreativeBrief" type="button">Génération de test</button>
+            </fieldset>
+            <fieldset class="memory-settings">
+              <legend>Mémoire durable</legend>
+              <label class="setting-line"><input id="longTermMemoryEnabled" type="checkbox"><span>Utiliser les souvenirs pertinents</span></label>
+              <div class="memory-add"><input id="newMemoryText" type="text" maxlength="1000" placeholder="Ajouter un souvenir utile"><button id="addMemoryButton" type="button">Ajouter</button></div>
+              <div id="memoryList" class="memory-list"></div>
+              <button id="clearMemoriesButton" type="button">Vider toute la mémoire</button>
+            </fieldset>
+
+            <fieldset class="openai-key-settings">
+              <legend>Connexion OpenAI</legend>
+              <p id="openAIKeyStatus" class="setting-help" role="status">Vérification…</p>
+              <label class="setting-field">
+                <span>Clé API OpenAI</span>
+                <input id="openAIKeyInput" type="password" autocomplete="off" placeholder="Enregistrée dans le coffre macOS">
+              </label>
+              <button id="saveOpenAIKey" type="button">Enregistrer la clé</button>
+              <small class="setting-help">La clé reste chiffrée dans le processus principal et n’est jamais affichée dans l’interface.</small>
+            </fieldset>
+
+            <fieldset class="wake-word-settings">
+              <legend>Réveil vocal — Salut Noon</legend>
+              <label class="setting-line"><input id="wakeWordEnabled" type="checkbox"><span>Activer l’écoute locale</span></label>
+              <p id="wakeWordStatus" class="setting-help" role="status">Non configuré.</p>
+              <label class="setting-field"><span>AccessKey Picovoice</span><input id="picovoiceAccessKey" type="password" autocomplete="off" placeholder="Enregistrée dans le coffre macOS"></label>
+              <button id="savePicovoiceKey" type="button">Enregistrer la clé</button>
+              <div class="wake-word-imports"><button id="importWakeKeyword" type="button">Importer .ppn</button><button id="importWakeModel" type="button">Importer français .pv</button></div>
+              <label class="setting-field"><span>Microphone</span><select id="wakeWordDevice"><option value="-1">Microphone par défaut</option></select></label>
+              <label class="setting-field"><span>Sensibilité <output id="wakeWordSensitivityValue">0,50</output></span><input id="wakeWordSensitivity" type="range" min="0" max="1" step="0.05" value="0.5"></label>
+              <label class="setting-line"><input id="resumeWakeAfterUnlock" type="checkbox"><span>Réactiver après déverrouillage</span></label>
+              <button id="testWakeWord" type="button">Tester le mot-clé</button>
+              <button id="resetWakeWord" type="button">Réinitialiser</button>
+              <small class="setting-help wake-privacy">L’écoute de “Salut Noon” est effectuée localement. Aucun son n’est enregistré ou envoyé à OpenAI avant le réveil de Noon.</small>
+            </fieldset>
           </div>
-          <button class="icon-btn" type="button" aria-label="Statut système">
-            <span class="orange-dot"></span>
-          </button>
+            <button id="shareConversationButton" class="icon-btn share-button" type="button" aria-label="Partager la conversation" aria-expanded="false" title="Partager la conversation">
+              <span class="share-icon" aria-hidden="true">↗</span>
+            </button>
+            <div id="shareConversationMenu" class="share-conversation-menu" hidden>
+              <button type="button" data-share-target="mail">Partager par e-mail</button>
+              <button type="button" data-share-target="whatsapp">Partager par WhatsApp</button>
+              <button type="button" data-share-target="save">Enregistrer dans un dossier</button>
+            </div>
+            <button id="systemStatusButton" class="icon-btn" type="button" aria-label="Vérifier l’état de Noon" title="Vérifier l’état de Noon">
+              <span class="orange-dot"></span>
+            </button>
+          </div>
         </div>
       </header>
 
@@ -177,11 +320,6 @@
 
           <canvas id="noonCanvas" aria-label="Animation de particules Noon"></canvas>
 
-          <div class="core-prompt">
-            <span>//</span>
-            <p>Dis-moi ce que tu veux accomplir</p>
-            <span>//</span>
-          </div>
           <div class="down-arrow" aria-hidden="true">⌄</div>
           <span id="coreActivity" class="core-activity">Système disponible</span>
         </div>
@@ -202,6 +340,14 @@
             <p>Bonjour. Je suis prêt.</p>
           </div>
         </section>
+      </section>
+
+      <section id="briefView" class="view brief-view">
+        <header class="chat-header"><div><span class="label">Veille créative</span><h1>Brief Noon</h1></div><time id="briefGeneratedAt"></time></header>
+        <div id="briefState" class="brief-state" role="status">Chargement…</div>
+        <article id="briefContent" class="brief-content"></article>
+        <div id="briefSources" class="message-sources"></div>
+        <div class="brief-actions"><button id="generateBriefButton" type="button">Générer maintenant</button><button id="readBriefButton" type="button" disabled>Lire à voix haute</button><button id="stopBriefReadingButton" type="button" disabled>Arrêter la lecture</button></div>
       </section>
 
       <!-- Le composeur accepte le texte, la voix et les pièces jointes. -->
@@ -232,16 +378,26 @@
             </div>
           </div>
           <textarea id="prompt" placeholder="Demande quelque chose à Noon…" rows="1"></textarea>
-          <button id="web-search-button" class="web-search-button" type="button" aria-pressed="false" title="Rechercher sur Internet">
-            <span aria-hidden="true">🌐</span>
-            <span>Internet</span>
-            <span id="web-search-counter" class="web-search-counter">0/10</span>
-          </button>
-          <button id="attachButton" class="composer-icon attach-icon" type="button" aria-label="Ajouter un fichier">
-            <img class="attachment-glyph" src="assets/noon-icon-attachment.svg" alt="">
-          </button>
-          <button class="composer-icon sliders-icon" type="button" aria-label="Réglages de la requête"></button>
-          <button id="sendButton" type="submit" class="send-btn" aria-label="Envoyer"><span aria-hidden="true"></span></button>
+          <div class="composer-menu-wrap">
+            <button id="composerMenuButton" class="composer-plus-button" type="button" aria-label="Ouvrir le menu du champ" aria-expanded="false" aria-controls="composerMenu">
+              <span aria-hidden="true">＋</span>
+            </button>
+            <div id="composerMenu" class="composer-menu" hidden>
+              <button id="attachButton" class="composer-menu-item" type="button">
+                <img class="attachment-glyph" src="assets/noon-icon-attachment.svg" alt="" aria-hidden="true">
+                <span><strong>Ajouter des fichiers</strong><small>Images, documents et code</small></span>
+              </button>
+              <button id="web-search-button" class="composer-menu-item web-search-button" type="button" aria-pressed="false" title="Rechercher sur Internet">
+                <span class="composer-menu-symbol" aria-hidden="true">◎</span>
+                <span><strong>Recherche sur le Web</strong><small>Informations récentes · <span id="web-search-counter" class="web-search-counter">0/10</span></small></span>
+              </button>
+              <button id="composerSettingsButton" class="composer-menu-item" type="button">
+                <span class="composer-menu-symbol" aria-hidden="true">☷</span>
+                <span><strong>Réglages</strong><small>Voix et qualité d’analyse</small></span>
+              </button>
+            </div>
+          </div>
+          <button id="sendButton" type="submit" class="send-btn" aria-label="Envoyer"><span aria-hidden="true">&gt;</span></button>
           <div
             id="web-search-suggestion"
             class="web-search-suggestion"
@@ -270,6 +426,9 @@
   </main>
 
   <script src="noon-particles.js"></script>
+  <script src="ui-utils.js"></script>
   <script src="app.js"></script>
+  <script src="live-voice-core.js"></script>
+  <script src="live-voice.js"></script>
 </body>
 </html>
