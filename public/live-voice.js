@@ -105,6 +105,24 @@
         this.refreshContext();
         this.updateSessionInstructions();
       });
+      window.addEventListener("noon-audio-device-change", () => {
+        void this.applyOutputDevice();
+        if (this.connected) {
+          bridge.updateActivity(
+            "Le nouveau microphone sera utilisé à la prochaine session Live."
+          );
+        }
+      });
+    }
+
+    async applyOutputDevice() {
+      const outputId = bridge.getAudioDevices?.().outputId || "";
+      if (typeof elements.audio.setSinkId !== "function") return;
+      try {
+        await elements.audio.setSinkId(outputId);
+      } catch {
+        bridge.updateActivity("Le casque sélectionné n’est plus disponible.");
+      }
     }
 
     setState(state, message = STATE_LABELS[state]) {
@@ -208,17 +226,13 @@
 
       try {
         this.stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-            channelCount: 1,
-          },
+          audio: bridge.getAudioConstraints?.() || true,
           video: false,
         });
         this.peer = new RTCPeerConnection();
         this.peer.ontrack = (event) => {
           elements.audio.srcObject = event.streams[0];
+          void this.applyOutputDevice();
           elements.audio.play().catch(() => {});
         };
         this.peer.onconnectionstatechange = () => {

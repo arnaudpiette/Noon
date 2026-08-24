@@ -15,4 +15,6 @@ La détection est locale. Aucun son n’est enregistré ni envoyé à OpenAI ava
 11. Autoriser le microphone lorsque macOS le demande.
 12. Tester « Salut Noon », puis activer le lancement à l’ouverture de session si souhaité.
 
-Une sensibilité élevée réduit les détections manquées mais augmente les faux positifs. Conversation Live suspend automatiquement le moteur local afin que les deux systèmes ne capturent jamais le microphone simultanément.
+Le Brief Noon est préparé chaque jour à 7 h, heure de Paris, ou rattrapé au prochain lancement. Après « Salut Noon », l’application répond « Bonjour Arnaud », affiche le point du jour et le lit si la réponse vocale est activée.
+
+Une sensibilité élevée réduit les détections manquées mais augmente les faux positifs. Conversation Live suspend automatiquement le moteur local afin que les deux systèmes ne capturent jamais le microphone simultanément. Après une détection, l’écoute locale reprend automatiquement à la fin du délai de lecture.

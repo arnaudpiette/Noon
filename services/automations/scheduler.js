@@ -8,12 +8,12 @@ function createAutomationRegistry(filePath) {
   function save(data) { fs.mkdirSync(path.dirname(filePath), { recursive: true }); const tmp = `${filePath}.tmp`; fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 }); fs.renameSync(tmp, filePath); }
   function ensureDefaults() {
     const data = load();
-    const legacyBrief = data.routines.find((routine) => routine.dedupeKey === "daily-brief-0700");
-    if (legacyBrief) Object.assign(legacyBrief, { schedule: "0 8 * * *", dedupeKey: "daily-brief-0800" });
-    if (!data.routines.some((routine) => routine.dedupeKey === "daily-brief-0800")) data.routines.push({
+    const legacyBrief = data.routines.find((routine) => routine.dedupeKey === "daily-brief-0800");
+    if (legacyBrief) Object.assign(legacyBrief, { schedule: "0 7 * * *", dedupeKey: "daily-brief-0700" });
+    if (!data.routines.some((routine) => routine.dedupeKey === "daily-brief-0700")) data.routines.push({
       id: crypto.randomUUID(), name: "Brief Noon quotidien", enabled: true,
-      schedule: "0 8 * * *", timezone: "Europe/Paris", lastRunAt: null,
-      lastSuccessAt: null, nextRunAt: null, status: "configured", dedupeKey: "daily-brief-0800",
+      schedule: "0 7 * * *", timezone: "Europe/Paris", lastRunAt: null,
+      lastSuccessAt: null, nextRunAt: null, status: "configured", dedupeKey: "daily-brief-0700",
       includesMondayVision: true,
     });
     save(data); return data;

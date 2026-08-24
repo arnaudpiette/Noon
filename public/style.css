@@ -82,6 +82,7 @@ body[data-interaction-mode="brief"] .composer{display:none}
 .setting-line + .setting-line{margin-top:12px}
 .setting-field{display:grid;gap:8px;margin-top:16px}
 .setting-field select{padding:8px 10px;color:#f7f7f7;background:#161c20;border:1px solid rgba(255,255,255,.15);border-radius:8px}
+.setting-field button{padding:8px 10px;color:#f7f7f7;background:#161c20;border:1px solid rgba(255,255,255,.15);border-radius:8px;font:inherit;cursor:pointer}
 .setting-help{color:rgba(255,255,255,.48);font-size:.7rem;line-height:1.4}
 
 .new-conversation-button{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:10px 12px;color:#6f9500;background:rgba(186,255,0,.08);border:1px solid rgba(139,188,0,.3);border-radius:10px;font:inherit;cursor:pointer;transition:background-color 160ms ease,border-color 160ms ease}

@@ -1877,7 +1877,7 @@ function buildVoiceInstructions({ language, accent, mode, focus, focusPath, hist
     : "";
 
   return buildNoonSystemPrompt([
-    "À l’oral, sois chaleureux, calme, vif et naturel.",
+    "À l’oral, utilise toujours une voix d’homme adulte, chaleureuse, calme, vive et naturelle.",
     "Parle comme un interlocuteur humain compétent, avec des phrases courtes, fluides, des contractions naturelles et de petites pauses.",
     "Évite le ton monotone, les introductions répétitives et les longues listes à l'oral.",
     languageInstruction,
@@ -3541,6 +3541,7 @@ if (req.method === "POST" && req.url === "/tts") {
     const mode = normalizeNoonMode(body.mode);
     const instructions = [
       `Parle en ${language === "auto" ? "la langue du texte" : language}.`,
+      "Utilise toujours une voix d’homme adulte, chaleureuse, posée et naturelle.",
       accent === "none" ? "Prononciation naturelle et neutre." : `Accent ${accent}, léger et intelligible.`,
       mode === "DEV" ? "Ton technique mais chaleureux." : "Ton créatif, chaleureux et naturel.",
       "Phrases fluides, rythme vivant, petites pauses et aucune diction de standard téléphonique.",

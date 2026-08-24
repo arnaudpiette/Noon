@@ -76,12 +76,12 @@ test("le raccourci Apple transmet l’entrée comme donnée stdin", async () => 
   assert.equal(observed.value, "Rappelle-moi Kasa demain");
 });
 
-test("le brief de 8 h reste unique et intègre le lundi", () => {
+test("le brief de 7 h reste unique et intègre le lundi", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "noon-auto-"));
   const registry = createAutomationRegistry(path.join(directory, "automations.json"));
   registry.ensureDefaults(); registry.ensureDefaults();
   const routines = registry.load().routines;
-  assert.equal(routines.filter((item) => item.dedupeKey === "daily-brief-0800").length, 1);
+  assert.equal(routines.filter((item) => item.dedupeKey === "daily-brief-0700").length, 1);
   assert.equal(routines[0].includesMondayVision, true);
   assert.equal(routines.some((item) => /vendredi/i.test(item.name)), false);
 });

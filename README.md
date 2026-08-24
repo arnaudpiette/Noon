@@ -39,13 +39,21 @@ La clé reste dans le processus serveur. Le renderer Electron utilise WebRTC et 
 
 ## Voix
 
-Le micro classique transcrit une phrase, puis lit la réponse avec `gpt-4o-mini-tts` et la voix `cedar` (`marin` en secours). « Conversation Live » ouvre une session WebRTC speech-to-speech avec `gpt-realtime-2.1-mini` par défaut.
+Le micro classique transcrit une phrase, puis lit la réponse avec `gpt-4o-mini-tts`, une voix masculine `marin` (`cedar` en secours) et une consigne vocale masculine explicite. « Conversation Live » ouvre une session WebRTC speech-to-speech avec `gpt-realtime-2.1-mini` par défaut et conserve la même identité vocale.
+
+Les réglages audio permettent de choisir séparément le microphone et la sortie son. Les périphériques connectés, notamment les casques et AirPods, sont actualisés automatiquement. Sur macOS, Noon demande explicitement l’autorisation du microphone et propose un accès direct aux réglages système en cas de refus.
 
 Langues : français, anglais, espagnol (Espagne et Mexique), portugais brésilien, russe, japonais, mandarin et néerlandais. Le mode Automatique répond dans la langue détectée. L’accent est indépendant de la langue.
 
 Commandes possibles : « Passe en mode DEV », « Passe en mode DA », « Focus sur Kasa », « Retire le Focus », « Parle anglais », « Habla español de México » ou « Parle français avec un accent russe ».
 
 Mini privilégie coût et fluidité. Max utilise `gpt-realtime-2.1`, demande une confirmation à chaque nouvelle session et est désactivé lorsque le budget est en mode économie/protection/blocage.
+
+## Salut Noon et point du jour
+
+Le réveil « Salut Noon » est détecté localement avec Picovoice lorsqu’il a été configuré et activé. Après détection, Noon affiche le Brief Noon puis annonce « Bonjour Arnaud » et lit le point du jour si la réponse vocale est activée.
+
+Le brief quotidien est programmé à `07:00` dans le fuseau `Europe/Paris`. Si l’application n’était pas lancée à cette heure, Noon rattrape une seule génération au prochain démarrage. Consultez [NOON_WAKE_WORD_SETUP.md](NOON_WAKE_WORD_SETUP.md) pour configurer le mot-clé local.
 
 ## Budget et sécurité
 
@@ -65,7 +73,7 @@ Les commandes vocales peuvent sélectionner Kasa, Mon Vieux Grimoire, Qwenta, Sm
 
 - Micro refusé : Réglages Système macOS → Confidentialité et sécurité → Microphone, puis relancer Noon.
 - Réseau coupé : Noon tente deux reconnexions, puis permet de continuer en texte ou avec le micro classique.
-- Pas de son : vérifier la sortie audio macOS et terminer/recréer la session Live.
+- Pas de son : choisir la sortie audio dans les réglages Noon, vérifier la sortie macOS puis terminer/recréer la session Live.
 - Lancer les contrôles automatiques avec `npm test`.
 
 Tests manuels à faire avec un microphone : les neuf langues/variantes ci-dessus, accents russe et français, interruption pendant la parole, commandes DA/DEV et Focus, coupure réseau/reconnexion, refus du microphone et blocage du budget vocal.

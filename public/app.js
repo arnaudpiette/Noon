@@ -67,6 +67,9 @@ const notificationsEnabledInput = document.getElementById(
   "notificationsEnabled"
 );
 const voiceRateSelect = document.getElementById("voiceRate");
+const audioInputDeviceSelect = document.getElementById("audioInputDevice");
+const audioOutputDeviceSelect = document.getElementById("audioOutputDevice");
+const openMicrophoneSettingsButton = document.getElementById("openMicrophoneSettings");
 const visualDetailSelect = document.getElementById("visualDetail");
 const intelligenceProfileSelect = document.getElementById("intelligenceProfile");
 const creativeBriefEnabledInput = document.getElementById("creativeBriefEnabled");
@@ -220,6 +223,10 @@ let notificationsEnabled =
   localStorage.getItem("noonNotificationsEnabled") === "true";
 let voiceRate =
   Number(localStorage.getItem("noonVoiceRate")) || 1;
+const AUDIO_INPUT_STORAGE_KEY = "noonAudioInputDevice";
+const AUDIO_OUTPUT_STORAGE_KEY = "noonAudioOutputDevice";
+let preferredAudioInputId = localStorage.getItem(AUDIO_INPUT_STORAGE_KEY) || "";
+let preferredAudioOutputId = localStorage.getItem(AUDIO_OUTPUT_STORAGE_KEY) || "";
 const allowedVisualDetails = ["low", "high"];
 let visualDetail =
   localStorage.getItem("noonVisualDetail") || "low";
@@ -387,6 +394,90 @@ voiceRateSelect.addEventListener("change", () => {
   voiceRate = Number(voiceRateSelect.value);
   localStorage.setItem("noonVoiceRate", String(voiceRate));
   updateActivity("Vitesse vocale enregistrée.");
+});
+
+function replaceAudioDeviceOptions(select, devices, defaultLabel, selectedId) {
+  select.replaceChildren();
+  const systemDefault = document.createElement("option");
+  systemDefault.value = "";
+  systemDefault.textContent = defaultLabel;
+  select.append(systemDefault);
+  devices.forEach((device, index) => {
+    const option = document.createElement("option");
+    option.value = device.deviceId;
+    option.textContent = device.label || `${defaultLabel} ${index + 1}`;
+    select.append(option);
+  });
+  select.value = devices.some(({ deviceId }) => deviceId === selectedId)
+    ? selectedId
+    : "";
+}
+
+async function refreshAudioDevices() {
+  if (!navigator.mediaDevices?.enumerateDevices) return;
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const inputs = devices.filter(({ kind }) => kind === "audioinput");
+    const outputs = devices.filter(({ kind }) => kind === "audiooutput");
+    replaceAudioDeviceOptions(
+      audioInputDeviceSelect,
+      inputs,
+      "Microphone système par défaut",
+      preferredAudioInputId
+    );
+    replaceAudioDeviceOptions(
+      audioOutputDeviceSelect,
+      outputs,
+      "Sortie système par défaut",
+      preferredAudioOutputId
+    );
+    if (audioInputDeviceSelect.value !== preferredAudioInputId) {
+      preferredAudioInputId = "";
+      localStorage.removeItem(AUDIO_INPUT_STORAGE_KEY);
+    }
+    if (audioOutputDeviceSelect.value !== preferredAudioOutputId) {
+      preferredAudioOutputId = "";
+      localStorage.removeItem(AUDIO_OUTPUT_STORAGE_KEY);
+    }
+  } catch {
+    updateActivity("Impossible d’actualiser les périphériques audio.");
+  }
+}
+
+function getNoonAudioConstraints() {
+  return {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    channelCount: 1,
+    ...(preferredAudioInputId
+      ? { deviceId: { exact: preferredAudioInputId } }
+      : {}),
+  };
+}
+
+audioInputDeviceSelect.addEventListener("change", () => {
+  preferredAudioInputId = audioInputDeviceSelect.value;
+  if (preferredAudioInputId) localStorage.setItem(AUDIO_INPUT_STORAGE_KEY, preferredAudioInputId);
+  else localStorage.removeItem(AUDIO_INPUT_STORAGE_KEY);
+  updateActivity("Microphone sélectionné.");
+});
+
+audioOutputDeviceSelect.addEventListener("change", () => {
+  preferredAudioOutputId = audioOutputDeviceSelect.value;
+  if (preferredAudioOutputId) localStorage.setItem(AUDIO_OUTPUT_STORAGE_KEY, preferredAudioOutputId);
+  else localStorage.removeItem(AUDIO_OUTPUT_STORAGE_KEY);
+  updateActivity("Sortie audio sélectionnée.");
+  window.dispatchEvent(new CustomEvent("noon-audio-device-change"));
+});
+
+openMicrophoneSettingsButton.addEventListener("click", async () => {
+  await window.noon?.openSystemSettings?.("microphone");
+  updateActivity("Réglages microphone macOS ouverts.");
+});
+
+navigator.mediaDevices?.addEventListener?.("devicechange", () => {
+  void refreshAudioDevices();
 });
 
 visualDetailSelect.addEventListener("change", () => {
@@ -2009,7 +2100,7 @@ async function loadCreativeBriefPreferences() {
   if (!window.noon?.getPreferences) return;
   const preferences = await window.noon.getPreferences();
   creativeBriefEnabledInput.checked = preferences.creativeBriefEnabled !== false;
-  creativeBriefTimeInput.value = preferences.creativeBriefTime || "08:00";
+  creativeBriefTimeInput.value = preferences.creativeBriefTime || "07:00";
   creativeBriefNotificationsInput.checked = preferences.creativeBriefNotifications !== false;
   launchAtLoginInput.checked = preferences.launchAtLogin !== false;
 }
@@ -2130,7 +2221,15 @@ function speakNoonWithSystemVoice(text, sessionId) {
   utterance.volume = 1;
 
   const voices = window.speechSynthesis.getVoices();
-  const frenchVoice = voices.find((voice) => voice.lang.toLowerCase().startsWith("fr")) || voices[0];
+  const frenchVoices = voices.filter((voice) =>
+    voice.lang.toLowerCase().startsWith("fr")
+  );
+  const maleVoiceNames = /\b(thomas|nicolas|daniel|alex|olivier|henri|paul|jacques|cedar|marin)\b/i;
+  const frenchVoice =
+    frenchVoices.find((voice) => maleVoiceNames.test(voice.name)) ||
+    frenchVoices[0] ||
+    voices.find((voice) => maleVoiceNames.test(voice.name)) ||
+    voices[0];
   if (frenchVoice) utterance.voice = frenchVoice;
 
   utterance.addEventListener("start", () => {
@@ -2192,6 +2291,9 @@ async function speakNoon(text) {
 
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     classicAudioContext = new AudioContextClass({ sampleRate: 24000 });
+    if (preferredAudioOutputId && typeof classicAudioContext.setSinkId === "function") {
+      await classicAudioContext.setSinkId(preferredAudioOutputId);
+    }
     await classicAudioContext.resume();
     const reader = response.body.getReader();
     let nextStartTime = classicAudioContext.currentTime + 0.08;
@@ -3007,14 +3109,12 @@ async function startRecording() {
 
     mediaStream =
       await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
+        audio: getNoonAudioConstraints(),
 
         video: false,
       });
+
+    await refreshAudioDevices();
 
     const audioType = getSupportedAudioType();
 
@@ -3113,9 +3213,14 @@ async function startRecording() {
     micButton.classList.remove("active");
     micButton.setAttribute("aria-pressed", "false");
 
-    updateActivity(
-      `Microphone indisponible : ${error.message}`
-    );
+    const microphoneMessage = error.name === "NotAllowedError"
+      ? "Accès au microphone refusé. Ouvre Réglages > Microphone dans les paramètres Noon."
+      : error.name === "NotFoundError"
+        ? "Aucun microphone détecté. Vérifie la connexion du casque puis réessaie."
+        : error.name === "OverconstrainedError"
+          ? "Le microphone sélectionné n’est plus disponible. Repasse sur le microphone système."
+          : `Microphone indisponible : ${error.message}`;
+    updateActivity(microphoneMessage);
   }
 }
 
@@ -3350,13 +3455,33 @@ refreshOpenAIKeyStatus();
 loadCreativeBriefPreferences();
 loadLongTermMemories();
 
+async function greetArnaudWithDailyBrief() {
+  switchView("brief");
+  const brief = await loadCreativeBrief();
+  const greeting = brief?.content
+    ? `Bonjour Arnaud. Voici votre point du jour. ${prepareTextForSpeech(brief.content.replace(/https?:\/\/\S+/g, " Sources disponibles à l’écran. "))}`
+    : "Bonjour Arnaud. Le point du jour n’est pas encore disponible. Je vous préviendrai dès qu’il sera prêt.";
+
+  activity.textContent = brief?.content
+    ? "Lecture du point du jour…"
+    : "Point du jour indisponible.";
+
+  if (voiceEnabled) {
+    await speakNoon(greeting);
+  }
+}
+
 window.noon?.onDeepLink((link) => {
   if (!link || typeof link.action !== "string") return;
   if (link.action === "open") {
     promptInput.focus();
     return;
   }
-  if (link.action === "live" || link.action === "wake") {
+  if (link.action === "wake") {
+    void greetArnaudWithDailyBrief();
+    return;
+  }
+  if (link.action === "live") {
     document.getElementById("liveVoiceButton")?.click();
     return;
   }
@@ -3449,6 +3574,13 @@ window.NoonAppBridge = {
       focusId: currentFocusId,
     };
   },
+  getAudioDevices() {
+    return {
+      inputId: preferredAudioInputId,
+      outputId: preferredAudioOutputId,
+    };
+  },
+  getAudioConstraints: getNoonAudioConstraints,
   setMode(mode) {
     setMode(mode);
   },
@@ -3478,3 +3610,5 @@ window.NoonAppBridge = {
     void loadProjectJournalPanel();
   },
 };
+
+void refreshAudioDevices();

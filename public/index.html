@@ -225,6 +225,22 @@
             </label>
 
             <label class="setting-field">
+              <span>Microphone</span>
+              <select id="audioInputDevice">
+                <option value="">Microphone système par défaut</option>
+              </select>
+              <button id="openMicrophoneSettings" type="button">Autorisation microphone macOS</button>
+            </label>
+
+            <label class="setting-field">
+              <span>Sortie audio</span>
+              <select id="audioOutputDevice">
+                <option value="">Sortie système par défaut</option>
+              </select>
+              <small class="setting-help">Les micros et casques connectés sont actualisés automatiquement.</small>
+            </label>
+
+            <label class="setting-field">
               <span>Analyse des images et PDF</span>
               <select id="visualDetail">
                 <option value="low">Économique</option>
@@ -246,7 +262,7 @@
             <fieldset class="brief-settings">
               <legend>Brief créatif</legend>
               <label class="setting-line"><input id="creativeBriefEnabled" type="checkbox"><span>Génération automatique</span></label>
-              <label class="setting-field"><span>Heure de génération</span><input id="creativeBriefTime" type="time" value="08:00"></label>
+              <label class="setting-field"><span>Heure de génération</span><input id="creativeBriefTime" type="time" value="07:00"></label>
               <small class="setting-help">Fuseau : Europe/Paris</small>
               <label class="setting-line"><input id="creativeBriefNotifications" type="checkbox"><span>Notification macOS</span></label>
               <label class="setting-line"><input id="launchAtLogin" type="checkbox"><span>Lancer Noon à l’ouverture de session</span></label>

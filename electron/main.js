@@ -2,7 +2,8 @@
 
 const {
   app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage,
-  Notification, powerMonitor, safeStorage, screen, session, shell, Tray,
+  Notification, powerMonitor, safeStorage, screen, session, shell,
+  systemPreferences, Tray,
 } = require("electron");
 const crypto = require("crypto");
 const fs = require("fs");
@@ -29,6 +30,7 @@ let wakeWordService = null;
 let resumeWakeTimer = null;
 let creativeBriefTimer = null;
 let creativeBriefRunning = false;
+let microphonePermission = "unknown";
 
 if (!hasSingleInstanceLock) app.quit();
 
@@ -48,7 +50,7 @@ function loadPreferences() {
   return {
     launchAtLogin: true,
     creativeBriefEnabled: true,
-    creativeBriefTime: "08:00",
+    creativeBriefTime: "07:00",
     creativeBriefNotifications: true,
     shortcut: DEFAULT_SHORTCUT,
     liveShortcut: DEFAULT_LIVE_SHORTCUT,
@@ -134,6 +136,18 @@ function configureSessionSecurity() {
     callback(isTrustedNoonOrigin(requestingUrl) &&
       (permission === "notifications" || (permission === "media" && audioOnly)));
   });
+}
+async function requestMicrophoneAccess() {
+  if (process.platform !== "darwin") {
+    microphonePermission = "granted";
+    return true;
+  }
+  microphonePermission = systemPreferences.getMediaAccessStatus("microphone");
+  if (microphonePermission === "not-determined") {
+    const granted = await systemPreferences.askForMediaAccess("microphone");
+    microphonePermission = granted ? "granted" : "denied";
+  }
+  return microphonePermission === "granted";
 }
 async function openExternalUrl(rawUrl) {
   if (!isSafeExternalUrl(rawUrl)) return false;
@@ -361,7 +375,8 @@ function scheduleCreativeBrief() {
 function registerIpc() {
   ipcMain.handle("noon:get-status", () => ({
     platform: process.platform, arch: process.arch, packaged: app.isPackaged,
-    liveVoiceActive, shortcuts: registerShortcuts(), loginItem: app.getLoginItemSettings(),
+    liveVoiceActive, microphonePermission,
+    shortcuts: registerShortcuts(), loginItem: app.getLoginItemSettings(),
   }));
   ipcMain.handle("noon:get-preferences", loadPreferences);
   ipcMain.handle("noon:set-preference", (_event, payload) => setPreference(payload?.key, payload?.value));
@@ -464,6 +479,32 @@ function registerIpc() {
 async function startNoon() {
   const userDataDirectory = app.getPath("userData");
   process.env.NOON_DATA_DIR = userDataDirectory;
+  const savedPreferences = readJson("preferences.json", {});
+  if (
+    savedPreferences.creativeBriefTime === "08:00" &&
+    savedPreferences.creativeBriefScheduleVersion !== 2
+  ) {
+    writeJson("preferences.json", {
+      ...savedPreferences,
+      creativeBriefTime: "07:00",
+      creativeBriefScheduleVersion: 2,
+    });
+  }
+  const migratedPreferences = readJson("preferences.json", {});
+  const wakeWordIsConfigured = Boolean(
+    loadEncryptedSecret("picovoice-access-key") &&
+    migratedPreferences.wakeWordKeywordPath &&
+    migratedPreferences.wakeWordModelPath &&
+    fs.existsSync(migratedPreferences.wakeWordKeywordPath) &&
+    fs.existsSync(migratedPreferences.wakeWordModelPath)
+  );
+  if (wakeWordIsConfigured && migratedPreferences.wakeWordStartupVersion !== 2) {
+    writeJson("preferences.json", {
+      ...migratedPreferences,
+      wakeWordEnabled: true,
+      wakeWordStartupVersion: 2,
+    });
+  }
   loadEncryptedOpenAIKey();
   logNoonEvent = createRotatingLogger(userDataDirectory);
   wakeWordService = new WakeWordService({ getAccessKey: () => loadEncryptedSecret("picovoice-access-key"), logger: logNoonEvent });
@@ -471,14 +512,16 @@ async function startNoon() {
   wakeWordService.on("detected", () => {
     shell.beep();
     dispatchDeepLink("noon://wake");
+    scheduleWakeWordResume(90_000);
   });
   const migration = migrateLegacyData(path.join(__dirname, ".."), userDataDirectory);
   logNoonEvent("audit", "data-migration", JSON.stringify({
     migrated: migration.migrated,
     skipped: migration.skipped,
   }));
-  localAuthSecret = getOrCreateLocalSecret();
-  configureSessionSecurity();
+    localAuthSecret = getOrCreateLocalSecret();
+    configureSessionSecurity();
+    await requestMicrophoneAccess();
   serverController = require(path.join(__dirname, "..", "server.js"));
   try {
     await serverController.startNoonServer({ authSecret: localAuthSecret });
