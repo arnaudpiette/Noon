@@ -1,5 +1,7 @@
 "use strict";
 
+// Vérifie l’ordre, les alias et la disponibilité des entrées du menu Focus.
+
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");

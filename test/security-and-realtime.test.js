@@ -1,5 +1,7 @@
 "use strict";
 
+// Vérifie les garde-fous de sécurité, les coûts vocaux et le nettoyage des sessions Realtime.
+
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");

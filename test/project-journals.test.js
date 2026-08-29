@@ -1,5 +1,7 @@
 "use strict";
 
+// Vérifie la persistance, la récupération et la déduplication des journaux de projet.
+
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");

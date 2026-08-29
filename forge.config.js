@@ -1,5 +1,7 @@
 "use strict";
 
+// Configuration de packaging Electron Forge : icône, ressources macOS et formats distribués.
+
 const path = require("path");
 const macIcon = path.join(__dirname, "assets", "icons", "noon.icns");
 
@@ -14,7 +16,11 @@ module.exports = {
     appBundleId: "com.arnaudpiette.noon",
     appCategoryType: "public.app-category.productivity",
     icon: macIcon,
-    asar: true,
+    // Les bibliothèques natives de sharp/libvips doivent rester hors de l’archive
+    // afin que le chargeur dynamique de macOS puisse résoudre leurs fichiers .dylib.
+    asar: {
+      unpack: "**/node_modules/@img/**",
+    },
     arch: "x64",
     protocols: [{ name: "Noon", schemes: ["noon"] }],
     extendInfo: {

@@ -8,11 +8,13 @@ const {
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const sharp = require("sharp");
 const { isSafeExternalUrl, isValidAccelerator, parseNoonDeepLink } = require("./app-core");
 const { createRotatingLogger, migrateLegacyData } = require("../lib/internal-data");
 const { FOCUS_CATALOG } = require("../lib/focus-catalog");
 const { WakeWordService } = require("../services/wake-word-service");
 const { isDueToday, nextRunAt } = require("../lib/creative-brief");
+const { createLocalPermissionStore } = require("../lib/local-permissions");
 
 const NOON_ORIGIN = "http://127.0.0.1:3000";
 const DEFAULT_SHORTCUT = "Control+Option+N";
@@ -29,12 +31,14 @@ let logNoonEvent = () => {};
 let wakeWordService = null;
 let resumeWakeTimer = null;
 let creativeBriefTimer = null;
+let briefRetryTimer = null;
 let creativeBriefRunning = false;
 let microphonePermission = "unknown";
 
 if (!hasSingleInstanceLock) app.quit();
 
 const dataPath = (name) => path.join(app.getPath("userData"), name);
+const localPermissionStore = createLocalPermissionStore(dataPath("local-permissions.json"));
 function readJson(name, fallback) {
   try { return JSON.parse(fs.readFileSync(dataPath(name), "utf8")); }
   catch { return fallback; }
@@ -111,6 +115,31 @@ function loadEncryptedOpenAIKey() {
       } catch {
         // Le fichier est absent ou illisible : poursuivre sans révéler son chemin.
       }
+    }
+  }
+}
+function loadLocalIntegrationEnvironment() {
+  const candidates = [
+    path.join(app.getPath("home"), "Noon", ".env"),
+    path.join(__dirname, "..", ".env"),
+  ];
+  const allowedNames = new Set([
+    "GOOGLE_OAUTH_CLIENT_ID",
+    "GOOGLE_OAUTH_CLIENT_SECRET",
+    "GOOGLE_OAUTH_REDIRECT_URI",
+  ]);
+  for (const candidate of candidates) {
+    try {
+      const contents = fs.readFileSync(candidate, "utf8");
+      for (const line of contents.split(/\r?\n/)) {
+        const match = line.match(/^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
+        if (!match || !allowedNames.has(match[1]) || process.env[match[1]]) continue;
+        const value = match[2].replace(/^(['"])(.*)\1$/, "$2").trim();
+        if (value) process.env[match[1]] = value;
+      }
+      if (process.env.GOOGLE_OAUTH_CLIENT_ID) return;
+    } catch {
+      // La configuration locale reste optionnelle tant que Gmail n'est pas connecté.
     }
   }
 }
@@ -333,31 +362,37 @@ async function runCreativeBrief({ force = false, notify = true } = {}) {
   if (creativeBriefRunning) return null;
   creativeBriefRunning = true;
   try {
-    const response = await fetch(`${NOON_ORIGIN}/brief/generate`, {
+    const dailyResponse = await fetch(`${NOON_ORIGIN}/daily-brief/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Noon-Local-Auth": localAuthSecret },
       body: JSON.stringify({ force }),
     });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.message || "Échec du Brief Noon.");
+    const dailyData = await dailyResponse.json();
+    if (!dailyResponse.ok) {
+      throw new Error(dailyData.message || "Échec du Daily Brief.");
+    }
     const preferences = loadPreferences();
     if (notify && preferences.creativeBriefNotifications && Notification.isSupported()) {
-      const notification = new Notification({ title: "Brief Noon prêt", body: "Votre veille créative du jour est disponible." });
+      const notification = new Notification({ title: "Votre brief matinal Noon est prêt", body: "Votre journée analysée et vos priorités sont disponibles." });
       notification.on("click", () => dispatchDeepLink("noon://brief")); notification.show();
     }
-    return data.brief;
+    clearTimeout(briefRetryTimer); briefRetryTimer = null;
+    return dailyData.brief;
   } catch (error) {
-    if (notify && Notification.isSupported()) new Notification({ title: "Brief Noon indisponible", body: "La veille créative n’a pas pu être préparée. Vous pouvez réessayer dans Noon." }).show();
-    logNoonEvent("error", "creative-brief", error.message); return null;
+    if (notify && Notification.isSupported()) new Notification({ title: "Brief Noon momentanément indisponible", body: "Noon réessaiera automatiquement dans quinze minutes." }).show();
+    logNoonEvent("error", "morning-brief", error.message);
+    clearTimeout(briefRetryTimer); briefRetryTimer = setTimeout(() => { void runCreativeBrief({ force: false, notify: true }); }, 15 * 60 * 1000);
+    return null;
   } finally { creativeBriefRunning = false; scheduleCreativeBrief(); }
 }
 
 async function checkCreativeBriefDue() {
   const preferences = loadPreferences();
   if (!preferences.creativeBriefEnabled) return scheduleCreativeBrief();
-  const response = await fetch(`${NOON_ORIGIN}/brief`, { headers: { "X-Noon-Local-Auth": localAuthSecret } }).catch(() => null);
+  const response = await fetch(`${NOON_ORIGIN}/daily-brief`, { headers: { "X-Noon-Local-Auth": localAuthSecret } }).catch(() => null);
   const state = response?.ok ? await response.json() : {};
-  if (isDueToday({ time: preferences.creativeBriefTime, lastSuccessDate: state.lastSuccessDate })) await runCreativeBrief();
+  const dailyIsDue = isDueToday({ time: preferences.creativeBriefTime, lastSuccessDate: state.lastSuccessDate });
+  if (dailyIsDue) await runCreativeBrief();
   else scheduleCreativeBrief();
 }
 
@@ -365,7 +400,7 @@ function scheduleCreativeBrief() {
   clearTimeout(creativeBriefTimer); creativeBriefTimer = null;
   const preferences = loadPreferences(); if (!preferences.creativeBriefEnabled) return;
   const next = nextRunAt({ time: preferences.creativeBriefTime });
-  void fetch(`${NOON_ORIGIN}/brief/schedule`, {
+  void fetch(`${NOON_ORIGIN}/daily-brief/schedule`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Noon-Local-Auth": localAuthSecret },
     body: JSON.stringify({ nextScheduledAt: next.toISOString() }),
@@ -475,6 +510,57 @@ function registerIpc() {
     if (!allowed[section]) return false;
     await shell.openExternal(allowed[section]); return true;
   });
+  ipcMain.handle("noon:list-local-permissions", () => localPermissionStore.load());
+  ipcMain.handle("noon:add-local-permission", async (_event, payload) => {
+    const mode = payload?.mode === "read-write" ? "read-write" : "read-only";
+    const result = await dialog.showOpenDialog(mainWindow, { title: "Autoriser un dossier pour Noon", properties: ["openDirectory", "createDirectory"] });
+    if (result.canceled || !result.filePaths[0]) return { canceled: true };
+    return { canceled: false, permission: localPermissionStore.add({ path: result.filePaths[0], mode, output: payload?.output === true }) };
+  });
+  ipcMain.handle("noon:remove-local-permission", (_event, targetPath) => {
+    localPermissionStore.remove(String(targetPath || ""));
+    return { status: "ok" };
+  });
+  ipcMain.handle("noon:open-artifact", async (_event, targetPath) => {
+    const realPath = fs.realpathSync(String(targetPath || ""));
+    if (!localPermissionStore.roots("read-write").some((root) => realPath === root || realPath.startsWith(`${root}${path.sep}`))) throw new Error("Livrable hors d’un dossier autorisé.");
+    const errorMessage = await shell.openPath(realPath); if (errorMessage) throw new Error(errorMessage); return true;
+  });
+  ipcMain.handle("noon:reveal-artifact", (_event, targetPath) => {
+    const realPath = fs.realpathSync(String(targetPath || ""));
+    if (!localPermissionStore.roots("read-write").some((root) => realPath === root || realPath.startsWith(`${root}${path.sep}`))) throw new Error("Livrable hors d’un dossier autorisé.");
+    shell.showItemInFolder(realPath); return true;
+  });
+  ipcMain.handle("noon:preview-artifact", async (_event, targetPath) => {
+    const realPath = fs.realpathSync(String(targetPath || ""));
+    const previewRoot = fs.realpathSync(dataPath("creative-image-previews"));
+    if (realPath !== previewRoot && !realPath.startsWith(`${previewRoot}${path.sep}`)) throw new Error("Aperçu temporaire non autorisé.");
+    const metadata = await sharp(realPath).metadata();
+    if (metadata.format !== "png") throw new Error("Aperçu non pris en charge.");
+    const preview = await sharp(realPath)
+      .resize({ width: 720, height: 720, fit: "inside", withoutEnlargement: true })
+      .webp({ quality: 82 })
+      .toBuffer();
+    return `data:image/webp;base64,${preview.toString("base64")}`;
+  });
+  ipcMain.handle("noon:download-artifact", async (_event, targetPath) => {
+    const realPath = fs.realpathSync(String(targetPath || ""));
+    const previewRoot = fs.realpathSync(dataPath("creative-image-previews"));
+    if (realPath !== previewRoot && !realPath.startsWith(`${previewRoot}${path.sep}`)) throw new Error("Aperçu temporaire non autorisé.");
+    if ((await sharp(realPath).metadata()).format !== "png") throw new Error("Image temporaire invalide.");
+    const selection = await dialog.showSaveDialog(mainWindow, {
+      title: "Enregistrer l’image générée",
+      defaultPath: path.join(app.getPath("downloads"), path.basename(realPath)),
+      filters: [{ name: "Image PNG", extensions: ["png"] }],
+      properties: ["showOverwriteConfirmation", "createDirectory"],
+    });
+    if (selection.canceled || !selection.filePath) return { canceled: true };
+    const destination = selection.filePath.toLowerCase().endsWith(".png")
+      ? selection.filePath
+      : `${selection.filePath}.png`;
+    fs.copyFileSync(realPath, destination);
+    return { canceled: false, path: destination, name: path.basename(destination) };
+  });
 }
 async function startNoon() {
   const userDataDirectory = app.getPath("userData");
@@ -506,6 +592,7 @@ async function startNoon() {
     });
   }
   loadEncryptedOpenAIKey();
+  loadLocalIntegrationEnvironment();
   logNoonEvent = createRotatingLogger(userDataDirectory);
   wakeWordService = new WakeWordService({ getAccessKey: () => loadEncryptedSecret("picovoice-access-key"), logger: logNoonEvent });
   wakeWordService.on("status", () => rebuildTrayMenu());
@@ -565,6 +652,14 @@ if (hasSingleInstanceLock) {
     powerMonitor.on("resume", () => { sendSystemState("resume"); scheduleWakeWordResume(); void checkCreativeBriefDue(); });
     app.on("activate", showMainWindow);
   }).catch((error) => {
+    // Conserve la cause exacte même si la boîte macOS est fermée immédiatement.
+    try {
+      fs.writeFileSync(
+        dataPath("startup-error.log"),
+        `${new Date().toISOString()}\n${error?.stack || error?.message || error}\n`,
+        { mode: 0o600 }
+      );
+    } catch {}
     dialog.showErrorBox("Noon ne peut pas démarrer", error.message);
     isQuitting = true; app.quit();
   });
@@ -574,6 +669,7 @@ app.on("window-all-closed", () => {});
 app.on("before-quit", () => { isQuitting = true; });
 app.on("will-quit", async (event) => {
   clearTimeout(resumeWakeTimer);
+  clearTimeout(briefRetryTimer);
   clearTimeout(creativeBriefTimer);
   await wakeWordService?.stop();
   globalShortcut.unregisterAll(); tray?.destroy(); tray = null;

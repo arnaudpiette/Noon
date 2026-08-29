@@ -1,4 +1,5 @@
 "use strict";
+// Nettoie les noms et calcule un chemin versionné afin de ne jamais écraser un livrable.
 const fs = require("fs");
 const path = require("path");
 function safeBaseName(value) { return String(value || "Livrable").normalize("NFKD").replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "Livrable"; }

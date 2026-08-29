@@ -1,5 +1,7 @@
 "use strict";
 
+// Journal d’audit local des actions sensibles, enregistré sans exposer les secrets manipulés.
+
 const fs = require("fs");
 const path = require("path");
 const { sanitizeAuditDetails } = require("./redaction");

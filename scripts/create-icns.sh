@@ -1,4 +1,5 @@
 #!/bin/sh
+# Construit le fichier .icns macOS depuis l’image PNG source de l’application.
 set -eu
 
 SOURCE_PNG="${1:-build/icon-1024.png}"

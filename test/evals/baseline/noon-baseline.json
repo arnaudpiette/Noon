@@ -1,0 +1,189 @@
+{
+  "baselineId": "baseline-2026-08-29",
+  "gitSha": "9a313a6",
+  "evaluationPolicyVersion": "noon-evaluation-v1",
+  "createdAt": "2026-08-29T19:51:00.294Z",
+  "scenarios": {
+    "conversation.turn": {
+      "status": "PASS",
+      "fingerprint": "e870b28d05706b57",
+      "metrics": {}
+    },
+    "memory.pending-review": {
+      "status": "PASS",
+      "fingerprint": "748d0cd11cd2379d",
+      "metrics": {}
+    },
+    "context.minimum": {
+      "status": "PASS",
+      "fingerprint": "32b86e68082e3a5e",
+      "metrics": {}
+    },
+    "routing.light": {
+      "status": "PASS",
+      "fingerprint": "9cec45882f487fa3",
+      "metrics": {}
+    },
+    "routing.complex": {
+      "status": "PASS",
+      "fingerprint": "f5bff69db99731c5",
+      "metrics": {}
+    },
+    "search.scoped": {
+      "status": "PASS",
+      "fingerprint": "ebbdd2235fb9639c",
+      "metrics": {}
+    },
+    "synthesis.provenance": {
+      "status": "PASS",
+      "fingerprint": "f5ed9f5b19bb051d",
+      "metrics": {}
+    },
+    "workspace.isolation": {
+      "status": "PASS",
+      "fingerprint": "c51ee72edbdb1a1e",
+      "metrics": {}
+    },
+    "intent.explicit": {
+      "status": "PASS",
+      "fingerprint": "eb62c8643dadd718",
+      "metrics": {}
+    },
+    "approval.remote-send": {
+      "status": "PASS",
+      "fingerprint": "6c59be7052caa24d",
+      "metrics": {}
+    },
+    "security.local-only": {
+      "status": "PASS",
+      "fingerprint": "b7d0661873018c84",
+      "metrics": {}
+    },
+    "security.root-scope": {
+      "status": "PASS",
+      "fingerprint": "a8ffeb30d6ec7401",
+      "metrics": {}
+    },
+    "execution.idempotent": {
+      "status": "PASS",
+      "fingerprint": "e7fd5501a127daa0",
+      "metrics": {}
+    },
+    "planning.non-destructive": {
+      "status": "PASS",
+      "fingerprint": "8b96f14db876bfbe",
+      "metrics": {}
+    },
+    "proactive.recommend-only": {
+      "status": "PASS",
+      "fingerprint": "d719e7d179b85b2e",
+      "metrics": {}
+    },
+    "daily-brief.offline": {
+      "status": "PASS",
+      "fingerprint": "7c0f7f63288869da",
+      "metrics": {}
+    },
+    "artifacts.preview-first": {
+      "status": "PASS",
+      "fingerprint": "54f805a1ccce4194",
+      "metrics": {}
+    },
+    "voice.identity": {
+      "status": "PASS",
+      "fingerprint": "47a3fff983f6191f",
+      "metrics": {}
+    },
+    "reliability.degraded": {
+      "status": "PASS",
+      "fingerprint": "7a60db86ebb7c94d",
+      "metrics": {}
+    },
+    "privacy.redaction": {
+      "status": "PASS",
+      "fingerprint": "6ccc7a91790f60b3",
+      "metrics": {}
+    },
+    "performance.smoke": {
+      "status": "PASS",
+      "fingerprint": "6b44cbdc65a8e944",
+      "metrics": {
+        "latencyMs": 25
+      }
+    },
+    "cost.offline": {
+      "status": "PASS",
+      "fingerprint": "093b3f11e0b02343",
+      "metrics": {
+        "estimatedCostUsd": 0
+      }
+    },
+    "config.snapshot": {
+      "status": "PASS",
+      "fingerprint": "419d1409a7ab70c1",
+      "metrics": {}
+    },
+    "features.shadow-authority": {
+      "status": "PASS",
+      "fingerprint": "b4f499283723846e",
+      "metrics": {}
+    },
+    "features.rollback": {
+      "status": "PASS",
+      "fingerprint": "6829708a2837554b",
+      "metrics": {}
+    },
+    "migration.critical-preservation": {
+      "status": "PASS",
+      "fingerprint": "676fbf34724b2b46",
+      "metrics": {}
+    },
+    "recovery.no-silent-empty": {
+      "status": "PASS",
+      "fingerprint": "8c768aebc1a842f4",
+      "metrics": {}
+    },
+    "public-research.current-official": {
+      "status": "PASS",
+      "fingerprint": "0ae3033f2339c352",
+      "metrics": {}
+    },
+    "public-research.stale-warning": {
+      "status": "PASS",
+      "fingerprint": "d6fa9aa9099aa530",
+      "metrics": {}
+    },
+    "public-research.provider-failure": {
+      "status": "PASS",
+      "fingerprint": "5e21183dc8625f5f",
+      "metrics": {}
+    },
+    "public-research.conflict": {
+      "status": "PASS",
+      "fingerprint": "6800e90fcc37ea7e",
+      "metrics": {}
+    },
+    "public-research.private-query": {
+      "status": "PASS",
+      "fingerprint": "e35c303a7bf0ad39",
+      "metrics": {}
+    },
+    "public-research.prompt-injection": {
+      "status": "PASS",
+      "fingerprint": "d45d47d70cebd2dd",
+      "metrics": {}
+    },
+    "public-research.citation": {
+      "status": "PASS",
+      "fingerprint": "fdcac97b922a2bdf",
+      "metrics": {}
+    },
+    "public-research.budget": {
+      "status": "PASS",
+      "fingerprint": "63eb205df6e17095",
+      "metrics": {
+        "estimatedCostUsd": 0
+      }
+    }
+  }
+}

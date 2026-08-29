@@ -12,6 +12,7 @@ const { parseFigmaUrl } = require("../services/connectors/figma");
 const { runGitReadOnly, FORBIDDEN_GIT_ACTIONS } = require("../services/connectors/github");
 const { runNoonReminderShortcut, SHORTCUT_NAME } = require("../services/connectors/apple-reminders");
 const { createAutomationRegistry } = require("../services/automations/scheduler");
+const { createGmailConnector } = require("../services/connectors/gmail");
 const { buildCreativeAxes } = require("../services/workflows/da-workflow");
 const { buildDiagnosticPlan, validateProposedDiff } = require("../services/workflows/dev-workflow");
 const { nextVersionedPath } = require("../services/production/versioning");
@@ -43,6 +44,15 @@ test("le coffre reste en mémoire si le chiffrement système est indisponible", 
   assert.equal(store.set("google", { access_token: "secret" }).persistent, false);
   assert.equal(store.get("google").access_token, "secret");
   assert.equal(store.persistent, false);
+});
+
+test("Gmail autorise uniquement la lecture et la création de brouillons", () => {
+  const tokenStore = createTokenStore({ filePath: path.join(os.tmpdir(), "unused-gmail-token.json") });
+  const gmail = createGmailConnector({ tokenStore });
+  assert.deepEqual(gmail.scopes, ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.compose"]);
+  assert.deepEqual(gmail.writeCapabilities, ["create_draft"]);
+  assert.ok(gmail.readCapabilities.includes("message_content"));
+  assert.equal(gmail.writeCapabilities.includes("send"), false);
 });
 
 test("les secrets sont masqués sans être recopiés", () => {

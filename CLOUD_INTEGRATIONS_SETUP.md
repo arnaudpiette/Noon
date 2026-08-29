@@ -9,7 +9,11 @@ Noon démarre avec `DRY_RUN_EXTERNAL_WRITES=true`. Les lectures peuvent être te
 3. Configurer l’écran de consentement OAuth pour votre compte de test.
 4. Créer un client OAuth local et enregistrer `http://127.0.0.1:3000/integrations/google/callback`.
 5. Placer l’identifiant et le secret dans `.env`, jamais dans une conversation ou Git.
-6. Noon demande séparément les scopes de lecture et d’écriture nécessaires. Gmail `compose` permet les brouillons et l’envoi : Noon bloque néanmoins l’envoi sans autorisation ponctuelle.
+6. Pour Gmail, Noon demande uniquement `gmail.readonly`. Cette permission permet de rechercher et lire le contenu des messages du compte autorisé, sans envoyer, modifier ni supprimer d’e-mail.
+7. Dans cette installation, le compte accepté est strictement `arno.piette@gmail.com`. Toute connexion avec un autre compte est refusée.
+8. Ouvrir **Réglages → Intégrations → Gmail → Connecter**, puis valider personnellement l’écran de consentement Google.
+
+Le contenu des messages sélectionnés par une recherche peut être transmis à OpenAI afin de produire la réponse demandée. Les jetons OAuth sont chiffrés localement avec le Trousseau macOS et ne sont jamais ajoutés à Git.
 
 ## GitHub
 

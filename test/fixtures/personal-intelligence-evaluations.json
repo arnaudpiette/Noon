@@ -1,0 +1,12 @@
+[
+  {"id":"recommandation-pertinente","expected":"high-priority","input":{"urgency":0.8,"impact":0.9,"deadlineHours":18,"confidence":0.9}},
+  {"id":"faux-doublon","expected":"reactivated","change":"source-updated"},
+  {"id":"vraie-urgence","expected":"visible-during-break","minimumScore":80},
+  {"id":"projet-bloque","expected":"blocked-signal","project":{"status":"blocked","blockers":["Réponse client"]}},
+  {"id":"creneau-interdit","expected":"no-lunch-slot","forbidden":"12:30-13:30"},
+  {"id":"action-distante-sans-permission","expected":"validation-required","action":"calendar-create"},
+  {"id":"preference-supposee","expected":"inferred","confirmed":false},
+  {"id":"memoire-expiree","expected":"excluded-from-context","status":"expired"},
+  {"id":"mode-hors-ligne","expected":"local-stale-only","remoteWrite":false},
+  {"id":"mauvaise-priorite","expected":"feedback-recorded","feedback":"wrong_priority"}
+]

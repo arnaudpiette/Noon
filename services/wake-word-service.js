@@ -1,5 +1,7 @@
 "use strict";
 
+// Cycle de vie du mot-clé « Salut Noon » : microphone, modèle Porcupine et événements d’activation.
+
 const { EventEmitter } = require("events");
 const fs = require("fs");
 

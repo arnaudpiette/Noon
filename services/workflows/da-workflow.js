@@ -1,4 +1,5 @@
 "use strict";
+// Workflow Direction Artistique : vérifie le brief puis structure les axes créatifs et livrables.
 function analyzeBrief(brief = {}) {
   const required = ["objective", "target", "message", "constraints", "deliverables"];
   return { ...brief, missing: required.filter((key) => !brief[key]), questions: required.filter((key) => !brief[key]).map((key) => `Préciser : ${key}`) };

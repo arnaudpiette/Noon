@@ -1,5 +1,7 @@
 "use strict";
 
+// Exécute les scénarios conversationnels de non-régression de l’intelligence Noon.
+
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { NOON_EVALUATION_CASES } = require("../lib/noon-evaluations");

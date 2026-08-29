@@ -1,5 +1,7 @@
 "use strict";
 
+// Vérifie la configuration, la confidentialité et le cycle de vie du mot-clé vocal.
+
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");

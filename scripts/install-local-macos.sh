@@ -1,4 +1,5 @@
 #!/bin/sh
+# Installe le paquet Noon construit dans /Applications après confirmation explicite.
 set -eu
 
 SOURCE_APP="${1:-$(pwd)/out/Noon-darwin-x64/Noon.app}"

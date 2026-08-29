@@ -13,17 +13,27 @@
 </head>
 <body>
   <main class="app">
-    <!-- Navigation latérale : mode, Focus, budget et activité. -->
+    <!-- Navigation latérale : conversations, projets et état local de Noon. -->
     <aside class="sidebar">
-      <div class="brand">
+      <div class="brand sidebar-brand-row">
         <p class="brand-name">NOO<span class="brand-name__mirrored-letter">N</span></p>
       </div>
 
       <button id="newConversationButton" class="new-conversation-button" type="button">
-        <span aria-hidden="true">＋</span>
-        Nouvelle conversation
+        <span class="sidebar-line-icon sidebar-line-icon--compose" aria-hidden="true"></span>
+        Nouveau chat
       </button>
 
+      <details id="conversationHistory" class="conversation-history">
+        <summary>
+          <span>Chats</span>
+          <span id="conversationHistoryCount" class="conversation-history__count">0 conversation</span>
+          <span class="conversation-history__chevron" aria-hidden="true">⌄</span>
+        </summary>
+        <div id="conversationHistoryList" class="conversation-history__list">
+          <span class="conversation-history__empty">Aucune conversation.</span>
+        </div>
+      </details>
       <section class="live-voice-panel" aria-labelledby="liveVoiceTitle">
         <div class="live-voice-heading">
           <div>
@@ -35,29 +45,13 @@
         <button id="liveVoiceButton" class="live-voice-button" type="button">
           Conversation Live
         </button>
-        <p id="liveVoiceStatus" class="live-voice-status" role="status" aria-live="polite">
-          Déconnecté
-        </p>
-        <div class="live-voice-controls">
-          <label>
-            <span>Qualité vocale</span>
-            <select id="liveVoiceQuality">
-              <option value="mini">Mini</option>
-              <option value="max">Max</option>
-            </select>
-          </label>
-          <!-- Langue et accent restent pilotables oralement, sans encombrer le panneau. -->
-          <input id="liveVoiceLanguage" type="hidden" value="auto">
-          <input id="liveVoiceAccent" type="hidden" value="none">
-        </div>
-        <div class="live-voice-actions">
-          <button id="liveVoiceMute" type="button" disabled>Couper le micro</button>
-          <button id="liveVoiceEnd" type="button" disabled>Terminer</button>
-        </div>
-        <p class="live-voice-context">
-          <span id="liveVoiceContext">DA · Aucun Focus</span>
+        <p class="live-voice-meta">
+          <span id="liveVoiceStatus" class="live-voice-status" role="status" aria-live="polite">Déconnecté</span>
           <span id="liveVoiceCost">0,00 $ / 11 $</span>
         </p>
+        <!-- Langue et accent restent pilotables oralement. -->
+        <input id="liveVoiceLanguage" type="hidden" value="auto">
+        <input id="liveVoiceAccent" type="hidden" value="none">
         <audio id="liveVoiceAudio" autoplay hidden></audio>
       </section>
 
@@ -96,7 +90,7 @@
           aria-expanded="false"
           aria-controls="focusMenu"
         >
-          <strong id="focusProject">Aucun projet</strong>
+          <strong id="focusProject">Aucun Focus</strong>
           <span class="focus-chevron" aria-hidden="true">⌄</span>
         </button>
 
@@ -108,6 +102,7 @@
             Actualiser les projets
           </button>
         </div>
+        <span id="focusAvailability" class="focus-availability">Chargement…</span>
       </section>
 
       <section id="projectJournalPanel" class="project-journal-panel" hidden>
@@ -168,7 +163,23 @@
       </div>
     </aside>
 
-    <button id="sidebarToggle" class="sidebar-toggle" type="button" aria-label="Replier le menu latéral" aria-expanded="true">
+    <!-- Rail persistant lorsque la navigation complète est repliée. -->
+    <nav id="collapsedSidebarRail" class="collapsed-sidebar-rail" aria-label="Navigation rapide">
+      <button class="rail-brand sidebar-tooltip" type="button" data-rail-action="open" data-tooltip="Ouvrir la barre latérale" aria-label="Ouvrir la barre latérale">
+        <span aria-hidden="true">N</span>
+      </button>
+      <button type="button" data-rail-action="new" aria-label="Nouveau chat" title="Nouveau chat">
+        <span class="sidebar-line-icon sidebar-line-icon--compose" aria-hidden="true"></span>
+      </button>
+      <button type="button" data-rail-action="projects" aria-label="Afficher les projets" title="Projets">
+        <span class="sidebar-line-icon sidebar-line-icon--folder" aria-hidden="true"></span>
+      </button>
+      <button type="button" data-rail-action="chats" aria-label="Afficher les chats" title="Chats">
+        <span class="sidebar-line-icon sidebar-line-icon--chat" aria-hidden="true"></span>
+      </button>
+    </nav>
+
+    <button id="sidebarToggle" class="sidebar-toggle sidebar-tooltip" type="button" data-tooltip="Fermer la barre latérale" aria-label="Fermer la barre latérale" aria-expanded="true">
       <span aria-hidden="true"></span>
     </button>
     <button id="sidebarBackdrop" class="sidebar-backdrop" type="button" aria-label="Fermer le menu latéral" tabindex="-1"></button>
@@ -184,6 +195,7 @@
             Chat
           </button>
           <button class="view-btn" data-view="brief" type="button" aria-pressed="false">Brief Noon</button>
+          <button class="view-btn" data-view="personal" type="button" aria-pressed="false">Personnel</button>
         </div>
 
         <div class="top-tools-right">
@@ -268,12 +280,38 @@
               <label class="setting-line"><input id="launchAtLogin" type="checkbox"><span>Lancer Noon à l’ouverture de session</span></label>
               <button id="testCreativeBrief" type="button">Génération de test</button>
             </fieldset>
+            <fieldset class="planning-settings">
+              <legend>Organisation personnelle</legend>
+              <label class="setting-line"><input id="autoPlanningEnabled" type="checkbox"><span>Proposer automatiquement des créneaux</span></label>
+              <label class="setting-line"><input id="autoDraftsEnabled" type="checkbox"><span>Création automatique de brouillons Gmail</span></label>
+              <label class="setting-line"><input id="planningLearningEnabled" type="checkbox"><span>Apprendre mes préférences d’organisation</span></label>
+              <div class="planning-time-grid">
+                <label class="setting-field"><span>Début de journée</span><input id="workdayStart" type="time" value="09:00"></label>
+                <label class="setting-field"><span>Fin de journée</span><input id="workdayEnd" type="time" value="18:30"></label>
+                <label class="setting-field"><span>Créneau minimum (min)</span><input id="minimumSlotMinutes" type="number" min="15" max="120" value="25"></label>
+                <label class="setting-field"><span>Bloc Focus maximum (min)</span><input id="maximumFocusMinutes" type="number" min="25" max="240" value="90"></label>
+                <label class="setting-field"><span>Tampon rendez-vous (min)</span><input id="planningBufferMinutes" type="number" min="0" max="60" value="10"></label>
+                <label class="setting-field"><span>Jours travaillés</span><input id="planningWorkingDays" type="text" value="1,2,3,4,5" aria-label="Jours ISO, lundi vaut 1"></label>
+                <label class="setting-field"><span>Agendas occupés</span><input id="busyCalendarIds" type="text" value="primary"></label>
+                <label class="setting-field"><span>Agenda cible</span><input id="targetCalendarId" type="text" value="primary"></label>
+              </div>
+              <small class="setting-help">Fuseau : Europe/Paris · Pause protégée : 12:30–13:30 · Couleur : Myrtille · Calendar exige toujours un ordre explicite · Envoi automatique d’e-mails : toujours désactivé.</small>
+              <strong>Ce que Noon sait de mon organisation</strong>
+              <div id="planningPreferenceList" class="memory-list"></div>
+            </fieldset>
             <fieldset class="memory-settings">
               <legend>Mémoire durable</legend>
               <label class="setting-line"><input id="longTermMemoryEnabled" type="checkbox"><span>Utiliser les souvenirs pertinents</span></label>
               <div class="memory-add"><input id="newMemoryText" type="text" maxlength="1000" placeholder="Ajouter un souvenir utile"><button id="addMemoryButton" type="button">Ajouter</button></div>
               <div id="memoryList" class="memory-list"></div>
               <button id="clearMemoriesButton" type="button">Vider toute la mémoire</button>
+            </fieldset>
+
+            <fieldset class="local-folder-settings">
+              <legend>Dossiers locaux autorisés</legend>
+              <label class="setting-field"><span>Nouvelle autorisation</span><select id="localFolderMode"><option value="read-only">Lecture seule</option><option value="read-write">Lecture et création</option></select></label>
+              <button id="addLocalFolderButton" type="button">Ajouter un dossier…</button>
+              <div id="localFolderPermissions" class="memory-list" aria-live="polite"></div>
             </fieldset>
 
             <fieldset class="openai-key-settings">
@@ -303,7 +341,7 @@
             </fieldset>
           </div>
             <button id="shareConversationButton" class="icon-btn share-button" type="button" aria-label="Partager la conversation" aria-expanded="false" title="Partager la conversation">
-              <span class="share-icon" aria-hidden="true">↗</span>
+              <span class="share-icon" aria-hidden="true">↥</span>
             </button>
             <div id="shareConversationMenu" class="share-conversation-menu" hidden>
               <button type="button" data-share-target="mail">Partager par e-mail</button>
@@ -359,11 +397,87 @@
       </section>
 
       <section id="briefView" class="view brief-view">
-        <header class="chat-header"><div><span class="label">Veille créative</span><h1>Brief Noon</h1></div><time id="briefGeneratedAt"></time></header>
+        <header class="chat-header"><div><span class="label">Chaque matin à 7 h · Europe/Paris</span><h1>Brief matinal Noon</h1></div><time id="briefGeneratedAt"></time></header>
+        <section class="daily-brief-section personal-brief-section">
+          <h2>Votre journée analysée</h2>
+          <div id="personalBriefState" class="brief-state" role="status">Chargement…</div>
+          <article id="personalBriefContent" class="brief-content"></article>
+        </section>
+        <section class="daily-brief-section creative-watch-section" hidden>
+          <h2>Veille créative</h2>
         <div id="briefState" class="brief-state" role="status">Chargement…</div>
         <article id="briefContent" class="brief-content"></article>
         <div id="briefSources" class="message-sources"></div>
-        <div class="brief-actions"><button id="generateBriefButton" type="button">Générer maintenant</button><button id="readBriefButton" type="button" disabled>Lire à voix haute</button><button id="stopBriefReadingButton" type="button" disabled>Arrêter la lecture</button></div>
+        </section>
+        <div id="briefSourceStates" class="brief-source-states"></div>
+        <div id="briefScheduledBlocks" class="brief-scheduled-blocks"></div>
+        <div id="briefDrafts" class="brief-scheduled-blocks"></div>
+        <div class="brief-actions"><button id="generateBriefButton" type="button">Actualiser</button><button id="readBriefButton" type="button" disabled>Lire le brief</button><button id="stopBriefReadingButton" type="button" disabled>Arrêter la lecture</button><a id="openCalendarButton" class="brief-action-button" href="https://calendar.google.com/calendar/u/0/r" target="_blank" rel="noopener noreferrer">Voir dans l’agenda</a></div>
+      </section>
+
+      <section id="personalView" class="view personal-intelligence-view" aria-labelledby="personalIntelligenceTitle">
+        <header class="chat-header">
+          <div><span class="label">Intelligence personnelle locale</span><h1 id="personalIntelligenceTitle">Ce que Noon sait de moi</h1></div>
+          <span id="personalDatabaseStatus" class="brief-state" role="status">Chargement…</span>
+        </header>
+        <nav class="personal-tabs" aria-label="Sections de l’assistant personnel">
+          <button type="button" class="personal-tab active" data-personal-tab="knowledge" aria-pressed="true">Mémoire</button>
+          <button type="button" class="personal-tab" data-personal-tab="projects" aria-pressed="false">Projets</button>
+          <button type="button" class="personal-tab" data-personal-tab="inbox" aria-pressed="false">Boîte d’entrée Noon</button>
+          <button type="button" class="personal-tab" data-personal-tab="recommendations" aria-pressed="false">Recommandations</button>
+          <button type="button" class="personal-tab" data-personal-tab="efficiency" aria-pressed="false">Efficacité de Noon</button>
+        </nav>
+
+        <section class="personal-panel active" data-personal-panel="knowledge">
+          <div class="private-memory-notice">
+            <strong>Mémoire privée locale</strong>
+            <span>Les éléments sélectionnés peuvent être transmis à OpenAI pour répondre. Les politiques de conservation de l’API restent applicables.</span>
+          </div>
+          <div id="privateMemoryProfiles" class="memory-profile-tabs" role="tablist" aria-label="Profils de mémoire">
+            <button type="button" class="active" data-memory-subject="arnaud">Arnaud</button>
+            <button type="button" data-memory-subject="alexandra">Alexandra</button>
+            <button type="button" data-memory-subject="sinan">Sinan</button>
+            <button type="button" data-memory-subject="kaan">Kaan</button>
+            <button type="button" data-memory-subject="household">Foyer</button>
+            <button type="button" data-memory-subject="noon">Noon</button>
+            <button type="button" data-memory-subject="projects">Projets</button>
+          </div>
+          <div class="personal-toolbar">
+            <input id="personalMemorySearch" type="search" placeholder="Rechercher dans la mémoire" aria-label="Rechercher dans la mémoire">
+            <select id="personalMemoryStatus" aria-label="Filtrer les souvenirs par statut"><option value="">Tous les statuts</option><option value="confirmed">Confirmé</option><option value="pending_review">À vérifier</option><option value="candidate">Candidat</option><option value="historical">Historique</option><option value="superseded">Remplacé</option><option value="deleted">Supprimé</option></select>
+            <select id="personalMemorySensitivity" aria-label="Filtrer par sensibilité"><option value="">Toutes sensibilités</option><option value="low">Faible</option><option value="medium">Moyenne</option><option value="high">Sensible</option><option value="restricted">Restreinte</option></select>
+          </div>
+          <div class="private-memory-controls">
+            <label><input id="privateMemoryEnabled" type="checkbox"> Mémoire active</label>
+            <label><input id="privateProfileEnabled" type="checkbox"> Profil actif</label>
+            <label><input id="privateMemorySensitiveApi" type="checkbox"> Autoriser les données sensibles après confirmation</label>
+            <button id="privateMemoryImportButton" type="button">Importer un seed privé…</button>
+            <button id="privateMemoryExportButton" type="button">Exporter ce profil</button>
+            <button id="privateMemoryPurgeButton" type="button" class="danger">Purger ce profil</button>
+          </div>
+          <p id="privateMemoryWhy" class="private-memory-why">Aucune mémoire privée utilisée pour la dernière réponse.</p>
+          <div id="personalMemoryList" class="personal-card-list" aria-live="polite"></div>
+        </section>
+
+        <section class="personal-panel" data-personal-panel="projects" hidden>
+          <div id="livingProjectsList" class="personal-card-list" aria-live="polite"></div>
+        </section>
+
+        <section class="personal-panel" data-personal-panel="inbox" hidden>
+          <div class="personal-toolbar"><select id="personalInboxFilter" aria-label="Filtrer la boîte d’entrée"><option value="">Tous</option><option value="ready">Aujourd’hui</option><option value="detected">Cette semaine</option><option value="snoozed">En attente</option><option value="clarification_needed">Bloqué</option><option value="completed">Terminé</option></select></div>
+          <div id="personalInboxList" class="personal-card-list" aria-live="polite"></div>
+        </section>
+
+        <section class="personal-panel" data-personal-panel="recommendations" hidden>
+          <p class="personal-disclaimer">Noon distingue ce qu’il sait, détecte, déduit et propose. Toute action distante demande une validation.</p>
+          <div id="personalRecommendationList" class="personal-card-list" aria-live="polite"></div>
+        </section>
+
+        <section class="personal-panel" data-personal-panel="efficiency" hidden>
+          <div id="personalMetrics" class="metrics-grid" aria-live="polite"></div>
+          <h2>Analyses longues</h2>
+          <div id="backgroundAnalysisList" class="personal-card-list"></div>
+        </section>
       </section>
 
       <!-- Le composeur accepte le texte, la voix et les pièces jointes. -->
@@ -381,7 +495,7 @@
             id="fileInput"
             type="file"
             multiple
-            accept=".txt,.md,.html,.css,.scss,.js,.jsx,.ts,.tsx,.json,.yaml,.yml,.xml,.png,.jpg,.jpeg,.webp,.pdf,.doc,.docx,.odt,.rtf,.ppt,.pptx,.csv,.tsv,.xls,.xlsx"
+            accept=".txt,.md,.html,.css,.scss,.js,.jsx,.ts,.tsx,.json,.yaml,.yml,.xml,.png,.jpg,.jpeg,.webp,.pdf,.doc,.docx,.odt,.rtf,.ppt,.pptx,.csv,.tsv,.xls,.xlsx,.webm,.wav,.mp3,.m4a"
             hidden
           >
           <div id="attachments-preview" class="attachments-preview" hidden>
@@ -413,6 +527,13 @@
               </button>
             </div>
           </div>
+          <label class="composer-voice-quality" for="liveVoiceQuality">
+            <span class="sr-only">Qualité de la voix</span>
+            <select id="liveVoiceQuality" aria-label="Qualité de la voix">
+              <option value="mini">Mini</option>
+              <option value="max">Max</option>
+            </select>
+          </label>
           <button id="sendButton" type="submit" class="send-btn" aria-label="Envoyer"><span aria-hidden="true">&gt;</span></button>
           <div
             id="web-search-suggestion"

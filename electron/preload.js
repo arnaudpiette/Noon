@@ -1,5 +1,7 @@
 "use strict";
 
+// Pont IPC minimal exposé au navigateur : aucune API Node.js n’est accessible directement.
+
 const { contextBridge, ipcRenderer } = require("electron");
 const invoke = (channel, payload) => ipcRenderer.invoke(channel, payload);
 
@@ -18,6 +20,13 @@ contextBridge.exposeInMainWorld("noon", Object.freeze({
   setOpenAIKey: (value) => invoke("noon:set-openai-key", value),
   shareConversation: (payload) => invoke("noon:share-conversation", payload),
   openSystemSettings: (section) => invoke("noon:open-system-settings", section),
+  listLocalPermissions: () => invoke("noon:list-local-permissions"),
+  addLocalPermission: (payload) => invoke("noon:add-local-permission", payload),
+  removeLocalPermission: (targetPath) => invoke("noon:remove-local-permission", targetPath),
+  openArtifact: (targetPath) => invoke("noon:open-artifact", targetPath),
+  revealArtifact: (targetPath) => invoke("noon:reveal-artifact", targetPath),
+  previewArtifact: (targetPath) => invoke("noon:preview-artifact", targetPath),
+  downloadArtifact: (targetPath) => invoke("noon:download-artifact", targetPath),
   onDeepLink: (callback) => {
     if (typeof callback !== "function") return () => {};
     const listener = (_event, value) => callback(value);

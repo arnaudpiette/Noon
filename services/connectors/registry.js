@@ -1,5 +1,7 @@
 "use strict";
 
+// Assemble tous les connecteurs disponibles et expose leur état à l’interface Intégrations.
+
 const { createGmailConnector } = require("./gmail");
 const { createCalendarConnector } = require("./google-calendar");
 const { createDriveConnector } = require("./google-drive");

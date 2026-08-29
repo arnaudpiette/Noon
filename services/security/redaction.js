@@ -1,5 +1,7 @@
 "use strict";
 
+// Détecte et masque les clés, jetons et autres secrets avant affichage ou journalisation.
+
 const SECRET_PATTERNS = [
   /sk-[A-Za-z0-9_-]{12,}/g,
   /(?:ghp|github_pat)_[A-Za-z0-9_]{12,}/g,

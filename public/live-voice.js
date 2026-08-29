@@ -49,12 +49,17 @@
       this.idleTimeoutMs = 2 * 60 * 1000;
       this.maxSessionMs = 20 * 60 * 1000;
       this.model = "gpt-realtime-2.1-mini";
+      this.voiceSessionId = null;
+      this.voiceIdentity = { id: "noon-default", voice: null, styleInstructions: "" };
       this.pendingUsers = [];
       this.seenUserItems = new Set();
       this.seenAssistantItems = new Set();
       this.processedToolCalls = new Set();
       this.state = "disconnected";
       this.cleaningUp = false;
+      this.responseStartedAt = null;
+      this.executionId = null;
+      this.liveMetrics = { turnCount: 0, interruptions: 0, responseLatencies: [], reconnectCount: 0 };
 
       const savedQuality = localStorage.getItem(STORAGE.quality);
       elements.quality.value = savedQuality === "max" ? "max" : "mini";
@@ -74,15 +79,15 @@
           this.connect();
         }
       });
-      elements.end.addEventListener("click", () => this.disconnect());
-      elements.mute.addEventListener("click", () => this.toggleMute());
+      elements.end?.addEventListener("click", () => this.disconnect());
+      elements.mute?.addEventListener("click", () => this.toggleMute());
       elements.language.addEventListener("change", () => {
         localStorage.setItem(STORAGE.language, elements.language.value);
-        this.updateSessionInstructions();
+        void this.updateSessionInstructions(true);
       });
       elements.accent.addEventListener("change", () => {
         localStorage.setItem(STORAGE.accent, elements.accent.value.trim() || "none");
-        this.updateSessionInstructions();
+        void this.updateSessionInstructions(true);
       });
       elements.quality.addEventListener("change", () => {
         localStorage.setItem(STORAGE.quality, elements.quality.value);
@@ -134,8 +139,8 @@
         : state === "connecting" || state === "reconnecting"
           ? "Connexion…"
           : "Conversation Live";
-      elements.mute.disabled = !this.connected;
-      elements.end.disabled = !this.connected && state !== "connecting";
+      if (elements.mute) elements.mute.disabled = !this.connected;
+      if (elements.end) elements.end.disabled = !this.connected && state !== "connecting";
       if (["listening", "muted"].includes(state)) bridge.setVisualState("listening");
       if (state === "thinking") bridge.setVisualState("thinking");
       if (state === "speaking") bridge.setVisualState("speaking");
@@ -147,8 +152,10 @@
 
     refreshContext() {
       const context = bridge.getContext();
-      elements.context.textContent =
-        `${context.mode} · ${context.focus || "Aucun Focus"}`;
+      if (elements.context) {
+        elements.context.textContent =
+          `${context.mode} · ${context.focus || "Aucun Focus"}`;
+      }
     }
 
     async refreshBudget() {
@@ -169,13 +176,7 @@
       const language = elements.language.value;
       const accent = elements.accent.value.trim() || "none";
       return [
-        "Tu es Noon, avec une voix d’homme chaleureuse, calme, vive et naturelle. Réponds oralement avec des phrases courtes et fluides.",
-        language === "auto"
-          ? "Détecte la langue parlée et réponds dans cette langue."
-          : `Réponds dans la langue ${language} jusqu'à nouvel ordre.`,
-        accent === "none"
-          ? "Prononciation naturelle sans accent particulier."
-          : `Accent ${accent}, léger, intelligible et non caricatural.`,
+        this.voiceIdentity.styleInstructions,
         context.mode === "DEV"
           ? "Mode DEV : code, architecture, tests, sécurité et débogage."
           : "Mode DA : direction artistique, UI/UX, accessibilité et cohérence visuelle.",
@@ -186,6 +187,24 @@
       ].join(" ");
     }
 
+    async loadVoiceIdentity(model = this.model) {
+      const params = new URLSearchParams({
+        pipeline: "realtime",
+        language: elements.language.value,
+        accent: elements.accent.value.trim() || "none",
+        model,
+      });
+      const response = await fetch(`/voice/identity?${params}`, { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || "Identité vocale indisponible.");
+      this.voiceIdentity = data.resolved;
+      window.noonVoiceMetrics ||= {};
+      window.noonVoiceMetrics.voiceIdentity = data.resolved.identityId;
+      window.noonVoiceMetrics.voice = data.resolved.voice;
+      window.noonVoiceMetrics.voiceIdentityResolveMs = data.resolved.voiceIdentityResolveMs;
+      return data.resolved;
+    }
+
     send(event) {
       if (this.channel?.readyState === "open") {
         this.channel.send(JSON.stringify(event));
@@ -194,7 +213,11 @@
       return false;
     }
 
-    updateSessionInstructions() {
+    async updateSessionInstructions(refreshIdentity = false) {
+      if (refreshIdentity) {
+        try { await this.loadVoiceIdentity(); }
+        catch (error) { bridge.updateActivity(error.message); return; }
+      }
       bridge.setVoiceStyle(elements.language.value, elements.accent.value.trim() || "none");
       this.send({
         type: "session.update",
@@ -208,6 +231,7 @@
     async connect({ reconnecting = false } = {}) {
       if (this.peer || this.state === "connecting") return;
       const quality = elements.quality.value === "max" ? "max" : "mini";
+      const requestedModel = quality === "max" ? "gpt-realtime-2.1" : "gpt-realtime-2.1-mini";
       let confirmMax = reconnecting && quality === "max";
 
       if (quality === "max" && !reconnecting) {
@@ -222,9 +246,19 @@
       }
 
       this.intentionalClose = false;
+      if (!reconnecting) {
+        const randomId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        this.executionId = `exec_${randomId}`;
+        this.liveMetrics = {
+          turnCount: 0, interruptions: 0, responseLatencies: [], reconnectCount: 0,
+          startedAt: performance.now(),
+        };
+      }
       this.setState(reconnecting ? "reconnecting" : "connecting");
+      const connectStartedAt = performance.now();
 
       try {
+        await this.loadVoiceIdentity(requestedModel);
         this.stream = await navigator.mediaDevices.getUserMedia({
           audio: bridge.getAudioConstraints?.() || true,
           video: false,
@@ -284,6 +318,12 @@
         }
         this.model = response.headers.get("X-Noon-Voice-Model") ||
           (quality === "max" ? "gpt-realtime-2.1" : "gpt-realtime-2.1-mini");
+        this.voiceSessionId = response.headers.get("X-Noon-Voice-Session");
+        this.voiceIdentity.id = response.headers.get("X-Noon-Voice-Identity") || this.voiceIdentity.identityId || "noon-default";
+        this.voiceIdentity.voice = response.headers.get("X-Noon-Voice") || this.voiceIdentity.voice;
+        window.noonVoiceMetrics.realtimeConnectMs = Math.round(performance.now() - connectStartedAt);
+        this.liveMetrics.sessionConnectMs = window.noonVoiceMetrics.realtimeConnectMs;
+        window.noonVoiceMetrics.voiceSessionId = this.voiceSessionId;
         this.maxSessionMs = Number(response.headers.get("X-Noon-Max-Session-Ms")) || this.maxSessionMs;
         this.idleTimeoutMs = Number(response.headers.get("X-Noon-Idle-Timeout-Ms")) || this.idleTimeoutMs;
         await this.peer.setRemoteDescription({ type: "answer", sdp: answerText });
@@ -314,6 +354,7 @@
         return;
       }
       if (event.type === "input_audio_buffer.speech_started") {
+        if (this.state === "speaking") this.liveMetrics.interruptions += 1;
         this.setState("listening");
         return;
       }
@@ -321,7 +362,20 @@
         this.setState("thinking");
         return;
       }
-      if (event.type === "response.created" || event.type === "response.output_audio.delta") {
+      if (event.type === "response.created") {
+        this.liveMetrics.turnCount += 1;
+        this.responseStartedAt = performance.now();
+        this.setState("speaking");
+        return;
+      }
+      if (event.type === "response.output_audio.delta") {
+        if (this.responseStartedAt !== null) {
+          window.noonVoiceMetrics ||= {};
+          window.noonVoiceMetrics.timeToFirstAudioMs = Math.round(performance.now() - this.responseStartedAt);
+          this.liveMetrics.responseLatencies.push(window.noonVoiceMetrics.timeToFirstAudioMs);
+          this.liveMetrics.firstAudioMs ??= window.noonVoiceMetrics.timeToFirstAudioMs;
+          this.responseStartedAt = null;
+        }
         this.setState("speaking");
         return;
       }
@@ -460,10 +514,11 @@
         localStorage.setItem(STORAGE.language, action.language);
         localStorage.setItem(STORAGE.accent, action.accent);
         bridge.setVoiceStyle(action.language, action.accent);
-        this.updateSessionInstructions();
+        void this.updateSessionInstructions(true);
       }
       if (action.type === "brainAnswer") {
-        bridge.addLiveMessage("Noon", action.answer, "noon", action.sources || []);
+        bridge.addLiveMessage("Noon", action.answer, "noon", action.sources || [], action.artifacts || []);
+        if (action.approval) bridge.addApproval(action.approval);
       }
       if (action.type === "refreshProjects") {
         void bridge.refreshProjects();
@@ -501,7 +556,9 @@
       const track = this.stream?.getAudioTracks()[0];
       if (!track) return;
       track.enabled = !track.enabled;
-      elements.mute.textContent = track.enabled ? "Couper le micro" : "Réactiver le micro";
+      if (elements.mute) {
+        elements.mute.textContent = track.enabled ? "Couper le micro" : "Réactiver le micro";
+      }
       this.setState(track.enabled ? "listening" : "muted");
     }
 
@@ -523,6 +580,7 @@
       }
       window.clearTimeout(this.reconnectTimer);
       this.reconnectAttempts += 1;
+      this.liveMetrics.reconnectCount += 1;
       this.setState("reconnecting", `Reconnexion ${this.reconnectAttempts}/2…`);
       this.reconnectTimer = window.setTimeout(
         () => this.connect({ reconnecting: true }),
@@ -550,12 +608,42 @@
       this.cleaningUp = false;
     }
 
+    async reportLiveMetrics() {
+      if (!this.executionId) return;
+      const total = this.liveMetrics.responseLatencies.reduce((sum, value) => sum + value, 0);
+      try {
+        await fetch("/api/diagnostics/voice", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Noon-Request": "1" },
+          body: JSON.stringify({
+            executionId: this.executionId,
+            completed: true,
+            channel: "live_voice",
+            metrics: {
+              voiceIdentity: this.voiceIdentity.id || "noon-default",
+              sessionConnectMs: this.liveMetrics.sessionConnectMs || 0,
+              turnCount: this.liveMetrics.turnCount,
+              interruptions: this.liveMetrics.interruptions,
+              avgResponseLatencyMs: this.liveMetrics.responseLatencies.length
+                ? Math.round(total / this.liveMetrics.responseLatencies.length) : null,
+              firstAudioMs: this.liveMetrics.firstAudioMs ?? null,
+              reconnectCount: this.liveMetrics.reconnectCount,
+              sessionTotalMs: Math.round(performance.now() - (this.liveMetrics.startedAt || performance.now())),
+            },
+          }),
+        });
+      } catch {
+        // La session reste utilisable si les métriques locales sont indisponibles.
+      }
+    }
+
     disconnect({ announce = true, message = "Conversation Live terminée." } = {}) {
       this.intentionalClose = true;
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
       this.cleanupConnection();
       this.setState("disconnected", announce ? message : "Déconnecté");
+      void this.reportLiveMetrics();
       if (announce) bridge.updateActivity(message);
     }
   }

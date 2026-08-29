@@ -1,5 +1,7 @@
 "use strict";
 
+// Coffre des jetons d’intégration, chiffré avec safeStorage lorsque macOS le permet.
+
 const fs = require("fs");
 const path = require("path");
 

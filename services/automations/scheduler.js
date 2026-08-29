@@ -1,5 +1,7 @@
 "use strict";
 
+// Planificateur persistant des automatisations locales et de leurs prochaines exécutions.
+
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");

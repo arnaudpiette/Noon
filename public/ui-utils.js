@@ -18,5 +18,18 @@
       .replace(/'/g, "&#039;");
   }
 
-  return { escapeHtml };
+  function parseFocusCommand(value) {
+    const question = String(value || "").trim();
+    if (/^(?:retire|enlève|désactive|supprime)\s+(?:le\s+)?focus\b/i.test(question)) {
+      return { action: "clear", name: null };
+    }
+    const match = question.match(
+      /^(?:(?:mets?|passe|sélectionne|active)\s+(?:le\s+)?)?focus\s+(?:sur|à)\s+(.+?)\s*[.!?]?$/i
+    );
+    return match
+      ? { action: "select", name: match[1].trim() }
+      : null;
+  }
+
+  return { escapeHtml, parseFocusCommand };
 });

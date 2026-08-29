@@ -1,5 +1,7 @@
 "use strict";
 
+// Vérifie les langues, accents, modes et limites de mémoire de la voix.
+
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {

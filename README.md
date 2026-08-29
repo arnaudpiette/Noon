@@ -27,6 +27,18 @@ Consultez [CLOUD_INTEGRATIONS_SETUP.md](CLOUD_INTEGRATIONS_SETUP.md), [PERMISSIO
 
 Assistant local Electron avec conversations texte, pièces jointes, recherche Web, voix classique OpenAI et conversation vocale Realtime.
 
+## Conversations et analyse locale
+
+Les modes Chat et Assistant vocal partagent la même mémoire et les mêmes outils d’analyse en lecture seule. Noon peut explorer les projets du Focus, rechercher et lire des fichiers dans les emplacements explicitement autorisés, analyser les pièces jointes et déléguer une analyse de code approfondie à Codex. Les fichiers secrets, caches et dossiers exclus restent bloqués.
+
+Le menu « Historique » classe les conversations dans un maximum de quinze dossiers, avec quinze conversations par dossier. « Général » reçoit automatiquement l’ancien historique. Une limite atteinte bloque la création ou le déplacement sans supprimer silencieusement de conversation. L’historique brut reste complet localement ; seule la fenêtre de contexte envoyée au modèle est bornée et résumée.
+
+Dans les réglages macOS, « Dossiers locaux autorisés » ouvre le sélecteur natif et permet d’accorder une permission en lecture seule ou en lecture et création, puis de la révoquer immédiatement. Les outils du modèle restent en lecture seule tant qu’un workflow de création vérifié et confirmé n’est pas utilisé.
+
+## Création de livrables
+
+Après avoir autorisé un dossier en « lecture et création », Chat et Conversation Live peuvent créer de nouveaux fichiers DOCX, PDF, PNG, XLSX, PPTX, Markdown, HTML, RTF, TXT, JSON et CSV. Les fichiers sont générés dans un emplacement temporaire, relus ou validés selon leur format, puis renommés atomiquement. Le nom est versionné : aucun fichier existant n’est écrasé. Chaque résultat apparaît dans la conversation avec les actions Ouvrir, Finder et Copier le chemin.
+
 ## Prérequis et lancement
 
 - Node.js récent et macOS pour l’application Electron.
@@ -77,3 +89,20 @@ Les commandes vocales peuvent sélectionner Kasa, Mon Vieux Grimoire, Qwenta, Sm
 - Lancer les contrôles automatiques avec `npm test`.
 
 Tests manuels à faire avec un microphone : les neuf langues/variantes ci-dessus, accents russe et français, interruption pendant la parole, commandes DA/DEV et Focus, coupure réseau/reconnexion, refus du microphone et blocage du budget vocal.
+
+## Intelligence personnelle locale
+
+L’onglet « Personnel » regroupe le portrait opérationnel, la mémoire structurée, les projets vivants, la boîte d’entrée, les recommandations explicables et les indicateurs d’efficacité. Ces données sont enregistrées dans `personal-intelligence.sqlite` sous le dossier privé `userData` d’Electron. `long-term-memory.json` et `project-journals.json` sont importés par une migration idempotente après sauvegarde et restent conservés.
+
+Les préférences observées restent des hypothèses jusqu’à confirmation. Noon peut analyser et proposer, mais ne crée aucun événement Calendar, n’envoie aucun e-mail et ne modifie aucun fichier existant sans ordre explicite. Les suggestions de créneaux sont uniquement en lecture et protègent la pause de 12 h 30 à 13 h 30.
+
+Fonctions expérimentales, désactivées par défaut :
+
+```sh
+ENABLE_RESPONSE_COMPACTION=false
+RESPONSE_COMPACTION_THRESHOLD_TOKENS=120000
+ENABLE_BACKGROUND_ANALYSIS=false
+NOON_MAX_PROACTIVE_NOTIFICATIONS=3
+```
+
+La compaction conserve le flux stateless `store: false` et retombe automatiquement sur la gestion actuelle si elle n’est pas supportée. Une analyse background ne démarre qu’après une action explicite. Voir [docs/personal-intelligence-architecture.md](docs/personal-intelligence-architecture.md) pour le schéma, les permissions, les migrations et les limites.

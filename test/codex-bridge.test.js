@@ -1,5 +1,7 @@
 "use strict";
 
+// Vérifie que le pont Codex reste disponible uniquement en lecture seule dans le Focus.
+
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {

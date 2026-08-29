@@ -1,5 +1,7 @@
 "use strict";
 
+// Vérifie les sauvegardes internes, le registre des agents et les règles de routage.
+
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");

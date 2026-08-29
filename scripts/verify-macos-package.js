@@ -1,5 +1,7 @@
 "use strict";
 
+// Contrôle le paquet macOS final et refuse l’inclusion de secrets ou données d’exécution.
+
 const fs = require("fs");
 const path = require("path");
 
