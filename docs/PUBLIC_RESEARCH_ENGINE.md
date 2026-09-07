@@ -17,7 +17,7 @@ Le contenu Web est toujours marqué `external_web` et `untrusted_content`. Il n�
 ## Rollout
 
 - `research.public.v1` : actif pour une demande Web explicite, avec retour au chemin legacy via le feature flag.
-- `research.mixed` : désactivé par défaut. Son activation exige que les évaluations critiques de confidentialité restent vertes.
+- `research.mixed` : explicitement limité au seul mode `OFF`. Une demande MIXED exécute uniquement la partie publique ; aucune preuve personnelle n’est transmise au provider Web. Le flag ne pourra être réactivé qu’après câblage et tests de la fusion personnelle locale.
 
 ## Limites
 

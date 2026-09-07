@@ -133,6 +133,14 @@ test("retourne un résultat vide propre lorsqu'aucune mémoire n'est pertinente"
   assert.equal(result.metadata.truncated, false);
 });
 
+test("exclut une mémoire legacy renvoyée sans rapport avec la question", () => {
+  const result = createFixture({
+    legacy: [{ id: "legacy-profile", text: "Arnaud est directeur artistique", tags: ["profil"] }],
+  }).getRelevantContext({ query: "Différence entre HTTP et WebSocket" });
+  assert.deepEqual(result.relevantMemories, []);
+  assert.equal(result.metadata.counts.excludedIrrelevant, 1);
+});
+
 test("une source en erreur n'empêche pas les autres sources de répondre", () => {
   const events = [];
   const engine = createFixture({

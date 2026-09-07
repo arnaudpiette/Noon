@@ -6,6 +6,8 @@ Cette suite mesure les contrats comportementaux de Noon au-dessus des tests unit
 
 - `npm run eval:smoke` : parcours rapide non critique.
 - `npm run eval:critical` : invariants de sécurité, confidentialité, approbation et idempotence.
+- `npm run eval:delegation` : délégation directe/complexe, isolation, autorité, budgets et partial.
+- `npm run eval:extensions` : manifests, permissions, lifecycle, schémas et invariants de sécurité des extensions.
 - `npm run eval` ou `npm run eval:full` : corpus hors ligne complet.
 - `npm run eval:live` : sélection réservée aux scénarios live ; aucun scénario live n'est activé par défaut.
 - `npm run noon:check` : lint, évaluations critiques et tests complets.

@@ -202,6 +202,7 @@ function createActionRequest(input = {}, skillPolicy = {}) {
     scope: input.scope,
     dataFlow: input.dataFlow,
     toRemoteModel: input.toRemoteModel === true,
+    isSpecialistProposal: input.isSpecialistProposal === true,
   };
   request.actionClass = classifyAction(request, skillPolicy);
   request.target = classifyTarget(request, skillPolicy);
@@ -260,7 +261,9 @@ function createOperationalSecurityPolicy({ hardRulesRegistry = null, reliability
     if (request.protectedProfile && request.dataFlow !== DATA_FLOWS.LOCAL_ONLY && !approvalValid) add(REASON_CODES.PROTECTED_PROFILE);
     if (!request.preconditionsValid) { add(REASON_CODES.STALE_PRECONDITION); blockedBy.push(REASON_CODES.STALE_PRECONDITION); }
     if (request.safeMode && mutating) { add(REASON_CODES.SAFE_MODE_READ_ONLY); blockedBy.push(REASON_CODES.SAFE_MODE_READ_ONLY); }
-    if (["external_content", "model_generated", "proactive_recommendation"].includes(request.origin) && mutating) { add(REASON_CODES.UNTRUSTED_ORIGIN); blockedBy.push(REASON_CODES.UNTRUSTED_ORIGIN); }
+    // Pour les propositions de spécialistes : transformer UNTRUSTED_ORIGIN → REQUIRE_APPROVAL au lieu de DENY
+    if (["external_content", "model_generated", "proactive_recommendation"].includes(request.origin) && mutating && !request.isSpecialistProposal) { add(REASON_CODES.UNTRUSTED_ORIGIN); blockedBy.push(REASON_CODES.UNTRUSTED_ORIGIN); }
+    if (request.isSpecialistProposal && ["external_content", "model_generated", "proactive_recommendation"].includes(request.origin) && mutating) { add(REASON_CODES.APPROVAL_REQUIRED); }
     if (skillPolicy.explicitOrderRequired && !request.explicitOrder) { add(REASON_CODES.EXPLICIT_ORDER_REQUIRED); blockedBy.push(REASON_CODES.EXPLICIT_ORDER_REQUIRED); }
     const calendarTime = request.args?.start || request.args?.startAt || request.args?.dateTime || request.context?.scheduledAt;
     if (request.target.targetType === "calendar" && mutating && calendarTime &&

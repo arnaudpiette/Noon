@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta
     http-equiv="Content-Security-Policy"
-    content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* http://localhost:*; media-src 'self' data: blob:; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'self';"
+    content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self' data: blob:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none';"
   />
   <title>Noon</title>
   <link rel="stylesheet" href="style.css" />
@@ -46,7 +46,7 @@
           Conversation Live
         </button>
         <p class="live-voice-meta">
-          <span id="liveVoiceStatus" class="live-voice-status" role="status" aria-live="polite">Déconnecté</span>
+          <span id="liveVoiceStatus" class="live-voice-status" role="status" aria-live="polite">Arbor — En attente de disponibilité API OpenAI</span>
           <span id="liveVoiceCost">0,00 $ / 11 $</span>
         </p>
         <!-- Langue et accent restent pilotables oralement. -->
@@ -212,6 +212,10 @@
             <span class="gear-icon" aria-hidden="true"></span>
           </button>
           <div id="quickSettings" class="quick-settings" hidden>
+            <button id="openControlCenterButton" class="control-center-entry" type="button">
+              <span aria-hidden="true">◎</span>
+              Ouvrir le Control Center
+            </button>
             <label class="setting-line">
               <input id="voiceEnabled" type="checkbox">
               <span>Réponse vocale</span>
@@ -348,7 +352,7 @@
               <button type="button" data-share-target="whatsapp">Partager par WhatsApp</button>
               <button type="button" data-share-target="save">Enregistrer dans un dossier</button>
             </div>
-            <button id="systemStatusButton" class="icon-btn" type="button" aria-label="Vérifier l’état de Noon" title="Vérifier l’état de Noon">
+            <button id="systemStatusButton" class="icon-btn" type="button" aria-label="Ouvrir le Control Center" title="Ouvrir le Control Center">
               <span class="orange-dot"></span>
             </button>
           </div>
@@ -400,6 +404,7 @@
         <header class="chat-header"><div><span class="label">Chaque matin à 7 h · Europe/Paris</span><h1>Brief matinal Noon</h1></div><time id="briefGeneratedAt"></time></header>
         <section class="daily-brief-section personal-brief-section">
           <h2>Votre journée analysée</h2>
+          <label for="briefHistorySelect">Consulter</label><select id="briefHistorySelect"><option value="">Brief du jour</option></select>
           <div id="personalBriefState" class="brief-state" role="status">Chargement…</div>
           <article id="personalBriefContent" class="brief-content"></article>
         </section>
@@ -562,8 +567,38 @@
     </section>
   </main>
 
+  <dialog id="controlCenter" class="control-center" aria-labelledby="controlCenterTitle">
+    <div class="control-center__shell">
+      <header class="control-center__header">
+        <div>
+          <p class="control-center__eyebrow">SUPERVISION LOCALE</p>
+          <h1 id="controlCenterTitle">Noon Control Center</h1>
+        </div>
+        <div class="control-center__header-actions">
+          <label class="control-center__view-label" for="controlCenterView">Vue</label>
+          <select id="controlCenterView">
+            <option value="USER">Utilisateur</option>
+            <option value="ADVANCED">Avancée</option>
+          </select>
+          <button id="refreshControlCenter" type="button" aria-label="Actualiser le Control Center">↻</button>
+          <button id="closeControlCenter" type="button" aria-label="Fermer le Control Center">×</button>
+        </div>
+      </header>
+      <div class="control-center__body">
+        <nav id="controlCenterNavigation" class="control-center__navigation" aria-label="Sections du Control Center"></nav>
+        <main class="control-center__content">
+          <div id="controlCenterLoading" class="control-center__loading" role="status">Chargement de l’état local…</div>
+          <p id="noonVoicePolicy" role="status" data-state="VoiceUnavailable">Voix Noon : Arbor — Statut : En attente de disponibilité API OpenAI</p>
+          <section id="controlCenterOverview" aria-live="polite"></section>
+          <section id="controlCenterSection" aria-live="polite" hidden></section>
+        </main>
+      </div>
+    </div>
+  </dialog>
+
   <script src="noon-particles.js"></script>
   <script src="ui-utils.js"></script>
+  <script src="control-center.js"></script>
   <script src="app.js"></script>
   <script src="live-voice-core.js"></script>
   <script src="live-voice.js"></script>

@@ -11,6 +11,39 @@ const { clean, normalizeMultimodalRequest, stableHash } = require("./media-schem
 const ANALYSIS_VERSION = "multimodal-v1";
 
 function cleanEvidenceText(value, maximum = 4000) { return String(value || "").replace(/\0/g, "").trim().slice(0, maximum); }
+function decodePdfLiteral(value) {
+  return String(value || "").replace(/\\([nrtbf()\\])/g, (_match, code) => ({
+    n: "\n", r: "\r", t: "\t", b: "\b", f: "\f",
+    "(": "(", ")": ")", "\\": "\\",
+  })[code]).replace(/\\([0-7]{1,3})/g, (_match, octal) => String.fromCharCode(parseInt(octal, 8)));
+}
+function extractNativePdfText(buffer, maximumCharacters = 120_000) {
+  const source = Buffer.from(buffer).toString("latin1");
+  const values = [];
+  for (const match of source.matchAll(/\(((?:\\.|[^\\()])*)\)\s*Tj\b/g)) {
+    values.push(decodePdfLiteral(match[1]));
+  }
+  for (const match of source.matchAll(/\[((?:.|\n|\r)*?)\]\s*TJ\b/g)) {
+    for (const literal of match[1].matchAll(/\(((?:\\.|[^\\()])*)\)/g)) {
+      values.push(decodePdfLiteral(literal[1]));
+    }
+  }
+  return values.join(" ").replace(/\s+/g, " ").trim().slice(0, maximumCharacters);
+}
+function createNativePdfAnalyzer() {
+  return async function analyzeNativePdf({ asset, buffer }) {
+    const text = extractNativePdfText(buffer);
+    return {
+      summary: text.slice(0, 2000),
+      evidence: text ? [{
+        type: "TEXT", content: text, confidence: "HIGH",
+        observationType: "OBSERVATION", extractionMethod: "native_text",
+      }] : [],
+      partial: !text,
+      metrics: { nativeTextCharacters: text.length, pageCount: asset.metadata.pageCount || 0 },
+    };
+  };
+}
 function safeConfidence(value) { return ["HIGH", "MEDIUM", "LOW", "UNKNOWN"].includes(String(value).toUpperCase()) ? String(value).toUpperCase() : "UNKNOWN"; }
 function normalizeRegion(region) {
   if (!region || typeof region !== "object") return null;
@@ -91,7 +124,20 @@ function createMultimodalEngine({
       const asset = requireAsset(assetId); const payload = payloads.get(assetId);
       const strategy = selectMediaStrategy(asset, asset.inspection, request);
       if (strategy.strategy === "UNSUPPORTED") { asset.processingState = "UNSUPPORTED"; uncertainties.push({ assetId, code: "MEDIA_UNSUPPORTED", message: "Ce format n’est pas pris en charge." }); analyzedAssets.push(structuredClone(asset)); continue; }
-      if (asset.localOnly && strategy.requiredCapabilities.some((item) => ["VISION", "AUDIO_TRANSCRIPTION"].includes(item))) {
+      const requiresRemoteMediaProvider = strategy.requiredCapabilities.some(
+        (item) => ["VISION", "AUDIO_TRANSCRIPTION"].includes(item)
+      );
+      if (request.privacyContext.allowRemote === false && requiresRemoteMediaProvider) {
+        asset.processingState = "PARTIAL";
+        uncertainties.push({
+          assetId,
+          code: "MEDIA_REMOTE_NOT_ALLOWED",
+          message: "Analyse distante désactivée pour cette demande.",
+        });
+        analyzedAssets.push(structuredClone(asset));
+        continue;
+      }
+      if (asset.localOnly && requiresRemoteMediaProvider) {
         const hasLocal = strategy.strategy === "SPEECH_TRANSCRIPTION" ? transcribe?.local === true : vision?.local === true;
         if (!hasLocal) { asset.processingState = "PARTIAL"; uncertainties.push({ assetId, code: "MEDIA_LOCAL_ONLY_REMOTE_BLOCKED", message: "Analyse distante interdite pour ce média local-only." }); analyzedAssets.push(structuredClone(asset)); continue; }
       }
@@ -167,4 +213,7 @@ function createMultimodalEngine({
   };
 }
 
-module.exports = { ANALYSIS_VERSION, createMultimodalEngine, defaultInspect, normalizeEvidence };
+module.exports = {
+  ANALYSIS_VERSION, createMultimodalEngine, createNativePdfAnalyzer,
+  defaultInspect, extractNativePdfText, normalizeEvidence,
+};

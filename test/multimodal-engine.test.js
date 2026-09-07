@@ -2,8 +2,13 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const sharp = require("sharp");
 const { createMediaIntakeService } = require("../services/multimodal/media-intake-service");
-const { createMultimodalEngine } = require("../services/multimodal/multimodal-engine");
+const {
+  createMultimodalEngine,
+  createNativePdfAnalyzer,
+} = require("../services/multimodal/multimodal-engine");
+const { createOpenAIMediaAnalyzer } = require("../services/multimodal/openai-media-analyzer");
 
 function fixtureIntake(mediaType = "IMAGE", overrides = {}) {
   return {
@@ -66,6 +71,23 @@ test("local_only interdit tout appel distant", async () => {
   assert.equal(pack.uncertainties[0].code, "MEDIA_LOCAL_ONLY_REMOTE_BLOCKED");
 });
 
+test("allowRemote false interdit tout appel distant", async () => {
+  let calls = 0;
+  const engine = createMultimodalEngine({
+    intake: fixtureIntake(), inspect: async () => ({}),
+    vision: async () => { calls += 1; return { evidence: [] }; },
+  });
+  const { asset } = await engine.ingest({ source: { filename: "confidentiel.png" } });
+  const pack = await engine.analyze({
+    assetIds: [asset.assetId],
+    userIntent: "Analyse",
+    privacyContext: { allowRemote: false },
+  });
+  assert.equal(calls, 0);
+  assert.equal(pack.coverage.partial, true);
+  assert.equal(pack.uncertainties[0].code, "MEDIA_REMOTE_NOT_ALLOWED");
+});
+
 test("met en cache une analyse identique et isole les workspaces", async () => {
   let calls = 0;
   const engine = createMultimodalEngine({
@@ -92,6 +114,41 @@ test("un PDF conserve des numéros de page à base 1", async () => {
   assert.equal(pack.evidence[0].provenance.page, 3);
 });
 
+test("un PDF à texte natif est extrait localement sans appel Vision", async () => {
+  let visionCalls = 0;
+  const nativePdf = Buffer.from(
+    "%PDF-1.4\n1 0 obj <<>> stream\nBT (Texte local verifie) Tj ET\nendstream endobj\n%%EOF",
+    "latin1"
+  );
+  const intake = {
+    async ingest() {
+      return {
+        asset: {
+          assetId: "media-native-pdf", mediaType: "PDF", mimeType: "application/pdf",
+          filename: "natif.pdf", fingerprint: "native-pdf", sizeBytes: nativePdf.length,
+          sourceType: "USER_UPLOAD", sourceScope: "PERSONAL", workspaceId: null,
+          localOnly: false, processingState: "REGISTERED", metadata: {},
+        },
+        payload: {
+          buffer: nativePdf,
+          dataUrl: `data:application/pdf;base64,${nativePdf.toString("base64")}`,
+        },
+      };
+    },
+  };
+  const engine = createMultimodalEngine({
+    intake,
+    inspect: async () => ({ metadata: { pageCount: 1 }, pdfKind: "TEXT_NATIVE" }),
+    nativeDocument: createNativePdfAnalyzer(),
+    vision: async () => { visionCalls += 1; return { evidence: [] }; },
+  });
+  const { asset } = await engine.ingest({ source: { filename: "natif.pdf" } });
+  const pack = await engine.analyze({ assetIds: [asset.assetId], userIntent: "Lis le PDF" });
+  assert.equal(visionCalls, 0);
+  assert.match(pack.evidence[0].content, /Texte local verifie/);
+  assert.equal(pack.evidence[0].provenance.extractionMethod, "native_text");
+});
+
 test("une transcription reste une preuve non fiable sans timestamps inventés", async () => {
   const engine = createMultimodalEngine({
     intake: fixtureIntake("AUDIO", { mimeType: "audio/webm" }), inspect: async () => ({}),
@@ -112,3 +169,27 @@ test("la vidéo est explicitement non prise en charge", async () => {
   assert.equal(pack.uncertainties[0].code, "MEDIA_UNSUPPORTED");
 });
 
+test("l’adaptateur distant retire EXIF et GPS sans modifier l’original", async () => {
+  const original = await sharp({
+    create: { width: 4, height: 4, channels: 3, background: "red" },
+  }).jpeg().withMetadata({
+    exif: { IFD0: { ImageDescription: "GPSLatitude=48.8566;GPSLongitude=2.3522" } },
+  }).toBuffer();
+  assert.ok((await sharp(original).metadata()).exif);
+  let transmitted;
+  const analyzer = createOpenAIMediaAnalyzer({
+    client: () => ({ responses: { async create(options) {
+      transmitted = options.input[0].content[0].image_url;
+      return { output_text: '{"summary":"ok","evidence":[]}', usage: {} };
+    } } }),
+  });
+  await analyzer.vision({
+    asset: { mediaType: "IMAGE", filename: "gps.jpg", mimeType: "image/jpeg" },
+    dataUrl: `data:image/jpeg;base64,${original.toString("base64")}`,
+    request: { userIntent: "Analyse", analysisDepth: "STANDARD" },
+    strategy: { strategy: "VISION" },
+  });
+  const sent = Buffer.from(transmitted.split(",")[1], "base64");
+  assert.equal(Boolean((await sharp(sent).metadata()).exif), false);
+  assert.ok((await sharp(original).metadata()).exif);
+});

@@ -32,6 +32,24 @@ function createFixture(result = memoryResult(), debug = null) {
   return { builder, calls, registry };
 }
 
+test("injecte uniquement les objectifs pertinents et exclut local_only avant le modèle", () => {
+  const registry = createHardRulesRegistry();
+  const calls = [];
+  const builder = createContextBuilder({
+    personalityProvider: () => "Noon",
+    hardRulesRegistry: registry,
+    memoryEngine: { getRelevantContext: () => memoryResult() },
+    goalContextProvider(input) {
+      calls.push(input);
+      return input.remote ? [{ goalId: "goal-public", title: "Livrer Qwenta", activeMilestone: "Soutenance", relevantConstraint: null, alignmentNeed: null }] : [];
+    },
+  });
+  const context = builder.buildContext({ query: "Où en est Qwenta ?", projectId: "project-qwenta", profileScope: "arnaud" });
+  assert.equal(calls[0].remote, true);
+  assert.deepEqual(context.remoteModelContext.userContext.relevantGoals.map((item) => item.goalId), ["goal-public"]);
+  assert.match(builder.renderRemoteSystemContext(context), /Livrer Qwenta/);
+});
+
 function memory(id, value, overrides = {}) {
   return {
     id, value, source: "private_memory", profileId: "arnaud",

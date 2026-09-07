@@ -1,7 +1,7 @@
 "use strict";
 
 const crypto = require("crypto");
-const { localDateKey } = require("../../lib/creative-brief");
+const { localDateKey, isDueToday } = require("../../lib/creative-brief");
 
 const TIME_ZONE = "Europe/Paris";
 
@@ -72,16 +72,46 @@ function createDailyBriefEngine({
   if (!contextBuilder?.buildContext) throw new TypeError("Context Builder requis.");
   if (!priorityEngine?.rank) throw new TypeError("Priority Engine requis.");
 
-  let activeRun = null;
+  const activeRuns = new Map();
+
+  function getCurrent({ at = new Date(), catchUp = false, enabled = true, time = "07:00" } = {}) {
+    let state = store.load();
+    const date = localDateKey(at, TIME_ZONE);
+    const current = (state.briefs || []).find((brief) => brief.date === date) || null;
+    const lastAttempt = Date.parse(state.lastAttemptAt || "");
+    const retryAllowed = !Number.isFinite(lastAttempt) || at.getTime() - lastAttempt >= 15 * 60 * 1000;
+    const due = enabled && !current && isDueToday({ now: at, time });
+    if (catchUp && due && retryAllowed && !activeRuns.has(date)) {
+      void generate({ at }).catch(() => {}); // The store retains the failure; polling respects the retry delay.
+    }
+    state = store.load();
+    const generating = activeRuns.has(date);
+    const attemptedToday = Number.isFinite(lastAttempt) && localDateKey(new Date(lastAttempt), TIME_ZONE) === date;
+    const failed = attemptedToday && ["error", "generating"].includes(state.status) && !generating;
+    return {
+      ...state, date, timeZone: TIME_ZONE, current,
+      previous: (state.briefs || []).find((brief) => brief.date < date) || null,
+      historical: (state.briefs || []).filter((brief) => brief.date !== date),
+      status: generating ? "generating" : current ? (current.metadata?.degraded ? "partial" : "ready") : failed ? "failed" : "missing",
+      generationActive: generating,
+      catchUpAllowed: due && retryAllowed,
+      error: failed ? state.error || "La génération précédente a été interrompue." : null,
+    };
+  }
+
+  function getHistorical(date) {
+    return (store.load().briefs || []).find((brief) => brief.date === date) || null;
+  }
 
   async function generate({ force = false, at = new Date() } = {}) {
     const date = localDateKey(at, TIME_ZONE);
     const briefId = `brief_${date}`;
     const existing = store.load();
-    if (!force && existing.lastSuccessDate === date && existing.briefs?.[0]) return existing.briefs[0];
-    if (activeRun) return activeRun;
+    if (activeRuns.has(date)) return activeRuns.get(date);
+    const current = (existing.briefs || []).find((brief) => brief.date === date);
+    if (!force && current) return current;
 
-    activeRun = (async () => {
+    const activeRun = Promise.resolve().then(async () => {
       const totalStarted = now();
       const executionId = `exec_${crypto.randomUUID()}`;
       observability?.startExecution({ executionId, channel: "background", intent: "brief", mode: "daily" });
@@ -265,12 +295,13 @@ function createDailyBriefEngine({
         }
         metrics.brief_generation_ms = elapsed(started, now);
         metrics.brief_total_ms = elapsed(totalStarted, now);
+        structured.metadata.generatedAt = new Date(now()).toISOString();
         const brief = {
           ...structured, content, title: `Brief Noon — ${date}`,
           generatedAt: structured.metadata.generatedAt,
           webSources: generation?.sources || [], topics: generation?.topics || [], metrics,
         };
-        store.markReady(brief, at);
+        store.markReady(brief, new Date(now()));
         observability?.completeExecution(executionId, {
           status: "completed", dailyBrief: metrics,
           wallClockTotalMs: metrics.brief_total_ms,
@@ -287,13 +318,14 @@ function createDailyBriefEngine({
         audit?.("daily-brief.failed", { briefId, code: String(error.code || error.name || "ERROR").slice(0, 100) });
         throw error;
       } finally {
-        activeRun = null;
+        activeRuns.delete(date);
       }
-    })();
+    });
+    activeRuns.set(date, activeRun);
     return activeRun;
   }
 
-  return { generate };
+  return { generate, getCurrent, getHistorical };
 }
 
 module.exports = { TIME_ZONE, createDailyBriefEngine, deduplicateDailyActions, deterministicBrief };

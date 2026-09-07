@@ -4,6 +4,7 @@
 
 const path = require("path");
 const macIcon = path.join(__dirname, "assets", "icons", "noon.icns");
+const requestedArch = process.env.NOON_RELEASE_ARCH || process.arch;
 
 const hasNotarizationCredentials = Boolean(
   process.env.APPLE_ID && process.env.APPLE_PASSWORD && process.env.APPLE_TEAM_ID
@@ -19,9 +20,9 @@ module.exports = {
     // Les bibliothèques natives de sharp/libvips doivent rester hors de l’archive
     // afin que le chargeur dynamique de macOS puisse résoudre leurs fichiers .dylib.
     asar: {
-      unpack: "**/node_modules/@img/**",
+      unpack: "**/node_modules/{@img,@picovoice}/**",
     },
-    arch: "x64",
+    arch: requestedArch,
     protocols: [{ name: "Noon", schemes: ["noon"] }],
     extendInfo: {
       NSMicrophoneUsageDescription:
@@ -45,7 +46,11 @@ module.exports = {
     ignore: [
       /^\/\.env(?:\.|$)/,
       /^\/\.git(?:\/|$)/,
+      /^\/\.github(?:\/|$)/,
       /^\/out(?:\/|$)/,
+      /^\/docs(?:\/|$)/,
+      /^\/scripts(?:\/|$)/,
+      /^\/Archive\.zip$/,
       /^\/backups(?:\/|$)/,
       /^\/logs(?:\/|$)/,
       /^\/test(?:\/|$)/,

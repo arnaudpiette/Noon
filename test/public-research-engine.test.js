@@ -2,7 +2,10 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { resolveResearchScope, inferFreshness, inferResearchMode } = require("../services/research/research-resolver");
+const {
+  resolveResearchScope, resolveExecutableResearchScope,
+  inferFreshness, inferResearchMode,
+} = require("../services/research/research-resolver");
 const { sanitizePublicQuery } = require("../services/research/privacy-query-sanitizer");
 const { isPrivateIp, normalizePublicUrl, validateRedirectChain } = require("../services/research/url-security");
 const { createSourceEvaluator } = require("../services/research/source-evaluator");
@@ -26,6 +29,13 @@ test("résout PERSONAL, PUBLIC et MIXED sans rechercher le Web pour une définit
   assert.equal(resolveResearchScope({ query: "Compare mon projet avec les recommandations actuelles" }).scope, "MIXED");
   assert.equal(resolveResearchScope({ query: "C’est quoi map en JavaScript ?" }).scope, "PERSONAL");
   assert.equal(resolveResearchScope({ query: "Cherche sur Internet", webAllowed: false }).scope, "PERSONAL");
+});
+
+test("MIXED reste explicitement désactivé tant que la fusion personnelle n’est pas câblée", () => {
+  const resolution = resolveExecutableResearchScope({ requestedScope: "MIXED" });
+  assert.equal(resolution.scope, "PUBLIC");
+  assert.equal(resolution.mixedEnabled, false);
+  assert.ok(resolution.reasonCodes.includes("mixed_disabled_until_personal_fusion"));
 });
 
 test("déduit les modes et contraintes temporelles", () => {
@@ -134,6 +144,18 @@ test("provider failure n’est jamais présenté comme zéro résultat", async (
   const engine = createPublicResearchEngine({ adapter: adapter([error]) });
   const pack = await engine.research({ query: "actualité", mode: "QUICK", freshnessRequirement: "RECENT", maxQueries: 1 });
   assert.equal(pack.state, "FAILED"); assert.match(pack.message, /ne peux pas vérifier/i); assert.equal(pack.providerFailures.length, 1);
+});
+
+test("un résultat adaptateur incomplet devient une erreur structurée", async () => {
+  const incomplete = result({ provenance: undefined });
+  const engine = createPublicResearchEngine({ adapter: adapter([[incomplete]]) });
+  const pack = await engine.research({
+    query: "documentation actuelle", mode: "QUICK",
+    freshnessRequirement: "CURRENT", maxQueries: 1,
+  });
+  assert.equal(pack.state, "FAILED");
+  assert.equal(pack.providerFailures[0].errorCode, "RESEARCH_ADAPTER_INVALID_RESULT");
+  assert.match(pack.message, /ne peux pas vérifier/i);
 });
 
 test("une Deep Research partielle conserve les preuves des sous-requêtes réussies", async () => {

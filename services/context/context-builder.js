@@ -67,6 +67,8 @@ function createContextBuilder({
   memoryEngine,
   conversationProvider = null,
   workspaceProvider = null,
+  ambientContextProvider = null,
+  goalContextProvider = null,
   permissionsProvider = () => [],
   cache = createContextCache(),
   debug = null,
@@ -230,6 +232,21 @@ function createContextBuilder({
       : (cacheEvents.session = { skipped: true }, {
         mode: null, channel, purpose: input.purpose || "remote_model", modelProfile: null,
       });
+    // Le contexte ambiant est éphémère et optionnel. Il est demandé au moteur
+    // central à chaque construction et n'entre jamais dans le cache mémoire.
+    let ambient = null;
+    if (typeof ambientContextProvider === "function") {
+      try {
+        ambient = ambientContextProvider({
+          query,
+          remote: (input.purpose || "remote_model") === "remote_model",
+          explicitWorkspaceId: input.workspaceId || input.projectId || null,
+          explicitMode: input.mode || null,
+        });
+      } catch {
+        ambient = null;
+      }
+    }
     const metadata = {
       intent,
       channel,
@@ -273,6 +290,7 @@ function createContextBuilder({
         hasFiles: Boolean(input.hasFiles),
         requiresReasoning: ["analysis", "development", "project", "memory"].includes(intent),
       },
+      ambientSignalIds: ambient?.signalIds || [],
     };
     metadata.inclusionReasons.push(
       { id: "noon.personality", source: "personality", reason: "system_identity" },
@@ -288,6 +306,23 @@ function createContextBuilder({
     }, () => projects, { scope: { projectId: input.projectId || null }, copyOnRead: false })
       : (cacheEvents.project = { skipped: true }, projects);
     const remoteMemories = deduplicate(memoryResult.remoteContext, (item) => item.value, seen, metadata);
+    // GoalStrategyEngine reste la source de vérité stratégique. Le builder ne
+    // reçoit qu'une vue compacte et filtrée, jamais le registre complet.
+    let relevantGoals = [];
+    if (typeof goalContextProvider === "function") {
+      try {
+        relevantGoals = (goalContextProvider({
+          query,
+          projectId: input.projectId || null,
+          workspaceId: input.workspaceId || null,
+          profileScope: input.profileScope || peopleIds[0] || "arnaud",
+          remote: (input.purpose || "remote_model") === "remote_model",
+          limit: channel === "live_voice" ? 2 : 5,
+        }) || []).slice(0, channel === "live_voice" ? 2 : 5);
+      } catch {
+        relevantGoals = [];
+      }
+    }
     const localOnly = deduplicate(memoryResult.localOnlyContext, (item) => item.value, new Set(seen), metadata);
     metadata.exclusionReasons.push(...localOnly.map((item) => ({
       id: item.id || null,
@@ -305,6 +340,7 @@ function createContextBuilder({
     let usedTokens = estimateTokens(personality) + hardRules.reduce((sum, rule) => sum + estimateTokens(rule.statement), 0);
     metadata.tokensBefore = usedTokens +
       projectItems.reduce((sum, item) => sum + estimateTokens(item.value), 0) +
+      relevantGoals.reduce((sum, item) => sum + estimateTokens(item), 0) +
       remoteMemories.reduce((sum, item) => sum + estimateTokens(item.value), 0) +
       recentMessages.reduce((sum, item) => sum + estimateTokens(item.content), 0) +
       (summaryItem ? estimateTokens(summaryItem.value) : 0);
@@ -348,6 +384,9 @@ function createContextBuilder({
       }
     }
     const keptProjects = keepWithinBudget(projectItems, (item) => item.value, "active_project", metadata.projectIds);
+    const goalIds = [];
+    const keptGoals = keepWithinBudget(relevantGoals.map((item) => ({ ...item, id: item.goalId })), (item) => item, "relevant_goal", goalIds)
+      .map(({ id: _id, ...item }) => item);
     const keptMemories = keepWithinBudget(remoteMemories, (item) => item.value, "relevant_memory", metadata.memoryIds);
 
     metadata.people = [...new Set(keptMemories.map((item) => item.profileId).filter(Boolean))];
@@ -369,6 +408,7 @@ function createContextBuilder({
       ruleIds: metadata.ruleIds,
       memoryIds: metadata.memoryIds,
       projectIds: metadata.projectIds,
+      goalIds,
       conversationIds: metadata.conversationIds,
       versions,
     });
@@ -378,6 +418,7 @@ function createContextBuilder({
       memories: keptMemories,
       people: keptMemories.filter((item) => item.profileId && !String(item.profileId).startsWith("project:")),
       projects: keptProjects,
+      relevantGoals: keptGoals,
       workspace: workspaceContext,
     };
     const conversation = { recentMessages: keptConversation, summary };
@@ -398,12 +439,25 @@ function createContextBuilder({
         summaryVersion: sessionSegment.summaryVersion,
         checkpointId: sessionSegment.checkpointId,
       },
+      ambient: ambient ? {
+        sessionId: ambient.sessionId,
+        mode: ambient.mode,
+        signals: ambient.signals,
+        ambientAuthority: false,
+      } : null,
+      decision: input.decisionContext ? {
+        decisionId: input.decisionContext.decisionId || null,
+        optionRefs: (input.decisionContext.optionRefs || []).slice(0, 20),
+        criterionRefs: (input.decisionContext.criterionRefs || []).slice(0, 30),
+        contextFingerprint: input.decisionContext.contextFingerprint || null,
+      } : null,
     };
     const system = { personality, hardRules };
     const localContext = {
       memories: [...keptMemories, ...localOnly],
       localOnly,
       projects: keptProjects,
+      relevantGoals: keptGoals,
       conversation,
       workspace: workspaceContext,
     };
@@ -415,6 +469,9 @@ function createContextBuilder({
       memory: { remote: keptMemories, localOnly },
       dynamic: { permissions },
       tools: toolSegment,
+      ambient: ambient || { signals: [], signalIds: [], ambientAuthority: false },
+      decision: runtime.decision || null,
+      goals: keptGoals,
     };
 
     debug?.("context-builder.summary", {
@@ -459,9 +516,16 @@ function createContextBuilder({
       };
       sections.push(`Continuité de session : ${JSON.stringify(compactState)}`);
     }
+    if (remote.runtime?.ambient?.signals?.length) {
+      sections.push(`Contexte de travail explicitement partagé (indice non autoritaire) : ${JSON.stringify(remote.runtime.ambient.signals)}`);
+    }
+    if (remote.runtime?.decision) sections.push(`Décision en cours (références uniquement) : ${JSON.stringify(remote.runtime.decision)}`);
     if (remote.conversation.summary) sections.push(String(remote.conversation.summary));
     if (remote.userContext.projects.length) {
       sections.push(`Projet actif : ${remote.userContext.projects.map((item) => textValue(item.value)).join(" | ")}`);
+    }
+    if (remote.userContext.relevantGoals?.length) {
+      sections.push(`Objectifs pertinents (contexte stratégique, sans autorité d'action) : ${JSON.stringify(remote.userContext.relevantGoals)}`);
     }
     if (remote.userContext.workspace) {
       const workspace = remote.userContext.workspace;

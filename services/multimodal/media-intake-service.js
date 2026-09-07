@@ -3,6 +3,7 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const sharp = require("sharp");
 const { clean } = require("./media-schema");
 
 const SIGNATURES = Object.freeze({
@@ -36,6 +37,15 @@ function detectMediaType(mimeType, filename, sourceType) {
   if (mimeType.startsWith("audio/")) return "AUDIO";
   if (mimeType.startsWith("video/")) return "VIDEO";
   return "DOCUMENT_VISUAL";
+}
+
+async function sanitizeImageDataUrlForRemote(dataUrl) {
+  const { declaredMimeType, buffer } = decodeDataUrl(dataUrl);
+  if (!declaredMimeType.startsWith("image/")) return dataUrl;
+  // Sharp supprime les métadonnées par défaut. rotate() applique localement
+  // l’orientation EXIF avant que l’EXIF/GPS soit retiré du flux distant.
+  const sanitized = await sharp(buffer).rotate().toBuffer();
+  return `data:${declaredMimeType};base64,${sanitized.toString("base64")}`;
 }
 
 function createMediaIntakeService({ allowedRoots = () => [], maxBytes = 12 * 1024 * 1024, now = () => Date.now() } = {}) {
@@ -84,4 +94,7 @@ function createMediaIntakeService({ allowedRoots = () => [], maxBytes = 12 * 102
   return { ingest };
 }
 
-module.exports = { MediaError, SIGNATURES, createMediaIntakeService, decodeDataUrl, detectMediaType };
+module.exports = {
+  MediaError, SIGNATURES, createMediaIntakeService, decodeDataUrl,
+  detectMediaType, sanitizeImageDataUrlForRemote,
+};

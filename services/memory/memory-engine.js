@@ -289,6 +289,11 @@ function createMemoryEngine({
   function legacyItems(options, queryTokens, counts) {
     if (!legacyStore) return [];
     return safeRead("legacy_memory", () => legacyStore.relevant(options.query, options.sourceLimit), counts)
+      .filter((item) => {
+        const score = relevanceScore(queryTokens, `${item.text} ${(item.tags || []).join(" ")}`);
+        if (score === 0) { counts.excludedIrrelevant += 1; return false; }
+        return true;
+      })
       .map((item) => ({
         id: item.id,
         value: item.text,
@@ -301,7 +306,7 @@ function createMemoryEngine({
         apiPolicy: "contextual",
         usableLocally: true,
         allowedForRemoteModel: true,
-        relevance: relevanceScore(queryTokens, `${item.text} ${(item.tags || []).join(" ")}`, 0.1),
+        relevance: relevanceScore(queryTokens, `${item.text} ${(item.tags || []).join(" ")}`),
         priority: SOURCE_PRIORITY.legacy_memory,
       }));
   }

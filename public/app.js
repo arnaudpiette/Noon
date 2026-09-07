@@ -432,6 +432,7 @@ systemStatusButton.addEventListener("click", async () => {
   await checkNoonConnection();
   updateActivity(connectionStatusText.textContent);
   systemStatusButton.disabled = false;
+  await window.NoonControlCenter?.open?.();
 });
 
 voiceEnabledInput.addEventListener("change", () => {
@@ -1345,7 +1346,7 @@ function setConnectionStatus(state, text) {
   connectionStatusText.textContent = text;
   systemStatusButton.dataset.state = state;
   systemStatusButton.title = text;
-  systemStatusButton.setAttribute("aria-label", `État de Noon : ${text}. Cliquer pour vérifier.`);
+  systemStatusButton.setAttribute("aria-label", `État de Noon : ${text}. Ouvrir le Control Center.`);
 }
 
 // Contrôle uniquement le serveur local ; cette requête ne contacte pas OpenAI.
@@ -2613,35 +2614,58 @@ function switchView(viewName) {
   }
 }
 
+let briefLoadVersion = 0;
+let briefRefreshTimer = null;
+const briefHistorySelect = document.getElementById("briefHistorySelect");
+briefHistorySelect.addEventListener("change", () => { void loadCreativeBrief(); });
+window.addEventListener("online", () => { if (currentView === "brief") void loadCreativeBrief(); });
+window.addEventListener("focus", () => { if (currentView === "brief") void loadCreativeBrief(); });
+
 async function loadCreativeBrief() {
+  const version = ++briefLoadVersion;
+  window.clearTimeout(briefRefreshTimer);
+  const historicalDate = briefHistorySelect.value;
+  briefState.textContent = personalBriefState.textContent = "Chargement…";
+  personalBriefState.dataset.state = "LOADING";
+  personalBriefContent.replaceChildren();
+  briefGeneratedAt.textContent = "";
   try {
-    const response = await fetch("/daily-brief", { cache: "no-store" });
+    const response = await fetch(historicalDate
+      ? `/daily-brief/history?date=${encodeURIComponent(historicalDate)}`
+      : "/daily-brief/current", { cache: "no-store" });
     const data = await response.json();
+    if (version !== briefLoadVersion) return null;
     if (!response.ok) throw new Error(data.message || "Brief indisponible.");
-    const brief = data.current;
-    if (data.status === "generating") {
-      briefState.textContent = "Génération en cours…";
-    } else if (data.status === "error") {
-      briefState.textContent = data.error || "La dernière génération a échoué. Vous pouvez réessayer.";
-    } else if (brief) {
-      briefState.textContent = "Brief prêt";
-    } else if (data.status === "scheduled" && data.nextScheduledAt) {
-      briefState.textContent = `Prochaine génération : ${new Date(data.nextScheduledAt).toLocaleString("fr-FR")}`;
-    } else {
-      briefState.textContent = "Aucun brief disponible.";
-    }
+    // The server owns today's date; historical content never becomes current implicitly.
+    const brief = historicalDate ? data.brief : data.current?.date === data.date ? data.current : null;
+    const generating = !historicalDate && data.generationActive === true;
+    const status = historicalDate ? "HISTORICAL" : generating ? "GENERATING"
+      : brief ? (data.status === "partial" ? "PARTIAL" : "READY")
+        : data.status === "failed" ? "FAILED" : "MISSING";
+    const label = historicalDate ? `Brief historique — ${historicalDate}`
+      : generating ? "Génération en cours…"
+        : brief ? (status === "PARTIAL" ? "Brief partiel" : "Brief prêt")
+          : status === "FAILED" ? `Le brief du jour (${data.date}) n’a pas pu être généré. ${data.error || ""}`
+            : `Le brief du jour (${data.date}) n’a pas été généré.`;
+    briefState.textContent = personalBriefState.textContent = label;
+    personalBriefState.dataset.state = status;
     briefContent.textContent = "";
-    personalBriefContent.textContent = brief?.content || "";
-    personalBriefState.textContent = data.status === "generating"
-      ? "Génération en cours…"
-      : data.status === "error"
-        ? data.error || "La génération du Daily Brief a échoué."
-        : brief
-          ? "Brief prêt"
-          : data.nextScheduledAt
-            ? `Prochaine génération : ${new Date(data.nextScheduledAt).toLocaleString("fr-FR")}`
-            : "Aucun Daily Brief disponible.";
-    briefGeneratedAt.textContent = brief?.generatedAt ? `Généré ${new Date(brief.generatedAt).toLocaleString("fr-FR")}` : "";
+    window.NoonUiUtils.renderBriefMarkdown(personalBriefContent, brief?.content || "");
+    briefGeneratedAt.textContent = brief?.generatedAt
+      ? `${historicalDate ? "Historique" : "Brief du jour"} · ${brief.date} · Généré ${new Date(brief.generatedAt).toLocaleString("fr-FR", { timeZone: "Europe/Paris" })}` : "";
+    if (!historicalDate) {
+      briefHistorySelect.replaceChildren();
+      const currentOption = document.createElement("option"); currentOption.value = ""; currentOption.textContent = "Brief du jour";
+      briefHistorySelect.append(currentOption);
+      for (const item of data.historical || []) {
+        const option = document.createElement("option"); option.value = item.date; option.textContent = `Brief précédent — ${item.date}`;
+        briefHistorySelect.append(option);
+      }
+      briefHistorySelect.value = "";
+      briefRefreshTimer = window.setTimeout(() => {
+        if (currentView === "brief" && !briefHistorySelect.value) void loadCreativeBrief();
+      }, generating ? 1500 : 60000);
+    }
     briefSourceStates.replaceChildren();
     for (const source of brief?.sources || []) {
       const badge = document.createElement("span"); badge.className = "brief-source-state"; badge.dataset.status = source.status;
@@ -2669,13 +2693,19 @@ async function loadCreativeBrief() {
     generateBriefButton.textContent = brief ? "Actualiser le brief" : "Générer maintenant";
     readBriefButton.disabled = !brief; stopBriefReadingButton.disabled = true;
     return brief || null;
-  } catch (error) { briefState.textContent = navigator.onLine ? error.message : "Absence de connexion."; return null; }
+  } catch (error) {
+    if (version !== briefLoadVersion) return null;
+    briefState.textContent = personalBriefState.textContent = navigator.onLine ? error.message : "Brief indisponible : absence de connexion.";
+    personalBriefState.dataset.state = "FAILED";
+    return null;
+  }
 }
 
 async function generateCreativeBrief(force = false) {
-  briefState.textContent = "Génération en cours…"; personalBriefState.textContent = "Génération en cours…"; generateBriefButton.disabled = true;
+  briefHistorySelect.value = "";
+  briefState.textContent = personalBriefState.textContent = "Chargement…"; generateBriefButton.disabled = true;
   try { const response = await fetch("/daily-brief/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ force }) }); const payload = await response.json(); if (!response.ok) throw new Error(payload.message); await loadCreativeBrief(); }
-  catch (error) { briefState.textContent = error.message || "La génération a échoué. Réessayez."; }
+  catch (error) { briefState.textContent = personalBriefState.textContent = error.message || "La génération a échoué. Réessayez."; personalBriefState.dataset.state = "FAILED"; }
   finally { generateBriefButton.disabled = false; }
 }
 
@@ -2919,66 +2949,6 @@ function notifyAnswerReady(answer) {
   });
 }
 
-function speakNoonWithSystemVoice(text, sessionId) {
-  if (!("speechSynthesis" in window)) {
-    updateActivity("Synthèse vocale indisponible.");
-    setVisualState("idle");
-    return;
-  }
-
-  currentSpeech = null;
-  window.speechSynthesis.cancel();
-  stopSpeechAnimation();
-
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = localStorage.getItem("noonVoiceLanguage") || "fr-FR";
-  utterance.rate = voiceRate;
-  utterance.pitch = 0.92;
-  utterance.volume = 1;
-
-  const voices = window.speechSynthesis.getVoices();
-  const frenchVoices = voices.filter((voice) =>
-    voice.lang.toLowerCase().startsWith("fr")
-  );
-  const maleVoiceNames = /\b(thomas|nicolas|daniel|alex|olivier|henri|paul|jacques|cedar|marin)\b/i;
-  const frenchVoice =
-    frenchVoices.find((voice) => maleVoiceNames.test(voice.name)) ||
-    frenchVoices[0] ||
-    voices.find((voice) => maleVoiceNames.test(voice.name)) ||
-    voices[0];
-  if (frenchVoice) utterance.voice = frenchVoice;
-
-  utterance.addEventListener("start", () => {
-    if (sessionId !== speechSessionId) return;
-
-    updateActivity("Noon parle avec la voix système de secours…");
-    setVisualState("speaking");
-    startSpeechAnimation();
-  });
-
-  utterance.addEventListener("end", () => {
-    if (sessionId !== speechSessionId) return;
-    if (currentSpeech !== utterance) return;
-
-    stopSpeechAnimation();
-    currentSpeech = null;
-    updateActivity("En attente.");
-    setVisualState("idle");
-  });
-
-  utterance.addEventListener("error", () => {
-    if (sessionId !== speechSessionId) return;
-    if (currentSpeech !== utterance) return;
-
-    stopSpeechAnimation();
-    currentSpeech = null;
-    updateActivity("Erreur de synthèse vocale.");
-    setVisualState("idle");
-  });
-
-  currentSpeech = utterance;
-  window.speechSynthesis.speak(utterance);
-}
 
 async function reportVoiceMetrics(executionId) {
   if (!executionId || !window.noonVoiceMetrics) return;
@@ -3001,6 +2971,13 @@ async function speakNoon(text, executionId = null) {
   window.noonVoiceMetrics ||= {};
 
   try {
+    const identityResponse = await fetch("/voice/identity?pipeline=tts", { cache: "no-store" });
+    const policy = await identityResponse.json();
+    if (!identityResponse.ok || policy.resolved.providerStatus === "unavailable") {
+      document.getElementById("noonVoicePolicy").dataset.state = "VoiceUnavailable";
+      updateActivity(`Voix Noon : ${policy.resolved?.displayName || "Arbor"} — ${policy.resolved?.statusMessage || "indisponible"}. Réponse textuelle uniquement.`);
+      return;
+    }
     const response = await fetch("/tts", {
       method: "POST",
       headers: {
@@ -3020,7 +2997,7 @@ async function speakNoon(text, executionId = null) {
       throw new Error("Voix OpenAI indisponible");
     }
     window.noonVoiceMetrics.voiceIdentity = response.headers.get("X-Noon-Voice-Identity") || "noon-default";
-    window.noonVoiceMetrics.voice = response.headers.get("X-Noon-Voice") || "marin";
+    window.noonVoiceMetrics.voice = response.headers.get("X-Noon-Voice") || null;
     window.noonVoiceMetrics.voiceIdentityResolveMs = Number(response.headers.get("X-Voice-Identity-Resolve-Ms")) || 0;
     window.noonVoiceMetrics.ttsStartMs = Number(response.headers.get("X-TTS-Start-Ms")) || Math.round(performance.now() - ttsRequestedAt);
     window.noonVoiceMetrics.fallbackCount = response.headers.get("X-Noon-Voice-Fallback") === "true" ? 1 : 0;
@@ -3097,8 +3074,10 @@ async function speakNoon(text, executionId = null) {
   } catch (error) {
     if (error.name === "AbortError" || sessionId !== speechSessionId) return;
     window.noonVoiceMetrics.fallbackCount = (window.noonVoiceMetrics.fallbackCount || 0) + 1;
-    updateActivity("Voix Noon indisponible, passage explicite à la voix système.");
-    speakNoonWithSystemVoice(text, sessionId);
+    stopSpeechAnimation();
+    currentSpeech = null;
+    updateActivity("Voix Noon indisponible. Réponse textuelle uniquement.");
+    setVisualState("idle");
   }
 }
 
@@ -3358,6 +3337,7 @@ async function sendQuestion(question, options = {}) {
         visualDetail,
         webSearchEnabled,
         intelligenceProfile,
+        runtimeNetworkState: navigator.onLine ? "ONLINE" : "OFFLINE",
       }),
       signal: activeRequestController.signal,
     });

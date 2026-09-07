@@ -154,3 +154,20 @@ test("le Daily Brief consomme la revue centrale sans créer un second pipeline",
   assert.equal(brief.reviewLearning.reviewType, "weekly");
   assert.equal(brief.reviewLearning.planningHints.bufferMultiplierHint, 1.2);
 });
+
+test("startup catch-up after 07:00 preserves same-day brief across engine restart", async () => {
+  const { engine, getState, counts } = fixture();
+  const at = new Date('2026-08-28T09:28:54.785Z');
+  const brief = await engine.generate({ at });
+  const generatedAt = brief.generatedAt;
+  const restarted = createDailyBriefEngine({
+    store: { load: getState, markReady() { assert.fail('duplicate brief'); } },
+    collect() { assert.fail('same-day collection must not restart'); },
+    contextBuilder: { buildContext() { assert.fail('duplicate context'); } },
+    priorityEngine: { rank() { assert.fail('duplicate ranking'); } },
+  });
+  assert.equal(await restarted.generate({ at: new Date('2026-08-28T12:00:00Z') }), brief);
+  assert.equal(getState().briefs.length, 1);
+  assert.equal(getState().briefs[0].generatedAt, generatedAt);
+  assert.equal(counts.compose, 1);
+});

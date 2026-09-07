@@ -82,6 +82,41 @@ test("correction, versionnement, expiration, oubli et purge fonctionnent", () =>
   } finally { ctx.close(); }
 });
 
+test("un souvenir corrigé puis oublié ne ressuscite pas après redémarrage", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "noon-private-memory-restart-"));
+  const filePath = path.join(directory, "memory.sqlite");
+  const masterKey = crypto.randomBytes(32);
+  let database = createPersonalDatabase(filePath);
+  try {
+    let service = createPrivateMemoryService({
+      databaseWrapper: database,
+      cipher: createMemoryCipher(masterKey),
+    });
+    const candidate = service.createMemory({
+      subjectId: "arnaud", category: "preference",
+      statement: "La couleur fictive est orange", status: "candidate",
+      consentStatus: "pending", sensitivity: "low", apiPolicy: "contextual",
+    });
+    assert.deepEqual(createPrivateContextBuilder(service).build({ question: "Quelle est la couleur fictive ?" }).memoryIds, []);
+
+    service.updateMemory(candidate.id, {
+      statement: "La couleur fictive est violette", status: "confirmed", consentStatus: "granted",
+    }, "confirmation et correction P1.1");
+    assert.deepEqual(createPrivateContextBuilder(service).build({ question: "Quelle est la couleur fictive ?" }).memoryIds, [candidate.id]);
+    service.forgetMemory(candidate.id);
+    assert.deepEqual(createPrivateContextBuilder(service).build({ question: "Quelle est la couleur fictive ?" }).memoryIds, []);
+
+    database.close();
+    database = createPersonalDatabase(filePath);
+    service = createPrivateMemoryService({ databaseWrapper: database, cipher: createMemoryCipher(masterKey) });
+    assert.deepEqual(createPrivateContextBuilder(service).build({ question: "Quelle est la couleur fictive ?" }).memoryIds, []);
+    assert.equal(service.listMemories({ subjectId: "arnaud" }).length, 0);
+  } finally {
+    database.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("l'import refuse un seed invalide et ne confirme jamais automatiquement le sensible", () => {
   assert.equal(validateSeed({ memories: [{ subjectId: "arnaud", statement: "", sensitivity: "low" }] }).valid, false);
   const ctx = fixture();

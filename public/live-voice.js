@@ -68,7 +68,7 @@
       this.bindEvents();
       this.refreshContext();
       this.refreshBudget();
-      this.setState("disconnected");
+      this.setState("VoiceUnavailable", "Arbor — En attente de disponibilité API OpenAI");
     }
 
     bindEvents() {
@@ -144,9 +144,9 @@
       if (["listening", "muted"].includes(state)) bridge.setVisualState("listening");
       if (state === "thinking") bridge.setVisualState("thinking");
       if (state === "speaking") bridge.setVisualState("speaking");
-      if (["disconnected", "error"].includes(state)) bridge.setVisualState("idle");
+      if (["disconnected", "error", "VoiceUnavailable"].includes(state)) bridge.setVisualState("idle");
       window.noon?.setLiveActive(
-        !["disconnected", "error"].includes(state)
+        !["disconnected", "error", "VoiceUnavailable"].includes(state)
       ).catch(() => {});
     }
 
@@ -198,6 +198,11 @@
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || "Identité vocale indisponible.");
       this.voiceIdentity = data.resolved;
+      if (data.resolved.providerStatus === "unavailable") {
+        const error = new Error(`Voix Noon : ${data.resolved.displayName} — ${data.resolved.statusMessage}`);
+        error.code = "VOICE_UNAVAILABLE";
+        throw error;
+      }
       window.noonVoiceMetrics ||= {};
       window.noonVoiceMetrics.voiceIdentity = data.resolved.identityId;
       window.noonVoiceMetrics.voice = data.resolved.voice;
@@ -332,6 +337,11 @@
         }, this.maxSessionMs);
       } catch (error) {
         this.cleanupConnection();
+        if (error.code === "VOICE_UNAVAILABLE") {
+          this.intentionalClose = true;
+          this.setState("VoiceUnavailable", error.message);
+          return;
+        }
         this.setState("error", error.message || "Erreur réseau");
         if (error?.name !== "NotAllowedError") this.scheduleReconnect();
       }
@@ -350,6 +360,14 @@
       this.touchActivity();
 
       if (event.type === "session.created" || event.type === "session.updated") {
+        const providerVoice = event.session?.audio?.output?.voice || event.session?.voice;
+        if (providerVoice) {
+          window.noonVoiceMetrics.providerVoice = providerVoice;
+          if (providerVoice !== this.voiceIdentity.voice) {
+            this.disconnect({ message: "La voix confirmée par OpenAI diffère de l’identité Noon. Reconnectez la session." });
+            return;
+          }
+        }
         if (this.connected) this.setState("listening");
         return;
       }

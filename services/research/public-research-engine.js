@@ -21,6 +21,29 @@ function confidence(results, conflicts, completeness) {
   return conflicts.length > 1 || results.every((item) => item.confidence === "LOW") ? "LOW" : "MEDIUM";
 }
 
+function validateAdapterResults(results) {
+  if (!Array.isArray(results)) {
+    throw Object.assign(new Error("La réponse du provider de recherche est invalide."), {
+      code: "RESEARCH_ADAPTER_INVALID_RESULT",
+    });
+  }
+  for (const item of results) {
+    if (
+      !item || typeof item !== "object" ||
+      typeof item.resultId !== "string" || !item.resultId ||
+      typeof item.url !== "string" || !item.url ||
+      typeof item.title !== "string" || !item.title ||
+      typeof item.provenance?.sourceFingerprint !== "string" ||
+      !item.provenance.sourceFingerprint
+    ) {
+      throw Object.assign(new Error("Un résultat du provider ne respecte pas le schéma de provenance."), {
+        code: "RESEARCH_ADAPTER_INVALID_RESULT",
+      });
+    }
+  }
+  return results;
+}
+
 function createPublicResearchEngine({ adapter, planner = createResearchPlanner(), evaluator = createSourceEvaluator(), cache = createResearchCache(), reliability = null, observability = null, now = () => Date.now() } = {}) {
   if (!adapter?.search) throw new TypeError("WebSearchAdapter requis.");
   const emit = (event, metadata) => { try { observability?.(event, metadata); } catch {} };
@@ -45,6 +68,7 @@ function createPublicResearchEngine({ adapter, planner = createResearchPlanner()
       emit("research_query_sanitized", { researchId: request.researchId, queryFingerprint: sanitized.queryFingerprint, sanitized: sanitized.sanitized, privateTermsRemoved: sanitized.privateTermsRemoved, localOnlyBlocked: sanitized.localOnlyBlocked, wordCount: sanitized.query.split(/\s+/).length });
       try {
         const result = await adapter.search({ ...request, query: sanitized.query, queryFingerprint: sanitized.queryFingerprint, signal: input.signal, modelProfile: input.modelProfile, budgetMode: input.budgetMode });
+        validateAdapterResults(result.results);
         attempts.push({ queryFingerprint: sanitized.queryFingerprint, status: "OK", resultCount: result.results.length, durationMs: result.durationMs });
         all.push(...result.results.map((item) => ({ ...item, queryProvenance: sanitized.provenance })));
         searchCalls += result.searchCalls || 0; modelCalls += result.modelCalls || 0;
@@ -78,4 +102,4 @@ function createPublicResearchEngine({ adapter, planner = createResearchPlanner()
 
 function cancelledPack(request, started, now, partial = {}) { return { evidencePackId: `public_pack_${hash(request.researchId)}`, researchId: request.researchId, scope: "PUBLIC", query: request.query, mode: request.mode, state: "CANCELLED", completeness: partial.results?.length ? "PARTIAL" : "INSUFFICIENT", confidence: "LOW", results: partial.results || [], remoteResults: partial.results || [], evidence: partial.results || [], citations: [], conflicts: [], sourceCoverage: { queriesExecuted: partial.attempts?.length || 0, sourcesFound: partial.results?.length || 0, sourcesUsed: partial.results?.length || 0, sourceTypes: [], unresolvedQuestions: [], failedQueries: [] }, providerFailures: [], retrievedAt: new Date(now()).toISOString(), budget: {}, latency: { totalMs: now() - started }, cache: { status: "BYPASS", retrievedFresh: false }, message: "Recherche annulée." }; }
 
-module.exports = { createPublicResearchEngine };
+module.exports = { createPublicResearchEngine, validateAdapterResults };

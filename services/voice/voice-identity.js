@@ -1,14 +1,27 @@
 "use strict";
 
 const crypto = require("node:crypto");
+const fs = require("node:fs");
+const SHARED_VOICES = Object.freeze([]);
 
 const NOON_VOICE_IDENTITY = Object.freeze({
   id: "noon-default",
-  primaryVoice: "marin",
-  realtimeVoice: "marin",
-  ttsVoice: "marin",
-  fallbackVoice: "cedar",
-  fallbackPolicy: "explicit_after_primary_retry",
+  identity: "noon-default",
+  targetVoice: "arbor",
+  requestedVoice: "arbor",
+  requestedVoiceProvider: "chatgpt-gpt-live",
+  exactMatchRequired: true,
+  providerStatus: "unavailable",
+  availability: "WAITING_FOR_PROVIDER_API",
+  state: "VoiceUnavailable",
+  fallbackSpeakerAllowed: false,
+  displayName: "Arbor",
+  statusMessage: "En attente de disponibilité API OpenAI",
+  primaryVoice: "arbor",
+  realtimeVoice: "arbor",
+  ttsVoice: "arbor",
+  fallbackVoice: null,
+  fallbackPolicy: "text_only",
   languagePolicy: "automatic",
   accentPolicy: "preserve_identity",
   style: Object.freeze({
@@ -35,11 +48,29 @@ function styleInstructions({ language = "auto", accent = "none", provider = "tts
   ].join(" ");
 }
 
-function createVoiceIdentity({ identity = NOON_VOICE_IDENTITY, debug = null, now = () => Date.now() } = {}) {
+function saveVoiceChoice(file, voice) {
+  if (voice !== "arbor") throw new Error("Arbor exacte est la seule voix autorisée pour Noon.");
+  const temporary = `${file}.${crypto.randomUUID()}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify({ ...NOON_VOICE_IDENTITY, voice }) + "\n", { mode: 0o600 });
+  fs.renameSync(temporary, file);
+}
+
+function createVoiceIdentity({ identity = NOON_VOICE_IDENTITY, selectionPath = null, debug = null, now = () => Date.now() } = {}) {
+  // Ignore legacy speaker selections and injected alternatives; persist the canonical policy.
+  identity = NOON_VOICE_IDENTITY;
+  if (selectionPath) saveVoiceChoice(selectionPath, identity.targetVoice);
+  function assertAvailable() {
+    const error = new Error(`Voix Noon : ${identity.displayName} — ${identity.statusMessage}. Réponse textuelle uniquement.`);
+    error.code = "VOICE_UNAVAILABLE";
+    error.statusCode = 503;
+    error.state = identity.state;
+    throw error;
+  }
   function resolve({ pipeline = "tts", language = "auto", accent = "none", model = null } = {}) {
     const startedAt = now();
     const voice = pipeline === "realtime" ? identity.realtimeVoice : identity.ttsVoice;
     const resolved = {
+      ...identity,
       identityId: identity.id,
       pipeline,
       voice,
@@ -60,11 +91,7 @@ function createVoiceIdentity({ identity = NOON_VOICE_IDENTITY, debug = null, now
   }
 
   function attempts(resolution) {
-    return [
-      { voice: resolution.primaryVoice, fallback: false, attempt: 1 },
-      { voice: resolution.primaryVoice, fallback: false, attempt: 2 },
-      { voice: resolution.fallbackVoice, fallback: true, attempt: 3 },
-    ].filter((attempt) => Boolean(attempt.voice));
+    return [];
   }
 
   function traceFallback(resolution, reason) {
@@ -83,6 +110,7 @@ function createVoiceIdentity({ identity = NOON_VOICE_IDENTITY, debug = null, now
 
   function publicConfig() {
     return {
+      ...identity,
       id: identity.id,
       primaryVoice: identity.primaryVoice,
       realtimeVoice: identity.realtimeVoice,
@@ -94,7 +122,7 @@ function createVoiceIdentity({ identity = NOON_VOICE_IDENTITY, debug = null, now
     };
   }
 
-  return { attempts, createSessionId, identity, publicConfig, resolve, traceFallback };
+  return { assertAvailable, attempts, createSessionId, identity, publicConfig, resolve, traceFallback };
 }
 
-module.exports = { NOON_VOICE_IDENTITY, createVoiceIdentity, styleInstructions };
+module.exports = { NOON_VOICE_IDENTITY, SHARED_VOICES, saveVoiceChoice, createVoiceIdentity, styleInstructions };

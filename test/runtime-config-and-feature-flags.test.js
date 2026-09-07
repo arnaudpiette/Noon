@@ -143,3 +143,41 @@ test("signale la dette des flags arrivés à échéance", () => {
   const debt = featureFlags.debt(new Date("2026-12-01T00:00:00Z"));
   assert.ok(debt.some((item) => item.flagId === "router.policy.v2" && item.readyForCleanup));
 });
+
+test("la délégation démarre en shadow avec des limites prudentes", () => {
+  const { registry, featureFlags, runtimeConfig } = fixture();
+  assert.equal(featureFlags.evaluate("delegation.engine").mode, "SHADOW");
+  assert.equal(runtimeConfig.get("delegation.maxSubtasks").value, 3);
+  assert.equal(runtimeConfig.get("delegation.maxParallel").value, 2);
+  assert.equal(registry.get("delegation.maxWallTimeMs").max, 120000);
+});
+
+test("le moteur de jobs démarre en shadow avec une backpressure configurée", () => {
+  const { registry, featureFlags, runtimeConfig } = fixture();
+  assert.equal(featureFlags.evaluate("jobs.engine").mode, "SHADOW");
+  assert.equal(runtimeConfig.get("jobs.maxQueued").value, 500);
+  assert.equal(runtimeConfig.get("jobs.maxRunning").value, 2);
+  assert.equal(registry.get("jobs.leaseMs").restartRequired, "APP_RESTART");
+});
+
+test("le portfolio démarre read-only par rollout progressif", () => {
+  const { flagRegistry, featureFlags, runtimeConfig } = fixture();
+  assert.equal(flagRegistry.get("portfolio.engine").defaultMode, "LIMITED");
+  assert.equal(flagRegistry.get("portfolio.capacity").defaultMode, "LIMITED");
+  assert.equal(flagRegistry.get("portfolio.overload").defaultMode, "SHADOW");
+  assert.equal(flagRegistry.get("portfolio.scenarios").defaultMode, "OFF");
+  // Sans identité de cohorte ni dépendances activées, le runtime échoue fermé.
+  assert.equal(featureFlags.evaluate("portfolio.engine").mode, "OFF");
+  assert.equal(featureFlags.evaluate("portfolio.scenarios").mode, "OFF");
+  assert.equal(runtimeConfig.get("portfolio.capacityCacheTtlMs").value, 60000);
+  assert.equal(runtimeConfig.get("portfolio.tightUtilizationRatio").value, 85);
+});
+
+test("le SDK extensions internes est actif mais les extensions externes restent coupées", () => {
+  const { flagRegistry, featureFlags, runtimeConfig } = fixture();
+  assert.equal(featureFlags.evaluate("extensions.sdk").mode, "ON");
+  assert.equal(featureFlags.evaluate("extensions.external").mode, "OFF");
+  assert.equal(runtimeConfig.get("extensions.developerMode").value, false);
+  assert.equal(runtimeConfig.get("extensions.storageQuotaBytes").value, 1048576);
+  assert.equal(flagRegistry.get("extensions.external").requires.includes("extensions.sdk"), true);
+});

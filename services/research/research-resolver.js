@@ -16,6 +16,18 @@ function resolveResearchScope(input = {}) {
   return { scope: "PERSONAL", explicit: false, reasonCodes: ["no_public_dependency"] };
 }
 
+function resolveExecutableResearchScope({ requestedScope } = {}) {
+  const scope = ["PERSONAL", "PUBLIC", "MIXED"].includes(requestedScope)
+    ? requestedScope
+    : "PERSONAL";
+  if (scope !== "MIXED") return { scope, mixedEnabled: false, reasonCodes: [] };
+  return {
+    scope: "PUBLIC",
+    mixedEnabled: false,
+    reasonCodes: ["mixed_disabled_until_personal_fusion"],
+  };
+}
+
 function inferResearchMode(query, requestedMode) {
   if (["QUICK", "STANDARD", "DEEP", "VERIFY", "COMPARE", "CURRENT_STATE"].includes(requestedMode)) return requestedMode;
   const text = String(query || "");
@@ -35,4 +47,7 @@ function inferFreshness(query, mode) {
   return "EVERGREEN";
 }
 
-module.exports = { inferFreshness, inferResearchMode, resolveResearchScope };
+module.exports = {
+  inferFreshness, inferResearchMode,
+  resolveExecutableResearchScope, resolveResearchScope,
+};

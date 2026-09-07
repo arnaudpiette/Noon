@@ -10,16 +10,36 @@ const fs = require("fs");
 const path = require("path");
 const sharp = require("sharp");
 const { isSafeExternalUrl, isValidAccelerator, parseNoonDeepLink } = require("./app-core");
+const {
+  createTrustedIpcRegistrar,
+  readPreviousStartupState,
+  resolveBuildProfile,
+  writeStartupState,
+} = require("./production-hardening");
 const { createRotatingLogger, migrateLegacyData } = require("../lib/internal-data");
 const { FOCUS_CATALOG } = require("../lib/focus-catalog");
 const { WakeWordService } = require("../services/wake-word-service");
 const { isDueToday, nextRunAt } = require("../lib/creative-brief");
 const { createLocalPermissionStore } = require("../lib/local-permissions");
 
-const NOON_ORIGIN = "http://127.0.0.1:3000";
+const smokeArgument = (name) => process.argv.find((value) => value.startsWith(`--${name}=`))?.split("=").slice(1).join("=");
+const smokeModeFromArguments = process.argv.includes("--noon-smoke-test");
+const NOON_PORT = process.env.NOON_SMOKE_TEST === "1" || smokeModeFromArguments
+  ? Math.max(1024, Math.min(65535, Number(process.env.NOON_SMOKE_PORT || smokeArgument("noon-smoke-port")) || 43127))
+  : 3000;
+const NOON_ORIGIN = `http://127.0.0.1:${NOON_PORT}`;
+const PROCESS_STARTED_AT = Date.now();
 const DEFAULT_SHORTCUT = "Control+Option+N";
 const DEFAULT_LIVE_SHORTCUT = "Control+Option+Shift+N";
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
+const buildProfile = resolveBuildProfile({ packaged: app.isPackaged });
+const safeModeRequested = process.argv.includes("--safe-mode") || process.env.NOON_SAFE_MODE === "1";
+const smokeTestRequested = process.env.NOON_SMOKE_TEST === "1" || smokeModeFromArguments;
+const smokeUserData = process.env.NOON_SMOKE_USER_DATA || smokeArgument("noon-smoke-user-data");
+if (smokeTestRequested && smokeUserData) {
+  app.setPath("userData", path.resolve(smokeUserData));
+}
+// Le smoke test utilise un profil et un port isolés ; il ne doit pas réveiller l'instance quotidienne.
+const hasSingleInstanceLock = smokeTestRequested || app.requestSingleInstanceLock();
 let mainWindow = null;
 let tray = null;
 let serverController = null;
@@ -51,7 +71,7 @@ function writeJson(name, value) {
   fs.renameSync(temporary, destination);
 }
 function loadPreferences() {
-  return {
+  const preferences = {
     launchAtLogin: true,
     creativeBriefEnabled: true,
     creativeBriefTime: "07:00",
@@ -67,6 +87,9 @@ function loadPreferences() {
     showInDock: true,
     ...readJson("preferences.json", {}),
   };
+  return safeModeRequested
+    ? { ...preferences, wakeWordEnabled: false, creativeBriefEnabled: false }
+    : preferences;
 }
 function encryptedSecretPath(name) { return dataPath(`${name}.bin`); }
 function saveEncryptedSecret(name, value) {
@@ -167,6 +190,10 @@ function configureSessionSecurity() {
   });
 }
 async function requestMicrophoneAccess() {
+  if (smokeTestRequested) {
+    microphonePermission = "skipped-smoke-test";
+    return false;
+  }
   if (process.platform !== "darwin") {
     microphonePermission = "granted";
     return true;
@@ -244,6 +271,7 @@ function createWindow() {
       preload: path.join(__dirname, "preload.js"), contextIsolation: true,
       nodeIntegration: false, sandbox: true, webSecurity: true,
       allowRunningInsecureContent: false, webviewTag: false,
+      devTools: buildProfile === "development" || buildProfile === "test",
     },
   });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -273,6 +301,11 @@ function createWindow() {
   mainWindow.on("closed", () => { mainWindow = null; });
   mainWindow.loadURL(`${NOON_ORIGIN}/app`);
   mainWindow.once("ready-to-show", () => {
+    logNoonEvent("info", "startup-window-ready", JSON.stringify({
+      elapsedMs: Date.now() - PROCESS_STARTED_AT,
+      profile: buildProfile,
+      safeMode: safeModeRequested,
+    }));
     if (!app.getLoginItemSettings().wasOpenedAtLogin) mainWindow.show();
     if (pendingDeepLink) {
       mainWindow.webContents.send("noon:deep-link", pendingDeepLink);
@@ -381,7 +414,7 @@ async function runCreativeBrief({ force = false, notify = true } = {}) {
   } catch (error) {
     if (notify && Notification.isSupported()) new Notification({ title: "Brief Noon momentanément indisponible", body: "Noon réessaiera automatiquement dans quinze minutes." }).show();
     logNoonEvent("error", "morning-brief", error.message);
-    clearTimeout(briefRetryTimer); briefRetryTimer = setTimeout(() => { void runCreativeBrief({ force: false, notify: true }); }, 15 * 60 * 1000);
+    clearTimeout(briefRetryTimer); briefRetryTimer = setTimeout(() => { void checkCreativeBriefDue(); }, 15 * 60 * 1000);
     return null;
   } finally { creativeBriefRunning = false; scheduleCreativeBrief(); }
 }
@@ -389,9 +422,9 @@ async function runCreativeBrief({ force = false, notify = true } = {}) {
 async function checkCreativeBriefDue() {
   const preferences = loadPreferences();
   if (!preferences.creativeBriefEnabled) return scheduleCreativeBrief();
-  const response = await fetch(`${NOON_ORIGIN}/daily-brief`, { headers: { "X-Noon-Local-Auth": localAuthSecret } }).catch(() => null);
+  const response = await fetch(`${NOON_ORIGIN}/daily-brief/current?catchUp=false`, { headers: { "X-Noon-Local-Auth": localAuthSecret } }).catch(() => null);
   const state = response?.ok ? await response.json() : {};
-  const dailyIsDue = isDueToday({ time: preferences.creativeBriefTime, lastSuccessDate: state.lastSuccessDate });
+  const dailyIsDue = state.catchUpAllowed === true;
   if (dailyIsDue) await runCreativeBrief();
   else scheduleCreativeBrief();
 }
@@ -408,29 +441,34 @@ function scheduleCreativeBrief() {
   creativeBriefTimer = setTimeout(() => { void checkCreativeBriefDue(); }, Math.min(next.getTime() - Date.now(), 2_147_000_000));
 }
 function registerIpc() {
-  ipcMain.handle("noon:get-status", () => ({
+  const registerTrustedHandler = createTrustedIpcRegistrar({
+    ipcMain,
+    trustedOrigin: NOON_ORIGIN,
+  });
+  registerTrustedHandler("noon:get-status", () => ({
     platform: process.platform, arch: process.arch, packaged: app.isPackaged,
+    buildProfile, safeMode: safeModeRequested,
     liveVoiceActive, microphonePermission,
     shortcuts: registerShortcuts(), loginItem: app.getLoginItemSettings(),
   }));
-  ipcMain.handle("noon:get-preferences", loadPreferences);
-  ipcMain.handle("noon:set-preference", (_event, payload) => setPreference(payload?.key, payload?.value));
-  ipcMain.handle("noon:show-window", showMainWindow);
-  ipcMain.handle("noon:hide-window", () => mainWindow?.hide());
-  ipcMain.handle("noon:set-live-active", (_event, active) => {
+  registerTrustedHandler("noon:get-preferences", loadPreferences);
+  registerTrustedHandler("noon:set-preference", (_event, payload) => setPreference(payload?.key, payload?.value));
+  registerTrustedHandler("noon:show-window", showMainWindow);
+  registerTrustedHandler("noon:hide-window", () => mainWindow?.hide());
+  registerTrustedHandler("noon:set-live-active", (_event, active) => {
     liveVoiceActive = Boolean(active);
     if (liveVoiceActive) void wakeWordService?.stop(); else scheduleWakeWordResume();
     rebuildTrayMenu(); return liveVoiceActive;
   });
-  ipcMain.handle("noon:get-wake-word-status", () => ({
+  registerTrustedHandler("noon:get-wake-word-status", () => ({
     ...wakeWordService?.getStatus(),
     configured: Boolean(loadEncryptedSecret("picovoice-access-key") && loadPreferences().wakeWordKeywordPath && loadPreferences().wakeWordModelPath),
     devices: WakeWordService.listDevices(),
   }));
-  ipcMain.handle("noon:get-openai-key-status", () => ({
+  registerTrustedHandler("noon:get-openai-key-status", () => ({
     configured: Boolean(process.env.OPENAI_API_KEY || loadEncryptedSecret("openai-api-key")),
   }));
-  ipcMain.handle("noon:set-openai-key", (_event, value) => {
+  registerTrustedHandler("noon:set-openai-key", (_event, value) => {
     if (typeof value !== "string" || value.length > 500) throw new Error("Clé OpenAI invalide.");
     const normalized = value.trim();
     if (normalized && !/^sk-[A-Za-z0-9_-]{12,}$/.test(normalized)) {
@@ -441,12 +479,12 @@ function registerIpc() {
     else delete process.env.OPENAI_API_KEY;
     return { configured: Boolean(normalized) };
   });
-  ipcMain.handle("noon:set-picovoice-key", (_event, value) => {
+  registerTrustedHandler("noon:set-picovoice-key", (_event, value) => {
     if (typeof value !== "string" || value.length > 500) throw new Error("Clé Picovoice invalide.");
     saveEncryptedSecret("picovoice-access-key", value.trim());
     return { configured: Boolean(value.trim()) };
   });
-  ipcMain.handle("noon:import-wake-model", async (_event, kind) => {
+  registerTrustedHandler("noon:import-wake-model", async (_event, kind) => {
     const extension = kind === "keyword" ? ".ppn" : kind === "model" ? ".pv" : null;
     if (!extension) throw new Error("Type de modèle refusé.");
     const result = await dialog.showOpenDialog(mainWindow, { properties: ["openFile"], filters: [{ name: extension, extensions: [extension.slice(1)] }] });
@@ -463,14 +501,14 @@ function registerIpc() {
     if (preferences.wakeWordEnabled) scheduleWakeWordResume(50);
     return { imported: true, name: path.basename(destination) };
   });
-  ipcMain.handle("noon:reset-wake-word", async () => {
+  registerTrustedHandler("noon:reset-wake-word", async () => {
     await wakeWordService?.stop();
     saveEncryptedSecret("picovoice-access-key", "");
     const preferences = { ...loadPreferences(), wakeWordEnabled: false, wakeWordKeywordPath: null, wakeWordModelPath: null, wakeWordSensitivity: 0.5, wakeWordDeviceIndex: -1 };
     writeJson("preferences.json", preferences);
     return wakeWordService?.getStatus();
   });
-  ipcMain.handle("noon:share-conversation", async (_event, payload) => {
+  registerTrustedHandler("noon:share-conversation", async (_event, payload) => {
     const target = payload?.target;
     const markdown = typeof payload?.markdown === "string" ? payload.markdown : "";
     const suggestedName = typeof payload?.suggestedName === "string" &&
@@ -502,7 +540,7 @@ function registerIpc() {
     await shell.openExternal(whatsappUrl);
     return { message: "WhatsApp ouvert. Aucun message n’a été envoyé automatiquement." };
   });
-  ipcMain.handle("noon:open-system-settings", async (_event, section) => {
+  registerTrustedHandler("noon:open-system-settings", async (_event, section) => {
     const allowed = {
       microphone: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
       notifications: "x-apple.systempreferences:com.apple.preference.notifications",
@@ -510,28 +548,28 @@ function registerIpc() {
     if (!allowed[section]) return false;
     await shell.openExternal(allowed[section]); return true;
   });
-  ipcMain.handle("noon:list-local-permissions", () => localPermissionStore.load());
-  ipcMain.handle("noon:add-local-permission", async (_event, payload) => {
+  registerTrustedHandler("noon:list-local-permissions", () => localPermissionStore.load());
+  registerTrustedHandler("noon:add-local-permission", async (_event, payload) => {
     const mode = payload?.mode === "read-write" ? "read-write" : "read-only";
     const result = await dialog.showOpenDialog(mainWindow, { title: "Autoriser un dossier pour Noon", properties: ["openDirectory", "createDirectory"] });
     if (result.canceled || !result.filePaths[0]) return { canceled: true };
     return { canceled: false, permission: localPermissionStore.add({ path: result.filePaths[0], mode, output: payload?.output === true }) };
   });
-  ipcMain.handle("noon:remove-local-permission", (_event, targetPath) => {
+  registerTrustedHandler("noon:remove-local-permission", (_event, targetPath) => {
     localPermissionStore.remove(String(targetPath || ""));
     return { status: "ok" };
   });
-  ipcMain.handle("noon:open-artifact", async (_event, targetPath) => {
+  registerTrustedHandler("noon:open-artifact", async (_event, targetPath) => {
     const realPath = fs.realpathSync(String(targetPath || ""));
     if (!localPermissionStore.roots("read-write").some((root) => realPath === root || realPath.startsWith(`${root}${path.sep}`))) throw new Error("Livrable hors d’un dossier autorisé.");
     const errorMessage = await shell.openPath(realPath); if (errorMessage) throw new Error(errorMessage); return true;
   });
-  ipcMain.handle("noon:reveal-artifact", (_event, targetPath) => {
+  registerTrustedHandler("noon:reveal-artifact", (_event, targetPath) => {
     const realPath = fs.realpathSync(String(targetPath || ""));
     if (!localPermissionStore.roots("read-write").some((root) => realPath === root || realPath.startsWith(`${root}${path.sep}`))) throw new Error("Livrable hors d’un dossier autorisé.");
     shell.showItemInFolder(realPath); return true;
   });
-  ipcMain.handle("noon:preview-artifact", async (_event, targetPath) => {
+  registerTrustedHandler("noon:preview-artifact", async (_event, targetPath) => {
     const realPath = fs.realpathSync(String(targetPath || ""));
     const previewRoot = fs.realpathSync(dataPath("creative-image-previews"));
     if (realPath !== previewRoot && !realPath.startsWith(`${previewRoot}${path.sep}`)) throw new Error("Aperçu temporaire non autorisé.");
@@ -543,7 +581,7 @@ function registerIpc() {
       .toBuffer();
     return `data:image/webp;base64,${preview.toString("base64")}`;
   });
-  ipcMain.handle("noon:download-artifact", async (_event, targetPath) => {
+  registerTrustedHandler("noon:download-artifact", async (_event, targetPath) => {
     const realPath = fs.realpathSync(String(targetPath || ""));
     const previewRoot = fs.realpathSync(dataPath("creative-image-previews"));
     if (realPath !== previewRoot && !realPath.startsWith(`${previewRoot}${path.sep}`)) throw new Error("Aperçu temporaire non autorisé.");
@@ -565,6 +603,11 @@ function registerIpc() {
 async function startNoon() {
   const userDataDirectory = app.getPath("userData");
   process.env.NOON_DATA_DIR = userDataDirectory;
+  process.env.NOON_BUILD_PROFILE = buildProfile;
+  if (safeModeRequested) process.env.NOON_SAFE_MODE = "1";
+  const startupMarker = dataPath("startup-state.json");
+  const previousStartupState = readPreviousStartupState(startupMarker);
+  writeStartupState(startupMarker, "starting", { profile: buildProfile, previousStartupState });
   const savedPreferences = readJson("preferences.json", {});
   if (
     savedPreferences.creativeBriefTime === "08:00" &&
@@ -594,6 +637,11 @@ async function startNoon() {
   loadEncryptedOpenAIKey();
   loadLocalIntegrationEnvironment();
   logNoonEvent = createRotatingLogger(userDataDirectory);
+  logNoonEvent("info", "startup-begin", JSON.stringify({
+    profile: buildProfile,
+    safeMode: safeModeRequested,
+    previousStartupState,
+  }));
   wakeWordService = new WakeWordService({ getAccessKey: () => loadEncryptedSecret("picovoice-access-key"), logger: logNoonEvent });
   wakeWordService.on("status", () => rebuildTrayMenu());
   wakeWordService.on("detected", () => {
@@ -611,8 +659,8 @@ async function startNoon() {
     await requestMicrophoneAccess();
   serverController = require(path.join(__dirname, "..", "server.js"));
   try {
-    await serverController.startNoonServer({ authSecret: localAuthSecret });
-    logNoonEvent("info", "server-started", "127.0.0.1:3000");
+    await serverController.startNoonServer({ authSecret: localAuthSecret, port: NOON_PORT });
+    logNoonEvent("info", "server-started", `127.0.0.1:${NOON_PORT}`);
   }
   catch (error) {
     if (error.code !== "EADDRINUSE") throw error;
@@ -622,6 +670,8 @@ async function startNoon() {
       throw new Error("Le port 3000 est occupé par une autre application.");
     }
   }
+  writeStartupState(startupMarker, "running", { profile: buildProfile });
+  logNoonEvent("info", "startup-server-ready", JSON.stringify({ elapsedMs: Date.now() - PROCESS_STARTED_AT }));
 }
 
 app.on("open-url", (event, url) => { event.preventDefault(); dispatchDeepLink(url); });
@@ -634,7 +684,27 @@ app.on("second-instance", (_event, argv) => {
 if (hasSingleInstanceLock) {
   app.whenReady().then(async () => {
     app.setAsDefaultProtocolClient("noon");
-    registerIpc(); await startNoon(); createWindow(); createTray(); registerShortcuts();
+    registerIpc();
+    await startNoon();
+    if (smokeTestRequested) {
+      const response = await fetch(`${NOON_ORIGIN}/health`, {
+        headers: { "X-Noon-Local-Auth": localAuthSecret },
+      });
+      if (!response.ok || (await response.json()).service !== "Noon") {
+        throw new Error("Le smoke test packagé n'a pas atteint /health.");
+      }
+      writeJson("smoke-result.json", {
+        status: "ok",
+        smoke: "packaged-startup",
+        profile: buildProfile,
+        elapsedMs: Date.now() - PROCESS_STARTED_AT,
+      });
+      console.log(JSON.stringify({ status: "ok", smoke: "packaged-startup", profile: buildProfile }));
+      isQuitting = true;
+      app.quit();
+      return;
+    }
+    createWindow(); createTray(); registerShortcuts();
     if (loadPreferences().launchAtLogin && !app.getLoginItemSettings().openAtLogin) {
       app.setLoginItemSettings({ openAtLogin: true, openAsHidden: true });
     }
@@ -673,6 +743,7 @@ app.on("will-quit", async (event) => {
   clearTimeout(creativeBriefTimer);
   await wakeWordService?.stop();
   globalShortcut.unregisterAll(); tray?.destroy(); tray = null;
+  try { writeStartupState(dataPath("startup-state.json"), "clean", { profile: buildProfile }); } catch {}
   if (serverController?.server?.listening) {
     event.preventDefault();
     try { await serverController.stopNoonServer(); } finally { app.exit(0); }

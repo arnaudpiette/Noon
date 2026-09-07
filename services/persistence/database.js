@@ -5,7 +5,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 13;
 
 function loadSqlite() {
   try { return require("node:sqlite"); }
@@ -339,7 +339,132 @@ function createSchema(database) {
     );
     CREATE INDEX IF NOT EXISTS conversation_segments_conversation_idx
       ON conversation_segments(conversation_id, started_at);
+    CREATE TABLE IF NOT EXISTS background_jobs (
+      id TEXT PRIMARY KEY, type TEXT NOT NULL, handler_version INTEGER NOT NULL,
+      state TEXT NOT NULL, priority TEXT NOT NULL, resource_class TEXT NOT NULL,
+      profile_scope TEXT NOT NULL DEFAULT 'arnaud', workspace_id TEXT, project_id TEXT,
+      session_id TEXT, conversation_id TEXT, input_mode TEXT NOT NULL,
+      input_ref_json TEXT NOT NULL DEFAULT '{}', output_ref_json TEXT NOT NULL DEFAULT '{}',
+      progress_json TEXT NOT NULL DEFAULT '{}', retry_policy_json TEXT NOT NULL DEFAULT '{}',
+      budget_json TEXT NOT NULL DEFAULT '{}', metadata_json TEXT NOT NULL DEFAULT '{}',
+      dependencies_json TEXT NOT NULL DEFAULT '[]', checkpoint_json TEXT NOT NULL DEFAULT '{}',
+      idempotency_key TEXT, dedupe_key TEXT, attempt_count INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 1, scheduled_at TEXT NOT NULL,
+      lease_owner TEXT, lease_expires_at TEXT, reason_code TEXT,
+      notification_state TEXT NOT NULL DEFAULT 'PENDING', created_at TEXT NOT NULL,
+      started_at TEXT, completed_at TEXT, updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS background_jobs_queue_idx
+      ON background_jobs(state, scheduled_at, priority, created_at);
+    CREATE INDEX IF NOT EXISTS background_jobs_scope_idx
+      ON background_jobs(profile_scope, workspace_id, created_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS background_jobs_idempotency_idx
+      ON background_jobs(idempotency_key) WHERE idempotency_key IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS background_jobs_dedupe_idx
+      ON background_jobs(dedupe_key, state);
+    CREATE TABLE IF NOT EXISTS sync_meta (
+      key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS sync_devices (
+      device_id TEXT PRIMARY KEY, device_type TEXT NOT NULL, display_name TEXT NOT NULL,
+      platform TEXT, app_version TEXT, protocol_version INTEGER NOT NULL,
+      public_signing_key TEXT NOT NULL, public_encryption_key TEXT NOT NULL,
+      status TEXT NOT NULL, capabilities_json TEXT NOT NULL DEFAULT '[]',
+      sync_scopes_json TEXT NOT NULL DEFAULT '[]', sync_window_json TEXT NOT NULL DEFAULT '{}',
+      paired_at TEXT, last_seen_at TEXT, revoked_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS sync_devices_status_idx ON sync_devices(status, last_seen_at);
+    CREATE TABLE IF NOT EXISTS sync_pairing_requests (
+      pairing_id TEXT PRIMARY KEY, device_id TEXT NOT NULL, request_json TEXT NOT NULL,
+      code_hash TEXT NOT NULL, state TEXT NOT NULL, created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL, consumed_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS sync_entities (
+      entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, profile_scope TEXT NOT NULL,
+      revision INTEGER NOT NULL, payload_json TEXT NOT NULL, field_versions_json TEXT NOT NULL DEFAULT '{}',
+      origin_device_id TEXT NOT NULL, deleted_at TEXT, updated_at TEXT NOT NULL,
+      PRIMARY KEY(entity_type, entity_id, profile_scope)
+    );
+    CREATE TABLE IF NOT EXISTS sync_changes (
+      sequence INTEGER PRIMARY KEY AUTOINCREMENT, change_id TEXT NOT NULL UNIQUE,
+      entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, operation TEXT NOT NULL,
+      version INTEGER NOT NULL, changed_at TEXT NOT NULL, origin_device_id TEXT NOT NULL,
+      profile_scope TEXT NOT NULL, sync_classification TEXT NOT NULL,
+      changed_fields_json TEXT NOT NULL DEFAULT '[]', base_field_versions_json TEXT NOT NULL DEFAULT '{}',
+      tombstone_until TEXT
+    );
+    CREATE INDEX IF NOT EXISTS sync_changes_cursor_idx ON sync_changes(sequence, profile_scope);
+    CREATE TABLE IF NOT EXISTS sync_outbox (
+      outbox_id TEXT PRIMARY KEY, change_id TEXT NOT NULL, target_device_id TEXT NOT NULL,
+      state TEXT NOT NULL, attempt_count INTEGER NOT NULL DEFAULT 0, envelope_json TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL, acknowledged_at TEXT,
+      UNIQUE(change_id, target_device_id)
+    );
+    CREATE INDEX IF NOT EXISTS sync_outbox_state_idx ON sync_outbox(state, created_at);
+    CREATE TABLE IF NOT EXISTS sync_applied_envelopes (
+      envelope_id TEXT PRIMARY KEY, source_device_id TEXT NOT NULL,
+      applied_at TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS sync_conflicts (
+      conflict_id TEXT PRIMARY KEY, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL,
+      field TEXT NOT NULL, version_a_json TEXT NOT NULL, version_b_json TEXT NOT NULL,
+      device_a TEXT NOT NULL, device_b TEXT NOT NULL, detected_at TEXT NOT NULL,
+      resolution_state TEXT NOT NULL, resolution_json TEXT, resolved_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS sync_conflicts_state_idx ON sync_conflicts(resolution_state, detected_at);
+    CREATE TABLE IF NOT EXISTS sync_cursors (
+      device_id TEXT PRIMARY KEY, inbound_sequence INTEGER NOT NULL DEFAULT 0,
+      outbound_sequence INTEGER NOT NULL DEFAULT 0, snapshot_revision INTEGER,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS sync_remote_requests (
+      request_id TEXT PRIMARY KEY, source_device_id TEXT NOT NULL, nonce_hash TEXT NOT NULL,
+      status TEXT NOT NULL, intent_ref_json TEXT NOT NULL, created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL, consumed_at TEXT, result_ref_json TEXT,
+      UNIQUE(source_device_id, nonce_hash)
+    );
+    CREATE TABLE IF NOT EXISTS remote_device_sessions (
+      device_session_id TEXT PRIMARY KEY, device_id TEXT NOT NULL, connection_state TEXT NOT NULL,
+      presence_state TEXT NOT NULL, capabilities_json TEXT NOT NULL DEFAULT '[]',
+      active_conversation_id TEXT, connected_at TEXT NOT NULL, last_activity_at TEXT NOT NULL, closed_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS remote_requests (
+      request_id TEXT PRIMARY KEY, remote_input_id TEXT NOT NULL UNIQUE, device_id TEXT NOT NULL,
+      device_session_id TEXT NOT NULL, channel TEXT NOT NULL, conversation_id TEXT, workspace_id TEXT,
+      sequence INTEGER NOT NULL, nonce_hash TEXT NOT NULL, state TEXT NOT NULL,
+      intent_ref_json TEXT NOT NULL DEFAULT '{}', result_ref_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL, expires_at TEXT, updated_at TEXT NOT NULL,
+      UNIQUE(device_id, nonce_hash)
+    );
+    CREATE INDEX IF NOT EXISTS remote_requests_device_state_idx ON remote_requests(device_id, state, updated_at);
+    CREATE TABLE IF NOT EXISTS remote_outputs (
+      remote_output_id TEXT PRIMARY KEY, request_id TEXT NOT NULL, conversation_id TEXT,
+      type TEXT NOT NULL, payload_ref_json TEXT NOT NULL, sequence INTEGER NOT NULL,
+      final INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
+      UNIQUE(request_id, sequence)
+    );
+    CREATE INDEX IF NOT EXISTS remote_outputs_resume_idx ON remote_outputs(request_id, sequence);
+    CREATE TABLE IF NOT EXISTS remote_handoffs (
+      handoff_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, session_id TEXT NOT NULL,
+      source_device_id TEXT NOT NULL, target_device_id TEXT NOT NULL, workspace_id TEXT,
+      refs_json TEXT NOT NULL DEFAULT '{}', state TEXT NOT NULL, created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL, completed_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS remote_handoffs_target_idx ON remote_handoffs(target_device_id, state, expires_at);
+    CREATE TABLE IF NOT EXISTS remote_media_transfers (
+      transfer_id TEXT PRIMARY KEY, request_id TEXT NOT NULL, device_id TEXT NOT NULL,
+      media_type TEXT NOT NULL, filename TEXT, expected_hash TEXT NOT NULL,
+      received_hash TEXT, size_bytes INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL,
+      asset_ref_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS remote_approval_responses (
+      response_id TEXT PRIMARY KEY, approval_id TEXT NOT NULL, device_id TEXT NOT NULL,
+      nonce_hash TEXT NOT NULL, decision TEXT NOT NULL, responded_at TEXT NOT NULL,
+      state TEXT NOT NULL, UNIQUE(device_id, nonce_hash)
+    );
   `);
+  // Migration additive pour les bases v12 créées pendant le rollout SHADOW.
+  try { database.exec("ALTER TABLE sync_changes ADD COLUMN base_field_versions_json TEXT NOT NULL DEFAULT '{}'"); } catch {}
   try {
     database.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS memory_items_fts USING fts5(id UNINDEXED, subject, value_text);`);
     database.ftsAvailable = true;
@@ -352,7 +477,7 @@ function createFallback(filePath) {
   const fallbackPath = `${filePath}.fallback.json`;
   function load() {
     try { return JSON.parse(fs.readFileSync(fallbackPath, "utf8")); }
-    catch { return { version: SCHEMA_VERSION, memory_items: [], projects: [], inbox_items: [], recommendations: [], followups: [], feedback_events: [], metrics_events: [], pending_approvals: [], execution_items: [], execution_events: [], duration_statistics: [], review_records: [], artifacts: [], artifact_writes: [], workspaces: [], workspace_projects: [], workspace_roots: [], workspace_conversations: [], workspace_artifacts: [], workspace_active_state: [], continuity_sessions: [], continuity_checkpoints: [], conversation_segments: [], transactional_executions: [], transactional_execution_steps: [] }; }
+    catch { return { version: SCHEMA_VERSION, memory_items: [], projects: [], inbox_items: [], recommendations: [], followups: [], feedback_events: [], metrics_events: [], pending_approvals: [], execution_items: [], execution_events: [], duration_statistics: [], review_records: [], artifacts: [], artifact_writes: [], workspaces: [], workspace_projects: [], workspace_roots: [], workspace_conversations: [], workspace_artifacts: [], workspace_active_state: [], continuity_sessions: [], continuity_checkpoints: [], conversation_segments: [], transactional_executions: [], transactional_execution_steps: [], background_jobs: [], sync_devices: [], sync_pairing_requests: [], sync_entities: [], sync_changes: [], sync_outbox: [], sync_applied_envelopes: [], sync_conflicts: [], sync_cursors: [], sync_remote_requests: [], remote_device_sessions: [], remote_requests: [], remote_outputs: [], remote_handoffs: [], remote_media_transfers: [], remote_approval_responses: [] }; }
   }
   function save(data) {
     fs.mkdirSync(path.dirname(fallbackPath), { recursive: true });

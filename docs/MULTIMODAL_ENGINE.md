@@ -6,7 +6,7 @@ Noon centralise l’analyse des images, captures d’écran, PDF et fichiers aud
 
 1. `media-intake-service` contrôle la source, les racines autorisées, la taille et la signature réelle.
 2. `multimodal-engine` inspecte paresseusement le média et classe les PDF en texte natif, scanné, hybride ou inconnu.
-3. `media-strategy-selector` sélectionne texte natif, vision/OCR ou transcription.
+3. `media-strategy-selector` sélectionne texte natif local, analyse distante du PDF complet ou transcription.
 4. `openai-media-analyzer` envoie seulement le média nécessaire avec `store: false` et sans outil activé.
 5. Les résultats deviennent des preuves structurées contenant l’asset, la page ou région éventuelle, la méthode d’extraction, la confiance et la distinction observation/inférence.
 6. Le cache évite une seconde analyse lorsque l’empreinte, la stratégie, la version et l’intention sont identiques.
@@ -22,7 +22,8 @@ Noon centralise l’analyse des images, captures d’écran, PDF et fichiers aud
 
 ## Limites actuelles
 
-- L’extraction PDF native détaillée repose encore sur l’analyse de document du fournisseur lorsque nécessaire; la sélection page par page pourra être raffinée.
+- Les opérateurs PDF texte simples (`Tj`/`TJ`) sont extraits localement sans appel Vision. Les flux compressés ou encodages complexes peuvent rester partiels.
+- Pour les PDF scannés ou hybrides, `WHOLE_PDF_VISION` et `WHOLE_PDF_MULTIMODAL` transmettent encore le document complet au fournisseur. La sélection page par page n’est donc pas une contrainte structurelle à ce stade et les stratégies ne prétendent plus le contraire.
 - La transcription n’expose des timestamps que si le fournisseur en retourne réellement.
 - Il n’existe ni diarisation inventée, ni analyse des sons non vocaux.
 - Le registre en mémoire est lié à la session du serveur; les preuves utiles sont injectées dans la conversation et indexées par workspace sans persister les binaires.

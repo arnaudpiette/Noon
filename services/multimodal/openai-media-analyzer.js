@@ -1,5 +1,7 @@
 "use strict";
 
+const { sanitizeImageDataUrlForRemote } = require("./media-intake-service");
+
 function parseStructuredOutput(text) {
   const raw = String(text || "").trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   try { const value = JSON.parse(raw); return value && typeof value === "object" ? value : {}; }
@@ -23,9 +25,12 @@ function analysisPrompt({ asset, request, strategy }) {
 function createOpenAIMediaAnalyzer({ client, trackUsage = null } = {}) {
   if (typeof client !== "function") throw new TypeError("Client OpenAI requis.");
   async function vision({ asset, dataUrl, request, strategy, signal, route }) {
+    const remoteDataUrl = ["IMAGE", "SCREENSHOT"].includes(asset.mediaType)
+      ? await sanitizeImageDataUrlForRemote(dataUrl)
+      : dataUrl;
     const mediaBlock = asset.mediaType === "PDF"
-      ? { type: "input_file", filename: asset.filename, file_data: dataUrl }
-      : { type: "input_image", image_url: dataUrl, detail: request.analysisDepth === "DEEP" ? "high" : "low" };
+      ? { type: "input_file", filename: asset.filename, file_data: remoteDataUrl }
+      : { type: "input_image", image_url: remoteDataUrl, detail: request.analysisDepth === "DEEP" ? "high" : "low" };
     const response = await client().responses.create({
       model: route?.model || "gpt-5.6-terra", store: false,
       input: [{ role: "user", content: [mediaBlock, { type: "input_text", text: analysisPrompt({ asset, request, strategy }) }] }],
