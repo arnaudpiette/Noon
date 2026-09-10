@@ -132,6 +132,7 @@ const { ApprovalManager } = require("./services/approvals/approval-manager");
 const { createPrivateSeedImporter, validateSeed } = require("./services/personal-memory/seed-importer");
 const { getErrorHeader, readJsonBody, readTextBody, validateAttachment } = require("./services/http/request-utils");
 const { extractExplicitMemoryCandidates } = require("./services/personal-memory/candidate-extractor");
+const { parseConversationMemoryCommand, executeConversationMemoryCommand } = require("./services/personal-memory/conversation-memory-commands");
 const { createTimeSlotService } = require("./services/scheduling/time-slot-service");
 const { createProactiveEngine } = require("./services/proactive/proactive-engine");
 const { createDailyPlanStore } = require("./services/planning/daily-plan-store");
@@ -537,6 +538,19 @@ const memoryEngine = createMemoryEngine({
     getConversationHistory(createConversationKey({ sessionId: conversationId })),
   debug: (event, counts) => toolAuditLog.append(event, counts),
 });
+
+function executeExplicitConversationMemoryCommand(question) {
+  const command = parseConversationMemoryCommand(question);
+  if (!command) return null;
+  const result = executeConversationMemoryCommand(privateMemoryService, command);
+  if (result && !["not_found", "needs_clarification", "unavailable"].includes(result.status)) {
+    contextBuilder.invalidateMemory();
+    personalSearchEngine?.invalidate();
+    multiSourceSynthesisEngine?.invalidate();
+  }
+  toolAuditLog.append("private-memory.conversation-command", { action: command.action, subjectId: command.subjectId, status: result?.status || "unavailable", memoryCount: result?.memoryIds?.length || 0 });
+  return { command, ...result };
+}
 const realtimeVoiceConfig = createRealtimeVoiceConfig({
   voiceIdentity,
   memoryEngine,
@@ -4286,6 +4300,19 @@ if (req.method === "POST" && req.url.startsWith("/ai")) {
       forceSemanticFallback: body.allowIntentFallback === true,
     });
     sessionContinuityEngine.applyIntent(continuitySession.id, normalizedIntent);
+    const memoryCommand = executeExplicitConversationMemoryCommand(question);
+    if (memoryCommand) {
+      const memoryContext = { sourcesUsed: ["private_memory"], memoryIds: memoryCommand.memoryIds || [], truncated: false };
+      sessionContinuityEngine.recordCompletedTurn(continuitySession.id, { channel: "chat", normalizedIntent, executionId: null, approvalIds: [], artifacts: [], messages: [{ role: "user", content: question, state: "completed" }, { role: "assistant", content: memoryCommand.answer, state: "completed" }], lastMessageId: null });
+      const response = { status: "ok", assistant: "Noon", question, answer: memoryCommand.answer, workspaceId, sessionId: continuitySession.id, conversationId: sessionId, normalizedIntent, sources: [], artifacts: [], memoryContext };
+      if (streamRequested) {
+        if (!res.headersSent) res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-transform" });
+        res.write(`event: final\ndata: ${JSON.stringify(response)}\n\n`);
+        return res.end();
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify(response));
+    }
     const continuityContext = {
       ...sessionContinuityEngine.contextForRequest(continuitySession.id),
       version: sessionContinuityEngine.getSession(continuitySession.id).version,
@@ -5481,6 +5508,13 @@ if (req.method === "POST" && req.url === "/realtime/tool") {
         sessionId: continuitySession.id, workspaceId,
       }, buildIntentContext({ sessionId: continuitySession.id, conversationId: sessionId, workspaceId }));
       sessionContinuityEngine.applyIntent(continuitySession.id, normalizedIntent);
+      const memoryCommand = executeExplicitConversationMemoryCommand(question);
+      if (memoryCommand) {
+        const memoryContext = { sourcesUsed: ["private_memory"], memoryIds: memoryCommand.memoryIds || [], truncated: false };
+        sessionContinuityEngine.recordCompletedTurn(continuitySession.id, { channel: "voice", normalizedIntent, executionId: null, approvalIds: [], artifacts: [], messages: [{ role: "user", content: question, state: "completed" }, { role: "assistant", content: memoryCommand.answer, state: "completed" }], lastMessageId: null });
+        res.writeHead(200);
+        return res.end(JSON.stringify({ status: "ok", answer: memoryCommand.answer, sessionId: continuitySession.id, conversationId: sessionId, sources: [], artifacts: [], memoryContext, clientAction: { type: "brainAnswer", question, answer: memoryCommand.answer, sources: [], artifacts: [] } }));
+      }
       const continuityContext = {
         ...sessionContinuityEngine.contextForRequest(continuitySession.id),
         version: sessionContinuityEngine.getSession(continuitySession.id).version,
