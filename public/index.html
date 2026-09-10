@@ -40,14 +40,16 @@
             <span class="label">Voix temps réel</span>
             <strong id="liveVoiceTitle">Conversation Live</strong>
           </div>
-          <span id="liveVoiceDot" class="live-voice-dot" data-state="disconnected" aria-hidden="true"></span>
         </div>
         <button id="liveVoiceButton" class="live-voice-button" type="button">
-          Conversation Live
+          <span id="liveVoiceButtonLabel">Conversation Live</span>
         </button>
+        <div class="live-voice-indicator-row">
+          <span id="liveVoiceDot" class="live-voice-dot" data-state="disconnected" aria-hidden="true"></span>
+          <span id="liveVoiceCost">0,00 $ / 11 $</span>
+        </div>
         <p class="live-voice-meta">
           <span id="liveVoiceStatus" class="live-voice-status" role="status" aria-live="polite">Arbor — En attente de disponibilité API OpenAI</span>
-          <span id="liveVoiceCost">0,00 $ / 11 $</span>
         </p>
         <!-- Langue et accent restent pilotables oralement. -->
         <input id="liveVoiceLanguage" type="hidden" value="auto">

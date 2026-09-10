@@ -12,11 +12,11 @@ test("TTS, Live Mini et Live Max utilisent tous arbor", () => {
   assert.equal(identity.resolve({ pipeline: "realtime", model: "gpt-realtime-2.1" }).voice, "arbor");
 });
 
-test("Luna, Terra et Sol n'influencent jamais l'identité", () => {
+test("Luna, Terra, Sol et Astra n'influencent jamais l'identité", () => {
   const identity = createVoiceIdentity();
-  const voices = ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]
+  const voices = ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra"]
     .map((model) => identity.resolve({ pipeline: "tts", model }).voice);
-  assert.deepEqual(voices, ["arbor", "arbor", "arbor"]);
+  assert.deepEqual(voices, ["arbor", "arbor", "arbor", "arbor"]);
 });
 
 test("français, anglais et espagnol conservent le même locuteur", () => {

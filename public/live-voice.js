@@ -7,6 +7,7 @@
 
   const elements = {
     button: document.getElementById("liveVoiceButton"),
+    buttonLabel: document.getElementById("liveVoiceButtonLabel"),
     status: document.getElementById("liveVoiceStatus"),
     dot: document.getElementById("liveVoiceDot"),
     quality: document.getElementById("liveVoiceQuality"),
@@ -134,11 +135,13 @@
       this.state = state;
       elements.status.textContent = message;
       elements.dot.dataset.state = state;
-      elements.button.textContent = this.connected
+      elements.dot.dataset.connected = String(this.connected);
+      elements.buttonLabel.textContent = this.connected
         ? "Conversation Live active"
         : state === "connecting" || state === "reconnecting"
           ? "Connexion…"
           : "Conversation Live";
+      elements.button.dataset.connected = String(this.connected);
       if (elements.mute) elements.mute.disabled = !this.connected;
       if (elements.end) elements.end.disabled = !this.connected && state !== "connecting";
       if (["listening", "muted"].includes(state)) bridge.setVisualState("listening");
