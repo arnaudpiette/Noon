@@ -297,7 +297,13 @@ const integrationTokenStore = createTokenStore({
   safeStorage: electronSafeStorage,
 });
 
+function assertGoogleRemoteAvailable(capability = "REMOTE_GMAIL") {
+  const result = localIntelligenceRuntime.preflight({ requiredCapabilities: [capability] });
+  if (result.status !== "AVAILABLE") throw Object.assign(new Error("Source Google bloquée par la politique locale ou le réseau."), { code: "REMOTE_CONNECTOR_BLOCKED" });
+}
+let googleRefreshInFlight = null;
 async function refreshGoogleAccessToken(savedToken) {
+  assertGoogleRemoteAvailable();
   if (!savedToken?.refresh_token) {
     throw new Error("Reconnectez Gmail pour renouveler l’autorisation.");
   }
@@ -314,7 +320,7 @@ async function refreshGoogleAccessToken(savedToken) {
   });
   const refreshed = await response.json();
   if (!response.ok || !refreshed.access_token) {
-    throw new Error("Impossible de renouveler l’autorisation Gmail.");
+    throw Object.assign(new Error("Reconnectez Google pour renouveler l’autorisation."), { status: response.status === 400 ? 401 : response.status });
   }
   const token = {
     ...savedToken,
@@ -326,16 +332,18 @@ async function refreshGoogleAccessToken(savedToken) {
 }
 
 async function getGoogleAccessToken() {
+  assertGoogleRemoteAvailable();
   const token = integrationTokenStore.get("google");
-  if (!token?.access_token) throw new Error("Google n’est pas connecté.");
+  if (!token?.access_token) {
+    throw Object.assign(new Error("Google n’est pas connecté."), { status: 401, code: "AUTH_MISSING" });
+  }
   if (!token.expires_at || token.expires_at > Date.now() + 60_000) {
     return token.access_token;
   }
-  return refreshGoogleAccessToken(token);
+  if (!googleRefreshInFlight) googleRefreshInFlight = refreshGoogleAccessToken(token).finally(() => { googleRefreshInFlight = null; });
+  return googleRefreshInFlight;
 }
 
-const remindersConnector = createAppleConnector({ tokenStore: integrationTokenStore });
-const notesConnector = createAppleNotesConnector({ tokenStore: integrationTokenStore });
 const USAGE_FILE = path.join(DATA_DIRECTORY, "usage.json");
 const MONTHLY_BUDGET_USD = 30;
 
@@ -665,18 +673,33 @@ const artifactEngine = createArtifactEngine({
   observability: (event, metadata) => toolAuditLog.append(event, metadata),
 });
 artifactEngine.cleanupPreviews();
+const remindersConnector = createAppleConnector({ reliability: reliabilityEngine });
+const notesConnector = createAppleNotesConnector({ reliability: reliabilityEngine });
 const gmailConnector = createGmailConnector({
   tokenStore: integrationTokenStore,
   getGoogleAccessToken,
+  runtime: localIntelligenceRuntime,
+  configured: () => Boolean(process.env.GOOGLE_OAUTH_CLIENT_ID && process.env.GOOGLE_OAUTH_CLIENT_SECRET),
   approvals: approvalManager,
   reliability: reliabilityEngine,
 });
 const calendarConnector = createCalendarConnector({
   tokenStore: integrationTokenStore,
   getGoogleAccessToken,
+  runtime: localIntelligenceRuntime,
+  configured: () => Boolean(process.env.GOOGLE_OAUTH_CLIENT_ID && process.env.GOOGLE_OAUTH_CLIENT_SECRET),
   approvals: approvalManager,
   reliability: reliabilityEngine,
 });
+
+function createGoogleReadAuthorization() {
+  assertGoogleRemoteAvailable();
+  return createGoogleAuthorization({
+    clientId: process.env.GOOGLE_OAUTH_CLIENT_ID,
+    redirectUri: GOOGLE_OAUTH_REDIRECT_URI,
+    scopes: [...new Set([...gmailConnector.scopes, ...calendarConnector.scopes])],
+  });
+}
 
 reliabilityEngine.register({
   componentId: "sqlite", type: "storage", criticality: "critical",
@@ -690,7 +713,7 @@ reliabilityEngine.register({
     const version = personalDatabase.database.prepare(
       "SELECT version FROM schema_migrations WHERE name = 'personal-intelligence-base' ORDER BY version DESC LIMIT 1"
     ).get()?.version;
-    if (Number(version) !== 10) throw Object.assign(new Error("Schema version mismatch"), { code: "SCHEMA_MISMATCH" });
+    if (Number(version) !== SCHEMA_VERSION) throw Object.assign(new Error("Schema version mismatch"), { code: "SCHEMA_MISMATCH" });
     if (deep) personalDatabase.database.prepare("PRAGMA quick_check").get();
     return { ok: true };
   },
@@ -742,10 +765,15 @@ reliabilityEngine.register({
   healthCheck: async () => { fs.mkdirSync(ARTIFACT_PREVIEW_DIRECTORY, { recursive: true }); fs.accessSync(ARTIFACT_PREVIEW_DIRECTORY, fs.constants.R_OK | fs.constants.W_OK); return { ok: true }; },
   impact: "La prévisualisation ou certains exports peuvent être indisponibles.",
 });
+for (const [connector, operation] of [[notesConnector, "listRecentNotes"], [remindersConnector, "listIncompleteReminders"]]) {
+  reliabilityEngine.register({ componentId: connector.id, type: "connector", criticality: "optional",
+    capabilities: connector.readCapabilities, ttlMs: 60_000, authState: () => connector.status.authState,
+    healthCheck: async () => { await connector[operation](); }, impact: "Cette source locale ne peut pas être vérifiée." });
+}
 reliabilityEngine.register({ componentId: "gmail", type: "connector", criticality: "optional", capabilities: ["read", "search", "draft"], ttlMs: 60_000, authState: () => gmailConnector.connected ? "connected" : "missing", healthCheck: async () => { if (!gmailConnector.connected) throw Object.assign(new Error("Google non connecté"), { status: 401, code: "AUTH_MISSING" }); await gmailConnector.searchGmailMessages("newer_than:1d", { maxResults: 1 }); }, impact: "Les emails ne peuvent pas être vérifiés ou inclus." });
 reliabilityEngine.register({ componentId: "google-calendar", type: "connector", criticality: "optional", capabilities: ["read", "availability", "write"], ttlMs: 60_000, authState: () => calendarConnector.connected ? "connected" : "missing", healthCheck: async () => { if (!calendarConnector.connected) throw Object.assign(new Error("Google non connecté"), { status: 401, code: "AUTH_MISSING" }); await calendarConnector.listCalendars(); }, impact: "Les disponibilités de l’agenda restent inconnues." });
-reliabilityEngine.register({ componentId: "openai-models", type: "model", criticality: "important", capabilities: ["luna", "terra", "sol"], ttlMs: 60_000, healthCheck: async () => { if (!process.env.OPENAI_API_KEY) throw Object.assign(new Error("OpenAI API key missing"), { code: "CONFIGURATION_ERROR" }); }, impact: "Le chat IA et les analyses distantes ne peuvent pas répondre." });
-for (const modelId of ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]) {
+reliabilityEngine.register({ componentId: "openai-models", type: "model", criticality: "important", capabilities: ["luna", "terra", "sol", "astra"], ttlMs: 60_000, healthCheck: async () => { if (!process.env.OPENAI_API_KEY) throw Object.assign(new Error("OpenAI API key missing"), { code: "CONFIGURATION_ERROR" }); }, impact: "Le chat IA et les analyses distantes ne peuvent pas répondre." });
+for (const modelId of ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra"]) {
   reliabilityEngine.register({ componentId: modelId, type: "model", criticality: "optional", capabilities: ["responses"], ttlMs: 30_000, circuitThreshold: 2, impact: "Ce profil de modèle est temporairement évité par le routeur." });
 }
 reliabilityEngine.register({ componentId: "realtime", type: "voice", criticality: "optional", capabilities: ["webrtc", "stt", "tts"], ttlMs: 60_000, fallback: "text-chat", fallbackQuality: "degraded", healthCheck: async () => { if (!process.env.OPENAI_API_KEY) throw Object.assign(new Error("OpenAI API key missing"), { code: "CONFIGURATION_ERROR" }); }, impact: "La voix Live est indisponible, mais le chat texte reste utilisable." });
@@ -3274,10 +3302,10 @@ const controlCenterService = createControlCenterService({
     },
     connections() {
       const report = reliabilityEngine.report();
-      const connectionIds = new Set(["gmail", "google-calendar", "openai-models", "public-web-search", "realtime"]);
+      const connectionIds = new Set(["gmail", "google-calendar", "apple-notes", "apple-reminders", "openai-models", "public-web-search", "realtime"]);
       const items = reliabilityItems(report, (component) => connectionIds.has(component.componentId)).map((entry) => ({
         ...entry,
-        meta: { ...entry.meta, auth: entry.meta.authState || "unknown", health: entry.state },
+        meta: { ...entry.meta, auth: [gmailConnector, calendarConnector, notesConnector, remindersConnector].find((connector) => connector.id === entry.id)?.status.authState || entry.meta.authState || "unknown", health: entry.state },
         actions: ["CHECK_CONNECTION"],
       }));
       const attention = items.some((entry) => ["UNAUTHORIZED", "MISCONFIGURED", "UNAVAILABLE"].includes(entry.state));
@@ -3361,7 +3389,14 @@ const controlCenterService = createControlCenterService({
   },
   actions: {
     RUN_QUICK_DIAGNOSTIC: async () => ({ status: "SUCCEEDED", diagnostic: await reliabilityEngine.diagnose({ deep: false }) }),
-    CHECK_CONNECTION: async ({ targetId }) => ({ status: "SUCCEEDED", component: await reliabilityEngine.check(targetId, { force: true }) }),
+    CHECK_CONNECTION: async ({ targetId }) => {
+      const googleConnector = [gmailConnector, calendarConnector].find((connector) => connector.id === targetId);
+      if (googleConnector && !googleConnector.connected) {
+        const { url } = createGoogleReadAuthorization();
+        return { status: "AUTH_REQUIRED", authorizationUrl: url };
+      }
+      return { status: "SUCCEEDED", component: await reliabilityEngine.check(targetId, { force: true }) };
+    },
     CHECK_EXTENSION: async ({ targetId }) => ({ status: "SUCCEEDED", health: await extensionRegistry.checkHealth(targetId) }),
   },
 });
@@ -6354,11 +6389,7 @@ if (req.method === "GET" && req.url === "/integrations/status") {
 
 if (req.method === "POST" && ["/integrations/gmail/connect", "/integrations/google-calendar/connect"].includes(req.url)) {
   try {
-    const { url } = createGoogleAuthorization({
-      clientId: process.env.GOOGLE_OAUTH_CLIENT_ID,
-      redirectUri: GOOGLE_OAUTH_REDIRECT_URI,
-      scopes: [...new Set([...gmailConnector.scopes, ...calendarConnector.scopes])],
-    });
+    const { url } = createGoogleReadAuthorization();
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     return res.end(JSON.stringify({ status: "ok", authorizationUrl: url }));
   } catch (error) {
@@ -6379,6 +6410,7 @@ if (req.method === "GET" && requestPath === "/integrations/google/callback") {
     const callbackUrl = new URL(req.url, "http://127.0.0.1:3000");
     const oauthError = callbackUrl.searchParams.get("error");
     if (oauthError) throw new Error("Autorisation Google refusée.");
+    assertGoogleRemoteAvailable();
     const token = await exchangeGoogleCode({
       code: callbackUrl.searchParams.get("code"),
       state: callbackUrl.searchParams.get("state"),
@@ -6404,18 +6436,17 @@ if (req.method === "GET" && requestPath === "/integrations/google/callback") {
       email: GOOGLE_ACCOUNT_EMAIL,
     });
     gmailConnector.markSuccess();
-    calendarConnector.markSuccess();
+    // OAuth Gmail profile is not proof of a successful Calendar read.
     return sendCallbackPage(200, "Google connecté à Noon", `Le compte ${GOOGLE_ACCOUNT_EMAIL} est autorisé pour Gmail et Calendar. Aucun e-mail ne sera envoyé automatiquement.`);
   } catch (error) {
-    integrationTokenStore.remove("google");
     return sendCallbackPage(400, "Connexion Gmail impossible", String(error.message || error));
   }
 }
 
 if (req.method === "POST" && ["/integrations/gmail/disconnect", "/integrations/google-calendar/disconnect"].includes(req.url)) {
-  gmailConnector.disconnect();
+  const result = gmailConnector.disconnect();
   res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-  return res.end(JSON.stringify({ status: "ok" }));
+  return res.end(JSON.stringify({ status: "ok", ...result }));
 }
 
 if (req.method === "GET" && req.url === "/integrations/google-calendar/health") {

@@ -46,10 +46,10 @@ test("le coffre reste en mémoire si le chiffrement système est indisponible", 
   assert.equal(store.persistent, false);
 });
 
-test("Gmail autorise uniquement la lecture et la création de brouillons", () => {
+test("Gmail demande uniquement le scope de lecture pendant le rollout P1.4", () => {
   const tokenStore = createTokenStore({ filePath: path.join(os.tmpdir(), "unused-gmail-token.json") });
   const gmail = createGmailConnector({ tokenStore });
-  assert.deepEqual(gmail.scopes, ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.compose"]);
+  assert.deepEqual(gmail.scopes, ["https://www.googleapis.com/auth/gmail.readonly"]);
   assert.deepEqual(gmail.writeCapabilities, ["create_draft"]);
   assert.ok(gmail.readCapabilities.includes("message_content"));
   assert.equal(gmail.writeCapabilities.includes("send"), false);

@@ -19,6 +19,7 @@ test("accepte uniquement les deep links Noon explicitement autorisés", () => {
 
 test("refuse les navigations externes qui ne sont pas HTTPS", () => {
   assert.equal(isSafeExternalUrl("https://openai.com/docs"), true);
+  assert.equal(isSafeExternalUrl("https://accounts.google.com/o/oauth2/v2/auth"), true);
   assert.equal(isSafeExternalUrl("http://openai.com"), false);
   assert.equal(isSafeExternalUrl("javascript:alert(1)"), false);
   assert.equal(isSafeExternalUrl("file:///tmp/test"), false);

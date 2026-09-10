@@ -3,14 +3,15 @@
 const { createConnector, providerFetch } = require("./base-connector");
 
 function createGmailConnector(deps) {
-  const base = createConnector({ id: "gmail", credentialId: "google", displayName: "Gmail",
+  const base = createConnector({ id: "gmail", credentialId: "google", remoteCapability: "REMOTE_GMAIL", displayName: "Gmail",
     capabilities: ["search", "threads", "message_content", "drafts"],
     readCapabilities: ["search", "threads", "message_content"], writeCapabilities: ["create_draft"],
-    scopes: ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.compose"],
+    scopes: ["https://www.googleapis.com/auth/gmail.readonly"],
   }, deps);
-  const token = async () => deps.getGoogleAccessToken
-    ? deps.getGoogleAccessToken()
-    : deps.tokenStore.get("google")?.access_token;
+  const token = async () => {
+    base.assertRemoteAvailable();
+    return deps.getGoogleAccessToken ? deps.getGoogleAccessToken() : deps.tokenStore.get("google")?.access_token;
+  };
   async function searchGmailMessages(query, options = {}) {
     const params = new URLSearchParams({ q: String(query).slice(0, 500), maxResults: String(Math.min(50, options.maxResults || 20)) });
     return base.run(async () => providerFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`, { token: await token() }), { idempotent: true });
@@ -37,15 +38,9 @@ function createGmailConnector(deps) {
     if (!input?.to || !/^\S+@\S+\.\S+$/.test(input.to)) throw new Error("Destinataire vérifié obligatoire.");
     return { kind: "gmail_draft", to: input.to, subject: String(input.subject || "").slice(0, 300), body: String(input.body || "").slice(0, 20_000), attachments: input.attachments || [] };
   }
-  async function createGmailDraft(input) {
-    const draft = prepareEmailReply(input);
-    const subject = draft.subject.replace(/[\r\n]/g, " ");
-    const recipient = draft.to.replace(/[\r\n]/g, "");
-    const rawMessage = [`To: ${recipient}`, `Subject: ${subject}`, "Content-Type: text/plain; charset=UTF-8", "", draft.body].join("\r\n");
-    const raw = Buffer.from(rawMessage, "utf8").toString("base64url");
-    return base.run(async () => providerFetch("https://gmail.googleapis.com/gmail/v1/users/me/drafts", {
-      token: await token(), method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: { raw } }),
-    }), { idempotent: false, destructive: true, unknownOutcome: true });
+  async function createGmailDraft() {
+    // No production caller wires this mutation through canonical transactional execution yet.
+    throw Object.assign(new Error("Création de brouillon distante non activée : pipeline d’autorisation et d’exécution requis."), { code: "REMOTE_WRITE_NOT_ENABLED" });
   }
   function previewGmailSend(draft) {
     return deps.approvals.requestApproval({ provider: "gmail", action: "send_email", target: draft.to, payload: draft,
@@ -56,11 +51,11 @@ function createGmailConnector(deps) {
     if (deps.dryRun) return { dryRun: true, sent: false };
     throw new Error("Envoi Gmail réel non activé dans cette version.");
   }
-  return { ...base, searchGmailMessages, getGmailMessage, getGmailMessageMetadata, getGmailThread, summarizeGmailThread: getGmailThread,
+  return Object.assign(base, { searchGmailMessages, getGmailMessage, getGmailMessageMetadata, getGmailThread, summarizeGmailThread: getGmailThread,
     getImportantUnreadMessages: () => searchGmailMessages("is:unread is:important"),
     getMessagesAwaitingReply: () => searchGmailMessages("is:unread -category:promotions -category:social"),
     getRecentMessagesForContact: (contact) => searchGmailMessages(`from:${contact} OR to:${contact}`),
     classifyGmailMessage, prepareEmailReply, createGmailDraft,
-    updateGmailDraft: prepareEmailReply, previewGmailSend, sendGmailDraftWithApproval };
+    updateGmailDraft: prepareEmailReply, previewGmailSend, sendGmailDraftWithApproval });
 }
 module.exports = { createGmailConnector };

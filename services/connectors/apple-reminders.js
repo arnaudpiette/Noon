@@ -39,7 +39,7 @@ end repeat
 return output
 end tell`;
   return new Promise((resolve, reject) => runner("osascript", ["-e", script], { timeout: 10_000, maxBuffer: 256 * 1024 }, (error, stdout) => {
-    if (error) return reject(new Error("Apple Rappels momentanément indisponible."));
+    if (error) return reject(Object.assign(new Error("Apple Rappels momentanément indisponible."), { status: /-1743|not authorized|not permitted/i.test(String(error.code) + error.message) ? 403 : 503 }));
     const reminders = String(stdout).split("\n").filter(Boolean).slice(0, 100).map((line) => {
       const [id, title, dueAt] = line.split("\t"); return { id, title, dueAt: dueAt && dueAt !== "missing value" ? dueAt : null, completed: false };
     });
@@ -47,9 +47,10 @@ end tell`;
   }));
 }
 function createAppleConnector(deps) {
-  return { ...createConnector({ id: "apple-reminders", displayName: "Apple Rappels",
+  const base = createConnector({ id: "apple-reminders", local: true, displayName: "Apple Rappels",
     capabilities: ["shortcut_check", "shortcut_run", "icloud_inbox"],
-    readCapabilities: ["shortcut_check"], writeCapabilities: ["create_reminder_explicit"], scopes: ["macOS Shortcuts"],
-  }, deps), listAppleShortcuts, runNoonReminderShortcut, checkNoonReminderShortcut, listIncompleteReminders };
+    readCapabilities: ["shortcut_check", "incomplete_reminders"], writeCapabilities: ["create_reminder_explicit"], scopes: ["macOS Shortcuts"],
+  }, deps);
+  return Object.assign(base, { listAppleShortcuts, runNoonReminderShortcut, checkNoonReminderShortcut, listIncompleteReminders: (runner) => base.run(() => listIncompleteReminders(runner), { idempotent: true, maxRetries: 0 }) });
 }
 module.exports = { SHORTCUT_NAME, createAppleConnector, listAppleShortcuts, runNoonReminderShortcut, checkNoonReminderShortcut, listIncompleteReminders };

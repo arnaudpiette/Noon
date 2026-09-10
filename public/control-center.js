@@ -59,6 +59,8 @@
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || "Action impossible.");
+      const authorizationUrl = data.action?.result?.authorizationUrl;
+      if (authorizationUrl) window.open(authorizationUrl, "_blank", "noopener");
       await load(activeSection, true);
     } catch (error) {
       const message = element("p", "control-center__notice", error.message || "Action impossible.");
