@@ -118,3 +118,8 @@ test('scheduler metadata cannot erase generation failure or a live attempt', t =
   store.markScheduled(new Date('2026-09-07T05:00:00Z'));
   assert.equal(engine.getCurrent({ at: today }).status, 'failed');
 });
+
+test('source unavailable keeps the current brief partial even when composition succeeds', async t => {
+ const {engine}=fixture(t,{collect:async()=>({actions:[],sources:[{id:'gmail',status:'unavailable'},{id:'apple-notes',status:'ready'}]})});
+ await engine.generate({at:today});assert.equal(engine.getCurrent({at:today}).status,'partial');
+});

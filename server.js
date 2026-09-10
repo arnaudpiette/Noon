@@ -1227,6 +1227,7 @@ const dailyBriefEngine = createDailyBriefEngine({
     const plan = await dailyPlanningEngine.buildPlan({
       actions,
       events: context.calendarEvents || [],
+      calendarStatus: context.sources?.find((source) => source.id === "google-calendar")?.status || "unknown",
       at,
       trigger: "daily_brief",
     });
@@ -1270,6 +1271,8 @@ const dailyBriefEngine = createDailyBriefEngine({
   audit: (event, metadata) => toolAuditLog.append(event, metadata),
   observability: noonObservability,
   compose: async ({ structured, personalContext }) => {
+    const runtimeDecision = localIntelligenceRuntime.preflight({ requiredCapabilities: ["REMOTE_REASONING"] });
+    if (runtimeDecision.status !== "AVAILABLE") throw Object.assign(new Error("Composition distante bloquée par la politique locale ou le réseau."), { code: "REMOTE_COMPOSITION_BLOCKED" });
     if (getBudgetStatus().mode === "BLOCKED") {
       const error = new Error("Budget mensuel Noon atteint.");
       error.code = "BUDGET_BLOCKED";

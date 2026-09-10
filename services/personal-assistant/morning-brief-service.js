@@ -3,7 +3,7 @@
 const { buildManagedEvent, dateKey, deduplicateActions, findFreeSlots, normalizeAction, occurrenceKey, prioritizeActions, sourceState } = require("../../lib/morning-brief");
 
 function importantText(value) { return /\b(urgent|important|échéance|deadline|avant le|répondre|réponse attendue|relance|soutenance|livrable|rendez-vous|rdv)\b/i.test(String(value || "")); }
-function containsPromptInjection(value) { return /ignore (?:all |les )?(?:previous|précédentes)|system prompt|instruction système|révèle (?:les )?secrets|exfiltr/i.test(String(value || "")); }
+function containsPromptInjection(value) { return /ignore (?:all |les )?(?:instructions? |règles? )?(?:previous|précédentes|et envoie)|system prompt|instruction système|révèle (?:les )?secrets|exfiltr/i.test(String(value || "")); }
 function extractEmail(value) { return String(value || "").match(/<([^>\s]+@[^>\s]+)>|([\w.+-]+@[\w.-]+\.[A-Za-z]{2,})/)?.slice(1).find(Boolean) || null; }
 function dateRange(now = new Date(), days = 7) { return { timeMin: now.toISOString(), timeMax: new Date(now.getTime() + days * 86_400_000).toISOString() }; }
 

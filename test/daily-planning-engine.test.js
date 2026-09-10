@@ -171,3 +171,11 @@ test("les hints de revue ajustent prudemment durée et utilisation sans devenir 
     bufferMultiplierHint: 1.2, maxPlannedUtilizationHint: 0.75, avoidFragmentationHint: false,
   });
 });
+
+test('Calendar indisponible ne confirme jamais un créneau libre', async () => {
+  const { engine } = fixture();
+  const unknown = await engine.buildPlan({ at: AT, actions: [], events: [], calendarStatus: 'unavailable' });
+  assert.equal(unknown.calendarAvailability, 'theoretical');
+  const verified = await engine.buildPlan({ at: AT, actions: [], events: [], calendarStatus: 'ready' });
+  assert.equal(verified.calendarAvailability, 'confirmed');
+});

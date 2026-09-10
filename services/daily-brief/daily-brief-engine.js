@@ -92,7 +92,7 @@ function createDailyBriefEngine({
       ...state, date, timeZone: TIME_ZONE, current,
       previous: (state.briefs || []).find((brief) => brief.date < date) || null,
       historical: (state.briefs || []).filter((brief) => brief.date !== date),
-      status: generating ? "generating" : current ? (current.metadata?.degraded ? "partial" : "ready") : failed ? "failed" : "missing",
+      status: generating ? "generating" : current ? (current.metadata?.degraded || current.sources?.some((source) => !["ready", "ok"].includes(source.status)) ? "partial" : "ready") : failed ? "failed" : "missing",
       generationActive: generating,
       catchUpAllowed: due && retryAllowed,
       error: failed ? state.error || "La génération précédente a été interrompue." : null,
@@ -142,8 +142,8 @@ function createDailyBriefEngine({
         metrics.brief_action_extract_ms = elapsed(started, now);
         metrics.actions_extracted = extractedActions.length;
         metrics.actions_deduplicated = extractedActions.length - sourceActions.length;
-        metrics.sources_ok = (collected.sources || []).filter((source) => source.status === "ok").length;
-        metrics.sources_failed = (collected.sources || []).filter((source) => source.status !== "ok").length;
+        metrics.sources_ok = (collected.sources || []).filter((source) => ["ok", "ready"].includes(source.status)).length;
+        metrics.sources_failed = (collected.sources || []).filter((source) => !["ok", "ready"].includes(source.status)).length;
 
         started = now();
         let priorities;
@@ -248,6 +248,7 @@ function createDailyBriefEngine({
           drafts: drafts || [], sourceStatus: Object.fromEntries((collected.sources || []).map((source) => [source.id, source.status])),
           sources: collected.sources || [],
           metadata: {
+            degraded: (collected.sources || []).some((source) => !["ready", "ok"].includes(source.status)),
             occurrenceKey: collected.occurrenceKey || `daily-brief:${date}:${TIME_ZONE}`,
             actionIds: priorities.map((item) => item.id), priorityVersion: priorityEngine.scoringVersion,
             actionTrace: priorities.map((item) => ({ sourceIds: [item.sourceId || item.id].filter(Boolean), actionId: item.id, score: item.score })),
