@@ -6,6 +6,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
+const asar = require("@electron/asar");
 
 const root = path.join(__dirname, "..");
 const arch = process.env.NOON_RELEASE_ARCH || process.arch;
@@ -45,6 +46,17 @@ try {
   bundleVersion = execFileSync("plutil", ["-extract", "CFBundleShortVersionString", "raw", "-o", "-", infoPlist]).toString().trim();
   if (bundleId !== "com.arnaudpiette.noon") blockers.push(`bundle-id:${bundleId}`);
 } catch { blockers.push("info-plist:unreadable"); }
+
+// Electron stocke l’intégrité de l’ASAR comme le SHA-256 de son en-tête,
+// pas comme le hash du fichier entier. Vérifier cette convention évite une
+// fausse alerte tout en détectant une archive incohérente.
+try {
+  const appAsar = path.join(appPath, "Contents", "Resources", "app.asar");
+  const expected = execFileSync("/usr/libexec/PlistBuddy", ["-c", "Print :ElectronAsarIntegrity:Resources/app.asar:hash", path.join(appPath, "Contents", "Info.plist")]).toString().trim();
+  const { headerString } = asar.getRawHeader(appAsar);
+  const actual = crypto.createHash("sha256").update(headerString).digest("hex");
+  if (expected !== actual) blockers.push("asar-integrity:mismatch");
+} catch { blockers.push("asar-integrity:unreadable"); }
 
 let signed = false;
 try { execFileSync("codesign", ["--verify", "--deep", "--strict", appPath], { stdio: "pipe" }); signed = true; }

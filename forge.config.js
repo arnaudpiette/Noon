@@ -55,6 +55,9 @@ module.exports = {
       /^\/logs(?:\/|$)/,
       /^\/test(?:\/|$)/,
       /^\/Workspace\/Temp(?:\/|$)/,
+      // La base locale appartient exclusivement au userData Electron. Elle ne
+      // doit jamais être copiée depuis un worktree de développement dans l’ASAR.
+      /^\/personal-intelligence\.sqlite(?:-(?:wal|shm)|\.fallback\.json(?:\.tmp)?)?$/,
       /^\/.*(?:conversation-memory|conversation-summaries|creative-brief|long-term-memory|usage|projects-registry|project-journals|approval-audit|integration-tokens|automations).*\.json(?:\.tmp|\.bak)?$/,
     ],
   },
