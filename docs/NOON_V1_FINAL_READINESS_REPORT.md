@@ -1,8 +1,28 @@
 # Noon V1 — rapport final de readiness
 
-## Validation P1.3 — Daily Brief (3 septembre 2026)
+## Intégration GPT-6 Astra — ModelRouter (8 septembre 2026)
 
-Statut : **PARTIAL**. Les invariants du brief quotidien sont validés par 92/92 tests ciblés : unicité journalière et concurrence, fuseau `Europe/Paris` et DST, mode dégradé, priorité/planning centraux, confidentialité et séparation stricte entre lecture, brouillon et mutations. Aucun déclenchement packagé n'a toutefois été observé à 07:00, après veille/réveil ou déverrouillage, et les sources Google/Apple réelles ne sont pas certifiées.
+Statut : **VERIFIED** avec rollout recommandé **SHADOW**. `gpt-6-astra` est enregistré comme quatrième niveau du ModelRouter canonique, derrière `router.astra=SHADOW`. Aucun router, engine, orchestrateur, pipeline d'outils ou privilège n'a été ajouté. Le seuil Astra (`88`) vaut deux fois le seuil Sol (`44`) et exige plusieurs signaux forts ou une préférence utilisateur explicite ; budget contraint et local-only empêchent l'appel. Le fallback Astra → Sol est borné, sans boucle, et observé.
+
+L'appel API réel non sensible a confirmé le modèle effectif `gpt-6-astra`, le streaming (193 deltas), un TTFT de 2 414 ms, 7 914 ms au total, 45 tokens d'entrée, 197 de sortie et un coût estimé de 0,0103 USD. Sur trois fixtures synthétiques identiques à effort `medium`, Sol et Astra ont chacun satisfait 100 % des contraintes structurées ; Sol a moyenné 1 995 ms TTFT, 4 649 ms total et 0,01192 USD, contre 5 155 ms, 10 537 ms et 0,04705 USD pour Astra. Ce petit échantillon ne justifie pas une promotion au-delà de `SHADOW`.
+
+Validation de régression après intégration : **976/976 tests**, **54/54 évaluations critiques**, build et lint réussis.
+
+Le paquet macOS x64 a été reconstruit et sa vérification statique est **PASS** (`com.arnaudpiette.noon`, 1.0.6, x86_64). Le précédent `TypeError: fetch failed` n'a pas été reproduit après arrêt propre de l'instance Noon active : quatre profils isolés successifs, puis le paquet reconstruit, ont atteint `/health` et terminé **PASS**. La cause historique reste indéterminée (concurrence d'instance ou incident Chromium transitoire plausibles, non démontrés) et n'a donc motivé aucun contournement. Le paquet reste non signé Developer ID et non notarized.
+
+Tarifs canoniques vérifiés lors de l'intégration : 10 USD/M tokens d'entrée, 1 USD/M cache et 50 USD/M sortie. Async tool calling et mid-turn steering restent `AVAILABLE_NOT_ENABLED`. VoiceIdentity et Arbor sont inchangés.
+
+## Precheck P1.4 — Control Center et SQLite (9 septembre 2026)
+
+Statut : **VERIFIED** pour le precheck SQLite ; P1.4 connecteurs reste **PARTIAL**. La base packagée réelle est située dans le `userData` canonique (`~/Library/Application Support/Noon/personal-intelligence.sqlite`). Elle existait avant la correction, est lisible, `PRAGMA integrity_check` retourne `ok` et sa migration canonique est en version 13. Le faux `CONFIGURATION_ERROR` venait du health check de `server.js`, qui comparait cette version à la constante obsolète `10` au lieu de `SCHEMA_VERSION` (`13`). La comparaison a été corrigée sans migration, suppression, recréation ou modification des données.
+
+Après reconstruction, installation dans `/Applications/Noon.app` et relance sur les mêmes données : SQLite est **HEALTHY / OK**, `userActionRequired=false`, et le statut global passe de **UNAVAILABLE / NOT_READY** à **DEGRADED / DEGRADED_READY**. Gmail reste honnêtement `AUTH_REQUIRED` avec auth manquante ; Calendar, Apple Notes, Apple Reminders et les modèles non testés restent `UNKNOWN`. Le modèle local reste indisponible avec provider `NONE`, ce qui n'est pas une panne du cœur. La stratégie de backup canonique existe, mais aucune sauvegarde valide n'est encore présente (`NONE`, affiché `UNKNOWN`) ; la migration est `CLEAN / HEALTHY`.
+
+Validation : **978/978 tests**, **54/54 évaluations critiques**, build, lint, package x64, vérification statique, smoke packagé et `git diff --check` réussis. L'ASAR installé correspond exactement à l'ASAR construit.
+
+## Validation P1.3 — Daily Brief (reprise le 8 septembre 2026)
+
+Statut : **PARTIAL**. Les invariants du brief quotidien sont validés par 136/136 tests ciblés, 970/970 tests complets et 54/54 évaluations critiques. Le bundle x64 reconstruit démarre réellement, l'historique local contient des briefs quotidiens jusqu'au 8 septembre et Apple Notes a été lue avec succès. Aucun déclenchement n'a toutefois été observé en direct à 07:00 ou après veille/réveil ; Gmail et Google Calendar restent déconnectés, et Apple Rappels est actuellement indisponible.
 
 Rapport détaillé : [`P1_3_DAILY_BRIEF_REPORT.md`](./P1_3_DAILY_BRIEF_REPORT.md).
 

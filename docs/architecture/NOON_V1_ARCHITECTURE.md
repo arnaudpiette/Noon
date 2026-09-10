@@ -39,7 +39,7 @@ Le chat HTTP entre encore par `server.js`, qui compose les dépendances et appel
 | Contexte | `services/context/context-builder.js` | adaptateur privé `services/personal-memory/context-builder.js` + ambiant filtré | cache borné | ancien assemblage dans `server.js` compatible ; l'adaptateur privé n'est pas un owner concurrent |
 | Mémoire | `services/memory/memory-engine.js` | service privé chiffré | SQLite / stockage privé | migration legacy read-only |
 | Règles | `services/rules/hard-rules-registry.js` | profils opérationnels dérivés | code versionné | constantes historiques dérivées uniquement |
-| Routage modèles | `lib/noon-intelligence.js` | `selectModelRoute()` | configuration | ancien routeur non canonique |
+| Routage modèles | `lib/noon-intelligence.js` | `selectModelRoute()` — Luna / Terra / Sol / Astra | configuration + flag Astra `SHADOW` | ancien routeur non canonique |
 | Skills | `skills/registry.js` | outils exposés à Responses | audit local | aucun registre parallèle autorisé |
 | Workspace | `services/workspaces/workspace-engine.js` | Focus legacy | SQLite/fallback | adaptateur Focus idempotent |
 | Sessions | `services/sessions/session-continuity-engine.js` | index de conversations UI | SQLite/fallback | JSON historiques en compatibilité |
@@ -83,6 +83,8 @@ Le chat HTTP entre encore par `server.js`, qui compose les dépendances et appel
 ## Local et distant
 
 La mémoire privée, les règles, les index locaux, les workspaces, les sessions et les décisions de sécurité restent locaux. Seul le contexte minimal autorisé est envoyé à Responses avec `store: false`. Sync, remote, média distant et approbation distante restent non opérationnels par défaut.
+
+GPT-6 Astra (`gpt-6-astra`) est un niveau additionnel du ModelRouter, jamais un sous-système. Son seuil est supérieur à Sol et exige plusieurs signaux forts ; le flag `router.astra` démarre en `SHADOW`. Astra utilise le même ContextBuilder, la même Responses API, le même SkillRegistry et le même pipeline Security/Approval/TransactionalExecution. Async tool calling et mid-turn steering sont supportés par le fournisseur mais restent `AVAILABLE_NOT_ENABLED` dans Noon V1.
 
 ## Déploiement
 

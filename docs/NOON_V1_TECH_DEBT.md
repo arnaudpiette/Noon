@@ -15,6 +15,7 @@
 | P2 | stockage JSON de compatibilité | migrations progressives | doublons/complexité | garder read-only, mesurer usage, retirer avec migration idempotente |
 | P2 | sync/remote/jobs en SHADOW | architecture préparée sans transport production | confusion produit si exposée | conserver masqué jusqu’à besoin réel |
 | P2 | métriques CPU/RAM/longue session | startup packagé mesuré à 13,6 s, mais idle/longue session non mesurés | régression performance invisible | benchmark reproductible hors tests unitaires |
+| P2 | Astra en SHADOW | disponibilité API et plomberie vérifiées, mais seulement trois fixtures qualité synthétiques | surcoût ou faux positifs si promotion trop rapide | mesurer fréquence, valeur et delta coût avant `LIMITED`; conserver async tools et mid-turn désactivés |
 
 ## Legacy
 

@@ -9,6 +9,7 @@ Taxonomie : `OPERATIONAL`, `OPERATIONAL_DEGRADED`, `PARTIAL`, `PREPARED`, `EXPER
 | Artefacts MD/HTML/PDF/DOCX/XLSX/PPTX/PNG/RTF | ArtifactEngine | OPERATIONAL | génération/validation/versionnement testés | NOT_VERIFIED | oui hors génération modèle | preview et racines autorisées |
 | Workspace et isolation | WorkspaceEngine | OPERATIONAL | tests SQLite, homonymes, fuite inter-workspace | NOT_VERIFIED | oui | Focus legacy adapté |
 | Chat texte complet | NoonOrchestrator | PARTIAL | API OpenAI live et streaming vérifiés, continuité après restart vérifiée | NOT_VERIFIED | réponses déterministes seulement | renderer et chat packagé non validés |
+| Niveau GPT-6 Astra | ModelRouter canonique | EXPERIMENTAL | appel Responses réel, streaming, coût et fallback testés | STARTUP_ONLY | non | flag `router.astra` SHADOW ; aucun privilège ; async tools/mid-turn non activés |
 | Voix locale complète | VoiceIdentity + renderer | PARTIAL | STT/TTS OpenAI réels sur audio artificiel ; parité/local-only automatisés | STARTUP_ONLY | non : STT, raisonnement et TTS sont distants | micro, audio audible, WebRTC/TCC/wake word réels non validés |
 | Recherche personnelle | PersonalSearchEngine | PARTIAL | tests adaptateurs et isolation | NOT_VERIFIED | oui | flag historique `search.unified` OFF à rationaliser |
 | Recherche Web | PublicResearchEngine | PARTIAL | tests cache/fraîcheur/injection | NOT_VERIFIED | cache seulement | aucun Web live pendant l’audit |
@@ -38,7 +39,7 @@ Taxonomie : `OPERATIONAL`, `OPERATIONAL_DEGRADED`, `PARTIAL`, `PREPARED`, `EXPER
 
 - `ON`: routeur modèles, recherche publique, multimodal unifié, SDK interne, Control Center.
 - `LIMITED`: PDF hybride, partage explicite, sensibilité décision, goals, progression, portfolio/capacité, coalescing, runtime offline.
-- `SHADOW`: délégation, jobs, sync, remote, contexte ambiant, décision, surcharge, notifications.
+- `SHADOW`: routage Astra, délégation, jobs, sync, remote, contexte ambiant, décision, surcharge, notifications.
 - `OFF`: recherche mixte, remote mutations/média/voix, capture écran, modèle local, extensions externes, historiques/scénarios avancés.
 
 Une capacité `SHADOW` ne produit aucun effet externe et ne doit jamais être présentée comme opérationnelle.
