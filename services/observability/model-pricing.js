@@ -6,6 +6,8 @@ const MODEL_PRICING = Object.freeze({
   "gpt-5.6-luna": Object.freeze({ input: 0.20, cachedInput: 0.02, output: 1.20 }),
   "gpt-5.6-terra": Object.freeze({ input: 2.00, cachedInput: 0.20, output: 12.00 }),
   "gpt-5.6-sol": Object.freeze({ input: 4.00, cachedInput: 0.40, output: 20.00 }),
+  // OpenAI pricing verified 2026-09-08: https://developers.openai.com/api/docs/models/gpt-6-astra
+  "gpt-6-astra": Object.freeze({ input: 10.00, cachedInput: 1.00, output: 50.00 }),
 });
 
 const TRANSCRIPTION_PRICE_PER_MINUTE = 0.003;

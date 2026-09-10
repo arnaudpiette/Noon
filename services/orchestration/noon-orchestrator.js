@@ -184,6 +184,9 @@ function createNoonOrchestrator({
                 component: "model", from: state.route.model, to: model, reason: "primary_model_error",
               });
               try { reliabilityEngine?.recordFallback(model, { from: state.route.model, to: model, quality: "degraded", reasonCode: "PRIMARY_MODEL_ERROR" }); } catch {}
+              if (state.route.model === "gpt-6-astra" && model === "gpt-5.6-sol") {
+                trace("astra_fallback_sol", state, { from: "gpt-6-astra", to: "gpt-5.6-sol", reason: "astra_unavailable" });
+              }
             }
             onModelResponse?.(response, state);
             try { reliabilityEngine?.recordSuccess(model, { latencyMs: modelTotalMs }); reliabilityEngine?.recordSuccess("openai-models", { latencyMs: modelTotalMs }); } catch {}
@@ -229,7 +232,9 @@ function createNoonOrchestrator({
         }
       } catch (error) {
         lastError = error;
-        if (![400, 403, 404].includes(error?.status) || model === "gpt-5.6-luna") break;
+        const astraFallbackAllowed = state.route.model === "gpt-6-astra" && model === "gpt-6-astra" && [400, 401, 403, 404, 429].includes(error?.status);
+        if (astraFallbackAllowed) trace("astra_unavailable", state, { model, status: error.status, code: String(error?.code || "ERROR").slice(0, 80) });
+        if ((!astraFallbackAllowed && ![400, 403, 404].includes(error?.status)) || model === "gpt-5.6-luna") break;
       }
     }
     throw new OrchestratorError("fallback_exhausted", "Tous les modèles disponibles ont échoué.", lastError);

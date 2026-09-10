@@ -16,7 +16,7 @@ function toolCall(name, args, callId = "call-1") {
   return { type: "function_call", name, call_id: callId, arguments: JSON.stringify(args) };
 }
 
-function createFixture({ responses = [], executeSkill, stream = false, maxRounds = 3, audit = null, intent = null, priorityEngine = null, observability = null, captureApprovalPreconditions, recheckApprovalPreconditions, recheckHardRules, recheckConnector, operationalSecurityPolicy = null, transactionalExecutionEngine = null, delegationEngine = null, normalizedIntent = null, selectModel = null } = {}) {
+function createFixture({ responses = [], executeSkill, stream = false, maxRounds = 3, audit = null, intent = null, priorityEngine = null, observability = null, captureApprovalPreconditions, recheckApprovalPreconditions, recheckHardRules, recheckConnector, operationalSecurityPolicy = null, transactionalExecutionEngine = null, delegationEngine = null, normalizedIntent = null, selectModel = null, modelFallbacks = null } = {}) {
   const queue = [...responses];
   const modelCalls = [];
   const contextCalls = [];
@@ -76,7 +76,7 @@ function createFixture({ responses = [], executeSkill, stream = false, maxRounds
   const orchestrator = createNoonOrchestrator({
     contextBuilder: builder,
     selectModel: selectModel || (() => ({ model: "gpt-5.6-sol", effort: "high", verbosity: "medium" })),
-    modelFallbacks: () => ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
+    modelFallbacks: modelFallbacks || (() => ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]),
     clientProvider: () => client,
     skillRegistry,
     priorityEngine,
@@ -446,6 +446,42 @@ test("une erreur compatible du modèle principal déclenche le fallback existant
   const result = await fixture.orchestrator.run(fixture.request);
   assert.equal(result.modelUsed, "gpt-5.6-terra");
   assert.equal(result.metadata.fallbackCount, 1);
+});
+
+test("Astra indisponible ou rate limited retombe une fois sur Sol et le trace", async () => {
+  for (const status of [404, 429]) {
+    const events = [];
+    const unavailable = Object.assign(new Error("Astra indisponible"), { status, code: status === 429 ? "rate_limit" : "model_not_found" });
+    const fixture = createFixture({
+      responses: [unavailable, response("Réponse Sol")],
+      selectModel: () => ({ model: "gpt-6-astra", effort: "high", verbosity: "medium" }),
+      modelFallbacks: () => ["gpt-6-astra", "gpt-5.6-sol"],
+      audit: (event, metadata) => events.push({ event, metadata }),
+    });
+    const result = await fixture.orchestrator.run(fixture.request);
+    assert.equal(result.modelUsed, "gpt-5.6-sol");
+    assert.equal(result.metadata.fallbackCount, 1);
+    assert.equal(fixture.modelCalls.length, 2);
+    assert.ok(events.some(({ event }) => event === "orchestrator.astra_unavailable"));
+    assert.ok(events.some(({ event }) => event === "orchestrator.astra_fallback_sol"));
+  }
+});
+
+test("Astra conserve exactement le même pipeline d'approbation et n'exécute aucun outil directement", async () => {
+  let executions = 0;
+  const fixture = createFixture({
+    responses: [response("", [toolCall("send_email", { to: "test@example.test", content: "Fictif" })])],
+    selectModel: () => ({ model: "gpt-6-astra", effort: "high", verbosity: "medium" }),
+    modelFallbacks: () => ["gpt-6-astra", "gpt-5.6-sol"],
+    executeSkill: (_name, _args, context) => {
+      if (!context.confirmed) throw Object.assign(new Error("Confirmation requise"), { code: "CONFIRMATION_REQUIRED" });
+      executions += 1;
+      return { sent: true };
+    },
+  });
+  const pending = await fixture.orchestrator.run(fixture.request);
+  assert.equal(pending.status, "approval_required");
+  assert.equal(executions, 0);
 });
 
 test("le contexte minimal vient uniquement du Context Builder", async () => {

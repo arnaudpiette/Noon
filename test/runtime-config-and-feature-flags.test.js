@@ -73,6 +73,7 @@ test("restaure la configuration persistée après redémarrage", () => {
 test("OFF, SHADOW, LIMITED, ON et kill switch sont déterministes", () => {
   const { featureFlags } = fixture();
   assert.equal(featureFlags.evaluate("router.policy.v2").mode, "ON");
+  assert.equal(featureFlags.evaluate("router.astra").mode, "SHADOW");
   featureFlags.update("router.policy.v2", { mode: "SHADOW" });
   assert.equal(featureFlags.evaluate("router.policy.v2").shadow, true);
   featureFlags.update("router.policy.v2", { mode: "LIMITED", allowWorkspaces: ["workspace-a"] });

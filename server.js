@@ -223,13 +223,44 @@ function selectConfiguredModelRoute(input = {}) {
     channel: input.channel || "chat",
   });
   if (evaluation.mode === "OFF") return legacyRoute(input);
+  const astraEvaluation = featureFlags.evaluate("router.astra", {
+    workspaceId: input.workspaceId || null,
+    sessionId: input.sessionId || null,
+    channel: input.channel || "chat",
+  });
+  let astraAvailability = "UNKNOWN";
+  try {
+    const health = reliabilityEngine?.snapshot?.("gpt-6-astra");
+    if (health?.state === "HEALTHY") astraAvailability = "AVAILABLE";
+    else if (health?.state === "UNAUTHORIZED") astraAvailability = "NOT_AUTHORIZED";
+    else if (health?.reasonCode === "RATE_LIMITED" || health?.circuitState === "open") astraAvailability = "RATE_LIMITED";
+    else if (["UNAVAILABLE", "MISCONFIGURED"].includes(health?.state)) astraAvailability = "UNAVAILABLE";
+  } catch {}
+  const astraInput = { ...input, astraMode: astraEvaluation.mode, astraAvailability };
   if (evaluation.mode === "SHADOW") {
     const active = legacyRoute(input);
-    const shadow = selectModelRoute(input);
+    const shadow = selectModelRoute(astraInput);
     shadowComparator.compare({ flagId: evaluation.flagId, legacyResult: active, shadowResult: shadow });
     return active;
   }
-  return selectModelRoute(input);
+  if (astraEvaluation.shadow) {
+    const active = selectModelRoute({ ...input, astraMode: "OFF", astraAvailability });
+    const shadow = selectModelRoute({ ...input, astraMode: "ON", astraAvailability });
+    shadowComparator.compare({ flagId: astraEvaluation.flagId, legacyResult: active, shadowResult: shadow });
+    toolAuditLog.append(shadow.astra?.wouldSelectAstra ? "routing.astra_selected" : "routing.astra_not_selected", {
+      selectedModel: active.model,
+      shadowModel: shadow.model,
+      score: shadow.score,
+      reasonCodes: shadow.reasonCodes,
+      estimatedCostMultiplier: shadow.model === "gpt-6-astra" ? 2.5 : 1,
+    });
+    return { ...active, astra: shadow.astra, shadowModel: shadow.model };
+  }
+  const route = selectModelRoute(astraInput);
+  if (route.model === "gpt-6-astra") toolAuditLog.append("routing.astra_selected", {
+    selectedModel: route.model, score: route.score, reasonCodes: route.reasonCodes, effort: route.effort,
+  });
+  return route;
 }
 const noonObservability = createNoonObservability({
   filePath: path.join(DATA_DIRECTORY, "noon-observability.jsonl"),
@@ -6770,8 +6801,9 @@ if (req.method === "POST" && req.url === "/background-analyses/start") {
       "gpt-5.6-luna": "economical",
       "gpt-5.6-terra": "balanced",
       "gpt-5.6-sol": "maximum",
+      "gpt-6-astra": "exceptional",
     }[body.model]) || "balanced";
-    const route = selectModelRoute({
+    const route = selectConfiguredModelRoute({
       question: typeof body.input === "string" ? body.input : String(body.kind || "Analyse en arrière-plan"),
       profile: requestedProfile,
       budgetMode: getBudgetStatus().mode,

@@ -82,6 +82,13 @@ test("calcule un coût connu et refuse d'inventer un prix inconnu", () => {
   });
   assert.equal(known.status, "available");
   assert.equal(known.total, 1.31);
+  const astra = estimateModelCost("gpt-6-astra", {
+    input_tokens: 1_000_000,
+    output_tokens: 1_000_000,
+    input_tokens_details: { cached_tokens: 500_000 },
+  });
+  assert.equal(astra.status, "available");
+  assert.equal(astra.total, 55.5);
   assert.deepEqual(
     estimateModelCost("modele-inconnu", { input_tokens: 999 }),
     { status: "unavailable", currency: "USD", total: null }
