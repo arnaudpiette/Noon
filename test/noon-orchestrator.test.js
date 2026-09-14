@@ -5,8 +5,12 @@ const test = require("node:test");
 const { EventEmitter } = require("node:events");
 const { ApprovalManager } = require("../services/approvals/approval-manager");
 const { createNoonOrchestrator } = require("../services/orchestration/noon-orchestrator");
+const { createOpenAIProviderAdapter } = require("../services/models/providers/openai-provider");
+const { PROVIDERS } = require("../services/models/model-registry");
+const { createProviderPrivacyPolicy } = require("../services/security/provider-privacy-policy");
 const { createOperationalSecurityPolicy } = require("../services/security/operational-security-policy");
 const { createIntentCommandEngine } = require("../services/intents/intent-command-engine");
+const { createReliabilityEngine } = require("../services/reliability/reliability-engine");
 
 function response(text, output = []) {
   return { output_text: text, output, usage: { input_tokens: 1, output_tokens: 1 } };
@@ -16,7 +20,7 @@ function toolCall(name, args, callId = "call-1") {
   return { type: "function_call", name, call_id: callId, arguments: JSON.stringify(args) };
 }
 
-function createFixture({ responses = [], executeSkill, stream = false, maxRounds = 3, audit = null, intent = null, priorityEngine = null, observability = null, captureApprovalPreconditions, recheckApprovalPreconditions, recheckHardRules, recheckConnector, operationalSecurityPolicy = null, transactionalExecutionEngine = null, delegationEngine = null, normalizedIntent = null, selectModel = null, modelFallbacks = null } = {}) {
+function createFixture({ responses = [], executeSkill, stream = false, maxRounds = 3, audit = null, intent = null, priorityEngine = null, observability = null, captureApprovalPreconditions, recheckApprovalPreconditions, recheckHardRules, recheckConnector, operationalSecurityPolicy = null, transactionalExecutionEngine = null, delegationEngine = null, normalizedIntent = null, selectModel = null, modelFallbacks = null, providerAdapters = null, providerConfiguration = () => true, reliabilityEngine = null, requestOverrides = {} } = {}) {
   const queue = [...responses];
   const modelCalls = [];
   const contextCalls = [];
@@ -73,11 +77,15 @@ function createFixture({ responses = [], executeSkill, stream = false, maxRounds
       };
     },
   };
+  const providerPrivacyPolicy = createProviderPrivacyPolicy({ providerRegistry: PROVIDERS, providerTiers: { google_ai: "FREE" } });
   const orchestrator = createNoonOrchestrator({
     contextBuilder: builder,
     selectModel: selectModel || (() => ({ model: "gpt-5.6-sol", effort: "high", verbosity: "medium" })),
     modelFallbacks: modelFallbacks || (() => ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]),
-    clientProvider: () => client,
+    providerAdapter: createOpenAIProviderAdapter({ clientProvider: () => client, privacyPolicy: providerPrivacyPolicy }),
+    providerAdapters,
+    providerConfiguration,
+    providerPrivacyPolicy,
     skillRegistry,
     priorityEngine,
     approvalManager: new ApprovalManager(),
@@ -92,6 +100,7 @@ function createFixture({ responses = [], executeSkill, stream = false, maxRounds
     operationalSecurityPolicy,
     transactionalExecutionEngine,
     delegationEngine,
+    reliabilityEngine,
   });
   const request = {
     query: "Question fictive",
@@ -102,9 +111,25 @@ function createFixture({ responses = [], executeSkill, stream = false, maxRounds
     contextInput: { query: "Question fictive", channel: "chat" },
     buildInput: () => [{ role: "user", content: "Question fictive" }],
     normalizedIntent,
+    dataClassification: "PUBLIC",
+    ...requestOverrides,
     ...(stream ? { onTextDelta: () => {} } : {}),
   };
   return { orchestrator, request, modelCalls, contextCalls, toolCalls };
+}
+
+function fakeProvider(provider, { responseText = "Avis Gemini", error = null, calls = [] } = {}) {
+  return {
+    provider,
+    async execute(request) {
+      calls.push({ provider, model: request.model, inputCount: request.input.length });
+      if (error) throw error;
+      return { text: responseText, output: [], toolCalls: [], usage: { inputTokens: 2, outputTokens: 2, totalTokens: 4 }, finishReason: "STOP", provider, model: request.model, latencyMs: 1, routingMetadata: { taskDomain: "GENERAL", requiredQuality: "NORMAL", success: true } };
+    },
+    async stream(request, options) { const result = await this.execute(request); options?.onTextDelta?.(result.text); return result; },
+    createToolResult(toolCall, result) { return { type: "function_call_output", call_id: toolCall.call_id, output: JSON.stringify(result) }; },
+    capabilities() { return ["TEXT", "STREAMING"]; },
+  };
 }
 
 function securityPolicy() {
@@ -122,6 +147,24 @@ test("question simple : Context Builder, routeur, modèle puis réponse", async 
   assert.equal(result.modelUsed, "gpt-5.6-sol");
   assert.equal(fixture.contextCalls.length, 1);
   assert.equal(fixture.modelCalls.length, 1);
+});
+
+test("local-only bloque avant le routage et produit zéro appel provider", async () => {
+  let routingCalls = 0;
+  const fixture = createFixture({
+    responses: [response("Réponse distante interdite")],
+    selectModel() {
+      routingCalls += 1;
+      return { model: "gpt-5.6-luna", effort: "low", verbosity: "low" };
+    },
+  });
+  fixture.request.privacyRequirements = "LOCAL_ONLY";
+  await assert.rejects(
+    fixture.orchestrator.run(fixture.request),
+    (error) => error.code === "LOCAL_ONLY_DATA"
+  );
+  assert.equal(routingCalls, 0);
+  assert.equal(fixture.modelCalls.length, 0);
 });
 
 test("sépare les capacités runtime des capacités propres au modèle", async () => {
@@ -558,4 +601,91 @@ test("le Priority Engine est appelé uniquement pour une intention d'organisatio
   conversation.request.priorityActions = [{ id: "action-2", title: "Ne doit pas être classée" }];
   await conversation.orchestrator.run(conversation.request);
   assert.equal(calls.length, 1);
+});
+
+test("une panne réseau OpenAI autorise un fallback Gemini séparément autorisé", async () => {
+  const failure = Object.assign(new Error("réseau synthétique"), { code: "NETWORK_ERROR" });
+  const geminiCalls = [];
+  const gemini = fakeProvider("google_ai", { responseText: "Fallback public", calls: geminiCalls });
+  const route = {
+    model: "gpt-5.6-terra", provider: "openai", effort: "medium", verbosity: "medium",
+    eligibleCandidates: [{ provider: "openai", model: "gpt-5.6-terra" }],
+    fallbackEligible: true, fallbackCandidates: [{ provider: "google_ai", model: "gemini-3.8-flash" }],
+  };
+  const { orchestrator, request } = createFixture({ responses: [failure], selectModel: () => route, providerAdapters: { google_ai: gemini } });
+  const result = await orchestrator.run(request);
+  assert.equal(result.text, "Fallback public");
+  assert.equal(geminiCalls.length, 1);
+});
+
+test("un refus privacy Gemini empêche le fallback et tout appel Gemini", async () => {
+  const failure = Object.assign(new Error("réseau synthétique"), { code: "NETWORK_ERROR" });
+  const geminiCalls = [];
+  const gemini = fakeProvider("google_ai", { calls: geminiCalls });
+  const route = {
+    model: "gpt-5.6-terra", provider: "openai", effort: "medium", verbosity: "medium",
+    eligibleCandidates: [{ provider: "openai", model: "gpt-5.6-terra" }],
+    fallbackEligible: true, fallbackCandidates: [{ provider: "google_ai", model: "gemini-3.8-flash" }],
+  };
+  const { orchestrator, request } = createFixture({ responses: [failure], selectModel: () => route, providerAdapters: { google_ai: gemini }, requestOverrides: { dataClassification: "PERSONAL" } });
+  await assert.rejects(orchestrator.run(request), /modèles disponibles ont échoué/);
+  assert.equal(geminiCalls.length, 0);
+});
+
+test("second opinion indépendante produit une seule synthèse canonique", async () => {
+  const geminiCalls = [];
+  const gemini = fakeProvider("google_ai", { responseText: "Avis indépendant", calls: geminiCalls });
+  let selections = 0;
+  const selectModel = () => {
+    selections += 1;
+    if (selections > 1) return { model: "gpt-5.6-terra", provider: "openai", effort: "medium", verbosity: "medium" };
+    return {
+      model: "gpt-5.6-terra", provider: "openai", effort: "medium", verbosity: "medium", taskDomain: "GENERAL", requiredQuality: "HIGH",
+      eligibleCandidates: [{ provider: "openai", model: "gpt-5.6-terra" }, { provider: "google_ai", model: "gemini-3.8-flash" }],
+      fallbackEligible: false, fallbackCandidates: [], secondOpinionEligible: true,
+      secondOpinionCandidate: { provider: "google_ai", model: "gemini-3.8-flash" },
+    };
+  };
+  const { orchestrator, request, modelCalls } = createFixture({ responses: [response("Avis principal"), response("Synthèse Noon")], selectModel, providerAdapters: { google_ai: gemini }, requestOverrides: { secondOpinionAssessment: "DISAGREEMENT" } });
+  const result = await orchestrator.run(request);
+  assert.equal(result.text, "Synthèse Noon");
+  assert.equal(geminiCalls.length, 1);
+  assert.equal(geminiCalls[0].inputCount, 1);
+  assert.equal(modelCalls.length, 2);
+  assert.equal(result.metadata.secondOpinion.agreement, "DISAGREEMENT");
+});
+
+test("l'échec du second provider conserve le résultat primaire", async () => {
+  const geminiCalls = [];
+  const gemini = fakeProvider("google_ai", { error: Object.assign(new Error("quota"), { code: "RATE_LIMIT" }), calls: geminiCalls });
+  const route = {
+    model: "gpt-5.6-terra", provider: "openai", effort: "medium", verbosity: "medium", taskDomain: "GENERAL", requiredQuality: "HIGH",
+    eligibleCandidates: [{ provider: "openai", model: "gpt-5.6-terra" }, { provider: "google_ai", model: "gemini-3.8-flash" }],
+    fallbackEligible: false, fallbackCandidates: [], secondOpinionEligible: true,
+    secondOpinionCandidate: { provider: "google_ai", model: "gemini-3.8-flash" },
+  };
+  const { orchestrator, request } = createFixture({ responses: [response("Résultat primaire")], selectModel: () => route, providerAdapters: { google_ai: gemini } });
+  const result = await orchestrator.run(request);
+  assert.equal(result.text, "Résultat primaire");
+  assert.equal(geminiCalls.length, 1);
+});
+
+test("une seconde opinion Gemini 503 ne dépasse pas deux tentatives et conserve le primaire", async () => {
+  const geminiCalls = [];
+  const gemini = fakeProvider("google_ai", { error: Object.assign(new Error("unavailable"), { status: 503, code: "PROVIDER_UNAVAILABLE" }), calls: geminiCalls });
+  const reliability = createReliabilityEngine({ sleep: async () => {}, random: () => 0 });
+  reliability.register({ componentId: "gemini-3.8-flash", maxRetries: 1, circuitThreshold: 3 });
+  const route = {
+    model: "gpt-5.6-terra", provider: "openai", effort: "medium", verbosity: "medium", taskDomain: "GENERAL", requiredQuality: "HIGH",
+    eligibleCandidates: [{ provider: "openai", model: "gpt-5.6-terra" }, { provider: "google_ai", model: "gemini-3.8-flash" }],
+    fallbackEligible: false, fallbackCandidates: [], secondOpinionEligible: true,
+    secondOpinionCandidate: { provider: "google_ai", model: "gemini-3.8-flash" },
+  };
+  const { orchestrator, request } = createFixture({ responses: [response("Résultat primaire")], selectModel: () => route, providerAdapters: { google_ai: gemini }, reliabilityEngine: reliability });
+  const result = await orchestrator.run(request);
+  assert.equal(result.text, "Résultat primaire");
+  assert.equal(geminiCalls.length, 2);
+  assert.equal(result.metadata.secondOpinion.status, "skipped_provider_unavailable");
+  assert.equal(result.metadata.secondOpinion.reasonCode, "SECOND_OPINION_SKIPPED_PROVIDER_UNAVAILABLE");
+  assert.equal(result.metadata.secondOpinion.failureCategory, "PROVIDER_FAILURE");
 });

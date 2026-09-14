@@ -10,11 +10,23 @@ const {
   createFolder,
   updateConversation,
   normalizeConversationStore,
+  deleteFolder,
 } = require("../lib/conversation-index");
 
 test("crée un titre court depuis la première demande", () => {
   assert.equal(createConversationTitle("  Analyse   mon projet Kasa  "), "Analyse mon projet Kasa");
   assert.equal(createConversationTitle(""), "Nouvelle conversation");
+});
+
+test("supprimer un projet replace ses conversations dans Chats sans les supprimer", () => {
+  let store = normalizeConversationStore(null);
+  store = createFolder(store, { id: "project-noon", title: "Noon" }).store;
+  store = upsertConversationIndex(store, { id: "conversation-noon", folderId: "project-noon" }).store;
+  const result = deleteFolder(store, "project-noon", { destinationFolderId: "general" });
+  assert.equal(result.deletedConversationIds.length, 0);
+  assert.equal(result.store.conversations.length, 1);
+  assert.equal(result.store.conversations[0].folderId, "general");
+  assert.equal(result.store.folders.some((folder) => folder.id === "project-noon"), false);
 });
 
 test("refuse la seizième conversation sans supprimer les quinze précédentes", () => {

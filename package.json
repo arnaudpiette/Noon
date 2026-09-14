@@ -51,20 +51,22 @@
     "lint:portfolio": "node --check services/portfolio/portfolio-schema.js && node --check services/portfolio/capacity-service.js && node --check services/portfolio/portfolio-capacity-engine.js",
     "lint:decision": "node --check services/decision/decision-schema.js && node --check services/decision/option-evaluator.js && node --check services/decision/decision-history-service.js && node --check services/decision/decision-support-engine.js",
     "eval:notifications": "node scripts/run-evaluations.js --tag=notification-attention",
-    "lint:notifications": "node --check services/notifications/notification-schema.js && node --check services/notifications/notification-store.js && node --check services/notifications/notification-policy.js && node --check services/notifications/delivery-router.js && node --check services/notifications/notification-attention-engine.js"
-    ,"eval:offline": "node scripts/run-evaluations.js --tag=local-offline-runtime"
-    ,"lint:runtime": "node --check services/runtime/capability-registry.js && node --check services/runtime/offline-policy.js && node --check services/runtime/local-model-adapter.js && node --check services/runtime/local-intelligence-runtime.js && npm run lint:extensions"
-    ,"eval:extensions": "node scripts/run-evaluations.js --tag=extensions-sdk"
-    ,"lint:extensions": "node --check services/extensions/extension-manifest-schema.js && node --check services/extensions/schema-validator.js && node --check services/extensions/extension-sdk.js && node --check services/extensions/extension-storage.js && node --check services/extensions/extension-loader.js && node --check services/extensions/extension-registry.js && node --check services/extensions/extension-runtime.js && node --check services/extensions/sample/noon-example-search.js"
+    "lint:notifications": "node --check services/notifications/notification-schema.js && node --check services/notifications/notification-store.js && node --check services/notifications/notification-policy.js && node --check services/notifications/delivery-router.js && node --check services/notifications/notification-attention-engine.js",
+    "eval:offline": "node scripts/run-evaluations.js --tag=local-offline-runtime",
+    "lint:runtime": "node --check services/runtime/capability-registry.js && node --check services/runtime/offline-policy.js && node --check services/runtime/local-model-adapter.js && node --check services/runtime/local-intelligence-runtime.js && npm run lint:extensions",
+    "eval:extensions": "node scripts/run-evaluations.js --tag=extensions-sdk",
+    "lint:extensions": "node --check services/extensions/extension-manifest-schema.js && node --check services/extensions/schema-validator.js && node --check services/extensions/extension-sdk.js && node --check services/extensions/extension-storage.js && node --check services/extensions/extension-loader.js && node --check services/extensions/extension-registry.js && node --check services/extensions/extension-runtime.js && node --check services/extensions/sample/noon-example-search.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@google/genai": "2.22.0",
     "@picovoice/porcupine-node": "4.0.2",
     "@picovoice/pvrecorder-node": "1.2.9",
     "docx": "^9.7.1",
     "dotenv": "^17.4.2",
+    "google-auth-library": "11.0.2",
     "jszip": "^3.10.1",
     "openai": "^7.5.0",
     "pdf-lib": "^1.17.1",

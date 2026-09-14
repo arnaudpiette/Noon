@@ -29,6 +29,21 @@ test("nettoie toutes les ressources WebRTC", () => {
   assert.equal(audio.srcObject, null);
 });
 
+test("nettoie trois cycles Live successifs sans conserver de ressource", () => {
+  const calls = [];
+  for (let cycle = 0; cycle < 3; cycle += 1) {
+    const audio = { pause: () => calls.push(`audio-${cycle}`), srcObject: {} };
+    cleanupRealtimeResources({
+      channel: { close: () => calls.push(`channel-${cycle}`) },
+      peer: { close: () => calls.push(`peer-${cycle}`), ontrack: () => {}, onconnectionstatechange: () => {} },
+      stream: { getTracks: () => [{ stop: () => calls.push(`track-${cycle}`) }] },
+      audio,
+    });
+    assert.equal(audio.srcObject, null);
+  }
+  assert.equal(calls.length, 12);
+});
+
 test("limite la reconnexion à deux tentatives avec backoff", () => {
   assert.equal(reconnectDelay(0), 800);
   assert.equal(reconnectDelay(1), 1600);

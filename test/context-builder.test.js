@@ -4,6 +4,8 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const { createContextBuilder, estimateTokens } = require("../services/context/context-builder");
 const { createHardRulesRegistry } = require("../services/rules/hard-rules-registry");
+const { PROVIDERS } = require("../services/models/model-registry");
+const { createProviderPrivacyPolicy } = require("../services/security/provider-privacy-policy");
 
 function memoryResult(overrides = {}) {
   return {
@@ -84,6 +86,24 @@ test("une mémoire local_only reste locale et disparaît du contexte distant", (
   assert.deepEqual(context.remoteModelContext.userContext.memories, []);
   assert.deepEqual(context.localContext.localOnly.map((item) => item.id), ["local-1"]);
   assert.equal(context.metadata.exclusionReasons.some((item) => item.id === "local-1" && item.reason === "local_only"), true);
+});
+
+test("le contexte distant expose seulement des métadonnées de confidentialité sans contenu", () => {
+  const privacy = createProviderPrivacyPolicy({ providerRegistry: PROVIDERS });
+  const registry = createHardRulesRegistry();
+  const builder = createContextBuilder({
+    personalityProvider: () => "Noon",
+    hardRulesRegistry: registry,
+    memoryEngine: { getRelevantContext: () => memoryResult({
+      remoteContext: [memory("private-1", "Préférence privée fictive")],
+      localOnlyContext: [memory("local-1", "Secret local fictif", { apiPolicy: "local_only" })],
+    }) },
+    privacyClassifier: privacy.inspectContextFragment,
+  });
+  const context = builder.buildContext({ query: "Question fictive" });
+  assert.ok(context.metadata.privacy.fragments.some((item) => item.classification === "PRIVATE"));
+  assert.equal(context.metadata.privacy.fragments.some((item) => item.classification === "LOCAL_ONLY"), false);
+  assert.doesNotMatch(JSON.stringify(context.metadata.privacy), /Préférence privée|Secret local/);
 });
 
 test("les règles critiques restent présentes même avec un budget presque épuisé", () => {

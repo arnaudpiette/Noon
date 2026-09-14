@@ -13,6 +13,37 @@ test("NO_DATA est un succès et non une panne", async () => { const f = fixture(
 test("auth expirée et permission refusée restent distinctes", () => { assert.equal(classifyFailure(Object.assign(new Error("token expired"), { status: 401 })).category, FAILURE_CATEGORIES.AUTH_REQUIRED); assert.equal(classifyFailure(Object.assign(new Error("forbidden"), { status: 403 })).category, FAILURE_CATEGORIES.PERMISSION_DENIED); });
 test("rate limit, timeout et réseau sont classés précisément", () => { assert.equal(classifyFailure(Object.assign(new Error("quota"), { status: 429 })).category, FAILURE_CATEGORIES.RATE_LIMITED); assert.equal(classifyFailure(Object.assign(new Error("timeout"), { code: "ETIMEDOUT" })).category, FAILURE_CATEGORIES.TIMEOUT); assert.equal(classifyFailure(Object.assign(new Error("dns"), { code: "ENOTFOUND" })).category, FAILURE_CATEGORIES.NETWORK_ERROR); });
 test("une lecture idempotente est retentée avec une limite", async () => { const f = fixture(); register(f.engine, "files", { maxRetries: 2 }); let calls = 0; const result = await f.engine.execute("files", async () => { calls += 1; if (calls < 3) throw Object.assign(new Error("timeout"), { code: "ETIMEDOUT" }); return ["ok"]; }); assert.equal(result.attempts, 3); assert.equal(calls, 3); });
+test("une panne provider 503 ou 429 autorise au plus une relance utilisateur", async () => {
+  for (const status of [429, 503]) {
+    const f = fixture(); register(f.engine, `gemini-${status}`, { maxRetries: 1, circuitThreshold: 3 }); let calls = 0;
+    const result = await f.engine.execute(`gemini-${status}`, async () => { calls += 1; if (calls === 1) throw Object.assign(new Error("provider transient"), { status }); return "ok"; }, { maxRetries: 1, retryPolicy: { baseDelayMs: 1250, maxDelayMs: 2500 } });
+    assert.equal(result.attempts, 2); assert.equal(calls, 2); assert.equal(result.retries.length, 1);
+  }
+});
+test("408 500 502 503 et 504 sont transitoires sans devenir des échecs qualité", () => {
+  for (const status of [408, 500, 502, 503, 504]) { const failure = classifyFailure(Object.assign(new Error("provider"), { status })); assert.equal(failure.category, FAILURE_CATEGORIES.SERVICE_UNAVAILABLE); assert.equal(failure.retryable, true); }
+});
+test("400 401 403 et 404 ne sont jamais relancés automatiquement", async () => {
+  for (const status of [400, 401, 403, 404]) {
+    const f = fixture(); register(f.engine, `gemini-${status}`, { maxRetries: 1 }); let calls = 0;
+    await assert.rejects(() => f.engine.execute(`gemini-${status}`, async () => { calls += 1; throw Object.assign(new Error("non retryable"), { status }); }, { maxRetries: 1, retryPolicy: { baseDelayMs: 1250 } }));
+    assert.equal(calls, 1);
+  }
+});
+test("les budgets coût et latence empêchent une relance transitoire", async () => {
+  for (const retryPolicy of [{ estimatedAttemptCost: 0.01, maxEstimatedCost: 0.015 }, { latencyBudgetMs: 500, baseDelayMs: 1250 }]) {
+    const f = fixture(); register(f.engine, "gemini-budget", { maxRetries: 1 }); let calls = 0;
+    await assert.rejects(() => f.engine.execute("gemini-budget", async () => { calls += 1; throw Object.assign(new Error("unavailable"), { status: 503 }); }, { maxRetries: 1, retryPolicy }));
+    assert.equal(calls, 1);
+  }
+});
+test("un timeout est relancé seulement si la policy canonique l'autorise", async () => {
+  for (const allowed of [true, false]) {
+    const f = fixture(); register(f.engine, `gemini-timeout-${allowed}`, { maxRetries: 1 }); let calls = 0;
+    await assert.rejects(() => f.engine.execute(`gemini-timeout-${allowed}`, async () => { calls += 1; throw Object.assign(new Error("timeout"), { code: "TIMEOUT" }); }, { maxRetries: 1, retryPolicy: { allows: () => allowed } }));
+    assert.equal(calls, allowed ? 2 : 1);
+  }
+});
 test("une écriture externe n'est jamais retentée aveuglément", async () => { const f = fixture(); register(f.engine, "gmail"); let calls = 0; await assert.rejects(() => f.engine.execute("gmail", async () => { calls += 1; throw new Error("lost response"); }, { idempotent: false, destructive: true, unknownOutcome: true })); assert.equal(calls, 1); });
 test("un outcome externe inconnu exige une vérification", () => { const result = classifyFailure(new Error("lost response"), { unknownOutcome: true }); assert.equal(result.category, FAILURE_CATEGORIES.UNKNOWN_OUTCOME); assert.equal(result.userActionRequired, true); });
 test("le circuit s'ouvre après des échecs transitoires répétés puis récupère", async () => { const f = fixture(); register(f.engine, "gmail", { circuitThreshold: 2, circuitCooldownMs: 1000 }); f.engine.recordFailure("gmail", Object.assign(new Error("network"), { code: "ENOTFOUND" })); f.engine.recordFailure("gmail", Object.assign(new Error("network"), { code: "ENOTFOUND" })); assert.equal(f.engine.snapshot("gmail").circuitState, CIRCUIT_STATES.OPEN); await assert.rejects(() => f.engine.execute("gmail", async () => "x"), /suspendu/); f.advance(1001); await f.engine.execute("gmail", async () => "ok"); assert.equal(f.engine.snapshot("gmail").circuitState, CIRCUIT_STATES.CLOSED); });

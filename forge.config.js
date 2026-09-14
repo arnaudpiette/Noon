@@ -25,6 +25,8 @@ module.exports = {
     arch: requestedArch,
     protocols: [{ name: "Noon", schemes: ["noon"] }],
     extendInfo: {
+      NSAppleEventsUsageDescription:
+        "Noon accède à Apple Notes et Rappels uniquement pour lire les éléments nécessaires aux demandes et briefs que vous lancez.",
       NSMicrophoneUsageDescription:
         "Noon utilise le microphone pour les conversations vocales et, si vous l’activez, pour détecter localement la phrase “Salut Noon”.",
       NSRemindersUsageDescription:
@@ -58,7 +60,7 @@ module.exports = {
       // La base locale appartient exclusivement au userData Electron. Elle ne
       // doit jamais être copiée depuis un worktree de développement dans l’ASAR.
       /^\/personal-intelligence\.sqlite(?:-(?:wal|shm)|\.fallback\.json(?:\.tmp)?)?$/,
-      /^\/.*(?:conversation-memory|conversation-summaries|creative-brief|long-term-memory|usage|projects-registry|project-journals|approval-audit|integration-tokens|automations).*\.json(?:\.tmp|\.bak)?$/,
+      /^\/.*(?:conversation-memory|conversation-summaries|creative-brief|long-term-memory|usage|projects-registry|project-journals|approval-audit|integration-tokens|tool-audit|automations).*\.json(?:\.tmp|\.bak)?$/,
     ],
   },
   makers: [

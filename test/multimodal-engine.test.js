@@ -9,6 +9,8 @@ const {
   createNativePdfAnalyzer,
 } = require("../services/multimodal/multimodal-engine");
 const { createOpenAIMediaAnalyzer } = require("../services/multimodal/openai-media-analyzer");
+const { PROVIDERS } = require("../services/models/model-registry");
+const { createProviderPrivacyPolicy } = require("../services/security/provider-privacy-policy");
 
 function fixtureIntake(mediaType = "IMAGE", overrides = {}) {
   return {
@@ -178,6 +180,7 @@ test("l’adaptateur distant retire EXIF et GPS sans modifier l’original", asy
   assert.ok((await sharp(original).metadata()).exif);
   let transmitted;
   const analyzer = createOpenAIMediaAnalyzer({
+    privacyPolicy: createProviderPrivacyPolicy({ providerRegistry: PROVIDERS }),
     client: () => ({ responses: { async create(options) {
       transmitted = options.input[0].content[0].image_url;
       return { output_text: '{"summary":"ok","evidence":[]}', usage: {} };
@@ -192,4 +195,25 @@ test("l’adaptateur distant retire EXIF et GPS sans modifier l’original", asy
   const sent = Buffer.from(transmitted.split(",")[1], "base64");
   assert.equal(Boolean((await sharp(sent).metadata()).exif), false);
   assert.ok((await sharp(original).metadata()).exif);
+});
+
+test("un média local-only est refusé avant toute résolution du client distant", async () => {
+  let clientCalls = 0;
+  const analyzer = createOpenAIMediaAnalyzer({
+    privacyPolicy: createProviderPrivacyPolicy({ providerRegistry: PROVIDERS }),
+    client() {
+      clientCalls += 1;
+      throw new Error("Le client distant ne doit pas être résolu.");
+    },
+  });
+  await assert.rejects(
+    analyzer.vision({
+      asset: { mediaType: "IMAGE", filename: "fixture.png", mimeType: "image/png", localOnly: true },
+      dataUrl: "data:image/png;base64,AA==",
+      request: { userIntent: "Analyse", analysisDepth: "STANDARD" },
+      strategy: { strategy: "VISION" },
+    }),
+    (error) => error.code === "LOCAL_ONLY_DATA"
+  );
+  assert.equal(clientCalls, 0);
 });

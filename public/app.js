@@ -2,9 +2,17 @@
 // Il gère la conversation, le Focus, la voix, les fichiers et les préférences locales.
 
 // Références DOM partagées par les différents modules de l’interface.
-const { escapeHtml, parseFocusCommand } = window.NoonUiUtils;
+const {
+  escapeHtml,
+  parseFocusCommand,
+  shouldConvertPastedText,
+  createPastedTextFileName,
+  maskPrivateMemoryValue,
+  privateMemoryCategoryLabel,
+} = window.NoonUiUtils;
 const chatForm = document.getElementById("chatForm");
 const promptInput = document.getElementById("prompt");
+const expandPromptButton = document.getElementById("expandPromptButton");
 const conversationMessages = document.getElementById(
   "conversationMessages"
 );
@@ -29,6 +37,9 @@ const newConversationButton = document.getElementById(
 const conversationHistory = document.getElementById("conversationHistory");
 const conversationHistoryCount = document.getElementById("conversationHistoryCount");
 const conversationHistoryList = document.getElementById("conversationHistoryList");
+const conversationProjects = document.getElementById("conversationProjects");
+const conversationProjectsList = document.getElementById("conversationProjectsList");
+const createConversationProjectButton = document.getElementById("createConversationProject");
 const shareConversationButton = document.getElementById("shareConversationButton");
 const shareConversationMenu = document.getElementById("shareConversationMenu");
 const connectionStatus = document.getElementById("connectionStatus");
@@ -119,6 +130,7 @@ const personalMemorySearch = document.getElementById("personalMemorySearch");
 const personalMemoryStatus = document.getElementById("personalMemoryStatus");
 const personalMemorySensitivity = document.getElementById("personalMemorySensitivity");
 const personalMemoryList = document.getElementById("personalMemoryList");
+const privateMemoryVisibilityButton = document.getElementById("privateMemoryVisibilityButton");
 const privateMemoryProfiles = document.getElementById("privateMemoryProfiles");
 const privateMemoryEnabled = document.getElementById("privateMemoryEnabled");
 const privateProfileEnabled = document.getElementById("privateProfileEnabled");
@@ -127,6 +139,16 @@ const privateMemoryImportButton = document.getElementById("privateMemoryImportBu
 const privateMemoryExportButton = document.getElementById("privateMemoryExportButton");
 const privateMemoryPurgeButton = document.getElementById("privateMemoryPurgeButton");
 const privateMemoryWhy = document.getElementById("privateMemoryWhy");
+const privateMemoryAuthDialog = document.getElementById("privateMemoryAuthDialog");
+const privateMemoryAuthForm = document.getElementById("privateMemoryAuthForm");
+const privateMemoryTouchIdButton = document.getElementById("privateMemoryTouchIdButton");
+const privateMemoryPasswordPanel = document.getElementById("privateMemoryPasswordPanel");
+const privateMemoryPasswordLabel = document.getElementById("privateMemoryPasswordLabel");
+const privateMemoryPasswordInput = document.getElementById("privateMemoryPasswordInput");
+const privateMemoryPasswordHelp = document.getElementById("privateMemoryPasswordHelp");
+const privateMemoryPasswordSubmit = document.getElementById("privateMemoryPasswordSubmit");
+const privateMemoryAuthCancel = document.getElementById("privateMemoryAuthCancel");
+const privateMemoryAuthError = document.getElementById("privateMemoryAuthError");
 const livingProjectsList = document.getElementById("livingProjectsList");
 const personalInboxFilter = document.getElementById("personalInboxFilter");
 const personalInboxList = document.getElementById("personalInboxList");
@@ -244,7 +266,7 @@ const DOCUMENT_MIME_TYPES = {
   ".pptx":
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 };
-const MAX_TEXT_ATTACHMENT_SIZE = 20 * 1024;
+const MAX_TEXT_ATTACHMENT_SIZE = 1024 * 1024;
 const MAX_IMAGE_ATTACHMENT_SIZE = 2 * 1024 * 1024;
 const MAX_PDF_ATTACHMENT_SIZE = 3 * 1024 * 1024;
 const MAX_DOCUMENT_ATTACHMENT_SIZE = 3 * 1024 * 1024;
@@ -255,6 +277,8 @@ let webSearchEnabled = false;
 let remainingWebSearches = 10;
 const MAX_ATTACHMENT_FILES = 3;
 const MAX_ATTACHMENTS_TOTAL_SIZE = 5 * 1024 * 1024;
+const MAX_PROMPT_HEIGHT = 320;
+const MAX_EXPANDED_PROMPT_HEIGHT = 720;
 const WEB_SEARCH_SUGGESTION_PATTERNS = [
   /\b(aujourd['’]hui|ce soir|cette semaine|ce mois-ci)\b/i,
   /\b(en ce moment|actuellement|maintenant)\b/i,
@@ -408,9 +432,8 @@ collapsedSidebarRail.addEventListener("click", (event) => {
   setSidebar(true);
 
   if (action === "projects") {
-    focusMenu.hidden = false;
-    focusToggle.setAttribute("aria-expanded", "true");
-    requestAnimationFrame(() => focusToggle.scrollIntoView({ block: "center" }));
+    conversationProjects.open = true;
+    requestAnimationFrame(() => conversationProjects.scrollIntoView({ block: "start" }));
   } else if (action === "chats") {
     conversationHistory.open = true;
     requestAnimationFrame(() => conversationHistory.scrollIntoView({ block: "start" }));
@@ -742,6 +765,18 @@ document.addEventListener("click", (event) => {
   }
 });
 
+document.addEventListener("keydown", (event) => {
+  if (!activeConversationContextMenu) return;
+  if (event.key === "Escape") { event.preventDefault(); closeConversationContextMenu(); return; }
+  if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
+  const keyboardMenu = document.activeElement?.closest?.(".conversation-context-menu") || activeConversationContextMenu;
+  const items = [...keyboardMenu.querySelectorAll(':scope > [role="menuitem"]')];
+  if (!items.length) return;
+  event.preventDefault();
+  const current = Math.max(0, items.indexOf(document.activeElement));
+  items[(current + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
+});
+
 function formatFileSize(size) {
   if (size < 1024) {
     return `${size} octets`;
@@ -1061,7 +1096,7 @@ function validateSelectedFile(file) {
       updateActivity("Image trop volumineuse : maximum 2 Mo.");
     } else {
       updateActivity(
-        "Fichier texte trop volumineux : maximum 20 Ko."
+        "Fichier texte trop volumineux : maximum 1 Mo."
       );
     }
 
@@ -1272,8 +1307,26 @@ document.addEventListener("paste", (event) => {
       item.type.startsWith("image/")
   );
 
-  // Le collage de texte continue normalement.
-  if (!imageItem) return;
+  if (!imageItem) {
+    const pastedText = event.clipboardData?.getData("text/plain") || "";
+
+    if (event.target !== promptInput || !shouldConvertPastedText(pastedText)) {
+      return;
+    }
+
+    event.preventDefault();
+    const textFile = new File(
+      [pastedText],
+      createPastedTextFileName(),
+      { type: "text/plain", lastModified: Date.now() }
+    );
+
+    if (handleSelectedFiles([textFile])) {
+      updateActivity("Texte long ajouté comme fichier texte.");
+      promptInput.focus();
+    }
+    return;
+  }
 
   event.preventDefault();
 
@@ -1313,6 +1366,39 @@ function updateActivity(text) {
   coreActivity.textContent = text;
 }
 
+let promptExpanded = false;
+
+function resizePromptInput() {
+  promptInput.style.height = "auto";
+  const hasMultipleLines = promptInput.scrollHeight > 28;
+  if (!hasMultipleLines) promptExpanded = false;
+  const expandedLimit = Math.min(
+    MAX_EXPANDED_PROMPT_HEIGHT,
+    Math.max(MAX_PROMPT_HEIGHT, window.innerHeight - 180)
+  );
+  const heightLimit = promptExpanded ? expandedLimit : MAX_PROMPT_HEIGHT;
+  const nextHeight = Math.min(promptInput.scrollHeight, heightLimit);
+  promptInput.style.height = `${Math.max(nextHeight, 20)}px`;
+  promptInput.style.overflowY =
+    promptInput.scrollHeight > heightLimit ? "auto" : "hidden";
+  composerDropZone.classList.toggle("is-multiline", hasMultipleLines);
+  composerDropZone.classList.toggle("is-expanded", promptExpanded);
+  expandPromptButton.hidden = !hasMultipleLines;
+  expandPromptButton.setAttribute("aria-pressed", String(promptExpanded));
+  expandPromptButton.setAttribute(
+    "aria-label",
+    promptExpanded ? "Réduire le champ de saisie" : "Agrandir le champ de saisie"
+  );
+}
+
+expandPromptButton.addEventListener("click", () => {
+  promptExpanded = !promptExpanded;
+  resizePromptInput();
+  promptInput.focus();
+});
+
+window.addEventListener("resize", resizePromptInput);
+
 function saveCurrentDraft() {
   const draft = promptInput.value.slice(0, MAX_DRAFT_LENGTH);
 
@@ -1335,9 +1421,7 @@ function restoreSavedDraft() {
   }
 
   promptInput.value = savedDraft;
-  promptInput.style.height = "auto";
-  promptInput.style.height =
-    `${Math.min(promptInput.scrollHeight, 100)}px`;
+  resizePromptInput();
   updateActivity("Brouillon précédent restauré.");
 }
 
@@ -2350,7 +2434,7 @@ async function createNewConversation() {
   localStorage.setItem(SESSION_STORAGE_KEY, currentSessionId);
   conversation.replaceChildren();
   promptInput.value = "";
-  promptInput.style.height = "auto";
+  resizePromptInput();
   clearSavedDraft();
   lastFailedQuestion = null;
   retryButton.hidden = true;
@@ -2377,6 +2461,175 @@ let activeConversationContextMenu = null;
 function closeConversationContextMenu() {
   activeConversationContextMenu?.remove();
   activeConversationContextMenu = null;
+}
+
+async function updateIndexedConversation(conversationId, changes) {
+  const response = await fetch(`/conversations/${encodeURIComponent(conversationId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", "X-Noon-Request": "1" },
+    body: JSON.stringify(changes),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || "Déplacement impossible.");
+  return data;
+}
+
+async function renameConversationProject(projectId, title) {
+  const response = await fetch(`/conversation-folders/${encodeURIComponent(projectId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", "X-Noon-Request": "1" },
+    body: JSON.stringify({ title }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || "Projet indisponible.");
+}
+
+async function beginConversationProjectRename(projectId) {
+  const project = conversationIndexState.folders.find((item) => item.id === projectId);
+  const projectRow = Array.from(conversationProjectsList.querySelectorAll("[data-conversation-project]"))
+    .find((item) => item.dataset.conversationProject === projectId);
+  const name = projectRow?.querySelector(".conversation-project__name");
+  if (!project || !name) return;
+  const input = document.createElement("input");
+  input.className = "conversation-project__rename";
+  input.value = project.title;
+  input.maxLength = 60;
+  input.setAttribute("aria-label", "Nom du projet");
+  name.replaceWith(input);
+  input.focus();
+  input.select();
+  let finished = false;
+  const finish = async (save) => {
+    if (finished) return;
+    finished = true;
+    const title = input.value.trim();
+    try {
+      if (save && title && title !== project.title) await renameConversationProject(projectId, title);
+    } catch (error) { updateActivity(error.message); }
+    await loadConversationIndex();
+  };
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); void finish(true); }
+    if (event.key === "Escape") { event.preventDefault(); void finish(false); }
+  });
+  input.addEventListener("blur", () => void finish(true));
+}
+
+async function beginIndexedConversationRename(conversationId) {
+  const conversationItem = conversationIndexState.conversations.find((item) => item.id === conversationId);
+  const row = Array.from(document.querySelectorAll("[data-conversation-id]"))
+    .find((item) => item.dataset.conversationId === conversationId);
+  const openButton = row?.querySelector(".conversation-history__open");
+  if (!conversationItem || !openButton) return;
+  const input = document.createElement("input");
+  input.className = "conversation-history__rename";
+  input.value = conversationItem.title || "";
+  input.maxLength = 72;
+  input.setAttribute("aria-label", "Nom de la conversation");
+  openButton.replaceWith(input);
+  row.draggable = false;
+  input.focus();
+  input.select();
+  let finished = false;
+  const finish = async (save) => {
+    if (finished) return;
+    finished = true;
+    const title = input.value.trim();
+    try {
+      if (save && title && title !== conversationItem.title) {
+        await updateIndexedConversation(conversationId, { title });
+        updateActivity("Conversation renommée.");
+      }
+    } catch (error) {
+      updateActivity(error.message);
+    }
+    await loadConversationIndex();
+  };
+  input.addEventListener("click", (event) => event.stopPropagation());
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); void finish(true); }
+    if (event.key === "Escape") { event.preventDefault(); void finish(false); }
+  });
+  input.addEventListener("blur", () => void finish(true));
+}
+
+async function createConversationProject({ conversationId = null } = {}) {
+  const response = await fetch("/conversation-folders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Noon-Request": "1" },
+    body: JSON.stringify({ title: "Nouveau projet" }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || "Création du projet impossible.");
+  if (conversationId) await updateIndexedConversation(conversationId, { folderId: data.folder.id });
+  conversationProjects.open = true;
+  await loadConversationIndex();
+  await beginConversationProjectRename(data.folder.id);
+}
+
+async function deleteConversationProject(project) {
+  if (!window.confirm(`Supprimer le projet « ${project.title} » ? Les conversations resteront dans Chats.`)) return;
+  const response = await fetch(`/conversation-folders/${encodeURIComponent(project.id)}?destinationFolderId=general`, {
+    method: "DELETE",
+    headers: { "X-Noon-Request": "1" },
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || "Suppression du projet impossible.");
+  await loadConversationIndex();
+}
+
+async function moveConversationToProject(conversationItem, projectId) {
+  await updateIndexedConversation(conversationItem.id, { folderId: projectId });
+  await loadConversationIndex();
+  updateActivity(projectId === "general" ? "Conversation replacée dans Chats." : "Conversation déplacée dans le projet.");
+}
+
+function openMoveConversationSubmenu(parentItem, conversationItem, menu) {
+  menu.querySelector(".conversation-context-submenu")?.remove();
+  const submenu = document.createElement("div");
+  submenu.className = "conversation-context-menu conversation-context-submenu";
+  submenu.setAttribute("role", "menu");
+  submenu.setAttribute("aria-label", "Choisir un projet");
+  const projects = conversationIndexState.folders.filter((folder) => folder.id !== "general");
+  const choices = [
+    ...projects.map((project) => ({ id: project.id, label: project.title })),
+    { id: "general", label: "Aucun projet / Chats", separated: true },
+    { id: "new", label: "+ Nouveau projet", separated: true },
+  ];
+  for (const choice of choices) {
+    if (choice.separated) {
+      const separator = document.createElement("span");
+      separator.className = "conversation-context-menu__separator";
+      separator.setAttribute("aria-hidden", "true");
+      submenu.append(separator);
+    }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.role = "menuitem";
+    button.className = "conversation-context-menu__item";
+    const marker = document.createElement("span");
+    marker.className = "conversation-context-menu__check";
+    marker.textContent = choice.id === conversationItem.folderId ? "✓" : "";
+    const label = document.createElement("span");
+    label.textContent = choice.label;
+    button.append(marker, label);
+    button.addEventListener("click", async () => {
+      closeConversationContextMenu();
+      try {
+        if (choice.id === "new") await createConversationProject({ conversationId: conversationItem.id });
+        else await moveConversationToProject(conversationItem, choice.id);
+      } catch (error) { updateActivity(error.message); }
+    });
+    submenu.append(button);
+  }
+  menu.append(submenu);
+  const parentRect = parentItem.getBoundingClientRect();
+  const submenuRect = submenu.getBoundingClientRect();
+  const opensLeft = parentRect.right + submenuRect.width + 12 > window.innerWidth;
+  submenu.style.left = opensLeft ? `${-submenuRect.width - 4}px` : `${parentRect.width + 4}px`;
+  submenu.style.top = `${Math.max(0, Math.min(menu.getBoundingClientRect().height - submenuRect.height, parentItem.offsetTop))}px`;
+  parentItem.setAttribute("aria-expanded", "true");
+  submenu.querySelector("button")?.focus();
 }
 
 async function deleteIndexedConversation(conversationItem) {
@@ -2406,6 +2659,7 @@ function openConversationContextMenu(anchor, conversationItem) {
   const actions = [
     { id: "share", label: "Partager", icon: "share" },
     { id: "rename", label: "Renommer", icon: "rename" },
+    { id: "move", label: "Déplacer vers le projet", icon: "folder" },
     { id: "delete", label: "Supprimer", icon: "trash", destructive: true, separated: true },
   ];
 
@@ -2421,6 +2675,10 @@ function openConversationContextMenu(anchor, conversationItem) {
     button.type = "button";
     button.role = "menuitem";
     button.className = "conversation-context-menu__item";
+    if (action.id === "move") {
+      button.setAttribute("aria-haspopup", "menu");
+      button.setAttribute("aria-expanded", "false");
+    }
     if (action.destructive) button.classList.add("is-destructive");
     const icon = document.createElement("span");
     icon.className = "conversation-context-menu__icon";
@@ -2429,23 +2687,24 @@ function openConversationContextMenu(anchor, conversationItem) {
     const label = document.createElement("span");
     label.textContent = action.label;
     button.append(icon, label);
+    if (action.id === "move") {
+      const chevron = document.createElement("span");
+      chevron.className = "conversation-context-menu__chevron";
+      chevron.textContent = "›";
+      button.append(chevron);
+    }
 
     button.addEventListener("click", async () => {
+      if (action.id === "move") {
+        openMoveConversationSubmenu(button, conversationItem, menu);
+        return;
+      }
       closeConversationContextMenu();
       if (action.id === "share") {
         if (conversationItem.id !== currentSessionId) await switchConversation(conversationItem.id);
         shareConversationButton.click();
       } else if (action.id === "rename") {
-        const renamed = window.prompt("Renommer la conversation :", conversationItem.title);
-        if (!renamed?.trim()) return;
-        const response = await fetch(`/conversations/${encodeURIComponent(conversationItem.id)}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json", "X-Noon-Request": "1" },
-          body: JSON.stringify({ title: renamed.trim() }),
-        });
-        const data = await response.json();
-        updateActivity(response.ok ? "Conversation renommée." : data.message);
-        if (response.ok) await loadConversationIndex();
+        await beginIndexedConversationRename(conversationItem.id);
       } else if (action.id === "delete") {
         await deleteIndexedConversation(conversationItem);
       }
@@ -2464,9 +2723,11 @@ function openConversationContextMenu(anchor, conversationItem) {
 
 function renderConversationIndex(conversations = []) {
   conversationHistoryList.replaceChildren();
-  conversationHistoryCount.textContent = `${conversations.length}/20`;
+  const chatConversations = conversations.filter((item) => !item.folderId || item.folderId === "general");
+  conversationHistoryCount.textContent = `${chatConversations.length} chat${chatConversations.length === 1 ? "" : "s"}`;
+  renderConversationProjects(conversations);
 
-  if (conversations.length === 0) {
+  if (chatConversations.length === 0) {
     const empty = document.createElement("span");
     empty.className = "conversation-history__empty";
     empty.textContent = "Aucune conversation.";
@@ -2474,7 +2735,7 @@ function renderConversationIndex(conversations = []) {
     return;
   }
 
-  const sortedConversations = [...conversations].sort(
+  const sortedConversations = [...chatConversations].sort(
     (left, right) => new Date(right.updatedAt) - new Date(left.updatedAt)
   );
 
@@ -2506,7 +2767,11 @@ function renderConversationIndex(conversations = []) {
 
     const item = document.createElement("div");
     item.className = "conversation-history__item";
+    item.draggable = true;
+    item.dataset.conversationId = conversationItem.id;
     item.classList.toggle("active", conversationItem.id === currentSessionId);
+    item.addEventListener("dragstart", (event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/x-noon-conversation", conversationItem.id); item.classList.add("is-dragging"); });
+    item.addEventListener("dragend", () => item.classList.remove("is-dragging"));
 
     const openButton = document.createElement("button");
     openButton.type = "button";
@@ -2517,18 +2782,9 @@ function renderConversationIndex(conversations = []) {
     title.textContent = conversationItem.title || "Nouvelle conversation";
     openButton.append(title);
     openButton.addEventListener("click", () => void switchConversation(conversationItem.id));
-    title.addEventListener("dblclick", async (event) => {
+    title.addEventListener("dblclick", (event) => {
       event.stopPropagation();
-      const renamed = window.prompt("Renommer la conversation :", conversationItem.title);
-      if (!renamed?.trim()) return;
-      const response = await fetch(`/conversations/${encodeURIComponent(conversationItem.id)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", "X-Noon-Request": "1" },
-        body: JSON.stringify({ title: renamed }),
-      });
-      const data = await response.json();
-      updateActivity(response.ok ? "Conversation renommée." : data.message);
-      if (response.ok) await loadConversationIndex();
+      void beginIndexedConversationRename(conversationItem.id);
     });
 
     const deleteButton = document.createElement("button");
@@ -2548,6 +2804,103 @@ function renderConversationIndex(conversations = []) {
   }
 }
 
+function createProjectConversationRow(conversationItem) {
+  const item = document.createElement("div");
+  item.className = "conversation-history__item conversation-project__conversation";
+  item.draggable = true;
+  item.dataset.conversationId = conversationItem.id;
+  item.classList.toggle("active", conversationItem.id === currentSessionId);
+  item.addEventListener("dragstart", (event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/x-noon-conversation", conversationItem.id); item.classList.add("is-dragging"); });
+  item.addEventListener("dragend", () => item.classList.remove("is-dragging"));
+  const openButton = document.createElement("button");
+  openButton.type = "button";
+  openButton.className = "conversation-history__open";
+  openButton.title = conversationItem.title;
+  const title = document.createElement("span");
+  title.className = "conversation-history__title";
+  title.textContent = conversationItem.title || "Nouvelle conversation";
+  openButton.append(title);
+  openButton.addEventListener("click", () => void switchConversation(conversationItem.id));
+  const more = document.createElement("button");
+  more.type = "button";
+  more.className = "conversation-history__delete conversation-history__more";
+  more.setAttribute("aria-label", `Plus d’actions pour ${conversationItem.title}`);
+  more.setAttribute("aria-haspopup", "menu");
+  more.textContent = "⋮";
+  more.addEventListener("click", (event) => { event.stopPropagation(); openConversationContextMenu(more, conversationItem); });
+  item.append(openButton, more);
+  return item;
+}
+
+function openProjectContextMenu(anchor, project) {
+  closeConversationContextMenu();
+  const menu = document.createElement("div");
+  menu.className = "conversation-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.setAttribute("aria-label", `Actions pour ${project.title}`);
+  for (const action of [{ id: "rename", label: "Renommer" }, { id: "delete", label: "Supprimer le projet", destructive: true }]) {
+    if (action.destructive) { const separator=document.createElement("span");separator.className="conversation-context-menu__separator";separator.setAttribute("aria-hidden","true");menu.append(separator); }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.role = "menuitem";
+    button.className = "conversation-context-menu__item";
+    if (action.destructive) button.classList.add("is-destructive");
+    button.textContent = action.label;
+    button.addEventListener("click", async () => { closeConversationContextMenu(); try { if (action.id === "rename") await beginConversationProjectRename(project.id); else await deleteConversationProject(project); } catch (error) { updateActivity(error.message); } });
+    menu.append(button);
+  }
+  document.body.append(menu);
+  const anchorRect = anchor.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(12, Math.min(window.innerWidth - menuRect.width - 12, anchorRect.right - menuRect.width))}px`;
+  menu.style.top = `${Math.max(12, Math.min(window.innerHeight - menuRect.height - 12, anchorRect.bottom + 6))}px`;
+  activeConversationContextMenu = menu;
+  menu.querySelector("button")?.focus();
+}
+
+function renderConversationProjects(conversations) {
+  conversationProjectsList.replaceChildren();
+  const projects = conversationIndexState.folders.filter((folder) => folder.id !== "general");
+  if (!projects.length) { const empty=document.createElement("span");empty.className="conversation-history__empty";empty.textContent="Aucun projet.";conversationProjectsList.append(empty);return; }
+  for (const project of projects) {
+    const projectDetails = document.createElement("details");
+    projectDetails.className = "conversation-project";
+    projectDetails.dataset.conversationProject = project.id;
+    projectDetails.open = true;
+    const summary = document.createElement("summary");
+    const folderIcon = document.createElement("span");
+    folderIcon.className = "sidebar-line-icon sidebar-line-icon--folder";
+    folderIcon.setAttribute("aria-hidden", "true");
+    const name = document.createElement("span");
+    name.className = "conversation-project__name";
+    name.textContent = project.title;
+    name.title = project.title;
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "conversation-project__more";
+    more.textContent = "⋮";
+    more.setAttribute("aria-label", `Actions pour le projet ${project.title}`);
+    more.setAttribute("aria-haspopup", "menu");
+    more.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); openProjectContextMenu(more, project); });
+    const chevron = document.createElement("span");
+    chevron.className = "conversation-project__chevron";
+    chevron.setAttribute("aria-hidden", "true");
+    summary.append(folderIcon, name, more, chevron);
+    projectDetails.append(summary);
+    const list = document.createElement("div");
+    list.className = "conversation-project__list";
+    const projectConversations = conversations.filter((item) => item.folderId === project.id).sort((left,right)=>new Date(right.updatedAt)-new Date(left.updatedAt));
+    if (!projectConversations.length) { const empty=document.createElement("span");empty.className="conversation-project__empty";empty.textContent="Aucune conversation";list.append(empty); }
+    else projectConversations.forEach((item) => list.append(createProjectConversationRow(item)));
+    projectDetails.append(list);
+    const setDropState = (active) => projectDetails.classList.toggle("is-drop-target", active);
+    projectDetails.addEventListener("dragover", (event) => { if (Array.from(event.dataTransfer.types).includes("text/x-noon-conversation")) { event.preventDefault(); event.dataTransfer.dropEffect="move"; setDropState(true); } });
+    projectDetails.addEventListener("dragleave", (event) => { if (!projectDetails.contains(event.relatedTarget)) setDropState(false); });
+    projectDetails.addEventListener("drop", async (event) => { event.preventDefault();setDropState(false);const id=event.dataTransfer.getData("text/x-noon-conversation");const item=conversationIndexState.conversations.find((candidate)=>candidate.id===id);if(item&&item.folderId!==project.id){try{await moveConversationToProject(item,project.id);}catch(error){updateActivity(error.message);}} });
+    conversationProjectsList.append(projectDetails);
+  }
+}
+
 document.addEventListener("click", (event) => {
   if (activeConversationContextMenu && !activeConversationContextMenu.contains(event.target)) {
     closeConversationContextMenu();
@@ -2555,6 +2908,7 @@ document.addEventListener("click", (event) => {
 });
 
 window.addEventListener("resize", closeConversationContextMenu);
+createConversationProjectButton.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); void createConversationProject().catch((error) => updateActivity(error.message)); });
 
 async function loadConversationIndex() {
   try {
@@ -2580,6 +2934,9 @@ async function loadConversationIndex() {
 }
 
 function switchView(viewName) {
+  if (currentView === "personal" && viewName !== "personal") {
+    resetPrivateMemoryVisibility();
+  }
   currentView = ["chat", "brief", "personal"].includes(viewName) ? viewName : "core";
 
   viewButtons.forEach((button) => {
@@ -2600,6 +2957,7 @@ function switchView(viewName) {
     void loadCreativeBrief();
     updateActivity("Brief Noon ouvert.");
   } else if (currentView === "personal") {
+    resetPrivateMemoryVisibility({ render: false });
     interruptNoonSpeech(false);
     window.noonLiveVoice?.disconnect({ announce: false });
     void loadPersonalIntelligence();
@@ -2801,6 +3159,107 @@ async function structuredMemoryAction(action, payload = {}) {
   const response = await fetch("/personal-intelligence/memories", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
   const data = await response.json(); if (!response.ok) throw new Error(data.message || "Mémoire structurée indisponible."); return data.result;
 }
+let privateMemoryShowAll = false;
+let visiblePrivateMemoryIds = new Set();
+let hiddenPrivateMemoryIds = new Set();
+let loadedPrivateMemories = [];
+let privateMemoryAuthResolver = null;
+let privateMemoryPasswordConfigured = false;
+
+function finishPrivateMemoryAuthentication(authenticated) {
+  const resolve = privateMemoryAuthResolver;
+  privateMemoryAuthResolver = null;
+  privateMemoryPasswordInput.value = "";
+  if (privateMemoryAuthDialog.open) privateMemoryAuthDialog.close();
+  resolve?.(authenticated);
+}
+
+function showPrivateMemoryAuthError(message) {
+  privateMemoryAuthError.textContent = message;
+  privateMemoryAuthError.hidden = false;
+}
+
+async function requestPrivateMemoryAuthentication() {
+  if (!window.noon?.getPrivateMemoryProtection || !window.noon?.authenticatePrivateMemory) {
+    updateActivity("Protection de la mémoire privée indisponible.");
+    return false;
+  }
+  let status;
+  try { status = await window.noon.getPrivateMemoryProtection(); }
+  catch { updateActivity("Impossible de vérifier la protection de la mémoire privée."); return false; }
+  privateMemoryPasswordConfigured = Boolean(status.passwordConfigured);
+  privateMemoryTouchIdButton.hidden = !status.touchIdAvailable;
+  privateMemoryPasswordPanel.hidden = false;
+  privateMemoryPasswordLabel.textContent = privateMemoryPasswordConfigured ? "Mot de passe Noon" : "Créer un mot de passe Noon";
+  privateMemoryPasswordInput.autocomplete = privateMemoryPasswordConfigured ? "current-password" : "new-password";
+  privateMemoryPasswordHelp.textContent = privateMemoryPasswordConfigured
+    ? "Utilisez Touch ID ou votre mot de passe Noon."
+    : "Créez un mot de passe local de 8 caractères minimum. Il sera protégé dans le coffre macOS.";
+  privateMemoryPasswordSubmit.textContent = privateMemoryPasswordConfigured ? "Confirmer" : "Créer et afficher";
+  privateMemoryAuthError.hidden = true;
+  privateMemoryAuthError.textContent = "";
+  privateMemoryPasswordInput.value = "";
+  return new Promise((resolve) => {
+    privateMemoryAuthResolver = resolve;
+    privateMemoryAuthDialog.showModal();
+    if (!status.touchIdAvailable) privateMemoryPasswordInput.focus();
+  });
+}
+
+function isPrivateMemoryVisible(memoryId) {
+  return privateMemoryShowAll
+    ? !hiddenPrivateMemoryIds.has(memoryId)
+    : visiblePrivateMemoryIds.has(memoryId);
+}
+
+function updatePrivateMemoryVisibilityControl() {
+  privateMemoryVisibilityButton.setAttribute("aria-pressed", String(privateMemoryShowAll));
+  privateMemoryVisibilityButton.setAttribute("aria-label", privateMemoryShowAll ? "Masquer toutes les données privées" : "Afficher toutes les données privées");
+  privateMemoryVisibilityButton.textContent = privateMemoryShowAll ? "Masquer les données" : "Afficher les données";
+}
+
+function renderStructuredMemories(memories = loadedPrivateMemories) {
+  personalMemoryList.replaceChildren();
+  if (!memories.length) { const empty=document.createElement("p");empty.className="personal-empty";empty.textContent="Aucune information dans ce filtre.";personalMemoryList.append(empty);return; }
+  const groups = new Map();
+  for (const memory of memories) {
+    const category = privateMemoryCategoryLabel(memory.category);
+    if (!groups.has(category)) groups.set(category, []);
+    groups.get(category).push(memory);
+  }
+  for (const [category, categoryMemories] of groups) {
+    const group=document.createElement("section");group.className="private-memory-category";
+    const groupTitle=document.createElement("h2");groupTitle.className="private-memory-category__title";groupTitle.textContent=category;
+    const groupList=document.createElement("div");groupList.className="private-memory-category__list";
+    for (const memory of categoryMemories) {
+      const visible = isPrivateMemoryVisible(memory.id);
+      const card=document.createElement("article");card.className="personal-card private-memory-card";card.dataset.status=memory.status;
+      const head=document.createElement("div");head.className="personal-card__head";const title=document.createElement("strong");title.textContent="Information privée";const badge=document.createElement("span");badge.className="personal-card__status";badge.textContent=statusLabel(memory.status);head.append(title,badge);
+      const valueRow=document.createElement("div");valueRow.className="private-memory-value-row";
+      const value=document.createElement("p");value.className="private-memory-value";value.textContent=visible?memory.statement:maskPrivateMemoryValue(memory.statement);
+      const reveal=document.createElement("button");reveal.type="button";reveal.className="private-memory-reveal";reveal.textContent=visible?"Masquer":"Afficher";reveal.setAttribute("aria-pressed",String(visible));reveal.setAttribute("aria-label",`${visible?"Masquer":"Afficher"} cette information privée`);
+      reveal.addEventListener("click",async()=>{const targetSet=privateMemoryShowAll?hiddenPrivateMemoryIds:visiblePrivateMemoryIds;if(!visible&&!await requestPrivateMemoryAuthentication())return;if(targetSet.has(memory.id))targetSet.delete(memory.id);else targetSet.add(memory.id);renderStructuredMemories();});
+      valueRow.append(value,reveal);
+      const meta=document.createElement("p");meta.className="personal-card__meta";meta.textContent=`Confiance ${Math.round(memory.confidence*100)} % · ${memory.sensitivity} · ${memory.apiPolicy} · Source : ${memory.sourceType}${memory.expiresAt?` · Expire le ${new Date(memory.expiresAt).toLocaleDateString("fr-FR")}`:""}`;
+      const actions=document.createElement("div");actions.className="personal-card__actions";
+      const addAction=(label,handler)=>{const button=document.createElement("button");button.type="button";button.textContent=label;button.addEventListener("click",async()=>{try{await handler();await loadStructuredMemories();}catch(error){updateActivity(error.message);}});actions.append(button);};
+      if(["candidate","pending_review"].includes(memory.status))addAction("Valider",()=>privateMemoryAction("confirm",{id:memory.id}));
+      addAction("Corriger",async()=>{const corrected=window.prompt("Corriger cette information",memory.statement);if(corrected===null)return;await privateMemoryAction("update",{id:memory.id,changes:{statement:corrected},reason:"correction explicite"});});
+      addAction("Oublier",()=>privateMemoryAction("forget",{id:memory.id}));
+      card.append(head,valueRow,meta,actions);groupList.append(card);
+    }
+    group.append(groupTitle,groupList);personalMemoryList.append(group);
+  }
+}
+
+function resetPrivateMemoryVisibility({ render = true } = {}) {
+  privateMemoryShowAll = false;
+  visiblePrivateMemoryIds = new Set();
+  hiddenPrivateMemoryIds = new Set();
+  updatePrivateMemoryVisibilityControl();
+  if (render) renderStructuredMemories();
+}
+
 async function loadStructuredMemories() {
   const subjectId = privateMemoryProfiles.querySelector(".active")?.dataset.memorySubject || "arnaud";
   const params = new URLSearchParams({ subjectId }); if (personalMemorySearch.value.trim()) params.set("q", personalMemorySearch.value.trim()); if (personalMemoryStatus.value) params.set("status", personalMemoryStatus.value); if (personalMemorySensitivity.value) params.set("sensitivity", personalMemorySensitivity.value);
@@ -2810,19 +3269,8 @@ async function loadStructuredMemories() {
   const profilesResponse = await fetch("/private-memory/profiles", { cache: "no-store" });
   const profilesData = await profilesResponse.json();
   privateProfileEnabled.checked = profilesData.profiles?.find((profile) => profile.id === subjectId)?.enabled !== false;
-  personalMemoryList.replaceChildren();
-  if (!data.memories.length) { const empty=document.createElement("p");empty.className="personal-empty";empty.textContent="Aucune information dans ce filtre.";personalMemoryList.append(empty);return; }
-  for (const memory of data.memories) {
-    const card=document.createElement("article");card.className="personal-card";card.dataset.status=memory.status;
-    const head=document.createElement("div");head.className="personal-card__head";const title=document.createElement("strong");title.textContent=memory.category;const badge=document.createElement("span");badge.className="personal-card__status";badge.textContent=statusLabel(memory.status);head.append(title,badge);
-    const value=document.createElement("p");value.textContent=memory.statement;const meta=document.createElement("p");meta.className="personal-card__meta";meta.textContent=`Confiance ${Math.round(memory.confidence*100)} % · ${memory.sensitivity} · ${memory.apiPolicy} · Source : ${memory.sourceType}${memory.expiresAt?` · Expire le ${new Date(memory.expiresAt).toLocaleDateString("fr-FR")}`:""}`;
-    const actions=document.createElement("div");actions.className="personal-card__actions";
-    const addAction=(label,handler)=>{const button=document.createElement("button");button.type="button";button.textContent=label;button.addEventListener("click",async()=>{try{await handler();await loadStructuredMemories();}catch(error){updateActivity(error.message);}});actions.append(button);};
-    if(["candidate","pending_review"].includes(memory.status))addAction("Valider",()=>privateMemoryAction("confirm",{id:memory.id}));
-    addAction("Corriger",async()=>{const corrected=window.prompt("Corriger cette information",memory.statement);if(corrected===null)return;await privateMemoryAction("update",{id:memory.id,changes:{statement:corrected},reason:"correction explicite"});});
-    addAction("Oublier",()=>privateMemoryAction("forget",{id:memory.id}));
-    card.append(head,value,meta,actions);personalMemoryList.append(card);
-  }
+  loadedPrivateMemories = data.memories;
+  renderStructuredMemories();
 }
 
 async function privateMemoryAction(action, payload = {}) {
@@ -2854,9 +3302,14 @@ async function loadRecommendations() {
 async function loadPersonalMetrics() { const [metricsResponse,backgroundResponse]=await Promise.all([fetch("/personal-intelligence/metrics",{cache:"no-store"}),fetch("/background-analyses",{cache:"no-store"})]);const metricsData=await metricsResponse.json();const backgroundData=await backgroundResponse.json();personalMetrics.replaceChildren();const values={"Taux d’acceptation":`${Math.round((metricsData.metrics?.acceptanceRate||0)*100)} %`,"Taux de réalisation":`${Math.round((metricsData.metrics?.completionRate||0)*100)} %`,"Propositions":metricsData.metrics?.values?.recommendations_generated||0,"Répétitions évitées":metricsData.metrics?.values?.repetitions_avoided||0};for(const [label,value] of Object.entries(values)){const card=document.createElement("div");card.className="metric-card";const text=document.createElement("span");text.textContent=label;const strong=document.createElement("strong");strong.textContent=String(value);card.append(text,strong);personalMetrics.append(card);}backgroundAnalysisList.replaceChildren();if(!backgroundData.enabled){backgroundAnalysisList.textContent="Analyses longues désactivées par configuration.";return;}for(const task of backgroundData.tasks||[]){const card=document.createElement("article");card.className="personal-card";const title=document.createElement("strong");title.textContent=task.kind;const status=document.createElement("span");status.textContent=`État : ${task.status}`;card.append(title,status);if(["queued","in_progress"].includes(task.status)){const cancel=document.createElement("button");cancel.type="button";cancel.textContent="Annuler";cancel.addEventListener("click",async()=>{await fetch(`/background-analyses/${encodeURIComponent(task.id)}/cancel`,{method:"POST"});await loadPersonalMetrics();});card.append(cancel);}backgroundAnalysisList.append(card);} }
 async function loadPersonalIntelligence() { try { const profileResponse=await fetch("/personal-intelligence/profile",{cache:"no-store"});const profileData=await profileResponse.json();if(!profileResponse.ok)throw new Error(profileData.message);personalDatabaseStatus.textContent=`${profileData.database==="sqlite"?"SQLite local":"Mode dégradé JSON"}${profileData.ftsAvailable?" · recherche FTS5":" · recherche exacte"}`;await Promise.all([loadStructuredMemories(),loadLivingProjects(),loadPersonalInbox(),loadRecommendations(),loadPersonalMetrics()]); } catch(error){personalDatabaseStatus.textContent=error.message;updateActivity(error.message);} }
 
-personalTabs.forEach((button)=>button.addEventListener("click",()=>{personalTabs.forEach(item=>{const active=item===button;item.classList.toggle("active",active);item.setAttribute("aria-pressed",String(active));});personalPanels.forEach(panel=>{const active=panel.dataset.personalPanel===button.dataset.personalTab;panel.classList.toggle("active",active);panel.hidden=!active;});}));
+personalTabs.forEach((button)=>button.addEventListener("click",()=>{const leavingKnowledge=button.dataset.personalTab!=="knowledge";resetPrivateMemoryVisibility();personalTabs.forEach(item=>{const active=item===button;item.classList.toggle("active",active);item.setAttribute("aria-pressed",String(active));});personalPanels.forEach(panel=>{const active=panel.dataset.personalPanel===button.dataset.personalTab;panel.classList.toggle("active",active);panel.hidden=!active;});if(!leavingKnowledge)void loadStructuredMemories().catch(error=>updateActivity(error.message));}));
 let personalMemorySearchTimer=null;personalMemorySearch.addEventListener("input",()=>{clearTimeout(personalMemorySearchTimer);personalMemorySearchTimer=setTimeout(()=>loadStructuredMemories().catch(error=>updateActivity(error.message)),250);});personalMemoryStatus.addEventListener("change",()=>loadStructuredMemories().catch(error=>updateActivity(error.message)));personalInboxFilter.addEventListener("change",()=>loadPersonalInbox().catch(error=>updateActivity(error.message)));
 personalMemorySensitivity.addEventListener("change",()=>loadStructuredMemories().catch(error=>updateActivity(error.message)));
+privateMemoryVisibilityButton.addEventListener("click",async()=>{if(!privateMemoryShowAll&&!await requestPrivateMemoryAuthentication())return;privateMemoryShowAll=!privateMemoryShowAll;visiblePrivateMemoryIds.clear();hiddenPrivateMemoryIds.clear();updatePrivateMemoryVisibilityControl();renderStructuredMemories();});
+privateMemoryTouchIdButton.addEventListener("click",async()=>{privateMemoryAuthError.hidden=true;try{const result=await window.noon.authenticatePrivateMemory({method:"touch-id"});if(result?.authenticated)finishPrivateMemoryAuthentication(true);}catch{showPrivateMemoryAuthError("Touch ID annulé ou non reconnu.");}});
+privateMemoryAuthForm.addEventListener("submit",async(event)=>{event.preventDefault();privateMemoryAuthError.hidden=true;const password=privateMemoryPasswordInput.value;if(password.length<8){showPrivateMemoryAuthError("Le mot de passe doit contenir au moins 8 caractères.");return;}try{const result=privateMemoryPasswordConfigured?await window.noon.authenticatePrivateMemory({method:"password",password}):await window.noon.setPrivateMemoryPassword(password);if(result?.authenticated||result?.configured)finishPrivateMemoryAuthentication(true);}catch(error){showPrivateMemoryAuthError(error?.message||"Confirmation refusée.");privateMemoryPasswordInput.select();}});
+privateMemoryAuthCancel.addEventListener("click",()=>finishPrivateMemoryAuthentication(false));
+privateMemoryAuthDialog.addEventListener("cancel",(event)=>{event.preventDefault();finishPrivateMemoryAuthentication(false);});
 privateMemoryProfiles.addEventListener("click",(event)=>{const button=event.target.closest("[data-memory-subject]");if(!button)return;privateMemoryProfiles.querySelectorAll("button").forEach((item)=>item.classList.toggle("active",item===button));void loadStructuredMemories().catch(error=>updateActivity(error.message));});
 privateMemoryEnabled.addEventListener("change",()=>void updatePrivateMemorySettings().catch(error=>updateActivity(error.message)));
 privateMemorySensitiveApi.addEventListener("change",()=>void updatePrivateMemorySettings().catch(error=>updateActivity(error.message)));
@@ -2864,6 +3317,7 @@ privateProfileEnabled.addEventListener("change",async()=>{try{const subjectId=pr
 privateMemoryExportButton.addEventListener("click",async()=>{try{const subjectId=privateMemoryProfiles.querySelector(".active")?.dataset.memorySubject||"arnaud";const response=await fetch(`/private-memory/export?subjectId=${encodeURIComponent(subjectId)}`,{cache:"no-store"});const data=await response.json();if(!response.ok)throw new Error(data.message);const url=URL.createObjectURL(new Blob([JSON.stringify(data.export,null,2)],{type:"application/json"}));const link=document.createElement("a");link.href=url;link.download=`noon-memoire-${subjectId}.private.json`;link.click();URL.revokeObjectURL(url);updateActivity("Export privé créé.");}catch(error){updateActivity(error.message);}});
 privateMemoryPurgeButton.addEventListener("click",async()=>{const subjectId=privateMemoryProfiles.querySelector(".active")?.dataset.memorySubject||"arnaud";if(!window.confirm(`Purger définitivement toute la mémoire du profil ${subjectId} ?`))return;if(!window.confirm("Cette suppression est irréversible. Confirmer une seconde fois ?"))return;try{await privateMemoryAction("purge",{subjectId});await loadStructuredMemories();updateActivity("Profil purgé définitivement.");}catch(error){updateActivity(error.message);}});
 privateMemoryImportButton.addEventListener("click",()=>{const picker=document.createElement("input");picker.type="file";picker.accept=".json,application/json";picker.addEventListener("change",async()=>{const file=picker.files?.[0];if(!file)return;try{const seed=JSON.parse(await file.text());const previewResponse=await fetch("/private-memory/import/preview",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({seed})});const previewData=await previewResponse.json();if(!previewResponse.ok||!previewData.result?.valid)throw new Error(previewData.message||(previewData.result?.errors||[]).join(" "));const selectedIndexes=[];for(const entry of previewData.result.entries){if(entry.duplicate||entry.expired)continue;const accepted=window.confirm(`Importer dans ${entry.subjectId} ?\n\n${entry.statementPreview}\n\nStatut : ${entry.status} · Sensibilité : ${entry.sensitivity}`);if(accepted)selectedIndexes.push(entry.index);}if(!selectedIndexes.length){updateActivity("Import annulé : aucune entrée validée.");return;}const importResponse=await fetch("/private-memory/import",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({seed,selectedIndexes})});const imported=await importResponse.json();if(!importResponse.ok)throw new Error(imported.message);await loadStructuredMemories();updateActivity(`${imported.result.importedCount} souvenir(s) chiffré(s). Supprimez le fichier source privé si vous n’en avez plus besoin.`);}catch(error){updateActivity(`Import refusé : ${error.message}`);}});picker.click();});
+updatePrivateMemoryVisibilityControl();
 for (const [element, key, value] of [[creativeBriefEnabledInput, "creativeBriefEnabled", () => creativeBriefEnabledInput.checked], [creativeBriefTimeInput, "creativeBriefTime", () => creativeBriefTimeInput.value], [creativeBriefNotificationsInput, "creativeBriefNotifications", () => creativeBriefNotificationsInput.checked], [launchAtLoginInput, "launchAtLogin", () => launchAtLoginInput.checked]]) element.addEventListener("change", () => window.noon?.setPreference(key, value()));
 
 function setVisualState(nextState) {
@@ -2973,7 +3427,7 @@ async function speakNoon(text, executionId = null) {
   try {
     const identityResponse = await fetch("/voice/identity?pipeline=tts", { cache: "no-store" });
     const policy = await identityResponse.json();
-    if (!identityResponse.ok || policy.resolved.providerStatus === "unavailable") {
+    if (!identityResponse.ok || !policy.resolved.activeVoice) {
       document.getElementById("noonVoicePolicy").dataset.state = "VoiceUnavailable";
       updateActivity(`Voix Noon : ${policy.resolved?.displayName || "Arbor"} — ${policy.resolved?.statusMessage || "indisponible"}. Réponse textuelle uniquement.`);
       return;
@@ -3052,7 +3506,7 @@ async function speakNoon(text, executionId = null) {
       if (!started) {
         started = true;
         window.noonVoiceMetrics.timeToFirstAudioMs = Math.round(performance.now() - ttsRequestedAt);
-        updateActivity(window.noonVoiceMetrics.fallbackCount ? "Noon parle avec sa voix de secours…" : "Noon parle…");
+        updateActivity("Noon parle…");
         setVisualState("speaking");
         startSpeechAnimation();
       }
@@ -3310,7 +3764,7 @@ async function sendQuestion(question, options = {}) {
   }
   updateFocusFromQuestion(finalQuestion);
   promptInput.value = "";
-  promptInput.style.height = "auto";
+  resizePromptInput();
   updateActivity("Noon réfléchit…");
   setVisualState("thinking");
   startActivityPolling();
@@ -3397,6 +3851,7 @@ async function sendQuestion(question, options = {}) {
       hideWebSearchSuggestion();
       updateActivity("Demande interrompue.");
       promptInput.value = finalQuestion;
+      resizePromptInput();
       saveCurrentDraft();
       lastFailedQuestion = null;
       retryButton.hidden = true;
@@ -3406,6 +3861,7 @@ async function sendQuestion(question, options = {}) {
 
     if (error.status === 429) {
       promptInput.value = finalQuestion;
+      resizePromptInput();
       saveCurrentDraft();
       lastFailedQuestion = finalQuestion;
 
@@ -3447,9 +3903,7 @@ async function sendQuestion(question, options = {}) {
     retryButton.disabled = false;
     updateActivity("Échec de l’envoi. La question est conservée.");
     promptInput.value = finalQuestion;
-    promptInput.style.height = "auto";
-    promptInput.style.height =
-      `${Math.min(promptInput.scrollHeight, 100)}px`;
+    resizePromptInput();
     saveCurrentDraft();
     promptInput.focus();
     promptInput.setSelectionRange(
@@ -3470,11 +3924,13 @@ chatForm.addEventListener("submit", async (event) => {
   const question = promptInput.value.trim();
   if (/^(contrôle (?:le )?projet|où en est|quelle est la prochaine étape|qu['’]est-ce qui bloque)/i.test(question)) {
     promptInput.value = "";
+    resizePromptInput();
     await controlActiveProject();
     return;
   }
   if (/^(fin de session|termine cette session|enregistre où nous en sommes|fais le bilan du projet)/i.test(question)) {
     promptInput.value = "";
+    resizePromptInput();
     await endActiveProjectSession();
     return;
   }
@@ -3919,8 +4375,7 @@ micButton.addEventListener("click", async () => {
 
 promptInput.addEventListener("input", () => {
   hideWebSearchSuggestion();
-  promptInput.style.height = "auto";
-  promptInput.style.height = `${Math.min(promptInput.scrollHeight, 100)}px`;
+  resizePromptInput();
 
   window.clearTimeout(draftSaveTimer);
   draftSaveTimer = window.setTimeout(() => {
@@ -4030,7 +4485,7 @@ async function callIntegration(provider, action) {
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.message || "Intégration indisponible.");
-  if (data.authorizationUrl) window.open(data.authorizationUrl, "_blank", "noopener");
+  if (data.authorizationUrl) await window.noon.openGoogleAuthorization(data.authorizationUrl);
   await loadIntegrations();
 }
 

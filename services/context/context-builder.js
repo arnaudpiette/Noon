@@ -70,6 +70,7 @@ function createContextBuilder({
   ambientContextProvider = null,
   goalContextProvider = null,
   permissionsProvider = () => [],
+  privacyClassifier = null,
   cache = createContextCache(),
   debug = null,
 } = {}) {
@@ -388,6 +389,41 @@ function createContextBuilder({
     const keptGoals = keepWithinBudget(relevantGoals.map((item) => ({ ...item, id: item.goalId })), (item) => item, "relevant_goal", goalIds)
       .map(({ id: _id, ...item }) => item);
     const keptMemories = keepWithinBudget(remoteMemories, (item) => item.value, "relevant_memory", metadata.memoryIds);
+
+    const classifyPrivacy = (fragment) => {
+      if (typeof privacyClassifier === "function") return privacyClassifier(fragment);
+      return {
+        source: fragment.source,
+        classification: fragment.classification,
+        localOnly: fragment.localOnly === true,
+        providerRestrictions: [...(fragment.providerRestrictions || [])],
+        secretDetected: false,
+        redactionRequired: fragment.redactionRequired === true,
+      };
+    };
+    const privacyInputs = [
+      { source: "personality", classification: "PUBLIC", content: personality },
+      ...hardRules.map((rule) => ({ source: "hard_rules", classification: "PUBLIC", content: rule.statement })),
+      ...keptConversation.map((item) => ({ source: item.source || "conversation", classification: "PERSONAL", content: item.content })),
+      ...(summary ? [{ source: "session_summary", classification: "PERSONAL", content: summary }] : []),
+      ...keptProjects.map((item) => ({ source: item.source || "project", classification: "PRIVATE", content: item.value })),
+      ...keptGoals.map((item) => ({ source: "goals", classification: "PERSONAL", content: item })),
+      ...keptMemories.map((item) => ({
+        source: item.source || "memory",
+        classification: item.classification || "PRIVATE",
+        content: item.value,
+        providerRestrictions: item.providerRestrictions || [],
+      })),
+      ...(workspaceContext ? [{ source: "workspace", classification: "PRIVATE", content: workspaceContext }] : []),
+    ];
+    metadata.privacy = {
+      fragments: privacyInputs.filter((item) => item.content !== null && item.content !== undefined && item.content !== "").map(classifyPrivacy),
+    };
+    metadata.privacy.classificationCounts = metadata.privacy.fragments.reduce((counts, item) => {
+      const key = item.classification || "UNKNOWN";
+      counts[key] = (counts[key] || 0) + 1;
+      return counts;
+    }, {});
 
     metadata.people = [...new Set(keptMemories.map((item) => item.profileId).filter(Boolean))];
     metadata.sources = [...new Set([

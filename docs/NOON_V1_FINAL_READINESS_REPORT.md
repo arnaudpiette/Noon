@@ -1,5 +1,40 @@
 # Noon V1 — rapport final de readiness
 
+## Observation quotidienne réelle — Jour 1 (13 septembre 2026)
+
+Périmètre : `/Applications/Noon.app`, usage personnel local, sans Picovoice, sans promotion Astra, sans changement de voix, sans écriture distante et sans modification fonctionnelle. Cette entrée initialise une observation de 3 à 7 jours ; elle ne constitue pas encore un rapport long-run.
+
+| Mesure | État observé | Classification |
+|---|---|---|
+| Uptime au relevé | 7 min 10 s depuis le dernier lancement contrôlé | `BASELINE` |
+| Démarrages journalisés sur 24 h | 27 `startup-begin` / 27 `server-started` / 27 `startup-server-ready` ; inclut les cycles de validation manuels | `EXPECTED`, pas un compteur de crashs |
+| Crash / erreur / warning local | 0 événement `error`, 0 événement `warning` dans `logs/noon.log` sur 24 h | `CONFIRMED_LOCAL` |
+| SQLite | `HEALTHY`, raison `OK`, 14 ms lors des cycles puis 14 ms ou moins sur les relevés suivants | `PACKAGED REAL` |
+| Gmail | `connected` après les relances ; diagnostic actif `HEALTHY / OK`, 171 ms | `PACKAGED REAL READ` |
+| Google Calendar | `connected` après les relances ; diagnostic actif `HEALTHY / OK`, 280 ms | `PACKAGED REAL READ` |
+| Apple Notes | diagnostic actif `HEALTHY / OK`, 4 037 ms | `PACKAGED REAL READ` |
+| Apple Reminders | diagnostic actif `HEALTHY / OK`, 1 060 ms après un timeout antérieur à 10 022 ms | `RECOVERED`, stabilité multi-jour à confirmer |
+| Daily Brief | un seul brief daté du 13 septembre, Markdown présent, génération terminée | `PACKAGED REAL PERSISTED` |
+| Sources du brief | Gmail, Calendar, mémoire Noon et projets `ready`; Notes et Reminders `unavailable` au moment de la génération; GitHub `disconnected` | `PARTIAL`, aucun faux empty |
+| SafeStorage Google | Gmail et Calendar restent `connected` après cinq Quit/relaunch sans nouvel OAuth | `PACKAGED REAL`, à réobserver chaque jour |
+| Instance unique | seconde ouverture : 1 processus principal, 1 serveur local | `PASS` |
+| Arrêt propre | après Quit : 0 processus principal, 0 helper, 0 listener sur le port local | `PASS` |
+| CPU / RAM au repos | 0,0 % CPU ponctuel ; 204,2 Mio RSS pour le processus principal | `BASELINE`, pas encore une tendance |
+| Démarrage | premier cycle prêt en 2 s ; cycles suivants en 1 s ; mesure chaude précise 1 789 ms | `BASELINE` |
+| Routage modèle cumulé | Luna 5, Terra 25 au relevé ; aucune fréquence Astra exploitable dans la fenêtre d’audit bornée | `LOCAL METRICS`, Astra reste `SHADOW` |
+| Picovoice | clé absente | `WAITING_FOR_ACCESS_KEY` |
+| Arbor | identité inchangée, aucun fallback autorisé | `WAITING_FOR_PROVIDER_API` |
+
+Points restant à observer réellement : passage à 07:00, sleep/wake, persistance mémoire après usages réels, mode local-only via interaction humaine confirmée, panne réseau, évolution CPU/RAM sur plusieurs heures et fréquence Astra shadow. Le service de backup réel n’a pas été déclenché : les stores sensibles du registre lifecycle courant sont déclarés `encrypted:false`, donc aucune copie privée non chiffrée supplémentaire n’a été créée.
+
+Problème utilisateur suivi :
+
+| Date | Area | Symptom | Severity | Reproducible | Root cause known? | Fix required? |
+|---|---|---|---|---|---|---|
+| 2026-09-13 | Apple Reminders | Une lecture a expiré à environ 10 s avec `SERVICE_UNAVAILABLE`, puis un diagnostic ultérieur a réussi | `DEGRADED / RECOVERED` | Pas encore | Timeout Apple Events probable, non prouvé | Non avant reproduction répétée |
+
+Statut Jour 1 : **`LOCAL_DAILY_USE_PARTIAL`**. Aucun défaut critique observé ; durée insuffisante pour `LOCAL_DAILY_USE_READY`.
+
 ## Intégration GPT-6 Astra — ModelRouter (8 septembre 2026)
 
 Statut : **VERIFIED** avec rollout recommandé **SHADOW**. `gpt-6-astra` est enregistré comme quatrième niveau du ModelRouter canonique, derrière `router.astra=SHADOW`. Aucun router, engine, orchestrateur, pipeline d'outils ou privilège n'a été ajouté. Le seuil Astra (`88`) vaut deux fois le seuil Sol (`44`) et exige plusieurs signaux forts ou une préférence utilisateur explicite ; budget contraint et local-only empêchent l'appel. Le fallback Astra → Sol est borné, sans boucle, et observé.

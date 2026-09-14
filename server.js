@@ -2,6 +2,7 @@
 require("dotenv").config();
 const OpenAI = require("openai");
 const { toFile } = require("openai");
+const { GoogleGenAI } = require("@google/genai");
 
 // Le client est créé au premier appel afin que l’application locale puisse
 // démarrer et rester utile hors ligne même sans clé OpenAI configurée.
@@ -15,6 +16,13 @@ function getOpenAIClient() {
   }
   openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   return openai;
+}
+let gemini = null;
+function getGeminiClient() {
+  if (gemini) return gemini;
+  if (!process.env.GEMINI_API_KEY) throw Object.assign(new Error("Credential Gemini absent."), { statusCode: 503 });
+  gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  return gemini;
 }
 
 const http = require("http");
@@ -71,6 +79,7 @@ const { createMorningBriefService } = require("./services/personal-assistant/mor
 const { buildMorningBriefPrompt } = require("./lib/morning-brief");
 const { createDailyBriefEngine } = require("./services/daily-brief/daily-brief-engine");
 const { createVoiceIdentity } = require("./services/voice/voice-identity");
+const { REALTIME_MODELS } = require("./services/voice/openai-voice-provider");
 const { assertRemoteVoiceAvailable, createRealtimeVoiceConfig } = require("./services/voice/realtime-config");
 const { createPlanningPreferenceStore } = require("./lib/planning-preferences");
 const { SCHEMA_VERSION, createPersonalDatabase, loadSqlite } = require("./services/persistence/database");
@@ -106,6 +115,11 @@ const { createDecisionSupportEngine } = require("./services/decision/decision-su
 const { createGoalStrategyEngine } = require("./services/goals/goal-strategy-engine");
 const { createCapacityService, createPortfolioCapacityEngine } = require("./services/portfolio");
 const { createNoonOrchestrator } = require("./services/orchestration/noon-orchestrator");
+const { createOpenAIProviderAdapter } = require("./services/models/providers/openai-provider");
+const { createGeminiProviderAdapter } = require("./services/models/providers/gemini-provider");
+const { createProviderShadowRunner } = require("./services/models/provider-shadow-runner");
+const { MODEL_DEFINITIONS, PROVIDERS } = require("./services/models/model-registry");
+const { createProviderPrivacyPolicy } = require("./services/security/provider-privacy-policy");
 const { createSpecialistRegistry } = require("./services/delegation/specialist-registry");
 const { createContextCapsuleBuilder } = require("./services/delegation/context-capsule-builder");
 const { createDelegationEngine } = require("./services/delegation/delegation-engine");
@@ -171,8 +185,14 @@ const {
   createSimpleLocalAdapter,
 } = require("./services/search/source-adapters");
 const {
+  GOOGLE_AUTH_LIBRARY_VERSION,
   createGoogleAuthorization,
+  discardGoogleState,
   exchangeGoogleCode,
+  normalizeGoogleTokenForPersistence,
+  rejectGoogleAuthorization,
+  inspectGoogleApiFailure,
+  assertGoogleProfileResponse,
 } = require("./services/connectors/google-auth");
 
 // Tous les chemins manipulés par les outils sont contrôlés par config.js.
@@ -228,6 +248,11 @@ function selectConfiguredModelRoute(input = {}) {
     sessionId: input.sessionId || null,
     channel: input.channel || "chat",
   });
+  const multiProvider = featureFlags.evaluate("router.multi-provider", input);
+  const costAware = featureFlags.evaluate("router.cost-aware", input);
+  const geminiLimited = featureFlags.evaluate("router.gemini-limited", input);
+  const secondOpinion = featureFlags.evaluate("router.second-opinion", input);
+  const crossProviderFallback = featureFlags.evaluate("router.cross-provider-fallback", input);
   let astraAvailability = "UNKNOWN";
   try {
     const health = reliabilityEngine?.snapshot?.("gpt-6-astra");
@@ -236,7 +261,27 @@ function selectConfiguredModelRoute(input = {}) {
     else if (health?.reasonCode === "RATE_LIMITED" || health?.circuitState === "open") astraAvailability = "RATE_LIMITED";
     else if (["UNAVAILABLE", "MISCONFIGURED"].includes(health?.state)) astraAvailability = "UNAVAILABLE";
   } catch {}
-  const astraInput = { ...input, astraMode: astraEvaluation.mode, astraAvailability };
+  const componentAvailability = (componentId) => {
+    try {
+      const health = reliabilityEngine?.snapshot?.(componentId);
+      return ["UNAVAILABLE", "MISCONFIGURED", "UNAUTHORIZED"].includes(health?.state) || health?.circuitState === "open" ? "UNAVAILABLE" : "AVAILABLE";
+    } catch { return "AVAILABLE"; }
+  };
+  const astraInput = {
+    ...input,
+    astraMode: astraEvaluation.mode,
+    astraAvailability,
+    multiProviderRouting: multiProvider.enabled,
+    costAwareRouting: costAware.enabled,
+    providerRollouts: { ...input.providerRollouts, google_ai: geminiLimited.enabled ? "LIMITED" : "SHADOW" },
+    secondOpinion: secondOpinion.enabled && input.secondOpinion === true,
+    crossProviderFallback: crossProviderFallback.enabled,
+    providerHealth: input.providerHealth || {
+      openai: componentAvailability("openai-models"),
+      google_ai: componentAvailability("google-ai-models"),
+    },
+    modelAvailability: input.modelAvailability || Object.fromEntries(MODEL_DEFINITIONS.map((definition) => [definition.id, componentAvailability(definition.id)])),
+  };
   if (evaluation.mode === "SHADOW") {
     const active = legacyRoute(input);
     const shadow = selectModelRoute(astraInput);
@@ -265,6 +310,41 @@ function selectConfiguredModelRoute(input = {}) {
 const noonObservability = createNoonObservability({
   filePath: path.join(DATA_DIRECTORY, "noon-observability.jsonl"),
 });
+const providerPrivacyPolicy = createProviderPrivacyPolicy({
+  providerRegistry: PROVIDERS,
+  providerTiers: { google_ai: process.env.GEMINI_TIER === "PAID" ? "PAID" : "FREE" },
+  observability: (event, metadata) => toolAuditLog.append(event, metadata),
+});
+function authorizeOpenAIPrivacy(fragments, requestPolicy = {}) {
+  const decision = providerPrivacyPolicy.evaluateProviderAccess({
+    provider: "openai",
+    contextMetadata: {
+      fragments: fragments.map((fragment) => providerPrivacyPolicy.inspectContextFragment(fragment)),
+    },
+    requestPolicy,
+  });
+  if (decision.decision !== "ALLOW") {
+    const error = new Error("La politique de confidentialité interdit cet appel distant.");
+    error.code = decision.reasonCodes[0] || "REMOTE_PROVIDER_POLICY_REQUIRED";
+    throw error;
+  }
+  return decision.permissionToken;
+}
+const openAIProviderAdapter = createOpenAIProviderAdapter({
+  clientProvider: getOpenAIClient,
+  privacyPolicy: providerPrivacyPolicy,
+});
+const geminiProviderAdapter = createGeminiProviderAdapter({ clientProvider: getGeminiClient, privacyPolicy: providerPrivacyPolicy });
+const geminiShadowRunner = createProviderShadowRunner({
+  adapter: geminiProviderAdapter,
+  privacyPolicy: providerPrivacyPolicy,
+  model: "gemini-3.8-flash",
+  enabled: Boolean(process.env.GEMINI_API_KEY) && process.env.NOON_GEMINI_ENABLED !== "false",
+  rollout: process.env.GEMINI_API_KEY && process.env.NOON_GEMINI_ROLLOUT !== "OFF" ? "SHADOW" : "OFF",
+  tier: process.env.GEMINI_TIER === "PAID" ? "PAID" : "FREE",
+  configured: Boolean(process.env.GEMINI_API_KEY),
+  observability: (event, metadata) => toolAuditLog.append(event, metadata),
+});
 const reliabilityEngine = createReliabilityEngine({
   observability: (event, metadata) => {
     toolAuditLog.append(`reliability.${event}`, metadata);
@@ -278,7 +358,10 @@ reliabilityEngine.register({
   impact: "Les informations publiques actuelles ne peuvent pas être vérifiées ; les recherches personnelles restent disponibles.",
 });
 const publicWebSearchAdapter = createOpenAIWebSearchAdapter({
-  client: { responses: { create: (...args) => getOpenAIClient().responses.create(...args) } },
+  client: { responses: { create: (...args) => {
+    authorizeOpenAIPrivacy([{ source: "public_web_search", classification: "PUBLIC", content: args[0]?.input || "" }]);
+    return getOpenAIClient().responses.create(...args);
+  } } },
   modelRouter: selectConfiguredModelRoute,
   observability: (event, metadata) => {
     toolAuditLog.append(`research.${event}`, metadata);
@@ -315,8 +398,8 @@ function getAllowedDirectories() {
   return [...new Set([...ALLOWED_DIRECTORIES, ...localPermissionStore.roots()])];
 }
 const GOOGLE_ACCOUNT_EMAIL = "arno.piette@gmail.com";
-const GOOGLE_OAUTH_REDIRECT_URI = process.env.GOOGLE_OAUTH_REDIRECT_URI ||
-  "http://127.0.0.1:3000/integrations/google/callback";
+const GOOGLE_OAUTH_CALLBACK_PATH = "/integrations/google/callback";
+const GOOGLE_OAUTH_LOOPBACK_TIMEOUT_MS = 10 * 60 * 1000;
 let electronSafeStorage = null;
 try {
   ({ safeStorage: electronSafeStorage } = require("electron"));
@@ -634,6 +717,7 @@ const contextBuilder = createContextBuilder({
     mode: entry.mode,
     output: entry.output === true,
   })),
+  privacyClassifier: (fragment) => providerPrivacyPolicy.inspectContextFragment(fragment),
   debug: (event, metadata) => toolAuditLog.append(event, metadata),
 });
 workspaceEngine = createWorkspaceEngine({
@@ -658,14 +742,18 @@ workspaceEngine = createWorkspaceEngine({
 async function classifyIntentWithModel({ text, channel, context }) {
   const budget = getBudgetStatus();
   const route = selectModelRoute({ question: text, profile: "economical", budgetMode: budget.mode, attachments: 0 });
-  const response = await getOpenAIClient().responses.create({
+  const privacyDecisionToken = authorizeOpenAIPrivacy([
+    { source: "intent_request", classification: "PERSONAL", content: text },
+    { source: "intent_context", classification: "PERSONAL", content: { channel, activeWorkspaceId: context.activeWorkspaceId } },
+  ]);
+  const response = await openAIProviderAdapter.execute({
     model: route.model,
     store: false,
     input: [{ role: "system", content: "Classe uniquement l’intention. Ne propose ni outil ni exécution." }, { role: "user", content: JSON.stringify({ text, channel, activeWorkspaceId: context.activeWorkspaceId }) }],
     text: { format: { type: "json_schema", name: "normalized_intent_hint", strict: true, schema: { type: "object", properties: { type: { type: "string", enum: ["ASK", "SEARCH", "CREATE", "UPDATE", "DELETE", "OPEN", "NAVIGATE", "PLAN", "REMIND", "SCHEDULE", "SUMMARIZE", "COMPARE", "GENERATE", "SWITCH_CONTEXT", "CONTROL", "CONFIRM", "REJECT", "CONTINUE", "CANCEL"] }, action: { type: "string" }, entities: { type: "object", properties: { title: { type: ["string", "null"] }, query: { type: ["string", "null"] }, format: { type: ["string", "null"] }, mode: { type: ["string", "null"] }, personName: { type: ["string", "null"] }, workspaceName: { type: ["string", "null"] } }, required: ["title", "query", "format", "mode", "personName", "workspaceName"], additionalProperties: false }, target: { type: "object", properties: { workspaceId: { type: ["string", "null"] }, projectId: { type: ["string", "null"] }, conversationId: { type: ["string", "null"] }, artifactId: { type: ["string", "null"] }, eventId: { type: ["string", "null"] }, approvalId: { type: ["string", "null"] }, executionId: { type: ["string", "null"] }, fileRef: { type: ["string", "null"] } }, required: ["workspaceId", "projectId", "conversationId", "artifactId", "eventId", "approvalId", "executionId", "fileRef"], additionalProperties: false }, confidence: { type: "string", enum: ["high", "medium", "low"] }, ambiguity: { type: "array", items: { type: "object", properties: { type: { type: "string" }, field: { type: "string" }, candidates: { type: "array", items: { type: "object", properties: { id: { type: ["string", "null"] }, label: { type: ["string", "null"] } }, required: ["id", "label"], additionalProperties: false } }, confidence: { type: "string", enum: ["LOW", "MEDIUM", "HIGH"] }, resolutionRequired: { type: "boolean" } }, required: ["type", "field", "candidates", "confidence", "resolutionRequired"], additionalProperties: false } } }, required: ["type", "action", "entities", "target", "confidence", "ambiguity"], additionalProperties: false } } },
-  });
+  }, { privacyDecisionToken });
   trackUsage(response);
-  return JSON.parse(response.output_text || "{}");
+  return JSON.parse(response.text || "{}");
 }
 const intentCommandEngine = createIntentCommandEngine({
   workspaceEngine,
@@ -723,13 +811,154 @@ const calendarConnector = createCalendarConnector({
   reliability: reliabilityEngine,
 });
 
-function createGoogleReadAuthorization() {
-  assertGoogleRemoteAvailable();
-  return createGoogleAuthorization({
-    clientId: process.env.GOOGLE_OAUTH_CLIENT_ID,
-    redirectUri: GOOGLE_OAUTH_REDIRECT_URI,
-    scopes: [...new Set([...gmailConnector.scopes, ...calendarConnector.scopes])],
+function sendGoogleCallbackPage(res, { statusCode, title, message }) {
+  res.writeHead(statusCode, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
   });
+  return res.end(`<!doctype html><html lang="fr"><meta charset="utf-8"><title>${title}</title><body style="font-family:system-ui;padding:40px"><h1>${title}</h1><p>${message}</p><p>Vous pouvez fermer cette fenêtre.</p></body></html>`);
+}
+
+async function completeGoogleOAuthCallback(callbackUrl) {
+  let completionStage = "CALLBACK";
+  try {
+    const oauthError = callbackUrl.searchParams.get("error");
+    if (oauthError) rejectGoogleAuthorization({
+      state: callbackUrl.searchParams.get("state"),
+      clientId: process.env.GOOGLE_OAUTH_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+      providerError: oauthError,
+    });
+    assertGoogleRemoteAvailable();
+    completionStage = "TOKEN_EXCHANGE";
+    const token = await exchangeGoogleCode({
+      code: callbackUrl.searchParams.get("code"),
+      state: callbackUrl.searchParams.get("state"),
+      clientId: process.env.GOOGLE_OAUTH_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+    });
+    toolAuditLog.append("google-oauth.token-exchange", {
+      tokenEndpointStatus: 200,
+      tokensReceived: token.access_token ? "YES" : "NO",
+      refreshTokenReceived: token.refresh_token ? "YES" : "NO",
+      stateMatched: "YES",
+      callbackExchangedOnce: "YES",
+      officialLibrary: "google-auth-library",
+      officialLibraryVersion: GOOGLE_AUTH_LIBRARY_VERSION,
+    });
+    completionStage = "GMAIL_PROFILE";
+    const profileResponse = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
+      headers: { Authorization: `Bearer ${token.access_token}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    const profile = await profileResponse.json();
+    const profileDiagnostic = assertGoogleProfileResponse({
+      status: profileResponse.status,
+      ok: profileResponse.ok,
+      emailAddress: profile.emailAddress,
+      expectedEmail: GOOGLE_ACCOUNT_EMAIL,
+      providerFailure: inspectGoogleApiFailure(profile),
+    });
+    toolAuditLog.append("google-oauth.profile-verification", profileDiagnostic);
+    completionStage = "TOKEN_PERSISTENCE";
+    const previousToken = integrationTokenStore.get("google");
+    const persistedToken = normalizeGoogleTokenForPersistence({ previousToken, token, email: GOOGLE_ACCOUNT_EMAIL });
+    const persistence = integrationTokenStore.set("google", persistedToken);
+    toolAuditLog.append("google-oauth.persistence", {
+      safeStorage: persistence.persistent ? "PASS" : "MEMORY_ONLY",
+      refreshTokenPreserved: token.refresh_token || previousToken?.refresh_token ? "YES" : "NO",
+    });
+    gmailConnector.markSuccess();
+    return {
+      statusCode: 200,
+      title: "Google connecté à Noon",
+      message: `Le compte ${GOOGLE_ACCOUNT_EMAIL} est autorisé pour Gmail et Calendar. Aucun e-mail ne sera envoyé automatiquement.`,
+    };
+  } catch (error) {
+    if (error.oauthDiagnostic) toolAuditLog.append("google-oauth.token-exchange", error.oauthDiagnostic);
+    if (error.profileDiagnostic) toolAuditLog.append("google-oauth.profile-verification", error.profileDiagnostic);
+    toolAuditLog.append("google-oauth.completion-failed", {
+      stage: completionStage,
+      code: String(error.code || error.name || "GOOGLE_OAUTH_COMPLETION_FAILED").slice(0, 80),
+      httpStatus: error.profileDiagnostic?.httpStatus || null,
+      providerStatus: error.profileDiagnostic?.providerStatus || null,
+      providerReason: error.profileDiagnostic?.providerReason || null,
+    });
+    return { statusCode: 400, title: "Connexion Gmail impossible", message: String(error.message || error) };
+  }
+}
+
+async function createGoogleLoopbackReceiver() {
+  let expectedState = null;
+  let redirectUri = null;
+  let timeout = null;
+  const receiver = http.createServer(async (req, res) => {
+    const callbackUrl = new URL(req.url, redirectUri || "http://127.0.0.1");
+    if (req.method !== "GET" || callbackUrl.pathname !== GOOGLE_OAUTH_CALLBACK_PATH) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
+      return res.end("Not found");
+    }
+    if (!expectedState || callbackUrl.searchParams.get("state") !== expectedState) {
+      res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
+      return res.end("Invalid OAuth state");
+    }
+    const result = await completeGoogleOAuthCallback(callbackUrl);
+    sendGoogleCallbackPage(res, result);
+    setImmediate(() => {
+      if (timeout) clearTimeout(timeout);
+      receiver.close();
+    });
+  });
+  await new Promise((resolve, reject) => {
+    receiver.once("error", reject);
+    receiver.listen(0, "127.0.0.1", resolve);
+  });
+  const address = receiver.address();
+  redirectUri = `http://127.0.0.1:${address.port}${GOOGLE_OAUTH_CALLBACK_PATH}`;
+  timeout = setTimeout(() => {
+    if (expectedState) discardGoogleState(expectedState);
+    receiver.close();
+  }, GOOGLE_OAUTH_LOOPBACK_TIMEOUT_MS);
+  timeout.unref?.();
+  return {
+    redirectUri,
+    setExpectedState(state) { expectedState = state; },
+    close() { if (timeout) clearTimeout(timeout); receiver.close(); },
+  };
+}
+
+async function createGoogleReadAuthorization() {
+  assertGoogleRemoteAvailable();
+  const loopback = await createGoogleLoopbackReceiver();
+  let authorization;
+  try {
+    authorization = await createGoogleAuthorization({
+      clientId: process.env.GOOGLE_OAUTH_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+      redirectUri: loopback.redirectUri,
+      scopes: [...new Set([...gmailConnector.scopes, ...calendarConnector.scopes])],
+    });
+    loopback.setExpectedState(authorization.state);
+  } catch (error) {
+    loopback.close();
+    throw error;
+  }
+  toolAuditLog.append("google-oauth.authorization-created", {
+    redirectUri: loopback.redirectUri,
+    loopbackPortMode: "EPHEMERAL",
+    redirectUriMatch: authorization.pkce?.redirectUriMatch || "FAIL",
+    codeVerifierAvailable: "YES",
+    stateMatched: "NOT_APPLICABLE",
+    callbackExchangedOnce: "NOT_ATTEMPTED",
+    clientConfigLoaded: process.env.GOOGLE_OAUTH_CLIENT_ID && process.env.GOOGLE_OAUTH_CLIENT_SECRET ? "YES" : "NO",
+    codeChallengePresent: authorization.pkce?.codeChallengePresent || "NO",
+    codeChallengeMethodPresent: authorization.pkce?.codeChallengeMethodPresent || "NO",
+    codeChallengeMethodValue: authorization.pkce?.codeChallengeMethodValue || "plain",
+    codeChallengeMethodExactName: authorization.pkce?.codeChallengeMethodExactName || "FAIL",
+    officialLibrary: "google-auth-library",
+    officialLibraryVersion: GOOGLE_AUTH_LIBRARY_VERSION,
+  });
+  return authorization;
 }
 
 reliabilityEngine.register({
@@ -804,9 +1033,11 @@ for (const [connector, operation] of [[notesConnector, "listRecentNotes"], [remi
 reliabilityEngine.register({ componentId: "gmail", type: "connector", criticality: "optional", capabilities: ["read", "search", "draft"], ttlMs: 60_000, authState: () => gmailConnector.connected ? "connected" : "missing", healthCheck: async () => { if (!gmailConnector.connected) throw Object.assign(new Error("Google non connecté"), { status: 401, code: "AUTH_MISSING" }); await gmailConnector.searchGmailMessages("newer_than:1d", { maxResults: 1 }); }, impact: "Les emails ne peuvent pas être vérifiés ou inclus." });
 reliabilityEngine.register({ componentId: "google-calendar", type: "connector", criticality: "optional", capabilities: ["read", "availability", "write"], ttlMs: 60_000, authState: () => calendarConnector.connected ? "connected" : "missing", healthCheck: async () => { if (!calendarConnector.connected) throw Object.assign(new Error("Google non connecté"), { status: 401, code: "AUTH_MISSING" }); await calendarConnector.listCalendars(); }, impact: "Les disponibilités de l’agenda restent inconnues." });
 reliabilityEngine.register({ componentId: "openai-models", type: "model", criticality: "important", capabilities: ["luna", "terra", "sol", "astra"], ttlMs: 60_000, healthCheck: async () => { if (!process.env.OPENAI_API_KEY) throw Object.assign(new Error("OpenAI API key missing"), { code: "CONFIGURATION_ERROR" }); }, impact: "Le chat IA et les analyses distantes ne peuvent pas répondre." });
+reliabilityEngine.register({ componentId: "google-ai-models", type: "model", criticality: "optional", capabilities: ["gemini"], ttlMs: 60_000, healthCheck: async () => { if (!process.env.GEMINI_API_KEY) throw Object.assign(new Error("Gemini credential missing"), { code: "CONFIGURATION_ERROR" }); }, impact: "Gemini est exclu ; OpenAI reste disponible." });
 for (const modelId of ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra"]) {
   reliabilityEngine.register({ componentId: modelId, type: "model", criticality: "optional", capabilities: ["responses"], ttlMs: 30_000, circuitThreshold: 2, impact: "Ce profil de modèle est temporairement évité par le routeur." });
 }
+reliabilityEngine.register({ componentId: "gemini-3.8-flash", type: "model", criticality: "optional", capabilities: ["generateContent"], ttlMs: 30_000, circuitThreshold: 2, circuitCooldownMs: 30_000, impact: "Gemini est temporairement évité après deux échecs transitoires ; OpenAI reste disponible." });
 reliabilityEngine.register({ componentId: "realtime", type: "voice", criticality: "optional", capabilities: ["webrtc", "stt", "tts"], ttlMs: 60_000, fallback: "text-chat", fallbackQuality: "degraded", healthCheck: async () => { if (!process.env.OPENAI_API_KEY) throw Object.assign(new Error("OpenAI API key missing"), { code: "CONFIGURATION_ERROR" }); }, impact: "La voix Live est indisponible, mais le chat texte reste utilisable." });
 reliabilityEngine.register({ componentId: "wake-word", type: "voice", criticality: "optional", capabilities: ["wake_word"], ttlMs: 120_000, impact: "L’activation par « Salut Noon » peut être indisponible." });
 reliabilityEngine.register({ componentId: "scheduler", type: "scheduler", criticality: "important", capabilities: ["daily_brief"], ttlMs: 60_000, impact: "Le brief planifié peut être retardé." });
@@ -838,6 +1069,7 @@ const operationalSecurityPolicy = createOperationalSecurityPolicy({
 });
 const openAIMediaAnalyzer = createOpenAIMediaAnalyzer({
   client: getOpenAIClient,
+  privacyPolicy: providerPrivacyPolicy,
   trackUsage,
 });
 multimodalEngine = createMultimodalEngine({
@@ -940,7 +1172,10 @@ const delegationEngine = createDelegationEngine({
     metricsService?.record?.(event, 1, metadata);
   },
   async runSpecialist({ specialist, capsule, route, signal }) {
-    const response = await getOpenAIClient().responses.create({
+    const privacyDecisionToken = authorizeOpenAIPrivacy([
+      { source: "specialist_context_capsule", classification: "PRIVATE", content: capsule },
+    ]);
+    const response = await openAIProviderAdapter.execute({
       model: route.model,
       store: false,
       reasoning: { effort: route.effort },
@@ -955,12 +1190,12 @@ const delegationEngine = createDelegationEngine({
         ].join("\n") },
         { role: "user", content: JSON.stringify(capsule) },
       ],
-    }, signal ? { signal } : undefined);
+    }, { signal, privacyDecisionToken });
     trackUsage(response);
-    const result = JSON.parse(response.output_text || "{}");
+    const result = JSON.parse(response.text || "{}");
     result.metrics = {
-      inputTokens: Number(response.usage?.input_tokens) || 0,
-      outputTokens: Number(response.usage?.output_tokens) || 0,
+      inputTokens: Number(response.usage?.inputTokens) || 0,
+      outputTokens: Number(response.usage?.outputTokens) || 0,
       modelCalls: 1,
       cost: estimateModelCost(route.model, response.usage || {}).total || 0,
     };
@@ -1019,7 +1254,11 @@ const noonOrchestrator = createNoonOrchestrator({
   delegationEngine,
   selectModel: selectConfiguredModelRoute,
   modelFallbacks,
-  clientProvider: getOpenAIClient,
+  providerAdapter: openAIProviderAdapter,
+  providerAdapters: { openai: openAIProviderAdapter, google_ai: geminiProviderAdapter },
+  providerConfiguration: (providerId) => providerId === "openai" ? Boolean(process.env.OPENAI_API_KEY) : providerId === "google_ai" ? Boolean(process.env.GEMINI_API_KEY) : false,
+  providerPrivacyPolicy,
+  providerShadowRunner: geminiShadowRunner,
   skillRegistry,
   approvalManager,
   captureApprovalPreconditions: captureActionPreconditions,
@@ -1156,7 +1395,12 @@ operationalProfileService.ensurePermanentRules();
 const backgroundAnalysisService = createBackgroundAnalysisService({
   client: {
     responses: {
-      create: (options, ...args) => getOpenAIClient().responses.create({ ...options, store: false }, ...args),
+      create: (options, ...args) => {
+        authorizeOpenAIPrivacy([
+          { source: "background_analysis", classification: "PERSONAL", content: options?.input || "" },
+        ]);
+        return getOpenAIClient().responses.create({ ...options, store: false }, ...args);
+      },
       retrieve: (...args) => getOpenAIClient().responses.retrieve(...args),
       cancel: (...args) => getOpenAIClient().responses.cancel(...args),
     },
@@ -1304,21 +1548,23 @@ const dailyBriefEngine = createDailyBriefEngine({
       output: { expectedLength: "long" },
       risk: { level: "medium" },
     });
-    const response = await getOpenAIClient().responses.create({
+    const privacyDecisionToken = authorizeOpenAIPrivacy([
+      { source: "daily_brief_prompt", classification: "PRIVATE", content: [prompt.system, prompt.user] },
+    ]);
+    const response = await openAIProviderAdapter.execute({
       model: route.model, store: false,
       reasoning: { effort: route.effort, context: "current_turn" },
       text: { verbosity: route.verbosity },
-      tools: [{ type: "web_search" }], tool_choice: "auto", max_tool_calls: 2,
+      tools: [{ type: "web_search" }], toolChoice: "auto", maxToolCalls: 2,
       input: [{ role: "system", content: prompt.system }, { role: "user", content: prompt.user }],
-    });
-    response.noonModel = route.model;
+    }, { privacyDecisionToken });
     trackUsage(response);
     const webCalls = countWebSearchCalls(response);
     registerWebSearchCalls(webCalls);
     const sources = extractWebSources(response);
     return {
-      content: response.output_text?.trim(), modelCalls: 1, models: [route.model], routing: route,
-      inputTokens: response.usage?.input_tokens || 0, outputTokens: response.usage?.output_tokens || 0,
+      content: response.text?.trim(), modelCalls: 1, models: [route.model], routing: route,
+      inputTokens: response.usage?.inputTokens || 0, outputTokens: response.usage?.outputTokens || 0,
       costEstimate: estimateModelCost(route.model, response.usage || {}),
       sources, topics: sources.map((source) => ({ date: structured.date, title: source.title, url: source.url, theme: "veille créative" })),
     };
@@ -1747,23 +1993,24 @@ function trackUsage(response) {
     };
   }
 
-  const inputTokens = response.usage.input_tokens || 0;
+  const inputTokens = response.usage.inputTokens ?? response.usage.input_tokens ?? 0;
   const cachedInputTokens =
-    response.usage.input_tokens_details?.cached_tokens || 0;
+    response.usage.cachedInputTokens ?? response.usage.input_tokens_details?.cached_tokens ?? 0;
+  const outputTokens = response.usage.outputTokens ?? response.usage.output_tokens ?? 0;
   const billableInputEquivalent = Math.max(0, inputTokens - cachedInputTokens) +
     cachedInputTokens * CACHED_INPUT_DISCOUNT;
   usage.inputTokens += inputTokens;
   usage.cachedInputTokens =
     (usage.cachedInputTokens || 0) + cachedInputTokens;
-  usage.outputTokens += response.usage.output_tokens || 0;
-  const usedModel = response.noonModel || "gpt-5.6-luna";
+  usage.outputTokens += outputTokens;
+  const usedModel = response.model || response.noonModel || "gpt-5.6-luna";
   const prices = MODEL_PRICES[usedModel] || MODEL_PRICES["gpt-5.6-luna"];
   usage.modelPremiumCostUSD = (usage.modelPremiumCostUSD || 0) +
     (billableInputEquivalent / 1_000_000) * (prices.input - LUNA_INPUT_PRICE) +
-    ((response.usage.output_tokens || 0) / 1_000_000) * (prices.output - LUNA_OUTPUT_PRICE);
+    (outputTokens / 1_000_000) * (prices.output - LUNA_OUTPUT_PRICE);
   usage.modelUsage = usage.modelUsage || {};
   const modelUsage = usage.modelUsage[usedModel] || { requests: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };
-  modelUsage.requests += 1; modelUsage.inputTokens += inputTokens; modelUsage.cachedInputTokens = (modelUsage.cachedInputTokens || 0) + cachedInputTokens; modelUsage.outputTokens += response.usage.output_tokens || 0;
+  modelUsage.requests += 1; modelUsage.inputTokens += inputTokens; modelUsage.cachedInputTokens = (modelUsage.cachedInputTokens || 0) + cachedInputTokens; modelUsage.outputTokens += outputTokens;
   usage.modelUsage[usedModel] = modelUsage;
   usage.webSearchCalls =
     (usage.webSearchCalls || 0) +
@@ -1772,10 +2019,10 @@ function trackUsage(response) {
 
   saveUsage(usage);
   const requestCostUSD = (billableInputEquivalent / 1_000_000) * prices.input +
-    ((response.usage.output_tokens || 0) / 1_000_000) * prices.output;
+    (outputTokens / 1_000_000) * prices.output;
   metricsService.record("api_requests", 1, { model: usedModel });
   metricsService.record("input_tokens", inputTokens, { model: usedModel });
-  metricsService.record("output_tokens", response.usage.output_tokens || 0, { model: usedModel });
+  metricsService.record("output_tokens", outputTokens, { model: usedModel });
   metricsService.record("api_cost_usd", requestCostUSD, { model: usedModel });
 }
 
@@ -3045,6 +3292,9 @@ async function askAI(
             async generateImage(imageArgs) {
               if (createdArtifacts.some((artifact) => artifact.creative === true)) throw new Error("Une seule image créative est autorisée par demande.");
               setSessionActivity(sessionId, "creating", "Génération de l’image…");
+              authorizeOpenAIPrivacy([
+                { source: "creative_image_request", classification: "PRIVATE", content: imageArgs },
+              ]);
               const generated = await generateCreativeImage(imageArgs, { client: getOpenAIClient(), previewDirectory: CREATIVE_IMAGE_PREVIEW_DIRECTORY, signal });
               trackImageGenerationUsage(generated.quality);
               createdArtifacts.push(generated.artifact);
@@ -3426,7 +3676,7 @@ const controlCenterService = createControlCenterService({
     CHECK_CONNECTION: async ({ targetId }) => {
       const googleConnector = [gmailConnector, calendarConnector].find((connector) => connector.id === targetId);
       if (googleConnector && !googleConnector.connected) {
-        const { url } = createGoogleReadAuthorization();
+        const { url } = await createGoogleReadAuthorization();
         return { status: "AUTH_REQUIRED", authorizationUrl: url };
       }
       return { status: "SUCCEEDED", component: await reliabilityEngine.check(targetId, { force: true }) };
@@ -5161,7 +5411,6 @@ if (
       error.statusCode = 403;
       throw error;
     }
-    voiceIdentity.assertAvailable();
     assertRemoteVoiceAvailable(localIntelligenceRuntime, "REMOTE_REALTIME");
 
     const voiceBudget = getVoiceBudgetStatus();
@@ -5243,6 +5492,7 @@ if (
     const language = normalizeLanguage(url.searchParams.get("language"));
     const accent = normalizeAccent(url.searchParams.get("accent"));
     const resolvedVoice = voiceIdentity.resolve({ pipeline: "realtime", language, accent, model });
+    voiceIdentity.assertAvailable(resolvedVoice);
     const conversationKey = createConversationKey({
       sessionId,
       mode,
@@ -5317,6 +5567,7 @@ if (
     if (!upstream.ok) {
       const error = new Error("Impossible d’ouvrir la conversation Live.");
       error.statusCode = upstream.status;
+      error.code = "PROVIDER_UNAVAILABLE";
       throw error;
     }
 
@@ -5326,6 +5577,7 @@ if (
       "X-Noon-Voice-Model": model,
       "X-Noon-Voice-Identity": resolvedVoice.identityId,
       "X-Noon-Voice": resolvedVoice.voice,
+      "X-Noon-Voice-Status": resolvedVoice.status,
       "X-Noon-Voice-Session": voiceSessionId,
       "X-Noon-Session": continuitySession.id,
       "X-Noon-Conversation": sessionId,
@@ -5355,10 +5607,10 @@ if (req.method === "POST" && req.url === "/realtime/usage") {
     }
     const body = await readJsonBody(req, 128 * 1024);
     const sessionId = normalizeSessionId(body.sessionId);
-    const model = ["gpt-realtime-2.1-mini", "gpt-realtime-2.1"]
+    const model = [REALTIME_MODELS.mini, REALTIME_MODELS.max]
       .includes(body.model)
       ? body.model
-      : "gpt-realtime-2.1-mini";
+      : REALTIME_MODELS.mini;
     const result = registerRealtimeUsage({
       sessionId,
       responseId: body.responseId,
@@ -5671,7 +5923,6 @@ if (req.method === "POST" && req.url === "/tts") {
       error.statusCode = 403;
       throw error;
     }
-    voiceIdentity.assertAvailable();
     assertRemoteVoiceAvailable(localIntelligenceRuntime, "REMOTE_REALTIME");
     const body = await readJsonBody(req, 32 * 1024);
     const input = String(body.text || "").trim().slice(0, 700);
@@ -5685,6 +5936,7 @@ if (req.method === "POST" && req.url === "/tts") {
     const mode = normalizeNoonMode(body.mode);
     const identityStartedAt = Date.now();
     const resolvedVoice = voiceIdentity.resolve({ pipeline: "tts", language, accent });
+    voiceIdentity.assertAvailable(resolvedVoice);
     const instructions = [
       resolvedVoice.styleInstructions,
       mode === "DEV" ? "Ton technique mais chaleureux." : "Ton créatif, chaleureux et naturel.",
@@ -6423,7 +6675,7 @@ if (req.method === "GET" && req.url === "/integrations/status") {
 
 if (req.method === "POST" && ["/integrations/gmail/connect", "/integrations/google-calendar/connect"].includes(req.url)) {
   try {
-    const { url } = createGoogleReadAuthorization();
+    const { url } = await createGoogleReadAuthorization();
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     return res.end(JSON.stringify({ status: "ok", authorizationUrl: url }));
   } catch (error) {
@@ -6433,48 +6685,8 @@ if (req.method === "POST" && ["/integrations/gmail/connect", "/integrations/goog
 }
 
 if (req.method === "GET" && requestPath === "/integrations/google/callback") {
-  const sendCallbackPage = (statusCode, title, message) => {
-    res.writeHead(statusCode, {
-      "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "no-store",
-    });
-    return res.end(`<!doctype html><html lang="fr"><meta charset="utf-8"><title>${title}</title><body style="font-family:system-ui;padding:40px"><h1>${title}</h1><p>${message}</p><p>Vous pouvez fermer cette fenêtre.</p></body></html>`);
-  };
-  try {
-    const callbackUrl = new URL(req.url, "http://127.0.0.1:3000");
-    const oauthError = callbackUrl.searchParams.get("error");
-    if (oauthError) throw new Error("Autorisation Google refusée.");
-    assertGoogleRemoteAvailable();
-    const token = await exchangeGoogleCode({
-      code: callbackUrl.searchParams.get("code"),
-      state: callbackUrl.searchParams.get("state"),
-      clientId: process.env.GOOGLE_OAUTH_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
-    });
-    const profileResponse = await fetch(
-      "https://gmail.googleapis.com/gmail/v1/users/me/profile",
-      {
-        headers: { Authorization: `Bearer ${token.access_token}` },
-        signal: AbortSignal.timeout(10_000),
-      }
-    );
-    const profile = await profileResponse.json();
-    if (!profileResponse.ok || profile.emailAddress?.toLowerCase() !== GOOGLE_ACCOUNT_EMAIL) {
-      throw new Error(`Connectez uniquement le compte ${GOOGLE_ACCOUNT_EMAIL}.`);
-    }
-    const previousToken = integrationTokenStore.get("google");
-    integrationTokenStore.set("google", {
-      ...token,
-      refresh_token: token.refresh_token || previousToken?.refresh_token || null,
-      expires_at: Date.now() + Number(token.expires_in || 3600) * 1000,
-      email: GOOGLE_ACCOUNT_EMAIL,
-    });
-    gmailConnector.markSuccess();
-    // OAuth Gmail profile is not proof of a successful Calendar read.
-    return sendCallbackPage(200, "Google connecté à Noon", `Le compte ${GOOGLE_ACCOUNT_EMAIL} est autorisé pour Gmail et Calendar. Aucun e-mail ne sera envoyé automatiquement.`);
-  } catch (error) {
-    return sendCallbackPage(400, "Connexion Gmail impossible", String(error.message || error));
-  }
+  const callbackUrl = new URL(req.url, "http://127.0.0.1:3000");
+  return sendGoogleCallbackPage(res, await completeGoogleOAuthCallback(callbackUrl));
 }
 
 if (req.method === "POST" && ["/integrations/gmail/disconnect", "/integrations/google-calendar/disconnect"].includes(req.url)) {

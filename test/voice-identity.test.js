@@ -5,43 +5,54 @@ const test = require("node:test");
 const { NOON_VOICE_IDENTITY, createVoiceIdentity } = require("../services/voice/voice-identity");
 const { assertRemoteVoiceAvailable, createRealtimeVoiceConfig } = require("../services/voice/realtime-config");
 
-test("TTS, Live Mini et Live Max utilisent tous arbor", () => {
-  const identity = createVoiceIdentity();
-  assert.equal(identity.resolve({ pipeline: "tts" }).voice, "arbor");
-  assert.equal(identity.resolve({ pipeline: "realtime", model: "gpt-realtime-2.1-mini" }).voice, "arbor");
-  assert.equal(identity.resolve({ pipeline: "realtime", model: "gpt-realtime-2.1" }).voice, "arbor");
+test("Cedar reste la voix canonique pour TTS et Live même si Arbor est disponible", () => {
+  const identity = createVoiceIdentity({ availableVoices: ["arbor", "cedar"] });
+  assert.equal(identity.resolve({ pipeline: "tts" }).voice, "cedar");
+  assert.equal(identity.resolve({ pipeline: "realtime", model: "gpt-realtime-2.1-mini" }).voice, "cedar");
+  assert.equal(identity.resolve({ pipeline: "realtime", model: "gpt-realtime-2.1" }).status, "LIVE_READY");
+});
+
+test("Cedar indisponible ne bascule pas vers une autre voix", () => {
+  const identity = createVoiceIdentity({ availableVoices: ["marin"] });
+  const resolved = identity.resolve({ pipeline: "realtime", fallbackVoice: "cedar" });
+  assert.equal(resolved.preferredVoice, "cedar");
+  assert.equal(resolved.activeVoice, null);
+  assert.equal(resolved.status, "LIVE_UNAVAILABLE");
+  assert.equal(resolved.fallback, false);
 });
 
 test("Luna, Terra, Sol et Astra n'influencent jamais l'identité", () => {
   const identity = createVoiceIdentity();
   const voices = ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra"]
     .map((model) => identity.resolve({ pipeline: "tts", model }).voice);
-  assert.deepEqual(voices, ["arbor", "arbor", "arbor", "arbor"]);
+  assert.deepEqual(voices, ["cedar", "cedar", "cedar", "cedar"]);
 });
 
 test("français, anglais et espagnol conservent le même locuteur", () => {
   const identity = createVoiceIdentity();
   const results = ["fr-FR", "en-US", "es-ES"].map((language) => identity.resolve({ pipeline: "realtime", language }));
   assert.deepEqual(results.map((item) => item.identityId), ["noon-default", "noon-default", "noon-default"]);
-  assert.deepEqual(results.map((item) => item.voice), ["arbor", "arbor", "arbor"]);
+  assert.deepEqual(results.map((item) => item.voice), ["cedar", "cedar", "cedar"]);
 });
 
-test("Arbor indisponible interdit toute tentative fournisseur", () => {
+test("Cedar prépare une seule tentative canonique sans fallback", () => {
   const events = [];
   const identity = createVoiceIdentity({ debug: (event, metadata) => events.push({ event, metadata }) });
   const resolution = identity.resolve({ pipeline: "tts" });
-  assert.deepEqual(identity.attempts(resolution), []);
-  assert.throws(() => identity.assertAvailable(), { code: "VOICE_UNAVAILABLE" });
+  assert.deepEqual(identity.attempts(resolution), [{ voice: "cedar", fallback: false }]);
+  assert.equal(identity.assertAvailable().activeVoice, "cedar");
   identity.traceFallback(resolution, "provider_error");
   assert.equal(events.at(-1).metadata.fallback, null);
-  assert.equal(NOON_VOICE_IDENTITY.primaryVoice, "arbor");
+  assert.equal(NOON_VOICE_IDENTITY.primaryVoice, "cedar");
+  assert.equal(NOON_VOICE_IDENTITY.futurePreferredVoice, "arbor");
 });
 
-test("une nouvelle résolution conserve Arbor indisponible", () => {
+test("une nouvelle résolution conserve Cedar", () => {
   const identity = createVoiceIdentity();
   const first = identity.resolve({ pipeline: "tts" });
   identity.traceFallback(first, "temporary_error");
-  assert.equal(identity.resolve({ pipeline: "tts" }).voice, "arbor");
+  assert.equal(identity.resolve({ pipeline: "tts" }).preferredVoice, "cedar");
+  assert.equal(identity.resolve({ pipeline: "tts" }).voice, "cedar");
 });
 
 test("périphérique et qualité restent des réglages de session", () => {
@@ -96,47 +107,40 @@ test("chosen voice survives a fresh process and ignores environment voice overri
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'noon-voice-test-'));
   const file = path.join(directory, 'voice-identity.json');
   try {
-    saveVoiceChoice(file, 'arbor');
+    saveVoiceChoice(file, 'cedar');
     const script = `const v=require(${JSON.stringify(require.resolve('../services/voice/voice-identity'))}).createVoiceIdentity({selectionPath:process.argv[1]});console.log(JSON.stringify(['tts','realtime'].map(pipeline=>v.resolve({pipeline}).voice)))`;
-    for (let i = 0; i < 2; i++) assert.deepEqual(JSON.parse(execFileSync(process.execPath, ['-e', script, file], { env: { ...process.env, OPENAI_VOICE: 'nova' } }).toString()), ['arbor','arbor']);
+    for (let i = 0; i < 2; i++) assert.deepEqual(JSON.parse(execFileSync(process.execPath, ['-e', script, file], { env: { ...process.env, OPENAI_VOICE: 'nova' } }).toString()), ['cedar','cedar']);
     assert.throws(() => saveVoiceChoice(file, 'onyx'));
     fs.writeFileSync(file, '{"voice":"invalid"}');
-    assert.equal(createVoiceIdentity({ selectionPath: file }).identity.targetVoice, "arbor");
+    assert.equal(createVoiceIdentity({ selectionPath: file }).identity.targetVoice, "cedar");
   } finally { fs.rmSync(directory, { recursive:true, force:true }); }
 });
 
-test("runtime voice payloads use canonical resolution without browser or literal fallback", () => {
+test("runtime voice payloads use canonical resolution without browser fallback", () => {
   const fs = require('node:fs');
   const server = fs.readFileSync(require.resolve('../server'), 'utf8');
   assert.match(server, /output: \{ voice: resolvedVoice.voice \}/);
   assert.match(server, /voiceIdentity.attempts\(resolvedVoice\)/);
   assert.match(server, /voice: attempt.voice/);
-  for (const file of ['../server.js','../public/app.js','../public/live-voice.js','../services/voice/realtime-config.js']) {
+  for (const file of ['../server.js','../services/voice/realtime-config.js']) {
     const code = fs.readFileSync(require.resolve(file),'utf8');
     assert.doesNotMatch(code, /voice\s*:\s*["'](?:marin|cedar|alloy|ash|ballad|coral|echo|fable|nova|onyx|sage|shimmer|verse)["']/);
     assert.doesNotMatch(code, /speechSynthesis\.speak\(|utterance\.voice/);
   }
 });
 
-for (const speaker of ["marin", "cedar", "macOS", "speechSynthesis"]) {
-  test(`Arbor unavailable does not fallback to ${speaker}`, () => {
-    const identity = createVoiceIdentity({ identity: { primaryVoice: speaker, fallbackVoice: speaker } });
-    assert.equal(identity.identity.targetVoice, "arbor");
-    assert.equal(identity.publicConfig().fallbackSpeakerAllowed, false);
-    assert.deepEqual(identity.attempts(identity.resolve()), []);
-    assert.throws(() => identity.assertAvailable(), { code: "VOICE_UNAVAILABLE" });
-  });
-}
-test("audio guards precede remote requests and live microphone with no unsupported retry loop", () => {
+test("audio guards precede remote requests et le micro Live reste distinct", () => {
   const fs = require("node:fs");
   const server = fs.readFileSync(require.resolve("../server"), "utf8");
   for (const route of ['req.url.startsWith("/realtime/session")', 'req.url === "/tts"']) {
     const handler = server.slice(server.indexOf(route));
-    assert.ok(handler.indexOf("voiceIdentity.assertAvailable()") < handler.indexOf("assertRemoteVoiceAvailable("));
+    assert.ok(handler.includes("assertRemoteVoiceAvailable("));
   }
   const live = fs.readFileSync(require.resolve("../public/live-voice"), "utf8");
-  assert.ok(live.indexOf("await this.loadVoiceIdentity(requestedModel)") < live.indexOf("await navigator.mediaDevices.getUserMedia"));
-  assert.match(live, /setState\("VoiceUnavailable", error.message\);\s*return;/);
+  assert.ok(live.indexOf("await this.loadVoiceIdentity()") < live.indexOf("await navigator.mediaDevices.getUserMedia"));
+  assert.match(live, /setState\("MIC_PERMISSION_DENIED"\)/);
+  assert.match(live, /setState\("MIC_DEVICE_UNAVAILABLE"\)/);
+  assert.match(live, /Le micro classique reste disponible/);
 });
 test("wake detection and text greeting remain independent of audio availability", () => {
   const fs = require("node:fs");

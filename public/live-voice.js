@@ -18,6 +18,7 @@
     context: document.getElementById("liveVoiceContext"),
     cost: document.getElementById("liveVoiceCost"),
     audio: document.getElementById("liveVoiceAudio"),
+    preferenceStatus: document.getElementById("liveVoicePreferenceStatus"),
   };
 
   const STORAGE = {
@@ -34,6 +35,9 @@
     muted: "Micro coupé",
     reconnecting: "Reconnexion…",
     error: "Erreur réseau",
+    LIVE_READY: "Cedar prête",
+    MIC_PERMISSION_DENIED: "Autorisation microphone refusée",
+    MIC_DEVICE_UNAVAILABLE: "Périphérique microphone indisponible",
   };
 
   class NoonLiveVoice {
@@ -49,7 +53,7 @@
       this.maxTimer = null;
       this.idleTimeoutMs = 2 * 60 * 1000;
       this.maxSessionMs = 20 * 60 * 1000;
-      this.model = "gpt-realtime-2.1-mini";
+      this.model = null;
       this.voiceSessionId = null;
       this.voiceIdentity = { id: "noon-default", voice: null, styleInstructions: "" };
       this.pendingUsers = [];
@@ -69,7 +73,8 @@
       this.bindEvents();
       this.refreshContext();
       this.refreshBudget();
-      this.setState("VoiceUnavailable", "Arbor — En attente de disponibilité API OpenAI");
+      this.updateVoiceMessage();
+      this.setState("LIVE_READY");
     }
 
     bindEvents() {
@@ -121,6 +126,10 @@
       });
     }
 
+    updateVoiceMessage() {
+      elements.preferenceStatus.textContent = "Cedar est la voix canonique actuelle. Arbor reste la voix future préférée lorsqu’elle sera réellement disponible via l’API. Aucun fallback automatique.";
+    }
+
     async applyOutputDevice() {
       const outputId = bridge.getAudioDevices?.().outputId || "";
       if (typeof elements.audio.setSinkId !== "function") return;
@@ -147,9 +156,9 @@
       if (["listening", "muted"].includes(state)) bridge.setVisualState("listening");
       if (state === "thinking") bridge.setVisualState("thinking");
       if (state === "speaking") bridge.setVisualState("speaking");
-      if (["disconnected", "error", "VoiceUnavailable"].includes(state)) bridge.setVisualState("idle");
+      if (["disconnected", "error", "LIVE_READY", "MIC_PERMISSION_DENIED", "MIC_DEVICE_UNAVAILABLE"].includes(state)) bridge.setVisualState("idle");
       window.noon?.setLiveActive(
-        !["disconnected", "error", "VoiceUnavailable"].includes(state)
+        !["disconnected", "error", "LIVE_READY", "MIC_PERMISSION_DENIED", "MIC_DEVICE_UNAVAILABLE"].includes(state)
       ).catch(() => {});
     }
 
@@ -201,11 +210,6 @@
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || "Identité vocale indisponible.");
       this.voiceIdentity = data.resolved;
-      if (data.resolved.providerStatus === "unavailable") {
-        const error = new Error(`Voix Noon : ${data.resolved.displayName} — ${data.resolved.statusMessage}`);
-        error.code = "VOICE_UNAVAILABLE";
-        throw error;
-      }
       window.noonVoiceMetrics ||= {};
       window.noonVoiceMetrics.voiceIdentity = data.resolved.identityId;
       window.noonVoiceMetrics.voice = data.resolved.voice;
@@ -239,7 +243,6 @@
     async connect({ reconnecting = false } = {}) {
       if (this.peer || this.state === "connecting") return;
       const quality = elements.quality.value === "max" ? "max" : "mini";
-      const requestedModel = quality === "max" ? "gpt-realtime-2.1" : "gpt-realtime-2.1-mini";
       let confirmMax = reconnecting && quality === "max";
 
       if (quality === "max" && !reconnecting) {
@@ -266,7 +269,7 @@
       const connectStartedAt = performance.now();
 
       try {
-        await this.loadVoiceIdentity(requestedModel);
+        await this.loadVoiceIdentity();
         this.stream = await navigator.mediaDevices.getUserMedia({
           audio: bridge.getAudioConstraints?.() || true,
           video: false,
@@ -321,11 +324,13 @@
         const answerText = await response.text();
         if (!response.ok) {
           let message = "Connexion Live impossible.";
-          try { message = JSON.parse(answerText).message || message; } catch { /* SDP ou texte simple. */ }
-          throw new Error(message);
+          let code = null;
+          try { const failure=JSON.parse(answerText);message=failure.message||message;code=failure.code||null; } catch { /* SDP ou texte simple. */ }
+          const failure = new Error(message);
+          failure.code = code;
+          throw failure;
         }
-        this.model = response.headers.get("X-Noon-Voice-Model") ||
-          (quality === "max" ? "gpt-realtime-2.1" : "gpt-realtime-2.1-mini");
+        this.model = response.headers.get("X-Noon-Voice-Model");
         this.voiceSessionId = response.headers.get("X-Noon-Voice-Session");
         this.voiceIdentity.id = response.headers.get("X-Noon-Voice-Identity") || this.voiceIdentity.identityId || "noon-default";
         this.voiceIdentity.voice = response.headers.get("X-Noon-Voice") || this.voiceIdentity.voice;
@@ -340,11 +345,9 @@
         }, this.maxSessionMs);
       } catch (error) {
         this.cleanupConnection();
-        if (error.code === "VOICE_UNAVAILABLE") {
-          this.intentionalClose = true;
-          this.setState("VoiceUnavailable", error.message);
-          return;
-        }
+        if (error?.name === "NotAllowedError") { this.intentionalClose=true;this.setState("MIC_PERMISSION_DENIED");return; }
+        if (["NotFoundError", "OverconstrainedError"].includes(error?.name)) { this.intentionalClose=true;this.setState("MIC_DEVICE_UNAVAILABLE");return; }
+        if (error?.code === "PROVIDER_UNAVAILABLE") { this.intentionalClose=true;this.setState("error", "Fournisseur Live indisponible. Le micro classique reste disponible.");return; }
         this.setState("error", error.message || "Erreur réseau");
         if (error?.name !== "NotAllowedError") this.scheduleReconnect();
       }

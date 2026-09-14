@@ -3,9 +3,10 @@
 const fs = require("fs");
 const path = require("path");
 const { estimateModelCost } = require("./model-pricing");
+const { normalizeRoutingMetadata } = require("../models/routing-metadata");
 
 const DEFAULT_RETENTION_DAYS = 30;
-const SENSITIVE_KEY = /(prompt|content|message|question|query|email|address|path|file|attachment|audio|transcript|token|secret|password|argument|result|payload|statement|value)/i;
+const SENSITIVE_KEY = /(prompt|response|content|message|question|query|email|address|path|file|attachment|audio|transcript|token|secret|password|argument|result|payload|statement|value)/i;
 const SAFE_METRIC_KEY = /^(inputTokens|outputTokens|cachedTokens|contextEstimatedTokens|estimatedTokens|budgetTokens|contextBudget|attachments|sourceCount|expectedCount|textLength|contextCacheHits|contextCacheMisses|contextCacheHitRate|contextCacheEntries|contextCacheMemoryBytesEstimate|contextTokensBefore|contextTokensAfter|contextTokensSaved|contextFingerprint|contextSegments|timeToFirstAudioMs|timeToFirstTokenMs|ttsMs|ttsStartMs|ttsTotalMs|transcriptionMs|realtimeConnectMs|firstAudioMs)$/i;
 const EMAIL = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 const PRIVATE_PATH = /(?:\/Users\/|\/home\/|[A-Z]:\\Users\\)[^\s"']+/gi;
@@ -145,12 +146,18 @@ function createNoonObservability({
   function recordModelCall(id, metrics) {
     mutate(id, (trace) => {
       const clean = sanitizeMetrics(metrics);
-      const cost = estimateModelCost(clean.model, metrics.usage || {});
-      clean.inputTokens = finite(metrics.usage?.input_tokens);
-      clean.outputTokens = finite(metrics.usage?.output_tokens);
-      clean.cachedTokens = finite(metrics.usage?.input_tokens_details?.cached_tokens);
+      const cost = estimateModelCost(metrics.provider || "openai", clean.model, metrics.usage || {});
+      const routingMetadata = normalizeRoutingMetadata(metrics.routingMetadata || metrics, {
+        provider: metrics.provider || "openai", model: clean.model, usage: metrics.usage || {},
+        latencyMs: metrics.modelTotalMs ?? metrics.latency, success: metrics.status !== "failed",
+        error: metrics.status === "failed" ? metrics.failureCategory || metrics.errorType || metrics.errorCode : null,
+      });
+      clean.inputTokens = finite(metrics.usage?.inputTokens ?? metrics.usage?.input_tokens);
+      clean.outputTokens = finite(metrics.usage?.outputTokens ?? metrics.usage?.output_tokens);
+      clean.cachedTokens = finite(metrics.usage?.cachedInputTokens ?? metrics.usage?.input_tokens_details?.cached_tokens);
       delete clean.usage;
       clean.costEstimate = cost;
+      clean.routingMetadata = routingMetadata;
       trace.modelCalls.push(clean);
       if (cost.status === "available") trace.costs.text += cost.total;
     });

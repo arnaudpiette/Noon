@@ -5,6 +5,26 @@ const { Readable } = require("node:stream");
 const test = require("node:test");
 const { getErrorHeader, readJsonBody, readTextBody, validateAttachment } = require("../services/http/request-utils");
 
+test("accepte les fichiers texte longs issus du composeur jusqu’à 1 Mo", () => {
+  const content = "ligne\n".repeat(20_000);
+  const attachment = validateAttachment({
+    kind: "text",
+    name: "texte-colle.txt",
+    content,
+  });
+
+  assert.equal(attachment.kind, "text");
+  assert.equal(attachment.content, content);
+  assert.throws(
+    () => validateAttachment({
+      kind: "text",
+      name: "trop-long.txt",
+      content: "é".repeat(600_000),
+    }),
+    /trop volumineux/
+  );
+});
+
 test("les lecteurs HTTP conservent les limites et erreurs historiques", async () => {
   assert.deepEqual(await readJsonBody(Readable.from([Buffer.from('{"ok":true}')]), 100), { ok: true });
   assert.equal(await readTextBody(Readable.from([Buffer.from("hello")]), 10), "hello");

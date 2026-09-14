@@ -31,6 +31,24 @@
       : null;
   }
 
+  function shouldConvertPastedText(value, threshold = 12_000) {
+    return typeof value === "string" && value.length > threshold;
+  }
+
+  function createPastedTextFileName(date = new Date()) {
+    const timestamp = date.toISOString().replace(/[:.]/g, "-");
+    return `texte-colle-${timestamp}.txt`;
+  }
+
+  function maskPrivateMemoryValue(value) {
+    return String(value || "").trim() ? "••••••••••••" : "••••••";
+  }
+
+  function privateMemoryCategoryLabel(value) {
+    const category = String(value || "").trim();
+    return category || "Autres";
+  }
+
   // No HTML parsing: all provider text becomes text nodes, including links and tags.
   function renderBriefMarkdown(container, value) {
     const doc = container.ownerDocument;
@@ -73,6 +91,14 @@
     }
   }
 
-  return { escapeHtml, parseFocusCommand, renderBriefMarkdown };
+  return {
+    escapeHtml,
+    parseFocusCommand,
+    shouldConvertPastedText,
+    createPastedTextFileName,
+    maskPrivateMemoryValue,
+    privateMemoryCategoryLabel,
+    renderBriefMarkdown,
+  };
 
 });

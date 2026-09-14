@@ -11,7 +11,11 @@ const orchestratorSource = fs.readFileSync(
   path.join(__dirname, "..", "services", "orchestration", "noon-orchestrator.js"),
   "utf8"
 );
-const applicationSource = `${serverSource}\n${orchestratorSource}`;
+const providerSource = fs.readFileSync(
+  path.join(__dirname, "..", "services", "models", "providers", "openai-provider.js"),
+  "utf8"
+);
+const applicationSource = `${serverSource}\n${orchestratorSource}\n${providerSource}`;
 
 test("tous les appels Responses sont stateless avec store false", () => {
   const calls = [...applicationSource.matchAll(/responses\.(?:create|stream)\s*\(/g)];
@@ -25,5 +29,6 @@ test("Tool Search possède un feature flag et un fallback contrôlé", () => {
   assert.match(serverSource, /type:\s*"tool_search"/);
   assert.match(registrySource, /defer_loading/);
   assert.match(orchestratorSource, /tool_search\.fallback/);
-  assert.match(orchestratorSource, /type:\s*"function_call_output"[\s\S]*call_id:\s*toolCall\.call_id/);
+  assert.match(orchestratorSource, /providerAdapter\.createToolResult\(toolCall, result\)/);
+  assert.match(providerSource, /type:\s*"function_call_output"[\s\S]*call_id:\s*toolCall\.call_id/);
 });

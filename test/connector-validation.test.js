@@ -80,6 +80,16 @@ test('safeStorage ciphertext survives reopening; public connector status contain
  assert.equal(encrypted,1);assert.ok(decrypted>0);assert.doesNotMatch(fs.readFileSync(filePath,'utf8'),/fixture-access|fixture-refresh/);
  assert.doesNotMatch(JSON.stringify(createGmailConnector({tokenStore:second}).status),/fixture-access|fixture-refresh|access_token|refresh_token/);
 });
+test('safeStorage failure prevents plaintext token persistence', t => {
+ const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+ const {createTokenStore}=require('../services/security/token-store');
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'noon-p14-token-failure-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const filePath=path.join(dir,'token.json');
+ const safeStorage={isEncryptionAvailable:()=>true,encryptString:()=>{throw new Error('encryption unavailable');}};
+ const store=createTokenStore({filePath,safeStorage});
+ assert.throws(()=>store.set('google',{access_token:'fixture-access'}));
+ assert.equal(fs.existsSync(filePath),false);
+});
 test('offline source collection preserves failures and isolates Apple success', async () => {
  const {createMorningBriefService}=require('../services/personal-assistant/morning-brief-service');
  const {createReliabilityEngine}=require('../services/reliability/reliability-engine');
@@ -109,7 +119,7 @@ test('Daily Brief composition honors local-only before any remote model call', (
  const fs=require('node:fs');const s=fs.readFileSync(require.resolve('../server'),'utf8');
  const a=s.indexOf('compose: async ({ structured, personalContext })');const b=s.indexOf('async function generateDailyBrief',a);const compose=s.slice(a,b);
  assert.ok(compose.indexOf('localIntelligenceRuntime.preflight')>=0);
- assert.ok(compose.indexOf('localIntelligenceRuntime.preflight')<compose.indexOf('getOpenAIClient().responses.create'));
+ assert.ok(compose.indexOf('localIntelligenceRuntime.preflight')<compose.indexOf('openAIProviderAdapter.execute'));
  assert.match(compose,/REMOTE_REASONING/);
 });
 test('packaged SQLite health compares the database against the canonical schema version', () => {
@@ -126,6 +136,16 @@ test('Control Center reuses the canonical read-only Google OAuth flow when auth 
  assert.match(server,/status: "AUTH_REQUIRED", authorizationUrl: url/);
  assert.equal((server.match(/createGoogleAuthorization\(\{/g)||[]).length,1);
  assert.match(renderer,/data\.action\?\.result\?\.authorizationUrl/);
- assert.match(renderer,/window\.open\(authorizationUrl, "_blank", "noopener"\)/);
+ assert.match(renderer,/window\.noon\.openGoogleAuthorization\(authorizationUrl\)/);
+ assert.doesNotMatch(renderer,/window\.open\(authorizationUrl/);
  assert.doesNotMatch(renderer,/clientSecret|access_token|refresh_token/);
+});
+test('Google Desktop OAuth uses an ephemeral loopback port bound to localhost', () => {
+ const fs=require('node:fs');const server=fs.readFileSync(require.resolve('../server'),'utf8');
+ const start=server.indexOf('async function createGoogleLoopbackReceiver()');
+ const helper=server.slice(start,server.indexOf('async function createGoogleReadAuthorization()',start));
+ assert.match(helper,/receiver\.listen\(0, "127\.0\.0\.1"/);
+ assert.match(helper,/loopbackPortMode: "EPHEMERAL"|GOOGLE_OAUTH_LOOPBACK_TIMEOUT_MS/);
+ assert.match(helper,/callbackUrl\.searchParams\.get\("state"\) !== expectedState/);
+ assert.doesNotMatch(server,/GOOGLE_OAUTH_REDIRECT_URI/);
 });

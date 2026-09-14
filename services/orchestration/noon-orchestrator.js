@@ -1,6 +1,10 @@
 "use strict";
 
 const crypto = require("crypto");
+const { assertModelProviderAdapter } = require("../models/model-provider-adapter");
+const { getModelDefinition } = require("../models/model-registry");
+const { classifyFailureCategory } = require("../models/routing-metadata");
+const { estimateModelCost } = require("../observability/model-pricing");
 
 class OrchestratorError extends Error {
   constructor(type, message, cause = null) {
@@ -45,7 +49,11 @@ function createNoonOrchestrator({
   contextBuilder,
   selectModel,
   modelFallbacks,
-  clientProvider,
+  providerAdapter,
+  providerAdapters = null,
+  providerConfiguration = () => true,
+  providerPrivacyPolicy,
+  providerShadowRunner = null,
   skillRegistry,
   priorityEngine = null,
   approvalManager = null,
@@ -74,7 +82,12 @@ function createNoonOrchestrator({
   if (!contextBuilder?.buildContext) throw new TypeError("Context Builder requis.");
   if (typeof selectModel !== "function") throw new TypeError("Model Router requis.");
   if (typeof modelFallbacks !== "function") throw new TypeError("Fallbacks modèle requis.");
-  if (typeof clientProvider !== "function") throw new TypeError("Client Responses requis.");
+  assertModelProviderAdapter(providerAdapter);
+  const adapters = Object.freeze({ [providerAdapter.provider]: providerAdapter, ...(providerAdapters || {}) });
+  for (const adapter of Object.values(adapters)) assertModelProviderAdapter(adapter);
+  if (!providerPrivacyPolicy?.evaluateProviderAccess || !providerPrivacyPolicy?.inspectContextFragment) {
+    throw new TypeError("ProviderPrivacyPolicy requise.");
+  }
   if (!skillRegistry?.executeSkill) throw new TypeError("Skill Registry requis.");
   if (typeof getTools !== "function") throw new TypeError("Sélecteur d'outils requis.");
 
@@ -122,53 +135,160 @@ function createNoonOrchestrator({
     if (state.request.webSearchEnabled) {
       options.max_tool_calls = Math.max(1, Number(state.request.maxWebToolCalls) || 1);
     }
-    return { options, isFinalRound, toolSearchEnabled };
+    return {
+      request: {
+        model: options.model,
+        input: options.input,
+        store: options.store,
+        reasoning: options.reasoning,
+        text: options.text,
+        tools: options.tools,
+        toolChoice: options.tool_choice,
+        maxToolCalls: options.max_tool_calls,
+        contextManagement: options.context_management,
+        routingMetadata: {
+          taskDomain: state.request.taskDomain || "GENERAL",
+          requiredQuality: state.request.requiredQuality || "NORMAL",
+          maxEstimatedCost: state.request.maxEstimatedCost,
+          estimatedUsage: state.request.estimatedUsage,
+        },
+      },
+      isFinalRound,
+      toolSearchEnabled,
+    };
+  }
+
+  function allowsTransientProviderRetry(error, normalizedError) {
+    const status = Number(error?.status || error?.statusCode) || null;
+    if ([408, 429, 500, 502, 503, 504].includes(status)) return true;
+    return ["RATE_LIMITED", "TIMEOUT", "NETWORK_ERROR", "SERVICE_UNAVAILABLE"].includes(normalizedError?.category);
+  }
+
+  async function invokeProvider(state, { adapter, model, operation, purpose = "primary", retryGuard = () => true }) {
+    const usage = state.request.estimatedUsage || {};
+    const estimate = estimateModelCost(adapter.provider, model, usage);
+    if (adapter.provider !== "google_ai" || !reliabilityEngine?.execute) {
+      const response = await operation();
+      if (estimate.status === "available") state.metrics.estimatedProviderCost += estimate.total;
+      return { response, attemptCount: 1, retryEvents: [], reliabilityManaged: false };
+    }
+    try { reliabilityEngine.component(model); } catch {
+      const response = await operation();
+      if (estimate.status === "available") state.metrics.estimatedProviderCost += estimate.total;
+      return { response, attemptCount: 1, retryEvents: [], reliabilityManaged: false };
+    }
+    const latencyBudgetMs = Number.isFinite(Number(state.request.latencyBudgetMs ?? state.request.latencyTarget))
+      ? Number(state.request.latencyBudgetMs ?? state.request.latencyTarget)
+      : null;
+    const maxEstimatedCost = Number.isFinite(Number(state.request.maxEstimatedCost)) ? Number(state.request.maxEstimatedCost) : null;
+    const reservedSynthesisCost = purpose === "second_opinion" && state.route?.estimatedCost?.status === "available"
+      ? Math.max(0, Number(state.route.estimatedCost.total) || 0)
+      : 0;
+    const retryResult = await reliabilityEngine.execute(model, operation, {
+      idempotent: true,
+      maxRetries: 1,
+      executionId: state.executionId,
+      retryPolicy: {
+        allows: (error, normalizedError) => retryGuard() && allowsTransientProviderRetry(error, normalizedError),
+        baseDelayMs: 1250,
+        maxDelayMs: 2500,
+        latencyBudgetMs: latencyBudgetMs === null ? null : Math.max(0, latencyBudgetMs - (now() - state.startedAt)),
+        estimatedAttemptCost: estimate.status === "available" ? estimate.total : 0,
+        estimatedSpent: state.metrics.estimatedProviderCost + reservedSynthesisCost,
+        maxEstimatedCost,
+      },
+    });
+    state.metrics.retryCount += Math.max(0, retryResult.attempts - 1);
+    if (estimate.status === "available") state.metrics.estimatedProviderCost += estimate.total * retryResult.attempts;
+    trace("provider_retry.completed", state, {
+      provider: adapter.provider, model, purpose, attemptCount: retryResult.attempts,
+      retryCount: Math.max(0, retryResult.attempts - 1),
+    });
+    return { response: retryResult.data, attemptCount: retryResult.attempts, retryEvents: retryResult.retries, reliabilityManaged: true };
   }
 
   async function callModel(state, round) {
-    const { options, isFinalRound, toolSearchEnabled } = buildOptions(state, round);
+    const { request, isFinalRound, toolSearchEnabled } = buildOptions(state, round);
     if (isFinalRound) onFinalRound?.(state.request);
     let lastError;
-    const availableModels = modelFallbacks(state.route.model).filter((model) => {
+    const routedModels = state.route.eligibleCandidates
+      ? [
+          state.route.model,
+          ...state.route.eligibleCandidates.filter((candidate) => candidate.model !== state.route.model && candidate.provider === state.route.provider).map((candidate) => candidate.model),
+          ...(state.route.fallbackEligible ? state.route.fallbackCandidates.map((candidate) => candidate.model) : []),
+        ]
+      : modelFallbacks(state.route.model);
+    const availableModels = [...new Set(routedModels)].filter((model) => {
       if (!reliabilityEngine) return true;
       try {
         const health = reliabilityEngine.snapshot(model);
         return !["UNAVAILABLE", "MISCONFIGURED"].includes(health.state) && health.circuitState !== "open";
       } catch { return true; }
     });
+    let previousProvider = null;
     for (const model of availableModels.length ? availableModels : modelFallbacks(state.route.model)) {
-      let attemptOptions = { ...options, model };
+      const providerId = getModelDefinition(model)?.provider || providerAdapter.provider;
+      if (previousProvider && providerId !== previousProvider && !["PROVIDER_FAILURE", "NETWORK_FAILURE", "RATE_LIMIT", "TIMEOUT", "AUTH_ERROR", "MODEL_UNAVAILABLE"].includes(classifyFailureCategory(lastError))) break;
+      const activeAdapter = adapters[providerId];
+      if (!activeAdapter || state.privacyDecisions?.[providerId]?.decision !== "ALLOW") continue;
+      let attemptRequest = { ...request, model };
       try {
         for (let compatibilityAttempt = 0; compatibilityAttempt < 3; compatibilityAttempt += 1) {
           const attemptStarted = now();
           try {
+            const callFragment = providerPrivacyPolicy.inspectContextFragment({
+              source: "provider_request",
+              classification: state.request.dataClassification || "PRIVATE",
+              localOnly: state.request.privacyRequirements === "LOCAL_ONLY",
+              content: attemptRequest.input,
+              providerRestrictions: state.request.providerRestrictions || [],
+            });
+            const callPrivacyDecision = providerPrivacyPolicy.evaluateProviderAccess({
+              provider: activeAdapter.provider,
+              contextMetadata: { fragments: [callFragment] },
+              requestPolicy: {
+                localOnly: state.request.privacyRequirements === "LOCAL_ONLY",
+                secretDetected: callFragment.secretDetected,
+                providerConfigured: providerConfiguration(activeAdapter.provider) === true,
+              },
+            });
+            if (callPrivacyDecision.decision !== "ALLOW") {
+              const privacyError = new Error("La politique de confidentialité interdit cet appel distant.");
+              privacyError.code = callPrivacyDecision.reasonCodes[0] || "REMOTE_PROVIDER_POLICY_REQUIRED";
+              throw privacyError;
+            }
             let streamChunks = 0;
             let firstTokenMs = null;
             let response;
+            let providerAttemptCount = 1;
+            let retryEvents = [];
+            let reliabilityManaged = false;
             if (typeof state.request.onTextDelta === "function") {
-              const stream = clientProvider().responses.stream(
-                attemptOptions,
-                state.request.signal ? { signal: state.request.signal } : undefined
-              );
-              stream.on("response.output_text.delta", (event) => {
-                streamChunks += 1;
-                if (state.metrics.timeToFirstTokenMs === null) {
-                  state.metrics.timeToFirstTokenMs = now() - attemptStarted;
-                  firstTokenMs = state.metrics.timeToFirstTokenMs;
-                }
-                state.request.onTextDelta(event.delta);
+              const invoked = await invokeProvider(state, { adapter: activeAdapter, model, purpose: "primary", retryGuard: () => streamChunks === 0, operation: () => activeAdapter.stream(attemptRequest, {
+                  signal: state.request.signal,
+                  privacyDecisionToken: callPrivacyDecision.permissionToken,
+                  onTextDelta(delta) {
+                    streamChunks += 1;
+                    if (state.metrics.timeToFirstTokenMs === null) {
+                      state.metrics.timeToFirstTokenMs = now() - attemptStarted;
+                      firstTokenMs = state.metrics.timeToFirstTokenMs;
+                    }
+                    state.request.onTextDelta(delta);
+                  },
+                })
               });
-              response = await stream.finalResponse();
+              ({ response, attemptCount: providerAttemptCount, retryEvents, reliabilityManaged } = invoked);
             } else {
-              response = await clientProvider().responses.create(
-                attemptOptions,
-                state.request.signal ? { signal: state.request.signal } : undefined
-              );
+              const invoked = await invokeProvider(state, { adapter: activeAdapter, model, purpose: "primary", operation: () => activeAdapter.execute(attemptRequest, {
+                  signal: state.request.signal,
+                  privacyDecisionToken: callPrivacyDecision.permissionToken,
+                })
+              });
+              ({ response, attemptCount: providerAttemptCount, retryEvents, reliabilityManaged } = invoked);
             }
             const modelTotalMs = now() - attemptStarted;
             state.metrics.modelMs += modelTotalMs;
             state.modelUsed = model;
-            response.noonModel = model;
             if (model !== state.route.model) state.metrics.fallbackCount += 1;
             observability?.recordModelCall(state.executionId, {
               index: state.modelCallIndex++, round, model,
@@ -177,7 +297,12 @@ function createNoonOrchestrator({
               timeToFirstTokenMs: firstTokenMs,
               streamDurationMs: streamChunks > 0 ? modelTotalMs : 0,
               streamChunks,
+              provider: response.provider,
+              attemptCount: providerAttemptCount,
+              retryCount: Math.max(0, providerAttemptCount - 1),
+              retryBackoffMs: retryEvents.reduce((sum, item) => sum + item.backoffMs, 0),
               usage: response.usage || null,
+              routingMetadata: response.routingMetadata,
             });
             if (model !== state.route.model) {
               observability?.recordFallback(state.executionId, {
@@ -188,33 +313,122 @@ function createNoonOrchestrator({
                 trace("astra_fallback_sol", state, { from: "gpt-6-astra", to: "gpt-5.6-sol", reason: "astra_unavailable" });
               }
             }
+            if (round === 0 && !state.request.onTextDelta && response.toolCalls?.length === 0 && state.route.secondOpinionEligible && state.route.secondOpinionCandidate) {
+              const second = state.route.secondOpinionCandidate;
+              const secondAdapter = adapters[second.provider];
+              const secondPrivacy = state.privacyDecisions?.[second.provider];
+              if (secondAdapter && secondPrivacy?.decision === "ALLOW") {
+                const minimumInput = attemptRequest.input.filter((item) => item?.role === "user").slice(-1);
+                try {
+                  const secondStarted = now();
+                  const secondInvocation = await invokeProvider(state, { adapter: secondAdapter, model: second.model, purpose: "second_opinion", operation: () => secondAdapter.execute({
+                    model: second.model,
+                    input: minimumInput,
+                    store: false,
+                    routingMetadata: attemptRequest.routingMetadata,
+                  }, { signal: state.request.signal, privacyDecisionToken: secondPrivacy.permissionToken }) });
+                  const secondResponse = secondInvocation.response;
+                  observability?.recordModelCall(state.executionId, {
+                    index: state.modelCallIndex++, round, provider: secondResponse.provider, model: secondResponse.model,
+                    modelTotalMs: now() - secondStarted, usage: secondResponse.usage, routingMetadata: secondResponse.routingMetadata,
+                    attemptCount: secondInvocation.attemptCount,
+                    callPurpose: "second_opinion",
+                  });
+                  const synthesisRoute = selectModel({
+                    question: "Synthèse de deux avis indépendants",
+                    taskDomain: state.route.taskDomain,
+                    requiredQuality: state.route.requiredQuality,
+                    eligibleProviders: Object.values(state.privacyDecisions).filter((item) => item.decision === "ALLOW").map((item) => item.provider),
+                    requiredCapabilities: ["TEXT"],
+                    estimatedUsage: state.request.estimatedUsage || { inputTokens: 1200, outputTokens: 600 },
+                    multiProviderRouting: state.request.multiProviderRouting === true,
+                    costAwareRouting: state.request.costAwareRouting === true,
+                    providerRollouts: state.request.providerRollouts,
+                  });
+                  const synthesisAdapter = adapters[synthesisRoute.provider || providerAdapter.provider];
+                  const synthesisPrivacy = state.privacyDecisions[synthesisAdapter.provider];
+                  const synthesisStarted = now();
+                  const synthesisInvocation = await invokeProvider(state, { adapter: synthesisAdapter, model: synthesisRoute.model, purpose: "synthesis", operation: () => synthesisAdapter.execute({
+                    model: synthesisRoute.model,
+                    store: false,
+                    input: [
+                      ...minimumInput,
+                      { role: "developer", content: "Produis une seule réponse Noon. Signale honnêtement accord, désaccord, incertitudes et contraintes manquantes. N’exécute aucune action." },
+                      { role: "user", content: JSON.stringify({ primary: response.text, independentSecondOpinion: secondResponse.text }) },
+                    ],
+                    routingMetadata: attemptRequest.routingMetadata,
+                  }, { signal: state.request.signal, privacyDecisionToken: synthesisPrivacy.permissionToken }) });
+                  const synthesis = synthesisInvocation.response;
+                  observability?.recordModelCall(state.executionId, {
+                    index: state.modelCallIndex++, round, provider: synthesis.provider, model: synthesis.model,
+                    modelTotalMs: now() - synthesisStarted, usage: synthesis.usage, routingMetadata: synthesis.routingMetadata,
+                    callPurpose: "synthesis",
+                  });
+                  response = synthesis;
+                  const agreement = ["AGREEMENT", "PARTIAL_AGREEMENT", "DISAGREEMENT", "UNCERTAINTY"].includes(state.request.secondOpinionAssessment)
+                    ? state.request.secondOpinionAssessment
+                    : "UNCERTAINTY";
+                  state.secondOpinion = { status: "completed", agreement, provider: second.provider, model: second.model, synthesisProvider: synthesis.provider, synthesisModel: synthesis.model };
+                } catch (secondOpinionError) {
+                  const failureCategory = classifyFailureCategory(secondOpinionError);
+                  const providerUnavailable = ["PROVIDER_FAILURE", "NETWORK_FAILURE", "RATE_LIMIT", "TIMEOUT", "MODEL_UNAVAILABLE"].includes(failureCategory);
+                  state.secondOpinion = {
+                    status: providerUnavailable ? "skipped_provider_unavailable" : "failed",
+                    reasonCode: providerUnavailable ? "SECOND_OPINION_SKIPPED_PROVIDER_UNAVAILABLE" : undefined,
+                    failureCategory,
+                  };
+                  observability?.recordFallback(state.executionId, { component: "second_opinion", reason: "second_provider_failure", primaryPreserved: true });
+                }
+              }
+            }
             onModelResponse?.(response, state);
-            try { reliabilityEngine?.recordSuccess(model, { latencyMs: modelTotalMs }); reliabilityEngine?.recordSuccess("openai-models", { latencyMs: modelTotalMs }); } catch {}
+            if (round === 0 && state.request.dataClassification === "PUBLIC" && response.provider !== providerShadowRunner?.provider && providerShadowRunner?.rollout === "SHADOW") {
+              void providerShadowRunner.runPublic({
+                ...attemptRequest,
+                primaryMetrics: {
+                  provider: response.provider,
+                  model: response.model || model,
+                  latency: modelTotalMs,
+                  cost: response.routingMetadata?.actualCost || null,
+                  success: true,
+                },
+              }, { signal: state.request.signal });
+            }
+            if (!reliabilityManaged) try { reliabilityEngine?.recordSuccess(model, { latencyMs: modelTotalMs }); } catch {}
+            try { reliabilityEngine?.recordSuccess(response.provider === "google_ai" ? "google-ai-models" : "openai-models", { latencyMs: modelTotalMs }); } catch {}
             return response;
           } catch (error) {
             const failedModelMs = now() - attemptStarted;
-            try { reliabilityEngine?.recordFailure(model, error, { latencyMs: failedModelMs, executionId: state.executionId }); } catch {}
+            if (!error?.reliabilityRecorded) try { reliabilityEngine?.recordFailure(model, error, { latencyMs: failedModelMs, executionId: state.executionId }); } catch {}
+            if (activeAdapter.provider === "google_ai") try { reliabilityEngine?.recordFailure("google-ai-models", error, { latencyMs: failedModelMs, executionId: state.executionId }); } catch {}
             observability?.recordModelCall(state.executionId, {
               index: state.modelCallIndex++, round, model,
               modelRequestMs: failedModelMs, modelTotalMs: failedModelMs,
               timeToFirstTokenMs: null, streamDurationMs: 0, streamChunks: 0,
               status: "failed", errorType: classifyError(error),
               errorCode: String(error?.code || error?.type || "ERROR").slice(0, 80),
+              provider: activeAdapter.provider,
+              providerStatus: Number(error?.status || error?.statusCode) || null,
+              failureCategory: classifyFailureCategory(error),
+              attemptCount: error?.retryDecision?.attempted || 1,
+              retryCount: Math.max(0, (error?.retryDecision?.attempted || 1) - 1),
+              retryBackoffMs: (error?.retryEvents || []).reduce((sum, item) => sum + (Number(item.backoffMs) || 0), 0),
+              circuitState: (() => { try { return reliabilityEngine?.snapshot(model)?.circuitState || null; } catch { return null; } })(),
               errorParam: String(error?.param || "").slice(0, 120) || null,
               usage: null,
+              routingMetadata: attemptRequest.routingMetadata,
             });
-            if (attemptOptions.context_management && isCompactionCompatibilityError(error)) {
-              attemptOptions = { ...attemptOptions };
-              delete attemptOptions.context_management;
+            if (attemptRequest.contextManagement && isCompactionCompatibilityError(error.cause || error)) {
+              attemptRequest = { ...attemptRequest, contextManagement: undefined };
               trace("compaction.fallback", state, { feature: "compaction", model });
               observability?.recordFallback(state.executionId, {
                 component: "compaction", from: "enabled", to: "disabled", reason: "compatibility_error",
               });
               continue;
             }
-            if (toolSearchEnabled && isToolSearchCompatibilityError(error)) {
-              attemptOptions = {
-                ...attemptOptions,
+            if (toolSearchEnabled && isToolSearchCompatibilityError(error.cause || error)) {
+              attemptRequest = {
+                ...attemptRequest,
                 tools: getTools({
                   webSearchEnabled: state.request.webSearchEnabled === true,
                   toolSearchEnabled: false,
@@ -232,6 +446,11 @@ function createNoonOrchestrator({
         }
       } catch (error) {
         lastError = error;
+        previousProvider = providerId;
+        if (state.route.fallbackEligible && ["PROVIDER_FAILURE", "NETWORK_FAILURE", "RATE_LIMIT", "TIMEOUT", "AUTH_ERROR", "MODEL_UNAVAILABLE"].includes(classifyFailureCategory(error))) {
+          observability?.recordFallback(state.executionId, { component: "provider", from: providerId, reason: "technical_provider_failure" });
+          continue;
+        }
         const astraFallbackAllowed = state.route.model === "gpt-6-astra" && model === "gpt-6-astra" && [400, 401, 403, 404, 429].includes(error?.status);
         if (astraFallbackAllowed) trace("astra_unavailable", state, { model, status: error.status, code: String(error?.code || "ERROR").slice(0, 80) });
         if ((!astraFallbackAllowed && ![400, 403, 404].includes(error?.status)) || model === "gpt-5.6-luna") break;
@@ -241,11 +460,7 @@ function createNoonOrchestrator({
   }
 
   function toolOutput(toolCall, result) {
-    return {
-      type: "function_call_output",
-      call_id: toolCall.call_id,
-      output: JSON.stringify(result),
-    };
+    return providerAdapter.createToolResult(toolCall, result);
   }
 
   async function executeTool(state, toolCall, args, confirmed = false, approvedContext = null, actionRequestOverrides = null) {
@@ -483,6 +698,7 @@ function createNoonOrchestrator({
         }],
         toolRounds: state.metrics.toolRounds,
         fallbackCount: state.metrics.fallbackCount,
+        secondOpinion: state.secondOpinion || null,
       },
       specialistProposal: { status, proposal, result, policyDecision },
       response: null,
@@ -526,6 +742,7 @@ function createNoonOrchestrator({
         priorities: state.priorities.map(({ id, score, priorityLevel, scoringVersion }) => ({ id, score, priorityLevel, scoringVersion })),
         toolRounds: state.metrics.toolRounds,
         fallbackCount: state.metrics.fallbackCount,
+        secondOpinion: state.secondOpinion || null,
       },
       response,
     };
@@ -552,8 +769,8 @@ function createNoonOrchestrator({
         throw error;
       }
       const response = await callModel(state, round);
-      const toolCalls = (response.output || []).filter((item) => item.type === "function_call");
-      if (toolCalls.length === 0) return finalResult(state, response, response.output_text?.trim());
+      const toolCalls = response.toolCalls || [];
+      if (toolCalls.length === 0) return finalResult(state, response, response.text?.trim());
       state.metrics.toolRounds += 1;
       state.input.push(...(response.output || []).map(sanitizeResponseOutput));
       for (const toolCall of toolCalls) {
@@ -757,6 +974,7 @@ function createNoonOrchestrator({
         contextBuildMs: 0, modelSelectMs: 0, modelMs: 0,
         timeToFirstTokenMs: null, toolExecutionMs: 0, totalMs: 0,
         fallbackCount: 0, toolRounds: 0, approvalWaitMs: 0,
+        retryCount: 0, estimatedProviderCost: 0,
       },
     };
     observability?.startExecution({
@@ -812,6 +1030,36 @@ function createNoonOrchestrator({
           ([segment, event]) => [segment, { hit: event.hit === true, fallback: event.fallback === true, ageMs: event.ageMs || 0, buildMs: event.buildMs || 0 }]
         )),
       });
+      const requestFragment = providerPrivacyPolicy.inspectContextFragment({
+        source: "user_request",
+        classification: request.dataClassification || "PERSONAL",
+        localOnly: request.privacyRequirements === "LOCAL_ONLY",
+        content: request.query,
+        providerRestrictions: request.providerRestrictions || [],
+      });
+      const privacyFragments = [...(state.context.metadata?.privacy?.fragments || []), requestFragment];
+      state.privacyDecisions = Object.fromEntries(Object.keys(adapters).map((providerId) => [providerId, providerPrivacyPolicy.evaluateProviderAccess({
+        provider: providerId,
+        contextMetadata: { fragments: privacyFragments },
+        requestPolicy: {
+          localOnly: request.privacyRequirements === "LOCAL_ONLY",
+          secretDetected: requestFragment.secretDetected,
+          providerConfigured: providerConfiguration(providerId) === true,
+        },
+      })]));
+      state.privacyDecision = state.privacyDecisions[providerAdapter.provider];
+      trace("provider_privacy_evaluated", state, {
+        provider: state.privacyDecision.provider,
+        decision: state.privacyDecision.decision,
+        reasonCodes: state.privacyDecision.reasonCodes,
+        classificationCounts: state.privacyDecision.classificationCounts,
+      });
+      const eligibleProviders = Object.values(state.privacyDecisions).filter((decision) => decision.decision === "ALLOW").map((decision) => decision.provider);
+      if (!eligibleProviders.length) {
+        const error = new Error("La politique de confidentialité interdit cet appel distant.");
+        error.code = state.privacyDecision.reasonCodes[0] || "REMOTE_PROVIDER_POLICY_REQUIRED";
+        throw new OrchestratorError("permission_error", error.message, error);
+      }
       const priorityIntent = ["planning", "calendar", "brief", "project", "projects", "organization", "tasks", "priorities"]
         .includes(state.context.metadata?.intent);
       if (priorityEngine && priorityIntent && Array.isArray(request.priorityActions) && request.priorityActions.length > 0) {
@@ -896,10 +1144,32 @@ function createNoonOrchestrator({
         // Les capacités runtime (REMOTE_REASONING, REMOTE_WEB_SEARCH...) sont
         // résolues par LocalIntelligenceRuntime. Le ModelRouter ne reçoit que
         // les capacités réellement supportées par un modèle (TEXT, VISION...).
-        requiredCapabilities: request.modelCapabilities || [],
+        requiredCapabilities: [...new Set([...(request.modelCapabilities || []), ...(state.context.metadata?.complexityHints?.hasTools === true ? ["FUNCTION_CALLING"] : [])])],
         networkState: request.runtimeCapabilitiesSnapshot?.state || "ONLINE",
         privacyRequirements: request.privacyRequirements || "STANDARD",
         budgetPolicy: request.budgetMode || "NORMAL",
+        eligibleProviders,
+        taskDomain: request.taskDomain,
+        requiredQuality: request.requiredQuality,
+        criticality: request.criticality,
+        maxEstimatedCost: request.maxEstimatedCost,
+        estimatedUsage: request.estimatedUsage || {
+          inputTokens: Math.max(1, Math.ceil(state.context.metadata?.estimatedTokens || String(request.query || "").length / 4)),
+          outputTokens: request.estimatedOutputTokens || (request.expectedOutputLength === "long" ? 1200 : request.expectedOutputLength === "short" ? 200 : 600),
+        },
+        explicitUserProvider: request.explicitUserProvider,
+        multiProviderRouting: request.multiProviderRouting === true,
+        costAwareRouting: request.costAwareRouting === true,
+        providerRollouts: request.providerRollouts,
+        providerHealth: request.providerHealth,
+        modelAvailability: request.modelAvailability,
+        latencyTarget: request.latencyTarget,
+        historicalLatency: request.historicalLatency,
+        crossProviderFallback: request.crossProviderFallback === true,
+        secondOpinion: request.secondOpinion === true,
+        explicitSecondOpinion: request.explicitSecondOpinion === true,
+        highUncertainty: request.highUncertainty === true,
+        contradictoryEvidence: request.contradictoryEvidence === true,
       });
       state.metrics.modelSelectMs = now() - started;
       observability?.recordRouting(state.executionId, {
@@ -911,6 +1181,9 @@ function createNoonOrchestrator({
         routingScore: state.route.score,
         reasonCodes: state.route.reasonCodes,
         signals: state.route.signals,
+        providerPrivacyDecision: state.privacyDecision.decision,
+        providerPrivacyReasonCodes: state.privacyDecision.reasonCodes,
+        providerPrivacyClassificationCounts: state.privacyDecision.classificationCounts,
         budgetMode: request.budgetMode || "NORMAL",
       });
       state.input = request.buildInput(state.context);

@@ -33,9 +33,29 @@ function isSafeExternalUrl(rawUrl) {
   }
 }
 
+function isSafeGoogleAuthorizationUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    const redirect = new URL(url.searchParams.get("redirect_uri"));
+    return url.protocol === "https:" &&
+      url.hostname === "accounts.google.com" &&
+      url.pathname === "/o/oauth2/v2/auth" &&
+      url.searchParams.get("response_type") === "code" &&
+      url.searchParams.get("code_challenge_method") === "S256" &&
+      Boolean(url.searchParams.get("code_challenge")) &&
+      redirect.protocol === "http:" &&
+      redirect.hostname === "127.0.0.1" &&
+      Boolean(redirect.port) &&
+      redirect.pathname === "/integrations/google/callback" &&
+      !redirect.search && !redirect.hash;
+  } catch {
+    return false;
+  }
+}
+
 function isValidAccelerator(value) {
   return typeof value === "string" && value.length <= 80 &&
     /^(?=.*(?:Command|Cmd|Control|Ctrl|Alt|Option|Shift))[-+A-Za-z0-9]+(?:\+[-+A-Za-z0-9]+)+$/.test(value);
 }
 
-module.exports = { isSafeExternalUrl, isValidAccelerator, parseNoonDeepLink };
+module.exports = { isSafeExternalUrl, isSafeGoogleAuthorizationUrl, isValidAccelerator, parseNoonDeepLink };

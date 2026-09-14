@@ -41,6 +41,7 @@ function classifyFailure(error, context = {}) {
   if (status === 401 || /invalid.grant|token.*(?:expired|invalid|revoked)|reconnect|non connect/.test(message)) return normalized("AUTH_REQUIRED", false, true, "La connexion au service doit être renouvelée.", context.recoveryAction || "RECONNECT");
   if (status === 403 || /permission|eacces|eperm|not permitted|accès refusé/.test(message)) return normalized("PERMISSION_DENIED", false, true, "Noon n’a pas l’autorisation nécessaire.", context.recoveryAction || "GRANT_PERMISSION");
   if (status === 429 || /rate.?limit|quota/.test(message)) return normalized("RATE_LIMITED", true, false, "Le service limite temporairement les requêtes.");
+  if ([408, 500, 502, 503, 504].includes(status)) return normalized("SERVICE_UNAVAILABLE", true, false, "Le service est momentanément indisponible.");
   if (code === "ABORTERROR" || code.includes("TIMEOUT") || /timed? ?out|délai/.test(message)) return normalized("TIMEOUT", true, false, "Le service n’a pas répondu à temps.");
   if (["ENOTFOUND", "ECONNRESET", "ECONNREFUSED", "EAI_AGAIN", "ENETUNREACH"].includes(code) || /network|fetch failed|dns|connexion.*impossible/.test(message)) return normalized("NETWORK_ERROR", true, false, "Le service n’est pas joignable actuellement.");
   if (context.stale === true || /stale|périm|fingerprint mismatch/.test(message)) return normalized("STALE_DATA", true, false, "Les données disponibles sont périmées.", "REFRESH");
@@ -121,17 +122,44 @@ function createReliabilityEngine({ observability = null, now = () => Date.now(),
     try { const result = await definition.healthCheck({ deep }); return recordSuccess(id, { latencyMs: now() - started, capabilities: result?.degradedCapabilities || [] }); }
     catch (error) { recordFailure(id, error, { latencyMs: now() - started }); return snapshot(id); }
   }
-  async function execute(id, operation, { idempotent = true, destructive = false, unknownOutcome = false, maxRetries = null, executionId = null } = {}) {
+  async function execute(id, operation, { idempotent = true, destructive = false, unknownOutcome = false, maxRetries = null, executionId = null, retryPolicy = null } = {}) {
     const definition = component(id);
     if (!circuitAllows(id)) throw Object.assign(new Error("Le composant est temporairement suspendu après plusieurs échecs."), { code: "CIRCUIT_OPEN", normalized: classifyFailure(Object.assign(new Error("unavailable"), { status: 503 })) });
     const retries = destructive || !idempotent ? 0 : Math.max(0, Math.min(5, maxRetries ?? definition.maxRetries)); let lastError;
+    const operationStartedAt = now();
+    const retryEvents = [];
     for (let attempt = 0; attempt <= retries; attempt += 1) {
       const started = now();
-      try { const data = await operation(); recordSuccess(id, { latencyMs: now() - started, noData: Array.isArray(data) && data.length === 0 }); return { ok: true, data, outcome: Array.isArray(data) && data.length === 0 ? "NO_DATA" : "SUCCESS", attempts: attempt + 1 }; }
+      try { const data = await operation({ attempt: attempt + 1 }); recordSuccess(id, { latencyMs: now() - started, noData: Array.isArray(data) && data.length === 0 }); return { ok: true, data, outcome: Array.isArray(data) && data.length === 0 ? "NO_DATA" : "SUCCESS", attempts: attempt + 1, retries: retryEvents }; }
       catch (error) {
         lastError = error; const normalizedError = recordFailure(id, error, { latencyMs: now() - started, executionId, unknownOutcome: unknownOutcome && (destructive || !idempotent) });
-        if (!normalizedError.retryable || attempt >= retries || destructive || !idempotent) { error.normalized = normalizedError; throw error; }
-        const delay = Math.round(Math.min(2000, 100 * (2 ** attempt)) * (0.8 + random() * 0.4)); emit("retry_count", { componentId: id, attempt: attempt + 1 }); await sleep(delay);
+        error.reliabilityRecorded = true;
+        const policyAllows = typeof retryPolicy?.allows === "function" ? retryPolicy.allows(error, normalizedError) : true;
+        const baseDelayMs = Math.max(0, Number(retryPolicy?.baseDelayMs) || 100);
+        const maxDelayMs = Math.max(baseDelayMs, Number(retryPolicy?.maxDelayMs) || 2000);
+        const delay = Math.round(Math.min(maxDelayMs, baseDelayMs * (2 ** attempt)) * (0.8 + random() * 0.4));
+        const latencyBudgetMs = retryPolicy?.latencyBudgetMs != null && Number.isFinite(Number(retryPolicy.latencyBudgetMs)) ? Math.max(0, Number(retryPolicy.latencyBudgetMs)) : null;
+        const estimatedAttemptCost = Math.max(0, Number(retryPolicy?.estimatedAttemptCost) || 0);
+        const estimatedSpent = Math.max(0, Number(retryPolicy?.estimatedSpent) || 0);
+        const maxEstimatedCost = retryPolicy?.maxEstimatedCost != null && Number.isFinite(Number(retryPolicy.maxEstimatedCost)) ? Math.max(0, Number(retryPolicy.maxEstimatedCost)) : null;
+        const projectedLatency = now() - operationStartedAt + delay;
+        const projectedCost = estimatedSpent + estimatedAttemptCost * (attempt + 2);
+        const latencyAllows = latencyBudgetMs === null || projectedLatency < latencyBudgetMs;
+        const costAllows = maxEstimatedCost === null || projectedCost <= maxEstimatedCost;
+        const retryAllowed = normalizedError.retryable && policyAllows && attempt < retries && !destructive && idempotent && latencyAllows && costAllows;
+        if (!retryAllowed) {
+          const reasonCode = !normalizedError.retryable || !policyAllows ? "NON_RETRYABLE" : !latencyAllows ? "LATENCY_BUDGET" : !costAllows ? "COST_BUDGET" : "MAX_ATTEMPTS";
+          emit("retry_skipped", { componentId: id, attemptCount: attempt + 1, reasonCode, failureCategory: normalizedError.category });
+          error.normalized = normalizedError;
+          error.retryDecision = { attempted: attempt + 1, reasonCode, latencyBudgetMs, maxEstimatedCost };
+          error.retryEvents = [...retryEvents];
+          throw error;
+        }
+        const retryEvent = { attempt: attempt + 2, backoffMs: delay, failureCategory: normalizedError.category };
+        retryEvents.push(retryEvent);
+        emit("retry_count", { componentId: id, attempt: attempt + 1, attemptCount: attempt + 2, failureCategory: normalizedError.category });
+        emit("retry_backoff_ms", { componentId: id, value: delay, attemptCount: attempt + 2 });
+        await sleep(delay);
       }
     }
     throw lastError;

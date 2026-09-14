@@ -98,6 +98,29 @@ test("une action de diagnostic sûre s'exécute sans mutation", async () => {
   assert.equal(calls.authorizations, 0);
 });
 
+test("CHECK_CONNECTION préserve l’URL Google canonique au-delà de 500 caractères", async () => {
+  const authorizationUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  authorizationUrl.search = new URLSearchParams({
+    client_id: "synthetic-client",
+    redirect_uri: "http://127.0.0.1:55587/integrations/google/callback",
+    response_type: "code",
+    code_challenge: "x".repeat(128),
+    code_challenge_method: "S256",
+    scope: Array.from({ length: 12 }, (_, index) => `https://example.test/scope-${index}`).join(" "),
+    state: "y".repeat(96),
+  });
+  assert.ok(authorizationUrl.href.length > 500);
+  const service = createControlCenterService({
+    readers: {},
+    actions: {
+      CHECK_CONNECTION: async () => ({ status: "AUTH_REQUIRED", authorizationUrl: authorizationUrl.href }),
+    },
+  });
+  const result = await service.requestAction({ action: "CHECK_CONNECTION", targetId: "gmail", params: {} });
+  assert.equal(result.result.authorizationUrl, authorizationUrl.href);
+  assert.equal(new URL(result.result.authorizationUrl).searchParams.get("redirect_uri"), "http://127.0.0.1:55587/integrations/google/callback");
+});
+
 test("une mutation de trusted_ui passe par la policy et reste bloquée en attente d'approbation", async () => {
   const { calls, service } = fixture();
   const result = await service.requestAction({ action: "MUTATE_TEST", targetId: "device-1", params: {} });

@@ -85,7 +85,7 @@ function validateAttachment(raw) {
     return { kind: "audio", name: fileName, mimeType, dataUrl, ...privacy };
   }
   if (raw.kind === "text") {
-    if (typeof raw.content !== "string" || raw.content.length > 20 * 1024) throw httpError("Le fichier texte est invalide ou trop volumineux.", 413);
+    if (typeof raw.content !== "string" || Buffer.byteLength(raw.content, "utf8") > 1024 * 1024) throw httpError("Le fichier texte est invalide ou trop volumineux.", 413);
     return { kind: "text", name: fileName, content: raw.content };
   }
   throw httpError("Type de pièce jointe non accepté.", 400);

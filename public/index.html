@@ -34,6 +34,16 @@
           <span class="conversation-history__empty">Aucune conversation.</span>
         </div>
       </details>
+      <details id="conversationProjects" class="conversation-projects" open>
+        <summary>
+          <span>Projets</span>
+          <button id="createConversationProject" class="conversation-projects__add" type="button" aria-label="Créer un projet">+</button>
+          <span class="conversation-projects__chevron" aria-hidden="true">⌄</span>
+        </summary>
+        <div id="conversationProjectsList" class="conversation-projects__list">
+          <span class="conversation-history__empty">Aucun projet.</span>
+        </div>
+      </details>
       <section class="live-voice-panel" aria-labelledby="liveVoiceTitle">
         <div class="live-voice-heading">
           <div>
@@ -49,7 +59,7 @@
           <span id="liveVoiceCost">0,00 $ / 11 $</span>
         </div>
         <p class="live-voice-meta">
-          <span id="liveVoiceStatus" class="live-voice-status" role="status" aria-live="polite">Arbor — En attente de disponibilité API OpenAI</span>
+          <span id="liveVoiceStatus" class="live-voice-status" role="status" aria-live="polite">Arbor préférée · voix API temporaire prête</span>
         </p>
         <!-- Langue et accent restent pilotables oralement. -->
         <input id="liveVoiceLanguage" type="hidden" value="auto">
@@ -210,10 +220,10 @@
           <button class="icon-btn audio-btn" type="button" aria-label="Activité audio">
             <span class="audio-bars"><i></i><i></i><i></i><i></i></span>
           </button>
-          <button id="settingsButton" class="icon-btn" type="button" aria-label="Ouvrir les réglages" aria-expanded="false">
+          <button id="settingsButton" class="icon-btn" type="button" aria-label="Ouvrir les réglages" aria-expanded="false" aria-controls="quickSettings">
             <span class="gear-icon" aria-hidden="true"></span>
           </button>
-          <div id="quickSettings" class="quick-settings" hidden>
+          <div id="quickSettings" class="quick-settings noon-menu-panel" aria-label="Réglages rapides" hidden>
             <button id="openControlCenterButton" class="control-center-entry" type="button">
               <span aria-hidden="true">◎</span>
               Ouvrir le Control Center
@@ -240,6 +250,10 @@
                 <option value="1">Normale</option>
                 <option value="1.15">Rapide</option>
               </select>
+            </label>
+            <label class="setting-field">
+              <span>Voix Noon</span>
+              <small id="liveVoicePreferenceStatus" class="setting-help">Cedar est la voix canonique actuelle. Arbor reste la voix future préférée lorsqu’elle sera réellement disponible via l’API. Aucun fallback automatique.</small>
             </label>
 
             <label class="setting-field">
@@ -346,15 +360,15 @@
               <small class="setting-help wake-privacy">L’écoute de “Salut Noon” est effectuée localement. Aucun son n’est enregistré ou envoyé à OpenAI avant le réveil de Noon.</small>
             </fieldset>
           </div>
-            <button id="shareConversationButton" class="icon-btn share-button" type="button" aria-label="Partager la conversation" aria-expanded="false" title="Partager la conversation">
+            <button id="shareConversationButton" class="icon-btn share-button" type="button" aria-label="Partager la conversation" aria-expanded="false" aria-controls="shareConversationMenu" aria-haspopup="menu" title="Partager la conversation">
               <span class="share-icon" aria-hidden="true">↥</span>
             </button>
-            <div id="shareConversationMenu" class="share-conversation-menu" hidden>
-              <button type="button" data-share-target="mail">Partager par e-mail</button>
-              <button type="button" data-share-target="whatsapp">Partager par WhatsApp</button>
-              <button type="button" data-share-target="save">Enregistrer dans un dossier</button>
+            <div id="shareConversationMenu" class="share-conversation-menu noon-menu-panel" role="menu" aria-label="Partager la conversation" hidden>
+              <button type="button" role="menuitem" data-share-target="mail">Partager par e-mail</button>
+              <button type="button" role="menuitem" data-share-target="whatsapp">Partager par WhatsApp</button>
+              <button type="button" role="menuitem" data-share-target="save">Enregistrer dans un dossier</button>
             </div>
-            <button id="systemStatusButton" class="icon-btn" type="button" aria-label="Ouvrir le Control Center" title="Ouvrir le Control Center">
+            <button id="systemStatusButton" class="icon-btn" type="button" aria-label="Ouvrir le Control Center" aria-controls="controlCenter" aria-haspopup="dialog" title="Ouvrir le Control Center">
               <span class="orange-dot"></span>
             </button>
           </div>
@@ -437,8 +451,12 @@
 
         <section class="personal-panel active" data-personal-panel="knowledge">
           <div class="private-memory-notice">
-            <strong>Mémoire privée locale</strong>
-            <span>Les éléments sélectionnés peuvent être transmis à OpenAI pour répondre. Les politiques de conservation de l’API restent applicables.</span>
+            <div class="private-memory-notice__title">
+              <strong>Mémoire privée locale</strong>
+              <span class="private-memory-local-badge" aria-label="Stockée localement sur ce Mac">⌑ Stockée localement</span>
+            </div>
+            <span>Ces informations sont stockées localement sur ce Mac. Lorsque Noon en a besoin pour répondre à une demande, seules les informations pertinentes peuvent être incluses dans la requête envoyée au modèle IA. Elles ne sont pas envoyées automatiquement sans nécessité.</span>
+            <small>Les données effectivement transmises à un fournisseur d’IA sont alors soumises aux conditions de traitement et de conservation de son API.</small>
           </div>
           <div id="privateMemoryProfiles" class="memory-profile-tabs" role="tablist" aria-label="Profils de mémoire">
             <button type="button" class="active" data-memory-subject="arnaud">Arnaud</button>
@@ -453,6 +471,7 @@
             <input id="personalMemorySearch" type="search" placeholder="Rechercher dans la mémoire" aria-label="Rechercher dans la mémoire">
             <select id="personalMemoryStatus" aria-label="Filtrer les souvenirs par statut"><option value="">Tous les statuts</option><option value="confirmed">Confirmé</option><option value="pending_review">À vérifier</option><option value="candidate">Candidat</option><option value="historical">Historique</option><option value="superseded">Remplacé</option><option value="deleted">Supprimé</option></select>
             <select id="personalMemorySensitivity" aria-label="Filtrer par sensibilité"><option value="">Toutes sensibilités</option><option value="low">Faible</option><option value="medium">Moyenne</option><option value="high">Sensible</option><option value="restricted">Restreinte</option></select>
+            <button id="privateMemoryVisibilityButton" class="private-memory-visibility-toggle" type="button" aria-pressed="false" aria-label="Afficher toutes les données privées">Afficher les données</button>
           </div>
           <div class="private-memory-controls">
             <label><input id="privateMemoryEnabled" type="checkbox"> Mémoire active</label>
@@ -489,14 +508,6 @@
 
       <!-- Le composeur accepte le texte, la voix et les pièces jointes. -->
       <form id="chatForm" class="composer">
-        <button id="micButton" class="mic-button microphone-btn" type="button" aria-label="Activer le microphone" aria-pressed="false">
-          <svg class="microphone-glyph" viewBox="0 0 64 64" aria-hidden="true">
-            <rect x="22" y="7" width="20" height="34" rx="10" fill="currentColor"></rect>
-            <path d="M14 29v4a18 18 0 0 0 36 0v-4" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"></path>
-            <path d="M32 51v7M22 58h20" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"></path>
-          </svg>
-        </button>
-
         <div id="composerDropZone" class="input-shell composer-drop-zone">
           <input
             id="fileInput"
@@ -514,7 +525,10 @@
               </button>
             </div>
           </div>
-          <textarea id="prompt" placeholder="Demande quelque chose à Noon…" rows="1"></textarea>
+          <textarea id="prompt" placeholder="Demande-moi n'importe quoi et abracadabra..." rows="1"></textarea>
+          <button id="expandPromptButton" class="composer-expand-button" type="button" aria-label="Agrandir le champ de saisie" aria-pressed="false" hidden>
+            <span aria-hidden="true"></span>
+          </button>
           <div class="composer-menu-wrap">
             <button id="composerMenuButton" class="composer-plus-button" type="button" aria-label="Ouvrir le menu du champ" aria-expanded="false" aria-controls="composerMenu">
               <span aria-hidden="true">＋</span>
@@ -541,7 +555,13 @@
               <option value="max">Max</option>
             </select>
           </label>
-          <button id="sendButton" type="submit" class="send-btn" aria-label="Envoyer"><span aria-hidden="true">&gt;</span></button>
+          <button id="micButton" class="mic-button microphone-btn" type="button" aria-label="Activer le microphone" aria-pressed="false">
+            <svg class="microphone-glyph" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
+              <path d="M6.5 11.5v.5a5.5 5.5 0 0 0 11 0v-.5M12 17.5V21M9.5 21h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+            </svg>
+          </button>
+          <button id="sendButton" type="submit" class="send-btn" aria-label="Envoyer"><span aria-hidden="true">↑</span></button>
           <div
             id="web-search-suggestion"
             class="web-search-suggestion"
@@ -569,6 +589,27 @@
     </section>
   </main>
 
+  <dialog id="privateMemoryAuthDialog" class="private-memory-auth-dialog" aria-labelledby="privateMemoryAuthTitle">
+    <form id="privateMemoryAuthForm" class="private-memory-auth-card" method="dialog">
+      <header>
+        <span class="private-memory-local-badge">⌑ Protection locale</span>
+        <h2 id="privateMemoryAuthTitle">Afficher les données privées</h2>
+        <p>Confirmez votre identité avant de révéler la mémoire.</p>
+      </header>
+      <button id="privateMemoryTouchIdButton" class="private-memory-touch-id" type="button">Utiliser Touch ID</button>
+      <div id="privateMemoryPasswordPanel" class="private-memory-password-panel">
+        <label id="privateMemoryPasswordLabel" for="privateMemoryPasswordInput">Mot de passe Noon</label>
+        <input id="privateMemoryPasswordInput" type="password" minlength="8" maxlength="128" autocomplete="current-password" spellcheck="false">
+        <small id="privateMemoryPasswordHelp">Ce mot de passe reste protégé dans le coffre macOS.</small>
+      </div>
+      <p id="privateMemoryAuthError" class="private-memory-auth-error" role="alert" hidden></p>
+      <div class="private-memory-auth-actions">
+        <button id="privateMemoryPasswordSubmit" type="submit">Confirmer</button>
+        <button id="privateMemoryAuthCancel" type="button">Annuler</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="controlCenter" class="control-center" aria-labelledby="controlCenterTitle">
     <div class="control-center__shell">
       <header class="control-center__header">
@@ -590,7 +631,7 @@
         <nav id="controlCenterNavigation" class="control-center__navigation" aria-label="Sections du Control Center"></nav>
         <main class="control-center__content">
           <div id="controlCenterLoading" class="control-center__loading" role="status">Chargement de l’état local…</div>
-          <p id="noonVoicePolicy" role="status" data-state="VoiceUnavailable">Voix Noon : Arbor — Statut : En attente de disponibilité API OpenAI</p>
+          <p id="noonVoicePolicy" role="status" data-state="LIVE_READY">Voix actuelle : Cedar · Arbor sera activée uniquement après disponibilité API vérifiée · aucun fallback automatique</p>
           <section id="controlCenterOverview" aria-live="polite"></section>
           <section id="controlCenterSection" aria-live="polite" hidden></section>
         </main>

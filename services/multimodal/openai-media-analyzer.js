@@ -22,9 +22,33 @@ function analysisPrompt({ asset, request, strategy }) {
   ].join("\n");
 }
 
-function createOpenAIMediaAnalyzer({ client, trackUsage = null } = {}) {
+function createOpenAIMediaAnalyzer({ client, privacyPolicy, trackUsage = null } = {}) {
   if (typeof client !== "function") throw new TypeError("Client OpenAI requis.");
+  if (!privacyPolicy?.evaluateProviderAccess || !privacyPolicy?.inspectContextFragment) {
+    throw new TypeError("ProviderPrivacyPolicy requise.");
+  }
   async function vision({ asset, dataUrl, request, strategy, signal, route }) {
+    const classification = asset.localOnly === true || String(asset.sensitivity).toUpperCase() === "LOCAL_ONLY"
+      ? "LOCAL_ONLY"
+      : String(asset.sensitivity).toUpperCase() === "HIGHLY_SENSITIVE"
+        ? "HIGHLY_SENSITIVE"
+        : "PRIVATE";
+    const fragment = privacyPolicy.inspectContextFragment({
+      source: "user_media",
+      classification,
+      localOnly: asset.localOnly === true,
+      content: [asset.filename, request.userIntent],
+    });
+    const privacyDecision = privacyPolicy.evaluateProviderAccess({
+      provider: "openai",
+      contextMetadata: { fragments: [fragment] },
+      requestPolicy: { localOnly: fragment.localOnly, secretDetected: fragment.secretDetected },
+    });
+    if (privacyDecision.decision !== "ALLOW") {
+      const error = new Error("La politique de confidentialité interdit l'analyse distante de ce média.");
+      error.code = privacyDecision.reasonCodes[0] || "REMOTE_PROVIDER_POLICY_REQUIRED";
+      throw error;
+    }
     const remoteDataUrl = ["IMAGE", "SCREENSHOT"].includes(asset.mediaType)
       ? await sanitizeImageDataUrlForRemote(dataUrl)
       : dataUrl;

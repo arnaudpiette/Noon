@@ -4,6 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   isSafeExternalUrl,
+  isSafeGoogleAuthorizationUrl,
   isValidAccelerator,
   parseNoonDeepLink,
 } = require("../electron/app-core");
@@ -15,6 +16,22 @@ test("accepte uniquement les deep links Noon explicitement autorisés", () => {
   assert.equal(parseNoonDeepLink("noon://focus?id=../../secret"), null);
   assert.equal(parseNoonDeepLink("noon://shell?command=rm"), null);
   assert.equal(parseNoonDeepLink("https://example.com"), null);
+});
+
+test("autorise uniquement l’URL OAuth Google canonique avec callback Noon intact", () => {
+  const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  url.search = new URLSearchParams({
+    client_id: "synthetic-client",
+    redirect_uri: "http://127.0.0.1:55370/integrations/google/callback",
+    response_type: "code",
+    code_challenge: "synthetic-challenge",
+    code_challenge_method: "S256",
+  });
+  assert.equal(isSafeGoogleAuthorizationUrl(url.href), true);
+  url.searchParams.set("redirect_uri", "http://127.0.0.1:55370/integrations/google%");
+  assert.equal(isSafeGoogleAuthorizationUrl(url.href), false);
+  url.searchParams.set("redirect_uri", "https://example.com/integrations/google/callback");
+  assert.equal(isSafeGoogleAuthorizationUrl(url.href), false);
 });
 
 test("refuse les navigations externes qui ne sont pas HTTPS", () => {

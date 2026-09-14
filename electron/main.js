@@ -9,7 +9,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const sharp = require("sharp");
-const { isSafeExternalUrl, isValidAccelerator, parseNoonDeepLink } = require("./app-core");
+const { isSafeExternalUrl, isSafeGoogleAuthorizationUrl, isValidAccelerator, parseNoonDeepLink } = require("./app-core");
 const {
   createTrustedIpcRegistrar,
   readPreviousStartupState,
@@ -21,6 +21,7 @@ const { FOCUS_CATALOG } = require("../lib/focus-catalog");
 const { WakeWordService } = require("../services/wake-word-service");
 const { isDueToday, nextRunAt } = require("../lib/creative-brief");
 const { createLocalPermissionStore } = require("../lib/local-permissions");
+const { createPasswordVerifier, verifyPassword } = require("../services/security/local-password-verifier");
 
 const smokeArgument = (name) => process.argv.find((value) => value.startsWith(`--${name}=`))?.split("=").slice(1).join("=");
 const smokeModeFromArguments = process.argv.includes("--noon-smoke-test");
@@ -54,6 +55,8 @@ let creativeBriefTimer = null;
 let briefRetryTimer = null;
 let creativeBriefRunning = false;
 let microphonePermission = "unknown";
+let privateMemoryAuthFailures = 0;
+let privateMemoryAuthLockedUntil = 0;
 
 if (!hasSingleInstanceLock) app.quit();
 
@@ -103,6 +106,21 @@ function loadEncryptedSecret(name) {
   try { return safeStorage.decryptString(fs.readFileSync(encryptedSecretPath(name))); }
   catch { return null; }
 }
+function privateMemoryPasswordVerifier() {
+  const encoded = loadEncryptedSecret("private-memory-display-password");
+  if (!encoded) return null;
+  try { return JSON.parse(encoded); } catch { return null; }
+}
+function canPromptPrivateMemoryTouchId() {
+  try { return process.platform === "darwin" && systemPreferences.canPromptTouchID(); }
+  catch { return false; }
+}
+function privateMemoryProtectionStatus() {
+  return {
+    touchIdAvailable: canPromptPrivateMemoryTouchId(),
+    passwordConfigured: Boolean(privateMemoryPasswordVerifier()),
+  };
+}
 function getOrCreateLocalSecret() {
   if (!safeStorage.isEncryptionAvailable()) throw new Error("Le coffre macOS est indisponible.");
   const secretPath = dataPath("local-auth.bin");
@@ -140,6 +158,35 @@ function loadEncryptedOpenAIKey() {
       }
     }
   }
+}
+function loadEncryptedGeminiKey() {
+  if (process.env.GEMINI_API_KEY) {
+    if (app.isPackaged && safeStorage.isEncryptionAvailable()) {
+      try { saveEncryptedSecret("gemini-api-key", process.env.GEMINI_API_KEY); } catch {}
+    }
+    return "ENV";
+  }
+  const encrypted = loadEncryptedSecret("gemini-api-key");
+  if (encrypted) {
+    process.env.GEMINI_API_KEY = encrypted;
+    return "SAFESTORAGE";
+  }
+  const candidates = [path.join(app.getPath("home"), "Noon", ".env"), path.join(__dirname, "..", ".env")];
+  for (const candidate of candidates) {
+    try {
+      const contents = fs.readFileSync(candidate, "utf8");
+      const match = contents.match(/^\s*(?:export\s+)?GEMINI_API_KEY\s*=\s*(.+?)\s*$/m);
+      if (!match) continue;
+      const value = match[1].replace(/^(['"])(.*)\1$/, "$2").trim();
+      if (!value) continue;
+      saveEncryptedSecret("gemini-api-key", value);
+      process.env.GEMINI_API_KEY = value;
+      return "SAFESTORAGE";
+    } catch {
+      // Secret local absent ou coffre indisponible : rester désactivé sans journaliser de détail.
+    }
+  }
+  return "NONE";
 }
 function loadLocalIntegrationEnvironment() {
   const candidates = [
@@ -455,6 +502,40 @@ function registerIpc() {
   registerTrustedHandler("noon:set-preference", (_event, payload) => setPreference(payload?.key, payload?.value));
   registerTrustedHandler("noon:show-window", showMainWindow);
   registerTrustedHandler("noon:hide-window", () => mainWindow?.hide());
+  registerTrustedHandler("noon:get-private-memory-protection", privateMemoryProtectionStatus);
+  registerTrustedHandler("noon:set-private-memory-password", async (_event, password) => {
+    if (privateMemoryPasswordVerifier()) throw Object.assign(new Error("Un mot de passe Noon est déjà configuré."), { code: "PRIVATE_MEMORY_PASSWORD_ALREADY_CONFIGURED" });
+    if (privateMemoryProtectionStatus().touchIdAvailable) await systemPreferences.promptTouchID("autoriser la création du mot de passe de la mémoire privée");
+    saveEncryptedSecret("private-memory-display-password", JSON.stringify(createPasswordVerifier(password)));
+    return { configured: true };
+  });
+  registerTrustedHandler("noon:authenticate-private-memory", async (_event, payload = {}) => {
+    if (Date.now() < privateMemoryAuthLockedUntil) throw Object.assign(new Error("Trop de tentatives. Réessayez dans quelques instants."), { code: "PRIVATE_MEMORY_AUTH_LOCKED" });
+    if (payload.method === "touch-id") {
+      if (!privateMemoryProtectionStatus().touchIdAvailable) throw Object.assign(new Error("Touch ID n’est pas disponible sur ce Mac."), { code: "PRIVATE_MEMORY_TOUCH_ID_UNAVAILABLE" });
+      await systemPreferences.promptTouchID("afficher les données de la mémoire privée");
+      privateMemoryAuthFailures = 0;
+      return { authenticated: true, method: "touch-id" };
+    }
+    const verifier = privateMemoryPasswordVerifier();
+    const authenticated = Boolean(verifier) && verifyPassword(payload.password, verifier);
+    if (!authenticated) {
+      privateMemoryAuthFailures += 1;
+      if (privateMemoryAuthFailures >= 5) { privateMemoryAuthLockedUntil = Date.now() + 30_000; privateMemoryAuthFailures = 0; }
+      throw Object.assign(new Error("Mot de passe Noon incorrect."), { code: "PRIVATE_MEMORY_AUTH_FAILED" });
+    }
+    privateMemoryAuthFailures = 0;
+    return { authenticated: true, method: "password" };
+  });
+  registerTrustedHandler("noon:open-google-authorization", async (_event, rawUrl) => {
+    if (!isSafeGoogleAuthorizationUrl(rawUrl)) {
+      const error = new Error("URL d’autorisation Google invalide.");
+      error.code = "GOOGLE_OAUTH_AUTHORIZATION_URL_INVALID";
+      throw error;
+    }
+    await shell.openExternal(String(rawUrl));
+    return true;
+  });
   registerTrustedHandler("noon:set-live-active", (_event, active) => {
     liveVoiceActive = Boolean(active);
     if (liveVoiceActive) void wakeWordService?.stop(); else scheduleWakeWordResume();
@@ -635,6 +716,7 @@ async function startNoon() {
     });
   }
   loadEncryptedOpenAIKey();
+  loadEncryptedGeminiKey();
   loadLocalIntegrationEnvironment();
   logNoonEvent = createRotatingLogger(userDataDirectory);
   logNoonEvent("info", "startup-begin", JSON.stringify({

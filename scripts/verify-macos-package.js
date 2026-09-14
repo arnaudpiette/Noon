@@ -5,7 +5,7 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { execFileSync } = require("child_process");
+const { execFileSync, spawnSync } = require("child_process");
 const asar = require("@electron/asar");
 
 const root = path.join(__dirname, "..");
@@ -19,7 +19,7 @@ if (!fs.existsSync(appPath)) {
   process.exit(1);
 }
 
-const forbiddenNames = new Set([".env", "Archive.zip", "integration-tokens.json", "conversation-memory.json", "personal-intelligence.sqlite"]);
+const forbiddenNames = new Set([".env", "Archive.zip", "integration-tokens.json", "conversation-memory.json", "personal-intelligence.sqlite", "tool-audit.json"]);
 const forbidden = [];
 function walk(directory) {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -29,6 +29,14 @@ function walk(directory) {
   }
 }
 walk(path.join(appPath, "Contents", "Resources"));
+try {
+  const appAsar = path.join(appPath, "Contents", "Resources", "app.asar");
+  for (const entry of asar.listPackage(appAsar)) {
+    if (forbiddenNames.has(path.posix.basename(entry))) forbidden.push(`${appAsar}:${entry}`);
+  }
+} catch {
+  blockers.push("asar-content:unreadable");
+}
 if (forbidden.length) blockers.push(`runtime-files-in-bundle:${forbidden.length}`);
 
 let executableArch = "unknown";
@@ -45,6 +53,8 @@ try {
   bundleId = execFileSync("plutil", ["-extract", "CFBundleIdentifier", "raw", "-o", "-", infoPlist]).toString().trim();
   bundleVersion = execFileSync("plutil", ["-extract", "CFBundleShortVersionString", "raw", "-o", "-", infoPlist]).toString().trim();
   if (bundleId !== "com.arnaudpiette.noon") blockers.push(`bundle-id:${bundleId}`);
+  const appleEventsUsage = execFileSync("plutil", ["-extract", "NSAppleEventsUsageDescription", "raw", "-o", "-", infoPlist]).toString().trim();
+  if (!appleEventsUsage) blockers.push("info-plist:NSAppleEventsUsageDescription-empty");
 } catch { blockers.push("info-plist:unreadable"); }
 
 // Electron stocke l’intégrité de l’ASAR comme le SHA-256 de son en-tête,
@@ -59,7 +69,19 @@ try {
 } catch { blockers.push("asar-integrity:unreadable"); }
 
 let signed = false;
-try { execFileSync("codesign", ["--verify", "--deep", "--strict", appPath], { stdio: "pipe" }); signed = true; }
+let signatureType = "unsigned";
+try {
+  execFileSync("codesign", ["--verify", "--deep", "--strict", appPath], { stdio: "pipe" });
+  signed = true;
+  const signatureInspection = spawnSync("codesign", ["-d", "--verbose=4", appPath], { encoding: "utf8" });
+  if (signatureInspection.status !== 0) throw new Error("signature inspection failed");
+  const signatureDetails = `${signatureInspection.stdout || ""}${signatureInspection.stderr || ""}`;
+  signatureType = /Signature=adhoc/.test(signatureDetails) ? "ad-hoc" : "identity";
+  const entitlementInspection = spawnSync("codesign", ["-d", "--entitlements", ":-", appPath], { encoding: "utf8" });
+  if (entitlementInspection.status !== 0) throw new Error("entitlement inspection failed");
+  const entitlements = `${entitlementInspection.stdout || ""}${entitlementInspection.stderr || ""}`;
+  if (!entitlements.includes("com.apple.security.automation.apple-events")) blockers.push("entitlements:apple-events-missing");
+}
 catch { warnings.push("codesign:unsigned-or-invalid"); }
 if (requireSignature && !signed) blockers.push("codesign:required");
 
@@ -72,7 +94,7 @@ for (const relative of ["Contents/Info.plist", "Contents/Resources/app.asar", "C
 const manifest = {
   formatVersion: 1,
   generatedAt: new Date().toISOString(),
-  app: { bundleId, version: bundleVersion, arch: executableArch, signed, notarized: false },
+  app: { bundleId, version: bundleVersion, arch: executableArch, signed, signatureType, notarized: false },
   files,
   blockers,
   warnings,

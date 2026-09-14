@@ -36,6 +36,30 @@ function validateAction(input = {}) {
   return Object.freeze({ action, targetId, params });
 }
 
+function preserveGoogleAuthorizationUrl(value) {
+  if (typeof value !== "string" || value.length > 8 * 1024) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" &&
+      url.hostname === "accounts.google.com" &&
+      url.pathname === "/o/oauth2/v2/auth" &&
+      !url.username && !url.password
+      ? value
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function scrubActionResponse(command, result, latencyMs) {
+  const response = scrub({ status: result?.status || "SUCCEEDED", action: command.action, result, latencyMs });
+  if (command.action === "CHECK_CONNECTION" && result?.status === "AUTH_REQUIRED") {
+    const authorizationUrl = preserveGoogleAuthorizationUrl(result.authorizationUrl);
+    if (authorizationUrl && response.result) response.result.authorizationUrl = authorizationUrl;
+  }
+  return response;
+}
+
 function createControlCenterService({
   readers = {}, actions = {}, reliability = null, featureAccess = () => ({ enabled: true, advanced: true, developer: false }),
   observability = null, now = () => Date.now(), cacheTtlMs = 2_000, sectionTimeoutMs = 1_500,
@@ -124,7 +148,7 @@ function createControlCenterService({
       const latencyMs = Math.round((performance.now() - started) * 100) / 100;
       metrics.actionLatencyMs += latencyMs; cache.clear();
       emit("control_center_action_completed", { action: command.action, latencyMs, status: result?.status || "SUCCEEDED" });
-      return scrub({ status: result?.status || "SUCCEEDED", action: command.action, result, latencyMs });
+      return scrubActionResponse(command, result, latencyMs);
     } catch (error) {
       emit("control_center_action_failed", { action: command.action, code: String(error.code || error.name || "ACTION_FAILED").slice(0, 80) });
       throw error;

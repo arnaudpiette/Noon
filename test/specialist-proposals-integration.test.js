@@ -7,6 +7,9 @@ const { createContextCapsuleBuilder } = require("../services/delegation/context-
 const { createDelegationEngine } = require("../services/delegation/delegation-engine");
 const { createSpecialistRegistry } = require("../services/delegation/specialist-registry");
 const { createNoonOrchestrator } = require("../services/orchestration/noon-orchestrator");
+const { createOpenAIProviderAdapter } = require("../services/models/providers/openai-provider");
+const { PROVIDERS } = require("../services/models/model-registry");
+const { createProviderPrivacyPolicy } = require("../services/security/provider-privacy-policy");
 const { createOperationalSecurityPolicy } = require("../services/security/operational-security-policy");
 
 function modelResponse(text) {
@@ -97,6 +100,7 @@ function createFixture(proposal) {
       },
     },
   };
+  const providerPrivacyPolicy = createProviderPrivacyPolicy({ providerRegistry: PROVIDERS });
   const orchestrator = createNoonOrchestrator({
     contextBuilder: {
       buildContext() {
@@ -109,7 +113,8 @@ function createFixture(proposal) {
     },
     selectModel: () => ({ model: "gpt-5.6-luna", effort: "low", verbosity: "low" }),
     modelFallbacks: () => ["gpt-5.6-luna"],
-    clientProvider: () => client,
+    providerAdapter: createOpenAIProviderAdapter({ clientProvider: () => client, privacyPolicy: providerPrivacyPolicy }),
+    providerPrivacyPolicy,
     skillRegistry,
     approvalManager,
     getTools: () => [],

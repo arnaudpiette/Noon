@@ -93,6 +93,13 @@ test("calcule un coût connu et refuse d'inventer un prix inconnu", () => {
     estimateModelCost("modele-inconnu", { input_tokens: 999 }),
     { status: "unavailable", currency: "USD", total: null }
   );
+  assert.equal(estimateModelCost("openai", "gpt-5.6-luna", {
+    inputTokens: 1_000_000, cachedInputTokens: 500_000, outputTokens: 1_000_000,
+  }).total, 1.31);
+  assert.deepEqual(
+    estimateModelCost("anthropic", "gpt-5.6-luna", { inputTokens: 999 }),
+    { status: "unavailable", currency: "USD", total: null }
+  );
 });
 
 test("produit les agrégats p50/p95, routage, coûts et reste failure-safe", async () => {
@@ -115,4 +122,21 @@ test("produit les agrégats p50/p95, routage, coûts et reste failure-safe", asy
   assert.equal(summary.contextCache.hitRate, 2 / 3);
   assert.equal(summary.contextCache.tokensSaved, 15);
   assert.ok(summary.persistenceErrors >= 1);
+});
+
+test("trace les métadonnées canoniques sans prompt ni réponse", () => {
+  const metrics = createNoonObservability();
+  metrics.startExecution({ executionId: "exec_routing" });
+  metrics.recordModelCall("exec_routing", {
+    provider: "google_ai", model: "gemini-3.8-flash", modelTotalMs: 25,
+    routingMetadata: { taskDomain: "GENERAL", requiredQuality: "NORMAL", maxEstimatedCost: 0.1 },
+    usage: { inputTokens: 100, outputTokens: 20 },
+    prompt: "PROMPT_INTERDIT", response: "REPONSE_INTERDITE",
+  });
+  const call = metrics.getTrace("exec_routing").modelCalls[0];
+  assert.equal(call.routingMetadata.taskDomain, "GENERAL");
+  assert.equal(call.routingMetadata.requiredQuality, "NORMAL");
+  assert.equal(call.routingMetadata.actualCost.currency, "USD");
+  assert.equal(call.routingMetadata.success, true);
+  assert.doesNotMatch(JSON.stringify(call), /PROMPT_INTERDIT|REPONSE_INTERDITE/);
 });
