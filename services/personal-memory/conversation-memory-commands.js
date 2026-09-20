@@ -15,7 +15,7 @@ const DOCUMENT_IMPORT_PATTERN = /^(?:noon,?\s*)?(?:retiens|souviens-toi|m[eé]mo
 const MEMORY_INSPECT_PATTERN = /^(?:noon,?\s*)?(?:montre(?:-moi)?|affiche|qu['’]as-tu\s+m[eé]moris[eé]|quelles?\s+informations?\s+(?:as-tu|sont)\s+m[eé]moris[eé]es?)\s+(?:.*?(?:m[eé]moire|enregistr[eé]|import[eé]|provenant|dossier|document|fichier).*)$/i;
 
 function clean(value, max = 12000) {
-  return String(value || "").replace(/[\0\r\n]+/g, " ").replace(/\s+/g, " ").trim().replace(/[.!?]+$/, "").slice(0, max);
+  return String(value || "").replace(/[\0\r\n]+/g, " ").replace(/\s+/g, " ").trim().replace(/[.!?]+$/, "").trim().slice(0, max);
 }
 
 function cleanDirectStatement(raw) {
@@ -25,6 +25,22 @@ function cleanDirectStatement(raw) {
   statement = statement.replace(/^(?:noon,?\s*)?(?:retiens|souviens-toi|m[eé]morise|enregistre)\s+(?:que\s+|qu['’]\s*)?/i, "").trim();
   statement = statement.replace(/[.!?]+$/, "").trim();
   return statement;
+}
+
+function requestedMemoryScope(text) {
+  const source = String(text || "").toLocaleLowerCase("fr");
+  if (/\bm[eé]moire\s+(?:locale\s+)?(?:priv[eé]e|sensible)\b|\bm[eé]moire\s+locale\s+priv[eé]e\b/.test(source)) return "private";
+  if (/\bm[eé]moire\s+(?:de\s+ce\s+projet|du\s+projet)\b/.test(source)) return "project";
+  if (/\bm[eé]moire\s+(?:g[eé]n[eé]rale|persistante)\b/.test(source)) return "general";
+  return null;
+}
+
+function stripMemoryScope(text) {
+  return cleanDirectStatement(String(text || "")
+    .replace(/^(?:dans\s+)?(?:ta|ma|la)\s+m[eé]moire\s+(?:locale\s+)?(?:priv[eé]e|sensible|g[eé]n[eé]rale|persistante)\s+(?:que\s+)?/i, "")
+    .replace(/^(?:dans\s+)?(?:la\s+)?m[eé]moire\s+(?:de\s+ce\s+projet|du\s+projet)\s+(?:que\s+)?/i, "")
+    .replace(/\s+(?:de|dans)\s+(?:ta|ma|la)\s+m[eé]moire\s+(?:locale\s+)?(?:priv[eé]e|sensible|g[eé]n[eé]rale|persistante)\s*$/i, "")
+    .replace(/\s+(?:de|dans)\s+(?:la\s+)?m[eé]moire\s+(?:de\s+ce\s+projet|du\s+projet)\s*$/i, ""));
 }
 
 function subjectFor(text) {
@@ -59,6 +75,8 @@ function importDateRange(query, now = new Date()) {
 function parseConversationMemoryCommand(text) {
   const source = clean(text, 4000);
   if (!source) return null;
+  let requestedScope = requestedMemoryScope(source);
+  if (/\bsur ce projet\b/i.test(source)) requestedScope = "project";
 
   // 1. Vérifier d'abord s'il s'agit d'un import documentaire
   if (DOCUMENT_IMPORT_PATTERN.test(source)) {
@@ -75,6 +93,7 @@ function parseConversationMemoryCommand(text) {
       action: "inspect",
       subjectId: subjectFor(source),
       query: source,
+      requestedScope,
     };
   }
 
@@ -90,9 +109,24 @@ function parseConversationMemoryCommand(text) {
         rawQuery: source,
       };
     }
-    const statement = cleanDirectStatement(rawStatement);
-    return { action: "save", subjectId: subjectFor(source), statement };
+    const statement = stripMemoryScope(rawStatement);
+    return { action: "save", subjectId: subjectFor(source), statement, requestedScope };
   }
+
+  match = source.match(/^(?:noon,?\s*)?qu['’]as-tu\s+retenu(?:\s+sur\s+ce\s+projet)?$/i);
+  if (match) return { action: "inspect", subjectId: "arnaud", query: "", requestedScope };
+  match = source.match(/^(?:noon,?\s*)?qu['’]as-tu\s+gard[eé]\s+(?:en\s+m[eé]moire|localement)$/i);
+  if (match) return { action: "inspect", subjectId: "arnaud", query: "", requestedScope };
+
+  match = source.match(/^(?:noon,?\s*)?qu['’]as-tu\s+(?:retenu|gard[eé])(?:\s+(?:dans|sur|concernant)\s+(.+))?$/i);
+  if (match) return { action: requestedScope ? "search" : "inspect", subjectId: subjectFor(source), query: stripMemoryScope(match[1] || ""), requestedScope };
+  match = source.match(/^(?:noon,?\s*)?qu['’]as-tu\s+dans\s+(?:ta|ma)\s+m[eé]moire(?:\s+(?:locale\s+)?(?:priv[eé]e|sensible|g[eé]n[eé]rale|persistante))?(?:\s+(?:sur|concernant)\s+(.+))?$/i);
+  if (match) return { action: requestedScope ? "search" : "inspect", subjectId: subjectFor(source), query: clean(match[1] || ""), requestedScope };
+  match = source.match(/^(?:noon,?\s*)?qu['’]est-ce que tu sais sur moi\s*$/i);
+  if (match) return { action: "inspect", subjectId: "arnaud", query: "", requestedScope };
+  match = source.match(/^(?:noon,?\s*)?quelles?\s+informations?\s+as-tu\s+enregistr[eé]es?\s+(aujourd['’]hui)\s*$/i);
+  if (match) return { action: "inspect", subjectId: "arnaud", query: match[1], requestedScope };
+  if (/^(?:noon,?\s*)?(?:non,?\s*)?(?:oublie|supprime|efface)\s+(?:ça|cela)$/i.test(source)) return { action: "delete_recent", subjectId: "arnaud" };
 
   // 4. Recherche de mémoire
   match = source.match(/^(?:noon,?\s*)?(?:qu['’]est-ce que tu sais sur|que sais-tu sur|que sais tu sur)\s+(.+)$/i);
@@ -109,7 +143,9 @@ function parseConversationMemoryCommand(text) {
   match = source.match(/^(?:noon,?\s*)?(?:modifie|corrige|mets à jour)\s+(?:dans\s+)?(?:ma\s+)?m[eé]moire\s+(.+?)\s+(?:en|par)\s+(.+)$/i);
   if (match) return { action: "update", subjectId: subjectFor(source), previous: clean(match[1]), statement: clean(match[2]) };
   match = source.match(/^(?:noon,?\s*)?(?:oublie|supprime|efface)\s+(?:de\s+)?(?:ma\s+)?m[eé]moire\s+(.+)$/i);
-  if (match) return { action: "delete", subjectId: subjectFor(source), previous: clean(match[1]) };
+  if (match) return { action: "delete", subjectId: subjectFor(source), previous: stripMemoryScope(match[1]), requestedScope };
+  match = source.match(/^(?:noon,?\s*)?(?:oublie|supprime|efface)\s+(.+?)(?:\s+(?:de|dans)\s+(?:ta|ma|la)\s+m[eé]moire(?:\s+(?:locale\s+)?(?:priv[eé]e|sensible|g[eé]n[eé]rale|persistante))?)$/i);
+  if (match) return { action: "delete", subjectId: subjectFor(source), previous: clean(match[1]), requestedScope };
 
   return null;
 }
@@ -118,6 +154,10 @@ function matchingMemories(service, subjectId, query) {
   const needle = clean(query, 4000).toLocaleLowerCase("fr");
   return service.listMemories({ subjectId, includeDeleted: false })
     .filter((item) => item.statement.toLocaleLowerCase("fr").includes(needle));
+}
+
+function commandReceipt({ success, operation, scope, persisted, memoryIds = [] }) {
+  return { success, operation, scope, automatic: false, persisted, created: operation === "create" && success ? 1 : 0, updated: operation === "update" && success ? 1 : 0, deleted: operation === "delete" && success ? 1 : 0, skipped: operation === "skip" && success ? 1 : 0, memoryIds };
 }
 
 function executeConversationMemoryCommand(serviceOrContext, command, options = {}) {
@@ -224,7 +264,7 @@ function executeConversationMemoryCommand(serviceOrContext, command, options = {
     const dateMatches = (itemDate) => !requestedRange || itemDate >= requestedRange.start && itemDate <= requestedRange.end;
 
     // 1. Lire la mémoire générale depuis personalRepo
-    if (personalRepo) {
+    if (personalRepo && command.requestedScope !== "private" && command.requestedScope !== "project") {
       const allGeneral = personalRepo.listMemories({ limit: 500 });
       for (const item of allGeneral) {
         if (item.useAllowed === false || item.status === "rejected" || item.status === "expired") continue;
@@ -240,8 +280,9 @@ function executeConversationMemoryCommand(serviceOrContext, command, options = {
     }
 
     // 2. Lire la mémoire privée depuis privateService
-    if (privateService && privateService.available) {
-      const allPrivate = privateService.listMemories({ includeDeleted: false });
+    if (privateService && privateService.available && command.requestedScope !== "general") {
+      const privateSubject = command.requestedScope === "project" && options.projectId ? `project:${options.projectId}` : null;
+      const allPrivate = privateService.listMemories({ includeDeleted: false, ...(privateSubject ? { subjectId: privateSubject } : {}) });
       for (const item of allPrivate) {
         if (item.status === "deleted") continue;
         const text = item.statement;
@@ -286,28 +327,32 @@ function executeConversationMemoryCommand(serviceOrContext, command, options = {
     if (!command.statement) return { status: "needs_clarification", answer: "Que dois-je retenir exactement ?" };
 
     const statement = command.statement;
-    const isPrivate = isPrivateScope(statement);
+    const isPrivate = command.requestedScope === "private" || isPrivateScope(statement);
 
     try {
-      if (isPrivate && privateService && privateService.available) {
+      if ((isPrivate || command.requestedScope === "project") && privateService && privateService.available) {
+        const subjectId = command.requestedScope === "project" && options.projectId ? `project:${options.projectId}` : command.subjectId;
         const item = privateService.createMemory({
-          subjectId: command.subjectId,
+          subjectId,
           category: "general",
           statement,
           sensitivity: "medium",
           status: "confirmed",
           confidence: 1,
           consentStatus: "granted",
-          apiPolicy: "local_only",
+          apiPolicy: isPrivate ? "local_only" : "contextual",
           sourceType: "explicit-voice-or-chat",
         });
+        const verified = item?.id ? privateService.getMemory(item.id) : null;
+        if (!verified || verified.statement !== statement || verified.apiPolicy !== (isPrivate ? "local_only" : "contextual")) throw new Error("MEMORY_READ_BACK_FAILED");
         return {
           status: item.duplicate ? "unchanged" : "saved",
-          scope: "private",
+          scope: command.requestedScope === "project" ? "project" : "private",
           answer: item.duplicate
             ? "Cette information est déjà dans votre mémoire privée."
             : "C’est retenu dans votre mémoire privée.",
           memoryIds: [item.id],
+          receipt: commandReceipt({ success: true, operation: item.duplicate ? "skip" : "create", scope: command.requestedScope === "project" ? "project" : "private", persisted: true, memoryIds: [item.id] }),
         };
       } else if (!isPrivate && personalRepo) {
         // Enregistrer en mémoire générale
@@ -323,6 +368,7 @@ function executeConversationMemoryCommand(serviceOrContext, command, options = {
             scope: "general",
             answer: "Cette information est déjà dans votre mémoire générale.",
             memoryIds: [duplicate.id],
+            receipt: commandReceipt({ success: true, operation: "skip", scope: "general", persisted: true, memoryIds: [duplicate.id] }),
           };
         }
 
@@ -337,12 +383,15 @@ function executeConversationMemoryCommand(serviceOrContext, command, options = {
           sourceType: "explicit-voice-or-chat",
           metadata: { profileId: command.subjectId, scope: "general" },
         });
+        const verified = item?.id ? personalRepo.getMemory(item.id) : null;
+        if (!verified || String(verified.value) !== statement) throw new Error("MEMORY_READ_BACK_FAILED");
 
         return {
           status: "saved",
           scope: "general",
           answer: "C’est retenu dans votre mémoire générale.",
           memoryIds: [item.id],
+          receipt: commandReceipt({ success: true, operation: "create", scope: "general", persisted: true, memoryIds: [item.id] }),
         };
       } else if (privateService && privateService.available) {
         // Fallback compatibilité si personalRepo absent
@@ -357,6 +406,8 @@ function executeConversationMemoryCommand(serviceOrContext, command, options = {
           apiPolicy: "contextual",
           sourceType: "explicit-voice-or-chat",
         });
+        const verified = item?.id ? privateService.getMemory(item.id) : null;
+        if (!verified || verified.statement !== statement) throw new Error("MEMORY_READ_BACK_FAILED");
         return {
           status: item.duplicate ? "unchanged" : "saved",
           scope: "private",
@@ -364,12 +415,14 @@ function executeConversationMemoryCommand(serviceOrContext, command, options = {
             ? "Cette information est déjà dans votre mémoire privée."
             : "C’est retenu dans votre mémoire privée.",
           memoryIds: [item.id],
+          receipt: commandReceipt({ success: true, operation: item.duplicate ? "skip" : "create", scope: "private", persisted: true, memoryIds: [item.id] }),
         };
       }
     } catch {
       return {
         status: "error",
         answer: "Je n’ai pas pu enregistrer cette information dans la mémoire persistante.",
+        receipt: commandReceipt({ success: false, operation: "create", scope: command.requestedScope || (isPrivate ? "private" : "general"), persisted: false }),
       };
     }
   }
@@ -378,9 +431,38 @@ function executeConversationMemoryCommand(serviceOrContext, command, options = {
   // ACTION : SEARCH
   // -------------------------------------------------------------
   if (command.action === "search") {
-    const matches = privateService ? matchingMemories(privateService, command.subjectId, command.query) : [];
+    if (command.requestedScope === "general" && personalRepo) {
+      const matches = personalRepo.searchMemories(command.query || "", { limit: 5 }).filter((item) => item.status !== "rejected" && item.status !== "expired");
+      if (!matches.length) return { status: "not_found", answer: "Je n’ai trouvé aucune information correspondante dans votre mémoire générale." };
+      return { status: "found", scope: "general", answer: matches.map((item) => typeof item.value === "string" ? item.value : JSON.stringify(item.value)).join(" "), memoryIds: matches.map((item) => item.id) };
+    }
+    const searchSubject = command.requestedScope === "project" && options.projectId ? `project:${options.projectId}` : command.subjectId;
+    const matches = privateService ? matchingMemories(privateService, searchSubject, command.query) : [];
     if (!matches.length) return { status: "not_found", answer: "Je n’ai trouvé aucune information correspondante dans votre mémoire privée." };
     return { status: "found", answer: matches.slice(0, 5).map((item) => item.statement).join(" "), memoryIds: matches.slice(0, 5).map((item) => item.id) };
+  }
+
+  if (command.action === "delete_recent") {
+    const recentIds = Array.isArray(options.recentMemoryIds) ? [...new Set(options.recentMemoryIds)].slice(0, 20) : [];
+    if (!recentIds.length) return { status: "needs_clarification", answer: "Quelle information dois-je oublier exactement ?" };
+    const deleted = [];
+    for (const id of recentIds) {
+      const privateItem = privateService?.getMemory?.(id);
+      if (privateItem && privateItem.status !== "deleted") {
+        privateService.forgetMemory(id);
+        const verified = privateService.getMemory(id);
+        if (verified?.status === "deleted" && verified.statement === "") deleted.push(id);
+        continue;
+      }
+      const generalItem = personalRepo?.getMemory?.(id);
+      if (generalItem && generalItem.status !== "rejected") {
+        personalRepo.forgetMemory(id);
+        const verified = personalRepo.getMemory(id);
+        if (verified?.status === "rejected" && verified.useAllowed === false) deleted.push(id);
+      }
+    }
+    if (deleted.length !== recentIds.length) return { status: "error", answer: "Je n’ai pas pu vérifier l’oubli de toutes les informations concernées.", receipt: commandReceipt({ success: false, operation: "delete", scope: "mixed", persisted: false, memoryIds: deleted }) };
+    return { status: "deleted", answer: "Je viens d’oublier cette information.", memoryIds: deleted, receipt: commandReceipt({ success: true, operation: "delete", scope: "mixed", persisted: true, memoryIds: deleted }) };
   }
 
   // -------------------------------------------------------------
@@ -388,20 +470,28 @@ function executeConversationMemoryCommand(serviceOrContext, command, options = {
   // -------------------------------------------------------------
   if (!privateService) return { status: "unavailable", answer: "La mémoire privée locale est indisponible." };
 
-  const matches = matchingMemories(privateService, command.subjectId, command.previous);
+  const deleteSubject = command.requestedScope === "project" && options.projectId ? `project:${options.projectId}` : command.subjectId;
+  const matches = matchingMemories(privateService, deleteSubject, command.previous);
   if (!matches.length) return { status: "not_found", answer: "Je n’ai pas trouvé cette information dans votre mémoire privée." };
   if (matches.length > 1) return { status: "needs_clarification", answer: "Plusieurs souvenirs correspondent. Dites la phrase complète à modifier ou à oublier.", memoryIds: matches.map((item) => item.id) };
   if (command.action === "update") {
     const item = privateService.updateMemory(matches[0].id, { statement: command.statement, status: "confirmed", consentStatus: "granted" }, "correction explicite par conversation");
-    return { status: "updated", answer: "L’information a été mise à jour dans votre mémoire privée.", memoryIds: [item.id] };
+    const verified = privateService.getMemory(item.id);
+    if (!verified || verified.statement !== command.statement) return { status: "error", answer: "Je n’ai pas pu vérifier la mise à jour dans la mémoire persistante.", receipt: commandReceipt({ success: false, operation: "update", scope: "private", persisted: false }) };
+    return { status: "updated", answer: "L’information a été mise à jour dans votre mémoire privée.", memoryIds: [item.id], receipt: commandReceipt({ success: true, operation: "update", scope: "private", persisted: true, memoryIds: [item.id] }) };
   }
   privateService.forgetMemory(matches[0].id);
-  return { status: "deleted", answer: "Cette information a été oubliée de votre mémoire privée.", memoryIds: [matches[0].id] };
+  const forgotten = privateService.getMemory(matches[0].id);
+  if (!forgotten || forgotten.status !== "deleted" || forgotten.statement !== "") return { status: "error", answer: "Je n’ai pas pu vérifier l’oubli dans la mémoire persistante.", receipt: commandReceipt({ success: false, operation: "delete", scope: "private", persisted: false }) };
+  return { status: "deleted", answer: "Cette information a été oubliée de votre mémoire privée.", memoryIds: [matches[0].id], receipt: commandReceipt({ success: true, operation: "delete", scope: "private", persisted: true, memoryIds: [matches[0].id] }) };
 }
 
 module.exports = {
   cleanDirectStatement,
+  commandReceipt,
   executeConversationMemoryCommand,
   importDateRange,
   parseConversationMemoryCommand,
+  requestedMemoryScope,
+  stripMemoryScope,
 };

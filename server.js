@@ -157,8 +157,8 @@ const {
 const { ApprovalManager } = require("./services/approvals/approval-manager");
 const { createPrivateSeedImporter, validateSeed } = require("./services/personal-memory/seed-importer");
 const { getErrorHeader, readJsonBody, readTextBody, validateAttachment } = require("./services/http/request-utils");
-const { extractExplicitMemoryCandidates } = require("./services/personal-memory/candidate-extractor");
 const { parseConversationMemoryCommand, executeConversationMemoryCommand } = require("./services/personal-memory/conversation-memory-commands");
+const { createAutonomousMemoryPipeline } = require("./services/personal-memory/autonomous-memory-pipeline");
 const { createAttachmentResolver } = require("./services/context/attachment-resolver");
 const { createTimeSlotService } = require("./services/scheduling/time-slot-service");
 const { createProactiveEngine } = require("./services/proactive/proactive-engine");
@@ -697,6 +697,12 @@ const memoryEngine = createMemoryEngine({
   debug: (event, counts) => toolAuditLog.append(event, counts),
 });
 const attachmentResolver = createAttachmentResolver();
+const recentAutomaticMemoryIds = new Map();
+const autonomousMemoryPipeline = createAutonomousMemoryPipeline({
+  personalRepository,
+  privateMemoryService,
+  audit: (event, metadata) => toolAuditLog.append(event, metadata),
+});
 
 function executeExplicitConversationMemoryCommand(question, options = {}) {
   const command = parseConversationMemoryCommand(question);
@@ -4755,11 +4761,13 @@ if (req.method === "POST" && req.url.startsWith("/ai")) {
       conversationId: sessionId,
       sessionId: continuitySession.id,
       currentAttachments: registeredAttachments,
+      projectId: focus || workspaceId || null,
+      recentMemoryIds: recentAutomaticMemoryIds.get(sessionId) || [],
     });
     if (memoryCommand) {
       const memoryContext = { sourcesUsed: ["structured_memory", "private_memory"], memoryIds: memoryCommand.memoryIds || [], truncated: false };
       sessionContinuityEngine.recordCompletedTurn(continuitySession.id, { channel: "chat", normalizedIntent, executionId: null, approvalIds: [], artifacts: [], messages: [{ role: "user", content: question, state: "completed" }, { role: "assistant", content: memoryCommand.answer, state: "completed" }], lastMessageId: null });
-      const response = { status: "ok", assistant: "Noon", question, answer: memoryCommand.answer, workspaceId, sessionId: continuitySession.id, conversationId: sessionId, normalizedIntent, sources: [], artifacts: [], memoryContext };
+      const response = { status: "ok", assistant: "Noon", question, answer: memoryCommand.answer, workspaceId, sessionId: continuitySession.id, conversationId: sessionId, normalizedIntent, sources: [], artifacts: [], memoryContext, memoryReceipt: memoryCommand.receipt || null };
       if (streamRequested) {
         if (!res.headersSent) res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-transform" });
         res.write(`event: final\ndata: ${JSON.stringify(response)}\n\n`);
@@ -4803,6 +4811,23 @@ if (req.method === "POST" && req.url.startsWith("/ai")) {
         : null
     );
 
+    if (result.status !== "approval_required" && privateMemoryService.available && privateMemoryService.settings().enabled) {
+      const automaticMemory = autonomousMemoryPipeline.process({
+        text: question,
+        attachments: registeredAttachments,
+        projectId: focus || workspaceId || null,
+        projectName: focus || null,
+      });
+      result.memoryReceipt = automaticMemory.receipt;
+      if (automaticMemory.notification) result.answer = `${result.answer}\n\n${automaticMemory.notification}`;
+      if (automaticMemory.receipt.memoryIds.length) {
+        recentAutomaticMemoryIds.set(sessionId, automaticMemory.receipt.memoryIds);
+        contextBuilder.invalidateMemory();
+        personalSearchEngine?.invalidate();
+        multiSourceSynthesisEngine?.invalidate();
+      }
+    }
+
     metricsService.record("response_time_ms", Date.now() - requestStartedAt, {
       category: "chat",
     });
@@ -4827,14 +4852,6 @@ if (req.method === "POST" && req.url.startsWith("/ai")) {
         result.answer,
         result.artifacts || []
       );
-      if (privateMemoryService.available && privateMemoryService.settings().enabled) {
-        let memoryChanged = false;
-        for (const candidate of extractExplicitMemoryCandidates(question)) {
-          privateMemoryService.createMemory(candidate);
-          memoryChanged = true;
-        }
-        if (memoryChanged) contextBuilder.invalidateMemory();
-      }
       touchConversation(sessionId, question);
       if (workspaceId) {
         workspaceEngine.linkConversation(workspaceId, sessionId);
@@ -4852,7 +4869,7 @@ if (req.method === "POST" && req.url.startsWith("/ai")) {
     if (streamRequested) {
       if (!res.headersSent) res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-transform" });
       const currentWebUsage = refreshDailyWebSearchUsage();
-      res.write(`event: final\ndata: ${JSON.stringify({ status: result.status === "approval_required" ? "approval_required" : "ok", assistant: "Noon", question, answer: result.answer, workspaceId, sessionId: continuitySession.id, conversationId: sessionId, normalizedIntent, approval: result.approval || null, executionId: result.executionId || result.execution?.id || null, sources: result.sources, research: result.research || null, multimodal: result.multimodal || null, artifacts: result.artifacts || [], memoryContext: result.memoryContext, webSearchCalls: result.webSearchCalls, webSearchCostUsd: result.webSearchCostUsd, webSearchUsage: { used: currentWebUsage.calls, limit: WEB_SEARCH_DAILY_LIMIT, remaining: WEB_SEARCH_DAILY_LIMIT - currentWebUsage.calls } })}\n\n`);
+      res.write(`event: final\ndata: ${JSON.stringify({ status: result.status === "approval_required" ? "approval_required" : "ok", assistant: "Noon", question, answer: result.answer, workspaceId, sessionId: continuitySession.id, conversationId: sessionId, normalizedIntent, approval: result.approval || null, executionId: result.executionId || result.execution?.id || null, sources: result.sources, research: result.research || null, multimodal: result.multimodal || null, artifacts: result.artifacts || [], memoryContext: result.memoryContext, memoryReceipt: result.memoryReceipt || null, webSearchCalls: result.webSearchCalls, webSearchCostUsd: result.webSearchCostUsd, webSearchUsage: { used: currentWebUsage.calls, limit: WEB_SEARCH_DAILY_LIMIT, remaining: WEB_SEARCH_DAILY_LIMIT - currentWebUsage.calls } })}\n\n`);
       return res.end();
     }
 
@@ -4877,6 +4894,7 @@ if (req.method === "POST" && req.url.startsWith("/ai")) {
           multimodal: result.multimodal || null,
           artifacts: result.artifacts || [],
           memoryContext: result.memoryContext,
+          memoryReceipt: result.memoryReceipt || null,
           webSearchCalls: result.webSearchCalls,
           webSearchCostUsd: result.webSearchCostUsd,
           webSearchUsage: {
@@ -5965,12 +5983,12 @@ if (req.method === "POST" && req.url === "/realtime/tool") {
         sessionId: continuitySession.id, workspaceId,
       }, buildIntentContext({ sessionId: continuitySession.id, conversationId: sessionId, workspaceId }));
       sessionContinuityEngine.applyIntent(continuitySession.id, normalizedIntent);
-      const memoryCommand = executeExplicitConversationMemoryCommand(question);
+      const memoryCommand = executeExplicitConversationMemoryCommand(question, { projectId: focus || workspaceId || null, recentMemoryIds: recentAutomaticMemoryIds.get(sessionId) || [] });
       if (memoryCommand) {
         const memoryContext = { sourcesUsed: ["private_memory"], memoryIds: memoryCommand.memoryIds || [], truncated: false };
         sessionContinuityEngine.recordCompletedTurn(continuitySession.id, { channel: "voice", normalizedIntent, executionId: null, approvalIds: [], artifacts: [], messages: [{ role: "user", content: question, state: "completed" }, { role: "assistant", content: memoryCommand.answer, state: "completed" }], lastMessageId: null });
         res.writeHead(200);
-        return res.end(JSON.stringify({ status: "ok", answer: memoryCommand.answer, sessionId: continuitySession.id, conversationId: sessionId, sources: [], artifacts: [], memoryContext, clientAction: { type: "brainAnswer", question, answer: memoryCommand.answer, sources: [], artifacts: [] } }));
+        return res.end(JSON.stringify({ status: "ok", answer: memoryCommand.answer, sessionId: continuitySession.id, conversationId: sessionId, sources: [], artifacts: [], memoryContext, memoryReceipt: memoryCommand.receipt || null, clientAction: { type: "brainAnswer", question, answer: memoryCommand.answer, sources: [], artifacts: [] } }));
       }
       const continuityContext = {
         ...sessionContinuityEngine.contextForRequest(continuitySession.id),
@@ -5992,6 +6010,17 @@ if (req.method === "POST" && req.url === "/realtime/tool") {
         normalizedIntent,
         continuityContext
       );
+      if (result.status !== "approval_required" && privateMemoryService.available && privateMemoryService.settings().enabled) {
+        const automaticMemory = autonomousMemoryPipeline.process({ text: question, projectId: focus || workspaceId || null, projectName: focus || null });
+        result.memoryReceipt = automaticMemory.receipt;
+        if (automaticMemory.notification) result.answer = `${result.answer}\n\n${automaticMemory.notification}`;
+        if (automaticMemory.receipt.memoryIds.length) {
+          recentAutomaticMemoryIds.set(sessionId, automaticMemory.receipt.memoryIds);
+          contextBuilder.invalidateMemory();
+          personalSearchEngine?.invalidate();
+          multiSourceSynthesisEngine?.invalidate();
+        }
+      }
       sessionContinuityEngine.recordCompletedTurn(continuitySession.id, {
         channel: "voice", normalizedIntent,
         executionId: result.executionId || null,
@@ -6013,6 +6042,7 @@ if (req.method === "POST" && req.url === "/realtime/tool") {
         conversationId: sessionId,
         sources: result.sources,
         artifacts: result.artifacts || [],
+        memoryReceipt: result.memoryReceipt || null,
         clientAction: {
           type: "brainAnswer",
           question,

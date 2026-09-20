@@ -94,7 +94,9 @@ Tests manuels à faire avec un microphone : les neuf langues/variantes ci-dessus
 
 L’onglet « Personnel » regroupe le portrait opérationnel, la mémoire structurée, les projets vivants, la boîte d’entrée, les recommandations explicables et les indicateurs d’efficacité. Ces données sont enregistrées dans `personal-intelligence.sqlite` sous le dossier privé `userData` d’Electron. `long-term-memory.json` et `project-journals.json` sont importés par une migration idempotente après sauvegarde et restent conservés.
 
-Les préférences observées restent des hypothèses jusqu’à confirmation. Noon peut analyser et proposer, mais ne crée aucun événement Calendar, n’envoie aucun e-mail et ne modifie aucun fichier existant sans ordre explicite. Les suggestions de créneaux sont uniquement en lecture et protègent la pause de 12 h 30 à 13 h 30.
+Les tendances déduites statistiquement du comportement restent des hypothèses jusqu’à confirmation. Noon peut analyser et proposer, mais ne crée aucun événement Calendar, n’envoie aucun e-mail et ne modifie aucun fichier existant sans ordre explicite. Les suggestions de créneaux sont uniquement en lecture et protègent la pause de 12 h 30 à 13 h 30.
+
+Le runtime conversationnel peut aussi retenir automatiquement un fait durable explicitement énoncé ou extrait localement d’une pièce jointe. La sélection est déterministe et bornée : salutations, anecdotes, exemples signalés comme fictifs, informations incertaines et secrets sont exclus. Chaque écriture est relue dans SQLite avant toute notification. Les données sensibles restent chiffrées dans la mémoire privée avec la politique `local_only`, tandis qu’une décision nommant sans ambiguïté le Focus actif est associée à `project:<id>`. Les commandes naturelles de consultation, correction et oubli interrogent toujours les repositories réels.
 
 Fonctions expérimentales, désactivées par défaut :
 
