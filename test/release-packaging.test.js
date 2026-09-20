@@ -30,6 +30,16 @@ test("la vérification inspecte aussi l’index interne de l’ASAR", () => {
   assert.match(verifier, /runtime-files-in-bundle/);
 });
 
+test("le packaging embarque uniquement les fixtures benchmark runtime comme ressource explicite", () => {
+  const forge = require("../forge.config");
+  const resources = forge.packagerConfig.extraResource;
+  assert.equal(resources.length, 1);
+  assert.match(resources[0], /resources[\\/]dev-benchmark-fixtures$/);
+  const verifier = fs.readFileSync(require.resolve("../scripts/verify-macos-package"), "utf8");
+  assert.match(verifier, /benchmark-fixture:missing/);
+  assert.match(verifier, /benchmark-fixture:content-mismatch/);
+});
+
 test("Gemini utilise un secret SafeStorage séparé et ne l'expose pas au renderer", () => {
   const main = fs.readFileSync(require.resolve("../electron/main"), "utf8");
   const preload = fs.readFileSync(require.resolve("../electron/preload"), "utf8");

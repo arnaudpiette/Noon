@@ -1,0 +1,1 @@
+const users=new Map([['1',{id:'1',name:'Ada',active:true}]]);function updateUser(id,patch){const user=users.get(id);if(!user)return null;Object.assign(user,patch);return user;}module.exports={updateUser};

@@ -74,6 +74,8 @@ test("OFF, SHADOW, LIMITED, ON et kill switch sont déterministes", () => {
   const { featureFlags } = fixture();
   assert.equal(featureFlags.evaluate("router.policy.v2").mode, "ON");
   assert.equal(featureFlags.evaluate("router.astra").mode, "SHADOW");
+  assert.equal(featureFlags.evaluate("dev.native-core").mode, "OFF");
+  assert.deepEqual(featureFlags.evaluate("dev.native-core").enabled, false);
   featureFlags.update("router.policy.v2", { mode: "SHADOW" });
   assert.equal(featureFlags.evaluate("router.policy.v2").shadow, true);
   featureFlags.update("router.policy.v2", { mode: "LIMITED", allowWorkspaces: ["workspace-a"] });
@@ -146,11 +148,24 @@ test("signale la dette des flags arrivés à échéance", () => {
 });
 
 test("la délégation démarre en shadow avec des limites prudentes", () => {
-  const { registry, featureFlags, runtimeConfig } = fixture();
+  const { registry, flagRegistry, featureFlags, runtimeConfig } = fixture();
   assert.equal(featureFlags.evaluate("delegation.engine").mode, "SHADOW");
+  assert.equal(featureFlags.evaluate("specialistAgentDelegation").mode, "OFF");
+  assert.equal(flagRegistry.get("specialistAgentDelegation").killSwitchAllowed, true);
   assert.equal(runtimeConfig.get("delegation.maxSubtasks").value, 3);
   assert.equal(runtimeConfig.get("delegation.maxParallel").value, 2);
   assert.equal(registry.get("delegation.maxWallTimeMs").max, 120000);
+});
+
+test("les budgets DEV sont configurables en USD et les flags V2.7 restent coupés", () => {
+  const { runtimeConfig, featureFlags } = fixture();
+  assert.equal(runtimeConfig.get("devBudget.monthlyLimitUsd").value, 20);
+  assert.equal(runtimeConfig.get("devBudget.currency").value, "USD");
+  runtimeConfig.set("devBudget.monthlyLimitUsd", 30, { scope: "USER" });
+  assert.equal(runtimeConfig.get("devBudget.monthlyLimitUsd").value, 30);
+  assert.equal(featureFlags.evaluate("dev.auto-routing").mode, "OFF");
+  assert.equal(featureFlags.evaluate("dev.budget-enforcement").mode, "OFF");
+  assert.equal(featureFlags.evaluate("dev.quality-escalation").mode, "OFF");
 });
 
 test("le moteur de jobs démarre en shadow avec une backpressure configurée", () => {

@@ -148,16 +148,19 @@ function createMemoryEngine({
     if (input.includePrivate !== false && privateMemoryService?.available) {
       try {
         const queryTokens = tokens(query);
+        const metaStopWords = new Set(["memorise", "memorisees", "enregistre", "enregistrees", "souvenir", "souvenirs", "quelles", "quelle", "informations", "information", "partir", "dossier", "document", "fichier", "retrouve", "montre", "hier", "aujourd", "hui"]);
+        const significantTokens = [...queryTokens].filter((t) => !metaStopWords.has(t));
+        const tokensToMatch = significantTokens.length ? significantTokens : [...queryTokens];
         for (const item of privateMemoryService.listMemories({ subjectId: profileScope, includeDeleted: false })) {
-          const haystack = normalizeForDeduplication(`${item.category} ${item.statement}`);
-          if (queryTokens.size && ![...queryTokens].some((token) => haystack.includes(token))) continue;
+          const haystack = normalizeForDeduplication(`${item.category} ${item.statement} ${item.sourceReference || ""} ${item.payload?.sourceFilename || ""}`);
+          if (tokensToMatch.length && !tokensToMatch.some((token) => haystack.includes(token))) continue;
           if (!includeHistorical && item.status === "historical") continue;
           output.push({
             id: item.id, statement: item.statement, status: item.status,
             source: item.sourceType, version: item.version || 1,
             profileScope: item.subjectId, sensitivity: item.sensitivity,
             timestamp: item.updatedAt, localOnly: item.apiPolicy === "local_only",
-            derivedFrom: item.sourceReference || null,
+            derivedFrom: item.sourceReference || item.payload?.sourceFilename || null,
             allowedForRemoteModel: item.status === "confirmed" && item.apiPolicy !== "local_only" &&
               item.apiPolicy !== "confirm_each_use" && (!item.consentRequired || item.consentStatus === "granted"),
           });

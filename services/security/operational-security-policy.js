@@ -139,7 +139,7 @@ function classifyReversibility(request, actionClass) {
 
 function inspectPath(request, allowedRoots, allowedWriteRoots, actionClass) {
   const requestedPath = request.args?.path || request.args?.outputDirectory || request.targets?.find((item) => item?.path)?.path;
-  if (!requestedPath) return { checked: false, allowed: true, exists: false, symlink: false };
+  if (!requestedPath) return { checked: false, allowed: true, exists: false, symlink: false, pathState: "MISSING", selectedRoots: [] };
   const resolved = path.resolve(String(requestedPath));
   let checkedPath = resolved;
   let exists = false;
@@ -156,7 +156,7 @@ function inspectPath(request, allowedRoots, allowedWriteRoots, actionClass) {
       checkedPath = path.join(fs.realpathSync(ancestor), ...missingSegments);
     }
   } catch {
-    return { checked: true, allowed: false, code: REASON_CODES.TARGET_OUT_OF_SCOPE, exists: false, symlink: true };
+    return { checked: true, allowed: false, code: REASON_CODES.TARGET_OUT_OF_SCOPE, exists: false, symlink: true, pathState: "CANONICALIZATION_FAILURE", requestedPath: resolved, selectedRoots: [] };
   }
   const roots = ([ACTION_CLASSES.WRITE, ACTION_CLASSES.DESTRUCTIVE].includes(actionClass) ? allowedWriteRoots : allowedRoots)
     .map((root) => { try { return fs.realpathSync(root); } catch { return path.resolve(root); } });
@@ -166,6 +166,10 @@ function inspectPath(request, allowedRoots, allowedWriteRoots, actionClass) {
     exists,
     symlink: checkedPath !== resolved,
     code: REASON_CODES.TARGET_OUT_OF_SCOPE,
+    pathState: "CANONICALIZED",
+    requestedPath: resolved,
+    checkedPath,
+    selectedRoots: roots,
   };
 }
 
@@ -249,7 +253,9 @@ function createOperationalSecurityPolicy({ hardRulesRegistry = null, reliability
     }) || [];
     const add = (code) => { if (!reasons.includes(code)) reasons.push(code); };
 
-    const pathDecision = inspectPath(request, allowedRootsProvider(), allowedWriteRootsProvider(), request.actionClass);
+    const authorizedRoots = Array.isArray(input.authorizedRoots) ? input.authorizedRoots : allowedRootsProvider();
+    const authorizedWriteRoots = Array.isArray(input.authorizedWriteRoots) ? input.authorizedWriteRoots : allowedWriteRootsProvider();
+    const pathDecision = inspectPath(request, authorizedRoots, authorizedWriteRoots, request.actionClass);
     const permission = input.currentPermissions || permissionProvider?.(request.skillId, request.args, input.permissionContext || {}) || { allowed: true, code: "AUTHORIZED" };
     const mutating = [ACTION_CLASSES.WRITE, ACTION_CLASSES.EXECUTE, ACTION_CLASSES.DESTRUCTIVE].includes(request.actionClass);
     const approvalValid = input.pendingApproval?.valid === true;
@@ -350,6 +356,17 @@ function createOperationalSecurityPolicy({ hardRulesRegistry = null, reliability
       outcome,
       durationMs: now() - started,
     });
+    if (input.scopeTelemetry?.benchmark === true) {
+      const telemetryRoot = String(input.scopeTelemetry.workspaceRoot || "");
+      const safePath = (value) => {
+        if (!value) return null;
+        if (telemetryRoot && isPathInsideRoots(value, [telemetryRoot])) return path.relative(telemetryRoot, value) || "<benchmark-root>";
+        return `sha256:${crypto.createHash("sha256").update(String(value)).digest("hex").slice(0, 16)}`;
+      };
+      emit("dev.benchmark_scope_input", sanitizeAuditDetails({ sessionId: input.scopeTelemetry.sessionId, runId: input.scopeTelemetry.runId, operation: request.operation, accessMode: request.actionClass, targetType: request.target.targetType, requestedPathSafe: safePath(pathDecision.requestedPath || request.args?.path), selectedRootsSafe: (pathDecision.selectedRoots || []).map(safePath) }));
+      emit("dev.benchmark_scope_canonicalization", sanitizeAuditDetails({ pathState: pathDecision.pathState || "UNKNOWN", requestedExists: pathDecision.exists, requestedCanonicalized: Boolean(pathDecision.checkedPath), rootCanonicalized: (pathDecision.selectedRoots || []).length > 0, requestedRootMatch: pathDecision.checkedPath ? (pathDecision.selectedRoots || []).some((root) => pathDecision.checkedPath === root) : null }));
+      emit("dev.benchmark_scope_decision", sanitizeAuditDetails({ allowed: pathDecision.allowed, containment: pathDecision.checked ? pathDecision.allowed : null, reasonCode: pathDecision.allowed ? null : pathDecision.code, ruleId: pathDecision.allowed ? null : REASON_CODES.TARGET_OUT_OF_SCOPE }));
+    }
     traces.unshift(trace); traces.splice(traceLimit);
     emit("security_policy_evaluated", trace);
     emit(outcome === OUTCOMES.DENY ? "security_policy_denied" : outcome === OUTCOMES.REQUIRE_APPROVAL ? "security_policy_requires_approval" : outcome === OUTCOMES.ALLOW_WITH_CONSTRAINTS ? "security_policy_constraint_applied" : "security_policy_allowed", trace);

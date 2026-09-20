@@ -41,6 +41,16 @@ test("les actions des menus latéraux restent sur une seule ligne", () => {
   assert.match(css, /\.conversation-context-menu__item\{width:100%;white-space:nowrap\}/);
 });
 
+test("les trois chevrons de section sont alignés et pivotent de 180 degrés en leur centre", () => {
+  assert.match(css, /\.focus-toggle \.focus-chevron,\.conversation-history__chevron,\.conversation-projects__chevron\{[^}]*justify-self:end[^}]*transform-origin:center[^}]*transition:transform \.3s ease/);
+  assert.match(css, /\.focus-toggle\[aria-expanded="true"\] \.focus-chevron,\.conversation-history\[open\] \.conversation-history__chevron,\.conversation-projects\[open\] \.conversation-projects__chevron\{transform:rotate\(-180deg\)!important\}/);
+});
+
+test("ouvrir Focus ou Chats ne réancre pas verticalement la barre latérale", () => {
+  assert.match(css, /\.sidebar\{overflow-anchor:none\}/);
+  assert.match(css, /\.sidebar>\.focus-panel,\.sidebar>\.conversation-history,\.sidebar>\.conversation-projects\{overflow-anchor:none\}/);
+});
+
 test("les conversations et projets se renomment dans la ligne sans window.prompt", () => {
   assert.match(app, /async function beginIndexedConversationRename/);
   assert.match(app, /await beginIndexedConversationRename\(conversationItem\.id\)/);

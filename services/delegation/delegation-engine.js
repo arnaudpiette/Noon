@@ -52,7 +52,7 @@ function validateSpecialistResult(value, expected) {
   };
 }
 
-function createDelegationEngine({ registry, capsuleBuilder, modelRouter, runSpecialist, observability = null, reliability = null, now = () => Date.now(), cacheTtlMs = 120_000 } = {}) {
+function createDelegationEngine({ registry, capsuleBuilder, modelRouter, runSpecialist, devDelegationRunner = null, observability = null, reliability = null, now = () => Date.now(), cacheTtlMs = 120_000 } = {}) {
   if (!registry?.get || !capsuleBuilder?.build || typeof modelRouter !== "function" || typeof runSpecialist !== "function") throw new TypeError("Dépendances DelegationEngine invalides.");
   const cache = new Map();
 
@@ -163,7 +163,12 @@ function createDelegationEngine({ registry, capsuleBuilder, modelRouter, runSpec
     return { status, plan: { ...plan, state: status }, results, toolRequests, reasonCodes: plan.reasonCodes, metrics: { totalMs: now() - totalStarted, specialistCount: results.length, modelCalls: results.reduce((sum, item) => sum + (Number(item.metrics?.modelCalls) || 0), 0), inputTokens: results.reduce((sum, item) => sum + (Number(item.metrics?.inputTokens) || 0), 0), outputTokens: results.reduce((sum, item) => sum + (Number(item.metrics?.outputTokens) || 0), 0), cost: results.reduce((sum, item) => sum + (Number(item.metrics?.cost) || 0), 0) } };
   }
 
-  return { shouldDelegate, planDelegation, run, validateSpecialistResult, modes: MODES, states: STATES, reasonCodes: REASON_CODES, maxDepth: 1 };
+  async function runDevTask(request) {
+    if (!devDelegationRunner?.runDevTask) throw Object.assign(new Error("Délégation DEV indisponible."), { code: "AGENT_UNAVAILABLE" });
+    if (request?.featureMode !== "LIMITED") return { status: "SKIPPED", finalVerdict: "FAIL", failureCategory: "FEATURE_DISABLED" };
+    return devDelegationRunner.runDevTask(request);
+  }
+  return { shouldDelegate, planDelegation, run, runDevTask, cancelDevTask: (taskId) => devDelegationRunner?.cancelTask?.(taskId) || false, recoverInterruptedDevTask: (request) => devDelegationRunner?.recoverInterruptedTask?.(request), validateSpecialistResult, modes: MODES, states: STATES, reasonCodes: REASON_CODES, maxDepth: 1 };
 }
 
 module.exports = { MODES, REASON_CODES, STATES, createDelegationEngine, validateSpecialistResult };

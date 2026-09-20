@@ -1,0 +1,1 @@
+const test=require('node:test');const assert=require('node:assert/strict');const {normalizeEmail}=require('../src/email');test('normalizes representative input',()=>assert.equal(normalizeEmail('USER@EXAMPLE.TEST'),'user@example.test'));

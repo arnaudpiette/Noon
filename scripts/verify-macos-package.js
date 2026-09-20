@@ -7,6 +7,12 @@ const fs = require("fs");
 const path = require("path");
 const { execFileSync, spawnSync } = require("child_process");
 const asar = require("@electron/asar");
+const {
+  BENCHMARK_FIXTURE_IDS,
+  PACKAGED_FIXTURE_DIRECTORY,
+  benchmarkFixtureTreeHash,
+  resolveBenchmarkFixtureRoot,
+} = require("../services/dev/benchmark/fixture-registry");
 
 const root = path.join(__dirname, "..");
 const arch = process.env.NOON_RELEASE_ARCH || process.arch;
@@ -38,6 +44,26 @@ try {
   blockers.push("asar-content:unreadable");
 }
 if (forbidden.length) blockers.push(`runtime-files-in-bundle:${forbidden.length}`);
+
+const sourceFixtureRoot = resolveBenchmarkFixtureRoot();
+const packagedFixtureRoot = path.join(appPath, "Contents", "Resources", PACKAGED_FIXTURE_DIRECTORY);
+const benchmarkFixtures = {
+  count: BENCHMARK_FIXTURE_IDS.length,
+  ids: [...BENCHMARK_FIXTURE_IDS],
+  sourceSha256: null,
+  packagedSha256: null,
+};
+for (const taskId of BENCHMARK_FIXTURE_IDS) {
+  const fixture = path.join(packagedFixtureRoot, taskId);
+  if (!fs.existsSync(fixture) || !fs.statSync(fixture).isDirectory()) blockers.push(`benchmark-fixture:missing:${taskId}`);
+}
+try { benchmarkFixtures.sourceSha256 = benchmarkFixtureTreeHash(sourceFixtureRoot); }
+catch { blockers.push("benchmark-fixture:source-unreadable"); }
+try { benchmarkFixtures.packagedSha256 = benchmarkFixtureTreeHash(packagedFixtureRoot); }
+catch { blockers.push("benchmark-fixture:package-unreadable"); }
+if (benchmarkFixtures.sourceSha256 && benchmarkFixtures.packagedSha256 && benchmarkFixtures.sourceSha256 !== benchmarkFixtures.packagedSha256) {
+  blockers.push("benchmark-fixture:content-mismatch");
+}
 
 let executableArch = "unknown";
 try {
@@ -95,6 +121,7 @@ const manifest = {
   formatVersion: 1,
   generatedAt: new Date().toISOString(),
   app: { bundleId, version: bundleVersion, arch: executableArch, signed, signatureType, notarized: false },
+  benchmarkFixtures,
   files,
   blockers,
   warnings,
@@ -102,5 +129,5 @@ const manifest = {
 const manifestPath = path.join(root, "out", `release-manifest-${arch}.json`);
 fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
-console.log(JSON.stringify({ status: blockers.length ? "BLOCKED" : "PASS", manifestPath, ...manifest.app, blockers, warnings }, null, 2));
+console.log(JSON.stringify({ status: blockers.length ? "BLOCKED" : "PASS", manifestPath, ...manifest.app, benchmarkFixtures, blockers, warnings }, null, 2));
 if (blockers.length) process.exitCode = 1;

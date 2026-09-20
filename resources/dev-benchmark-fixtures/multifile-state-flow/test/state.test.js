@@ -1,0 +1,1 @@
+const test=require('node:test');const assert=require('node:assert/strict');const {create}=require('../src/controller');test('creates an item',()=>assert.equal(create({body:{label:'A'}}).body.items[0].label,'A'));

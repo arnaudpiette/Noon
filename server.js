@@ -7,8 +7,10 @@ const { GoogleGenAI } = require("@google/genai");
 // Le client est créé au premier appel afin que l’application locale puisse
 // démarrer et rester utile hors ligne même sans clé OpenAI configurée.
 let openai = null;
+let loadOpenAIKeyOnDemand = null;
 function getOpenAIClient() {
   if (openai) return openai;
+  if (!process.env.OPENAI_API_KEY && loadOpenAIKeyOnDemand) loadOpenAIKeyOnDemand();
   if (!process.env.OPENAI_API_KEY) {
     const error = new Error("Clé OpenAI absente. Configurez-la dans Noon.");
     error.statusCode = 503;
@@ -18,8 +20,10 @@ function getOpenAIClient() {
   return openai;
 }
 let gemini = null;
+let loadGeminiKeyOnDemand = null;
 function getGeminiClient() {
   if (gemini) return gemini;
+  if (!process.env.GEMINI_API_KEY && loadGeminiKeyOnDemand) loadGeminiKeyOnDemand();
   if (!process.env.GEMINI_API_KEY) throw Object.assign(new Error("Credential Gemini absent."), { statusCode: 503 });
   gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   return gemini;
@@ -123,6 +127,14 @@ const { createProviderPrivacyPolicy } = require("./services/security/provider-pr
 const { createSpecialistRegistry } = require("./services/delegation/specialist-registry");
 const { createContextCapsuleBuilder } = require("./services/delegation/context-capsule-builder");
 const { createDelegationEngine } = require("./services/delegation/delegation-engine");
+const { createCodexSpecialistAgent } = require("./services/delegation/codex-specialist-agent");
+const { createDevDelegationRunner } = require("./services/delegation/dev-delegation-runner");
+const { createNativeDevCoordinator } = require("./services/dev/native-dev-coordinator");
+const { createDevTaskJournal } = require("./services/dev/dev-task-journal");
+const { createNativeDevReasoner } = require("./services/dev/native-dev-reasoner");
+const { createDevCostBudgetService } = require("./services/dev/dev-cost-budget-service");
+const { createBenchmarkRuntime } = require("./services/dev/benchmark/benchmark-runtime");
+const { createBenchmarkControlPlane } = require("./services/dev/benchmark/benchmark-control-plane");
 const { createTransactionalExecutionEngine } = require("./services/execution/transactional-execution-engine");
 const { createNoonObservability } = require("./services/observability/noon-observability");
 const { createConfigRegistry } = require("./services/config/config-registry");
@@ -147,6 +159,7 @@ const { createPrivateSeedImporter, validateSeed } = require("./services/personal
 const { getErrorHeader, readJsonBody, readTextBody, validateAttachment } = require("./services/http/request-utils");
 const { extractExplicitMemoryCandidates } = require("./services/personal-memory/candidate-extractor");
 const { parseConversationMemoryCommand, executeConversationMemoryCommand } = require("./services/personal-memory/conversation-memory-commands");
+const { createAttachmentResolver } = require("./services/context/attachment-resolver");
 const { createTimeSlotService } = require("./services/scheduling/time-slot-service");
 const { createProactiveEngine } = require("./services/proactive/proactive-engine");
 const { createDailyPlanStore } = require("./services/planning/daily-plan-store");
@@ -229,6 +242,23 @@ const featureFlags = createFeatureFlagService({
 const shadowComparator = createShadowComparator({
   observability: (event, metadata) => toolAuditLog.append(`features.${event}`, metadata),
 });
+const devCostBudgetService = createDevCostBudgetService({
+  filePath: path.join(DATA_DIRECTORY, "dev-cost-ledger.json"),
+  config: () => {
+    const optionalLimit = (key) => {
+      const value = Number(runtimeConfig.get(key).value);
+      return value > 0 ? value : null;
+    };
+    return {
+      enabled: runtimeConfig.get("devBudget.enabled").value,
+      taskLimit: optionalLimit("devBudget.taskLimitUsd"),
+      dailyLimit: optionalLimit("devBudget.dailyLimitUsd"),
+      monthlyLimit: optionalLimit("devBudget.monthlyLimitUsd"),
+    };
+  },
+  observability: (event, metadata) => toolAuditLog.append(`dev-budget.${event}`, metadata),
+});
+devCostBudgetService.recoverStale();
 
 function legacyRoute(input) {
   const model = selectLegacyModelRoute(input);
@@ -406,9 +436,12 @@ try {
 } catch {
   // Le serveur Node seul conserve alors le jeton uniquement en mémoire.
 }
+const runtimeSafeStorage = process.env.NOON_SMOKE_TEST === "1"
+  ? null
+  : electronSafeStorage;
 const integrationTokenStore = createTokenStore({
   filePath: path.join(DATA_DIRECTORY, "integration-tokens.json"),
-  safeStorage: electronSafeStorage,
+  safeStorage: runtimeSafeStorage,
 });
 
 function assertGoogleRemoteAvailable(capability = "REMOTE_GMAIL") {
@@ -596,7 +629,10 @@ const executionTrackingRepository = createExecutionTrackingRepository(personalDa
 const reviewLearningRepository = createReviewLearningRepository(personalDatabase);
 let privateMemoryCipher = null;
 try {
-  const protectedKey = loadOrCreateProtectedMasterKey(DATA_DIRECTORY, electronSafeStorage);
+  // Le smoke packagé utilise un profil jetable et ne doit pas créer de clé de
+  // mémoire privée ni attendre le trousseau macOS pour valider le cœur local.
+  // Le service sait déjà fonctionner indisponible lorsque safeStorage manque.
+  const protectedKey = loadOrCreateProtectedMasterKey(DATA_DIRECTORY, runtimeSafeStorage);
   if (protectedKey) privateMemoryCipher = createMemoryCipher(protectedKey);
 } catch {
   toolAuditLog.append("private-memory.unavailable", { code: "KEYSTORE_UNAVAILABLE" });
@@ -660,11 +696,12 @@ const memoryEngine = createMemoryEngine({
     getConversationHistory(createConversationKey({ sessionId: conversationId })),
   debug: (event, counts) => toolAuditLog.append(event, counts),
 });
+const attachmentResolver = createAttachmentResolver();
 
-function executeExplicitConversationMemoryCommand(question) {
+function executeExplicitConversationMemoryCommand(question, options = {}) {
   const command = parseConversationMemoryCommand(question);
   if (!command) return null;
-  const result = executeConversationMemoryCommand(privateMemoryService, command);
+  const result = executeConversationMemoryCommand({ privateMemoryService, personalRepository, attachmentResolver }, command, options);
   if (result && !["not_found", "needs_clarification", "unavailable"].includes(result.status)) {
     contextBuilder.invalidateMemory();
     personalSearchEngine?.invalidate();
@@ -1104,6 +1141,23 @@ const transactionalExecutionEngine = createTransactionalExecutionEngine({
   reliabilityEngine,
   observability: (event, metadata) => toolAuditLog.append(event, metadata),
 });
+const nativeDevReasoner = createNativeDevReasoner({
+  featureFlags,
+  budgetService: devCostBudgetService,
+  selectModelRoute: selectConfiguredModelRoute,
+  estimateCost: estimateModelCost,
+  authorizePrivacy: authorizeOpenAIPrivacy,
+  providerAdapter: openAIProviderAdapter,
+  trackUsage,
+});
+const nativeDevJournal = createDevTaskJournal({ directory: path.join(DATA_DIRECTORY, "dev-task-journal") });
+const nativeDevCoordinator = createNativeDevCoordinator({
+  workspaceEngine, transactionalExecutionEngine, operationalSecurityPolicy, skillRegistry, reasoner: nativeDevReasoner, journal: nativeDevJournal,
+  featureMode: (input) => featureFlags.evaluate("dev.native-core", { workspaceId: input.workspaceId, sessionId: input.sessionId }).mode,
+  qualityEscalationMode: (input) => featureFlags.evaluate("dev.quality-escalation", { workspaceId: input.workspaceId, sessionId: input.sessionId }).mode,
+  sameTierRepairAttempts: (input) => runtimeConfig.get("devBudget.sameTierRepairAttempts", { workspaceId: input.workspaceId, sessionId: input.sessionId }).value,
+  observability: (event, metadata) => toolAuditLog.append(`dev.${event}`, metadata),
+});
 
 // Les extensions enrichissent les registries existants ; elles ne reçoivent jamais les services internes bruts.
 const extensionRuntime = createExtensionRuntime({
@@ -1138,14 +1192,52 @@ const extensionRegistry = createExtensionRegistry({
   observability: (event, metadata) => toolAuditLog.append(`extensions.${event}`, metadata),
 });
 extensionRuntime.bindRegistry(extensionRegistry);
-extensionRegistry.discover({ manifest: noonExampleSearchExtension.manifest, module: noonExampleSearchExtension, provenance: "BUNDLED", trust: "TRUSTED", signed: true });
-extensionRegistry.install(noonExampleSearchExtension.manifest.id, { approvedPermissions: noonExampleSearchExtension.manifest.permissions });
-void extensionRegistry.enable(noonExampleSearchExtension.manifest.id).catch((error) => {
-  toolAuditLog.append("extensions.extension_failed", { extensionId: noonExampleSearchExtension.manifest.id, errorCode: String(error.code || "ACTIVATION_FAILED") });
-});
+// L'extension de démonstration reste disponible pour les tests de développement,
+// mais ne doit jamais concurrencer la vraie recherche publique en production.
+if (process.env.NOON_ENABLE_EXAMPLE_SEARCH_EXTENSION === "true") {
+  extensionRegistry.discover({ manifest: noonExampleSearchExtension.manifest, module: noonExampleSearchExtension, provenance: "BUNDLED", trust: "TRUSTED", signed: true });
+  extensionRegistry.install(noonExampleSearchExtension.manifest.id, { approvedPermissions: noonExampleSearchExtension.manifest.permissions });
+  void extensionRegistry.enable(noonExampleSearchExtension.manifest.id).catch((error) => {
+    toolAuditLog.append("extensions.extension_failed", { extensionId: noonExampleSearchExtension.manifest.id, errorCode: String(error.code || "ACTIVATION_FAILED") });
+  });
+}
 
 const specialistRegistry = createSpecialistRegistry();
 const contextCapsuleBuilder = createContextCapsuleBuilder();
+const codexSpecialistAgent = createCodexSpecialistAgent({ observability: (event, metadata) => toolAuditLog.append(`dev.${event}`, metadata) });
+const devDelegationRunner = createDevDelegationRunner({
+  specialistAgent: codexSpecialistAgent,
+  workspaceEngine,
+  operationalSecurityPolicy,
+  observability: (event, metadata) => toolAuditLog.append(`delegation.${event}`, metadata),
+});
+// Le benchmark possède déjà son propre gate B2 et son snapshot canonique. Son
+// runner ne doit donc pas résoudre l'identifiant de session comme un workspace
+// utilisateur persistant dans WorkspaceEngine.
+const benchmarkDevDelegationRunner = createDevDelegationRunner({
+  specialistAgent: codexSpecialistAgent,
+  operationalSecurityPolicy,
+  observability: (event, metadata) => toolAuditLog.append(`delegation.${event}`, metadata),
+});
+let benchmarkRuntime = null;
+let benchmarkControlPlane = null;
+try {
+  benchmarkRuntime = createBenchmarkRuntime({
+    database: personalDatabase,
+    runtimeConfig,
+    benchmarkWorkspaceRoot: path.join(DATA_DIRECTORY, "benchmark-workspaces"),
+    nativeDevCoordinator,
+    devDelegationRunner: benchmarkDevDelegationRunner,
+    featureMode: (context = {}) => featureFlags.evaluate("dev.benchmark", context).mode,
+    observability: (event, metadata) => toolAuditLog.append(`dev.${event}`, metadata),
+  });
+  benchmarkControlPlane = createBenchmarkControlPlane({
+    runtime: benchmarkRuntime,
+    featureMode: (context = {}) => featureFlags.evaluate("dev.benchmark", context).mode,
+  });
+} catch (error) {
+  toolAuditLog.append("dev.benchmark_service_unavailable", { code: String(error.code || error.name || "INITIALIZATION_FAILED").slice(0, 80) });
+}
 const specialistResultSchema = {
   type: "object",
   properties: {
@@ -1167,6 +1259,7 @@ const delegationEngine = createDelegationEngine({
   capsuleBuilder: contextCapsuleBuilder,
   modelRouter: selectConfiguredModelRoute,
   reliability: reliabilityEngine,
+  devDelegationRunner,
   observability: (event, metadata) => {
     toolAuditLog.append(`delegation.${event}`, metadata);
     metricsService?.record?.(event, 1, metadata);
@@ -2832,6 +2925,55 @@ async function askAI(
   // Bloque localement tout nouvel appel lorsque le plafond mensuel est atteint.
   const budget = getBudgetStatus();
   const limits = getRuntimeLimits(budget.mode);
+  if (normalizedIntent?.type === "GENERATE" && normalizedIntent?.action === "image") {
+    if (budget.mode === "BLOCKED") {
+      throw Object.assign(new Error("Budget mensuel Noon atteint. Les appels API sont bloqués jusqu'au mois prochain."), { code: "BUDGET_BLOCKED" });
+    }
+    setSessionActivity(sessionId, "creating", "Génération de l’image…");
+    authorizeOpenAIPrivacy([
+      { source: "creative_image_request", classification: "PRIVATE", content: normalizedIntent.entities.prompt || question },
+    ]);
+    try {
+      const generated = await generateCreativeImage({
+        prompt: normalizedIntent.entities.prompt || question,
+        title: "Image Noon",
+        project: focus || "Noon",
+        quality: "medium",
+        size: "1024x1024",
+      }, {
+        client: getOpenAIClient(),
+        previewDirectory: CREATIVE_IMAGE_PREVIEW_DIRECTORY,
+        signal,
+        observability: (event, metadata) => toolAuditLog.append(`image.${event}`, metadata),
+      });
+      trackImageGenerationUsage(generated.quality);
+      rememberContinuityEntity({ type: "artifact", id: generated.artifact.path, label: generated.artifact.name, status: "preview" });
+      setSessionActivity(sessionId, "done", "Image prête.");
+      return {
+        status: "completed",
+        answer: "Voici l’aperçu généré. Il reste temporaire tant que tu ne cliques pas sur Télécharger.",
+        artifacts: [generated.artifact], sources: [], webSearchCalls: 0, executionId: null,
+        imageGeneration: { provider: "openai", model: generated.artifact.model, success: true },
+      };
+    } catch (error) {
+      const code = String(error?.code || "IMAGE_GENERATION_FAILED").slice(0, 80);
+      toolAuditLog.append("image.image_generation_failed", { provider: error?.provider || "openai", model: error?.model || "gpt-image-2", code, status: Number(error?.status) || null, retryable: error?.retryable === true });
+      setSessionActivity(sessionId, "done", "Génération d’image indisponible.");
+      const messages = {
+        NO_IMAGE_PROVIDER: "Aucun fournisseur d’image compatible n’est actuellement configuré.",
+        AUTH_ERROR: "La génération d’image a échoué : le fournisseur doit être reconnecté.",
+        QUOTA_EXCEEDED: "La génération a atteint la limite du fournisseur. Aucun fichier n’a été créé.",
+        RATE_LIMITED: "Le fournisseur d’image limite temporairement les requêtes. Aucun fichier n’a été créé.",
+        TIMEOUT: "Le fournisseur d’image n’a pas répondu à temps. Aucun fichier n’a été créé.",
+        NETWORK_ERROR: "Le fournisseur d’image n’est pas joignable actuellement. Aucun fichier n’a été créé.",
+        PROVIDER_UNAVAILABLE: "La génération d’image a échoué : le fournisseur est momentanément indisponible.",
+        PROVIDER_REJECTED: "Le fournisseur d’image a refusé cette génération. Aucun fichier n’a été créé.",
+        INVALID_RESPONSE: "Le fournisseur d’image n’a retourné aucun visuel exploitable.",
+        ASSET_WRITE_FAILED: "L’image a été générée, mais son aperçu temporaire n’a pas pu être créé.",
+      };
+      return { status: "unavailable", answer: messages[code] || "La génération d’image a échoué. Aucun fichier n’a été créé.", artifacts: [], sources: [], webSearchCalls: 0, executionId: null, imageGeneration: { provider: error?.provider || "openai", model: error?.model || "gpt-image-2", success: false, error: { code, retryable: error?.retryable === true } } };
+    }
+  }
   const researchResolution = resolveResearchScope({
     query: question,
     webRequested: webSearchEnabled,
@@ -3392,15 +3534,11 @@ async function askAI(
   });
 
   if (execution.status === "approval_required") {
-    const approvalSources = publicEvidencePack?.citations.map((citation) => ({
-      citationId: citation.citationId,
-      evidenceId: citation.evidenceId,
-      title: citation.sourceTitle,
-      url: citation.url,
-      domain: citation.domain,
-      publishedAt: citation.publishedAt,
-      updatedAt: citation.updatedAt,
-      retrievedAt: citation.retrievedAt,
+    const approvalSources = publicEvidencePack?.results.map((item) => ({
+      citationId: publicEvidencePack.citations.find((citation) => citation.evidenceId === item.evidenceId)?.citationId || null,
+      evidenceId: item.evidenceId, title: item.title, url: item.url,
+      source: item.sourceDomain, domain: item.sourceDomain, snippet: item.snippet,
+      publishedAt: item.publishedAt, updatedAt: item.updatedAt, retrievedAt: item.retrievedAt,
     })) || [];
     const approvalWebSearchCalls = publicEvidencePack?.budget.searchCalls || 0;
     return {
@@ -3435,15 +3573,11 @@ async function askAI(
 
   setSessionActivity(sessionId, "done", "Réponse prête.");
   const responseWebSearchCalls = countWebSearchCalls(execution.response);
-  const publicSources = publicEvidencePack?.citations.map((citation) => ({
-    citationId: citation.citationId,
-    evidenceId: citation.evidenceId,
-    title: citation.sourceTitle,
-    url: citation.url,
-    domain: citation.domain,
-    publishedAt: citation.publishedAt,
-    updatedAt: citation.updatedAt,
-    retrievedAt: citation.retrievedAt,
+  const publicSources = publicEvidencePack?.results.map((item) => ({
+    citationId: publicEvidencePack.citations.find((citation) => citation.evidenceId === item.evidenceId)?.citationId || null,
+    evidenceId: item.evidenceId, title: item.title, url: item.url,
+    source: item.sourceDomain, domain: item.sourceDomain, snippet: item.snippet,
+    publishedAt: item.publishedAt, updatedAt: item.updatedAt, retrievedAt: item.retrievedAt,
   })) || [];
   const publicWebSearchCalls = publicEvidencePack?.budget.searchCalls || 0;
   return {
@@ -4494,29 +4628,10 @@ if (req.method === "POST" && req.url.startsWith("/ai")) {
     );
     const visualDetail =
       body.visualDetail === "high" ? "high" : "low";
-    const webSearchEnabled = body.webSearchEnabled === true;
+    let webSearchEnabled = body.webSearchEnabled === true;
     const intelligenceProfile = normalizeIntelligenceProfile(body.intelligenceProfile);
     let maxWebToolCalls = 0;
 
-    if (webSearchEnabled) {
-      const currentWebUsage = refreshDailyWebSearchUsage();
-      const remainingWebCalls =
-        WEB_SEARCH_DAILY_LIMIT - currentWebUsage.calls;
-
-      if (remainingWebCalls <= 0) {
-        const limitError = new Error(
-          "La limite quotidienne de 10 recherches Internet est atteinte."
-        );
-        limitError.statusCode = 429;
-        limitError.code = "WEB_SEARCH_DAILY_LIMIT";
-        throw limitError;
-      }
-
-      maxWebToolCalls = Math.min(
-        WEB_SEARCH_MAX_PER_REQUEST,
-        remainingWebCalls
-      );
-    }
     let focusPath = normalizeFocusPath(body.focusPath);
     const catalogSelection = resolveFocusCatalogSelection(
       body.focusId,
@@ -4584,6 +4699,11 @@ if (req.method === "POST" && req.url.startsWith("/ai")) {
     }
 
     const attachments = rawAttachments.map(validateAttachment);
+    const registeredAttachments = attachmentResolver.registerAttachments({
+      conversationId: sessionId,
+      sessionId: continuitySession.id,
+      attachments,
+    });
 
     const conversationKey = createConversationKey({
       sessionId,
@@ -4618,10 +4738,26 @@ if (req.method === "POST" && req.url.startsWith("/ai")) {
       allowSemanticFallback: body.allowIntentFallback === true,
       forceSemanticFallback: body.allowIntentFallback === true,
     });
+    webSearchEnabled = webSearchEnabled || normalizedIntent.requiresPublicResearch === true;
+    if (webSearchEnabled) {
+      const currentWebUsage = refreshDailyWebSearchUsage();
+      const remainingWebCalls = WEB_SEARCH_DAILY_LIMIT - currentWebUsage.calls;
+      if (remainingWebCalls <= 0) {
+        const limitError = new Error("La limite quotidienne de 10 recherches Internet est atteinte.");
+        limitError.statusCode = 429;
+        limitError.code = "WEB_SEARCH_DAILY_LIMIT";
+        throw limitError;
+      }
+      maxWebToolCalls = Math.min(WEB_SEARCH_MAX_PER_REQUEST, remainingWebCalls);
+    }
     sessionContinuityEngine.applyIntent(continuitySession.id, normalizedIntent);
-    const memoryCommand = executeExplicitConversationMemoryCommand(question);
+    const memoryCommand = executeExplicitConversationMemoryCommand(question, {
+      conversationId: sessionId,
+      sessionId: continuitySession.id,
+      currentAttachments: registeredAttachments,
+    });
     if (memoryCommand) {
-      const memoryContext = { sourcesUsed: ["private_memory"], memoryIds: memoryCommand.memoryIds || [], truncated: false };
+      const memoryContext = { sourcesUsed: ["structured_memory", "private_memory"], memoryIds: memoryCommand.memoryIds || [], truncated: false };
       sessionContinuityEngine.recordCompletedTurn(continuitySession.id, { channel: "chat", normalizedIntent, executionId: null, approvalIds: [], artifacts: [], messages: [{ role: "user", content: question, state: "completed" }, { role: "assistant", content: memoryCommand.answer, state: "completed" }], lastMessageId: null });
       const response = { status: "ok", assistant: "Noon", question, answer: memoryCommand.answer, workspaceId, sessionId: continuitySession.id, conversationId: sessionId, normalizedIntent, sources: [], artifacts: [], memoryContext };
       if (streamRequested) {
@@ -7171,6 +7307,105 @@ if (req.method === "GET" && req.url.startsWith("/api/config/status")) {
   return res.end(JSON.stringify({ status: "ok", config: runtimeConfig.getPublicConfig(context), snapshot: runtimeConfig.snapshot(context) }));
 }
 
+if (requestPath === "/api/dev/benchmark/suite" && req.method === "GET") {
+  if (req.headers["x-noon-request"] !== "1") { res.writeHead(403); return res.end(); }
+  try { res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" }); return res.end(JSON.stringify({ status: "ok", suite: benchmarkControlPlane?.read("suite") })); }
+  catch (error) { res.writeHead(503, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ status: "error", code: error.code || "BENCHMARK_UNAVAILABLE" })); }
+}
+
+if (requestPath === "/api/dev/benchmark/prepare" && req.method === "POST") {
+  if (req.headers["x-noon-request"] !== "1") { res.writeHead(403); return res.end(); }
+  try { const result = await benchmarkControlPlane.execute("prepare", await readJsonBody(req, 8 * 1024)); res.writeHead(201, { "Content-Type": "application/json", "Cache-Control": "no-store" }); return res.end(JSON.stringify({ status: "ok", ...result })); }
+  catch (error) { res.writeHead(error.code === "FEATURE_DISABLED" ? 409 : 400, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ status: "error", code: error.code || "BENCHMARK_PREPARE_FAILED" })); }
+}
+
+if (requestPath === "/api/dev/benchmark/arm" && req.method === "POST") {
+  if (req.headers["x-noon-request"] !== "1") { res.writeHead(403); return res.end(); }
+  try { const result = await benchmarkControlPlane.execute("arm", await readJsonBody(req, 2 * 1024)); res.writeHead(201, { "Content-Type": "application/json", "Cache-Control": "no-store" }); return res.end(JSON.stringify({ status: "ok", arm: result })); }
+  catch (error) { res.writeHead(400, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ status: "error", code: error.code || "BENCHMARK_ARM_FAILED" })); }
+}
+
+if (requestPath === "/api/dev/benchmark/codex-probe/arm" && req.method === "POST") {
+  if (req.headers["x-noon-request"] !== "1") { res.writeHead(403); return res.end(); }
+  try { const result = await benchmarkControlPlane.execute("armCodexProbe", await readJsonBody(req, 2 * 1024)); res.writeHead(201, { "Content-Type": "application/json", "Cache-Control": "no-store" }); return res.end(JSON.stringify({ status: "ok", arm: result })); }
+  catch (error) { res.writeHead(400, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ status: "error", code: error.code || "CODEX_PROBE_ARM_FAILED" })); }
+}
+if (requestPath === "/api/dev/benchmark/codex-probe/prepare" && req.method === "POST") {
+  if (req.headers["x-noon-request"] !== "1") { res.writeHead(403); return res.end(); }
+  try { const result = await benchmarkControlPlane.execute("prepareCodexProbe", await readJsonBody(req, 8 * 1024)); res.writeHead(201, { "Content-Type": "application/json", "Cache-Control": "no-store" }); return res.end(JSON.stringify({ status: "ok", ...result })); }
+  catch (error) { res.writeHead(error.code === "FEATURE_DISABLED" ? 409 : 400, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ status: "error", code: error.code || "CODEX_PROBE_PREPARE_FAILED" })); }
+}
+const codexProbeRun = requestPath.match(/^\/api\/dev\/benchmark\/codex-probe\/run\/([^/]+)$/);
+if (codexProbeRun && req.method === "POST") {
+  if (req.headers["x-noon-request"] !== "1") { res.writeHead(403); return res.end(); }
+  try { const result = await benchmarkControlPlane.execute("runCodexProbe", { ...(await readJsonBody(req, 2 * 1024)), sessionId: decodeURIComponent(codexProbeRun[1]) }); res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" }); return res.end(JSON.stringify({ status: "ok", result })); }
+  catch (error) { res.writeHead(error.code === "FEATURE_DISABLED" ? 409 : 400, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ status: "error", code: error.code || "CODEX_PROBE_RUN_FAILED" })); }
+}
+
+const benchmarkDisarm = requestPath.match(/^\/api\/dev\/benchmark\/disarm\/([^/]+)$/);
+if (benchmarkDisarm && req.method === "POST") {
+  if (req.headers["x-noon-request"] !== "1") { res.writeHead(403); return res.end(); }
+  try { const result = await benchmarkControlPlane.execute("disarm", { ...(await readJsonBody(req, 2 * 1024)), armId: decodeURIComponent(benchmarkDisarm[1]) }); res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" }); return res.end(JSON.stringify({ status: "ok", arm: result })); }
+  catch (error) { res.writeHead(400, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ status: "error", code: error.code || "BENCHMARK_DISARM_FAILED" })); }
+}
+
+const benchmarkAction = requestPath.match(/^\/api\/dev\/benchmark\/(run-next|cancel|resume)\/([^/]+)$/);
+if (benchmarkAction && req.method === "POST") {
+  if (req.headers["x-noon-request"] !== "1") { res.writeHead(403); return res.end(); }
+  try { const action = benchmarkAction[1] === "run-next" ? "runNext" : benchmarkAction[1]; const result = await benchmarkControlPlane.execute(action, { ...(await readJsonBody(req, 2 * 1024)), sessionId: decodeURIComponent(benchmarkAction[2]) }); res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" }); return res.end(JSON.stringify({ status: "ok", result })); }
+  catch (error) { res.writeHead(error.code === "FEATURE_DISABLED" ? 409 : 400, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ status: "error", code: error.code || "BENCHMARK_CONTROL_FAILED" })); }
+}
+
+const benchmarkRead = requestPath.match(/^\/api\/dev\/benchmark\/(status|results)\/([^/]+)$/);
+if (benchmarkRead && req.method === "GET") {
+  if (req.headers["x-noon-request"] !== "1") { res.writeHead(403); return res.end(); }
+  try { const result = benchmarkControlPlane.read(benchmarkRead[1], decodeURIComponent(benchmarkRead[2])); res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" }); return res.end(JSON.stringify({ status: "ok", ...result })); }
+  catch (error) { res.writeHead(400, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ status: "error", code: error.code || "BENCHMARK_READ_FAILED" })); }
+}
+
+if (requestPath === "/api/dev/native/tasks" && req.method === "POST") {
+  try {
+    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403, code: "TRUSTED_UI_REQUIRED" });
+    const body = await readJsonBody(req, 128 * 1024);
+    const result = await nativeDevCoordinator.runTask({
+      taskId: body.taskId, sessionId: body.sessionId, workspaceId: String(body.workspaceId || ""), repositoryRoot: String(body.repositoryRoot || ""),
+      objective: String(body.objective || ""), allowedPaths: Array.isArray(body.allowedPaths) ? body.allowedPaths : undefined,
+      forbiddenPaths: Array.isArray(body.forbiddenPaths) ? body.forbiddenPaths : undefined, constraints: Array.isArray(body.constraints) ? body.constraints : [],
+      validationCommands: Array.isArray(body.validationCommands) ? body.validationCommands : [], requiredQuality: body.requiredQuality,
+      maxIterations: body.maxIterations, maxDuration: body.maxDuration, maxEstimatedCost: body.maxEstimatedCost,
+      localOnly: body.localOnly === true,
+      permissions: ["READ_WRITE_WORKSPACE", "TERMINAL_SAFE"],
+    });
+    res.writeHead(result.finalVerdict === "FAIL" ? 422 : 200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    return res.end(JSON.stringify(result));
+  } catch (error) {
+    res.writeHead(error.statusCode || 400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    return res.end(JSON.stringify({ status: "error", code: error.code || "DEV_TASK_FAILURE", message: error.message }));
+  }
+}
+
+if (requestPath === "/api/dev/budget" && req.method === "GET") {
+  if (req.headers["x-noon-request"] !== "1") { res.writeHead(403); return res.end(); }
+  const url = new URL(req.url, `http://${req.headers.host || DEFAULT_HOST}`);
+  const taskId = url.searchParams.get("taskId");
+  const context = { workspaceId: url.searchParams.get("workspaceId"), sessionId: taskId };
+  const budgetEnforcement = featureFlags.evaluate("dev.budget-enforcement", context).enabled;
+  res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+  return res.end(JSON.stringify({ status: "ok", budget: devCostBudgetService.snapshot(taskId, null, budgetEnforcement) }));
+}
+
+if (requestPath.startsWith("/api/dev/native/tasks/") && req.method === "GET") {
+  if (req.headers["x-noon-request"] !== "1") { res.writeHead(403); return res.end(); }
+  const taskId = decodeURIComponent(requestPath.slice("/api/dev/native/tasks/".length)); const result = nativeDevCoordinator.getTaskStatus(taskId);
+  res.writeHead(result ? 200 : 404, { "Content-Type": "application/json", "Cache-Control": "no-store" }); return res.end(JSON.stringify(result || { status: "not_found" }));
+}
+
+if (requestPath.startsWith("/api/dev/native/tasks/") && requestPath.endsWith("/cancel") && req.method === "POST") {
+  if (req.headers["x-noon-request"] !== "1") { res.writeHead(403); return res.end(); }
+  const taskId = decodeURIComponent(requestPath.slice("/api/dev/native/tasks/".length, -"/cancel".length)); const result = nativeDevCoordinator.cancelTask(taskId);
+  res.writeHead(result.cancelled ? 200 : 409, { "Content-Type": "application/json", "Cache-Control": "no-store" }); return res.end(JSON.stringify(result));
+}
+
 if (req.method === "GET" && req.url.startsWith("/api/features")) {
   const url = new URL(req.url, `http://${req.headers.host || DEFAULT_HOST}`);
   const context = { workspaceId: url.searchParams.get("workspaceId"), sessionId: url.searchParams.get("sessionId") };
@@ -7204,6 +7439,8 @@ async function startNoonServer({
   host = DEFAULT_HOST,
   port = DEFAULT_PORT,
   authSecret = null,
+  loadOpenAIKey = null,
+  loadGeminiKey = null,
 } = {}) {
   if (host !== DEFAULT_HOST) {
     return Promise.reject(
@@ -7212,6 +7449,8 @@ async function startNoonServer({
   }
 
   localAuthSecret = authSecret || null;
+  loadOpenAIKeyOnDemand = typeof loadOpenAIKey === "function" ? loadOpenAIKey : null;
+  loadGeminiKeyOnDemand = typeof loadGeminiKey === "function" ? loadGeminiKey : null;
 
   // La migration est locale, sauvegardée et idempotente. Elle est exécutée
   // avant l'écoute HTTP afin qu'aucune requête ne lise un état intermédiaire.

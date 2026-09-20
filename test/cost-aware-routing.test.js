@@ -78,11 +78,31 @@ test("fallback cross-provider n'est préparé que si explicitement autorisé", (
   assert.ok(fallback.fallbackCandidates.every((candidate) => candidate.provider !== fallback.provider));
 });
 
+test("l'escalade qualité exige une preuve et choisit uniquement un palier supérieur", () => {
+  const sameTier = route({ eligibleProviders: ["openai"], qualityEscalation: true, qualityFailureEvidence: false, escalationFromModel: "gpt-5.6-terra" });
+  assert.equal(sameTier.model, "gpt-5.6-terra");
+  const escalated = route({ eligibleProviders: ["openai"], qualityEscalation: true, qualityFailureEvidence: true, escalationFromModel: "gpt-5.6-terra" });
+  assert.equal(escalated.model, "gpt-5.6-sol");
+  assert.ok(escalated.routingReasonCodes.includes("QUALITY_ESCALATION"));
+});
+
+test("une escalade trop chère échoue sans dégrader la qualité", () => {
+  assert.throws(() => route({ eligibleProviders: ["openai"], qualityEscalation: true, qualityFailureEvidence: true, escalationFromModel: "gpt-5.6-terra", maxEstimatedCost: 0.001 }), (error) => error.code === "ESCALATION_BLOCKED_BUDGET");
+});
+
 test("les cinq flags V2.4 sont prudents et réversibles", () => {
   const ids = ["router.multi-provider", "router.cost-aware", "router.gemini-limited", "router.second-opinion", "router.cross-provider-fallback"];
   for (const id of ids) {
     const flag = FEATURE_FLAGS.find((item) => item.flagId === id);
     assert.ok(flag);
+    assert.equal(flag.defaultMode, "OFF");
+    assert.equal(flag.rollbackSafe, true);
+  }
+});
+
+test("les flags DEV V2.7 sont OFF et réversibles par défaut", () => {
+  for (const id of ["dev.auto-routing", "dev.budget-enforcement", "dev.quality-escalation"]) {
+    const flag = FEATURE_FLAGS.find((item) => item.flagId === id);
     assert.equal(flag.defaultMode, "OFF");
     assert.equal(flag.rollbackSafe, true);
   }

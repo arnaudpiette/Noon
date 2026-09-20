@@ -72,6 +72,25 @@ test("les métriques ne contiennent jamais le texte ni le transcript", async () 
   const serialized = JSON.stringify(events); assert.equal(serialized.includes("Secret Nom"), false); assert.equal(serialized.includes("Rappelle-moi"), false);
 });
 
+test("une demande explicite d’image est routée sans modèle texte intermédiaire", async () => {
+  const { engine } = fixture();
+  const intent = await engine.parse("chat", { text: "Génère-moi une image d’un bulldog au-dessus de la jungle" });
+  assert.equal(intent.type, "GENERATE");
+  assert.equal(intent.action, "image");
+  assert.equal(intent.requiresTool, true);
+  assert.match(intent.entities.prompt, /bulldog/);
+});
+
+test("les recherches publiques explicites et les recherches locales restent séparées", async () => {
+  const { engine } = fixture();
+  const web = await engine.parse("chat", { text: "Trouve-moi un tutoriel React" });
+  assert.equal(web.action, "public_research");
+  assert.equal(web.requiresPublicResearch, true);
+  const local = await engine.parse("chat", { text: "Trouve-moi le fichier portfolio dans mon dossier" });
+  assert.equal(local.action, "file");
+  assert.equal(local.requiresPublicResearch, false);
+});
+
 test("le parsing temporel conserve les dayparts et calcule le relatif", () => {
   const now = new Date("2026-08-28T08:00:00Z");
   assert.equal(parseTemporal("demain matin", { now }).daypart, "morning");

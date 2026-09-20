@@ -22,6 +22,9 @@ module.exports = {
     asar: {
       unpack: "**/node_modules/{@img,@picovoice}/**",
     },
+    // Les fixtures du pilot sont des entrées runtime en lecture seule. Elles
+    // restent hors ASAR afin de conserver les sémantiques fs.realpath/fs.cp.
+    extraResource: [path.join(__dirname, "resources", "dev-benchmark-fixtures")],
     arch: requestedArch,
     protocols: [{ name: "Noon", schemes: ["noon"] }],
     extendInfo: {
@@ -56,6 +59,7 @@ module.exports = {
       /^\/backups(?:\/|$)/,
       /^\/logs(?:\/|$)/,
       /^\/test(?:\/|$)/,
+      /^\/resources\/dev-benchmark-fixtures(?:\/|$)/,
       /^\/Workspace\/Temp(?:\/|$)/,
       // La base locale appartient exclusivement au userData Electron. Elle ne
       // doit jamais être copiée depuis un worktree de développement dans l’ASAR.

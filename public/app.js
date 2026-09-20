@@ -9,6 +9,8 @@ const {
   createPastedTextFileName,
   maskPrivateMemoryValue,
   privateMemoryCategoryLabel,
+  normalizeSafeChatUrl,
+  renderChatMarkdown,
 } = window.NoonUiUtils;
 const chatForm = document.getElementById("chatForm");
 const promptInput = document.getElementById("prompt");
@@ -2099,7 +2101,7 @@ function addMessage(
   message.className = `message ${className}`;
   authorLabel.className = "author";
   authorLabel.textContent = author;
-  paragraph.textContent = text;
+  renderChatMarkdown(paragraph, text);
   message.append(authorLabel, paragraph);
 
   if (attachments.length > 0) {
@@ -2144,9 +2146,9 @@ function addMessage(
 
     sources.forEach((source) => {
       try {
-        const url = new URL(source.url);
-
-        if (url.protocol !== "https:") return;
+        const safeUrl = normalizeSafeChatUrl(source.url);
+        if (!safeUrl) return;
+        const url = new URL(safeUrl);
 
         const link = document.createElement("a");
         link.href = url.href;
@@ -2157,10 +2159,16 @@ function addMessage(
         card.className = "message-source-card";
         const metadata = document.createElement("small");
         const sourceDate = source.updatedAt || source.publishedAt || source.retrievedAt;
-        metadata.textContent = [source.domain || url.hostname, sourceDate ? new Date(sourceDate).toLocaleDateString("fr-FR") : null]
+        metadata.textContent = [source.source || source.domain || url.hostname, sourceDate ? new Date(sourceDate).toLocaleDateString("fr-FR") : null]
           .filter(Boolean).join(" · ");
         card.append(link);
         if (metadata.textContent) card.append(metadata);
+        if (source.snippet) {
+          const snippet = document.createElement("p");
+          snippet.className = "message-source-card__snippet";
+          snippet.textContent = String(source.snippet).slice(0, 500);
+          card.append(snippet);
+        }
         sourcesContainer.append(card);
       } catch {
         // Une source incorrecte n’est pas affichée.

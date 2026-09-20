@@ -10,7 +10,9 @@ const test = require("node:test");
 const sharp = require("sharp");
 const {
   IMAGE_MODEL,
+  IMAGE_PROVIDER,
   generateCreativeImage,
+  normalizeImageGenerationError,
 } = require("../services/production/creative-image-generator");
 
 async function pngBase64() {
@@ -88,4 +90,41 @@ test("n’écrase jamais une image créative existante", async (context) => {
   assert.notEqual(first.artifact.path, second.artifact.path);
   assert.match(first.artifact.name, /_v001_/);
   assert.match(second.artifact.name, /_v002_/);
+});
+
+test("le registre image n’expose qu’un modèle réellement compatible", () => {
+  assert.equal(IMAGE_PROVIDER.model, IMAGE_MODEL);
+  assert.equal(IMAGE_PROVIDER.capabilities.imageGeneration, true);
+  assert.equal(IMAGE_PROVIDER.capabilities.text, false);
+});
+
+test("retente une seule fois un échec transitoire puis produit l’asset", async (context) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "noon-image-retry-"));
+  context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  let calls = 0;
+  const client = { images: { generate: async () => {
+    calls += 1;
+    if (calls === 1) throw Object.assign(new Error("temporary"), { status: 503 });
+    return { data: [{ b64_json: await pngBase64() }] };
+  } } };
+  const result = await generateCreativeImage({ prompt: "Fixture synthétique", title: "Retry" }, { client, previewDirectory: directory, sleep: async () => {} });
+  assert.equal(calls, 2);
+  assert.equal(result.artifact.creative, true);
+});
+
+test("normalise les échecs sans recopier de secret dans le message", () => {
+  const error = normalizeImageGenerationError(Object.assign(new Error("Bearer secret-value"), { status: 429 }));
+  assert.equal(error.code, "RATE_LIMITED");
+  assert.equal(error.retryable, true);
+  assert.equal(error.message.includes("secret-value"), false);
+});
+
+test("un résultat provider vide devient INVALID_RESPONSE et ne laisse aucun PNG", async (context) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "noon-image-empty-"));
+  context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  await assert.rejects(
+    generateCreativeImage({ prompt: "Fixture synthétique", title: "Empty" }, { client: { images: { generate: async () => ({ data: [] }) } }, previewDirectory: directory }),
+    { code: "INVALID_RESPONSE" }
+  );
+  assert.deepEqual(fs.readdirSync(directory), []);
 });

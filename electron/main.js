@@ -22,6 +22,8 @@ const { WakeWordService } = require("../services/wake-word-service");
 const { isDueToday, nextRunAt } = require("../lib/creative-brief");
 const { createLocalPermissionStore } = require("../lib/local-permissions");
 const { createPasswordVerifier, verifyPassword } = require("../services/security/local-password-verifier");
+const { executeBenchmarkControlCommand, parseBenchmarkControlCommand, publicCommandError } = require("./benchmark-control-client");
+const { createDeferredOptionalLoader, createStartupDiagnostics, startOptionalStartupPhase } = require("./startup-diagnostics");
 
 const smokeArgument = (name) => process.argv.find((value) => value.startsWith(`--${name}=`))?.split("=").slice(1).join("=");
 const smokeModeFromArguments = process.argv.includes("--noon-smoke-test");
@@ -36,11 +38,15 @@ const buildProfile = resolveBuildProfile({ packaged: app.isPackaged });
 const safeModeRequested = process.argv.includes("--safe-mode") || process.env.NOON_SAFE_MODE === "1";
 const smokeTestRequested = process.env.NOON_SMOKE_TEST === "1" || smokeModeFromArguments;
 const smokeUserData = process.env.NOON_SMOKE_USER_DATA || smokeArgument("noon-smoke-user-data");
+let benchmarkControlCommand = null;
+let benchmarkControlCommandError = null;
+try { benchmarkControlCommand = parseBenchmarkControlCommand(process.argv); }
+catch (error) { benchmarkControlCommandError = error; }
 if (smokeTestRequested && smokeUserData) {
   app.setPath("userData", path.resolve(smokeUserData));
 }
 // Le smoke test utilise un profil et un port isolés ; il ne doit pas réveiller l'instance quotidienne.
-const hasSingleInstanceLock = smokeTestRequested || app.requestSingleInstanceLock();
+const hasSingleInstanceLock = benchmarkControlCommand || benchmarkControlCommandError ? true : smokeTestRequested || app.requestSingleInstanceLock();
 let mainWindow = null;
 let tray = null;
 let serverController = null;
@@ -57,10 +63,55 @@ let creativeBriefRunning = false;
 let microphonePermission = "unknown";
 let privateMemoryAuthFailures = 0;
 let privateMemoryAuthLockedUntil = 0;
+let serverStartedLatencyMs = null;
+let startupTimingLoggerReady = false;
+const startupPhaseTimings = [];
+let startupDiagnostics = null;
+let deferredOpenAISecret = null;
+let deferredGeminiSecret = null;
+
+async function measureStartupPhase(phase, operation) {
+  return startupDiagnostics.measure(phase, async () => {
+    const startedAt = process.hrtime.bigint();
+    let status = "ok";
+    let errorCode = null;
+    try {
+      return await operation();
+    } catch (error) {
+      status = "error";
+      errorCode = String(error?.code || error?.name || "ERROR").slice(0, 80);
+      throw error;
+    } finally {
+      const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+      const timing = {
+        phase,
+        durationMs: Math.round(durationMs * 10) / 10,
+        status,
+        ...(errorCode ? { errorCode } : {}),
+      };
+      if (startupTimingLoggerReady) logNoonEvent("info", "startup-phase", JSON.stringify(timing));
+      else startupPhaseTimings.push(timing);
+    }
+  });
+}
+
+function flushStartupPhaseTimings() {
+  for (const timing of startupPhaseTimings.splice(0)) {
+    logNoonEvent("info", "startup-phase", JSON.stringify(timing));
+  }
+}
+
+function recordSkippedStartupPhase(phase) {
+  startupPhaseTimings.push({ phase, durationMs: 0, status: "skipped" });
+}
 
 if (!hasSingleInstanceLock) app.quit();
 
 const dataPath = (name) => path.join(app.getPath("userData"), name);
+startupDiagnostics = createStartupDiagnostics({ filePath: dataPath("startup-diagnostics.jsonl") });
+deferredOpenAISecret = createDeferredOptionalLoader({ operation: () => loadEncryptedOpenAIKey() });
+deferredGeminiSecret = createDeferredOptionalLoader({ operation: () => loadEncryptedGeminiKey() });
+startupDiagnostics.record("main-module", "ready", { elapsedMs: Date.now() - PROCESS_STARTED_AT });
 const localPermissionStore = createLocalPermissionStore(dataPath("local-permissions.json"));
 function readJson(name, fallback) {
   try { return JSON.parse(fs.readFileSync(dataPath(name), "utf8")); }
@@ -130,6 +181,11 @@ function getOrCreateLocalSecret() {
     fs.writeFileSync(secretPath, safeStorage.encryptString(secret), { mode: 0o600 });
     return secret;
   }
+}
+function loadExistingLocalSecret() {
+  if (!safeStorage.isEncryptionAvailable()) throw Object.assign(new Error("Coffre indisponible."), { code: "NOON_AUTH_UNAVAILABLE" });
+  try { return safeStorage.decryptString(fs.readFileSync(dataPath("local-auth.bin"))); }
+  catch { throw Object.assign(new Error("Authentification locale indisponible."), { code: "NOON_AUTH_UNAVAILABLE" }); }
 }
 function loadEncryptedOpenAIKey() {
   if (process.env.OPENAI_API_KEY || !safeStorage.isEncryptionAvailable()) return;
@@ -252,6 +308,25 @@ async function requestMicrophoneAccess() {
   }
   return microphonePermission === "granted";
 }
+async function initializeWakeWordConfiguration(preferences) {
+  const configured = Boolean(
+    loadEncryptedSecret("picovoice-access-key") &&
+    preferences.wakeWordKeywordPath &&
+    preferences.wakeWordModelPath &&
+    fs.existsSync(preferences.wakeWordKeywordPath) &&
+    fs.existsSync(preferences.wakeWordModelPath)
+  );
+  if (configured && preferences.wakeWordStartupVersion !== 2) {
+    await measureStartupPhase("wake-word-preferences", async () => {
+      writeJson("preferences.json", {
+        ...preferences,
+        wakeWordEnabled: true,
+        wakeWordStartupVersion: 2,
+      });
+    });
+  }
+  return configured;
+}
 async function openExternalUrl(rawUrl) {
   if (!isSafeExternalUrl(rawUrl)) return false;
   await shell.openExternal(rawUrl);
@@ -292,6 +367,16 @@ async function syncWakeWordState() {
   const preferences = loadPreferences();
   if (!preferences.wakeWordEnabled || liveVoiceActive) {
     await wakeWordService.stop();
+    rebuildTrayMenu();
+    return;
+  }
+  if (microphonePermission !== "granted") {
+    await wakeWordService.stop();
+    const denied = microphonePermission === "denied" || microphonePermission === "restricted";
+    wakeWordService.setStatus(
+      denied ? "unavailable" : "waiting-permission",
+      denied ? "Autorisation microphone indisponible." : "En attente de l’autorisation microphone."
+    );
     rebuildTrayMenu();
     return;
   }
@@ -547,7 +632,9 @@ function registerIpc() {
     devices: WakeWordService.listDevices(),
   }));
   registerTrustedHandler("noon:get-openai-key-status", () => ({
-    configured: Boolean(process.env.OPENAI_API_KEY || loadEncryptedSecret("openai-api-key")),
+    configured: Boolean(process.env.OPENAI_API_KEY || fs.existsSync(encryptedSecretPath("openai-api-key"))),
+    available: Boolean(process.env.OPENAI_API_KEY),
+    state: process.env.OPENAI_API_KEY ? "READY" : deferredOpenAISecret.state(),
   }));
   registerTrustedHandler("noon:set-openai-key", (_event, value) => {
     if (typeof value !== "string" || value.length > 500) throw new Error("Clé OpenAI invalide.");
@@ -687,61 +774,81 @@ async function startNoon() {
   process.env.NOON_BUILD_PROFILE = buildProfile;
   if (safeModeRequested) process.env.NOON_SAFE_MODE = "1";
   const startupMarker = dataPath("startup-state.json");
-  const previousStartupState = readPreviousStartupState(startupMarker);
-  writeStartupState(startupMarker, "starting", { profile: buildProfile, previousStartupState });
-  const savedPreferences = readJson("preferences.json", {});
-  if (
-    savedPreferences.creativeBriefTime === "08:00" &&
-    savedPreferences.creativeBriefScheduleVersion !== 2
-  ) {
-    writeJson("preferences.json", {
-      ...savedPreferences,
-      creativeBriefTime: "07:00",
-      creativeBriefScheduleVersion: 2,
-    });
+  const previousStartupState = await measureStartupPhase("startup-state", async () => {
+    const previous = readPreviousStartupState(startupMarker);
+    writeStartupState(startupMarker, "starting", { profile: buildProfile, previousStartupState: previous });
+    return previous;
+  });
+  const migratedPreferences = await measureStartupPhase("preferences", async () => {
+    const savedPreferences = readJson("preferences.json", {});
+    if (
+      savedPreferences.creativeBriefTime === "08:00" &&
+      savedPreferences.creativeBriefScheduleVersion !== 2
+    ) {
+      writeJson("preferences.json", {
+        ...savedPreferences,
+        creativeBriefTime: "07:00",
+        creativeBriefScheduleVersion: 2,
+      });
+    }
+    return readJson("preferences.json", {});
+  });
+  if (safeModeRequested) {
+    recordSkippedStartupPhase("wake-word-config");
   }
-  const migratedPreferences = readJson("preferences.json", {});
-  const wakeWordIsConfigured = Boolean(
-    loadEncryptedSecret("picovoice-access-key") &&
-    migratedPreferences.wakeWordKeywordPath &&
-    migratedPreferences.wakeWordModelPath &&
-    fs.existsSync(migratedPreferences.wakeWordKeywordPath) &&
-    fs.existsSync(migratedPreferences.wakeWordModelPath)
-  );
-  if (wakeWordIsConfigured && migratedPreferences.wakeWordStartupVersion !== 2) {
-    writeJson("preferences.json", {
-      ...migratedPreferences,
-      wakeWordEnabled: true,
-      wakeWordStartupVersion: 2,
-    });
+  if (smokeTestRequested) {
+    // Le smoke valide le cœur local et ne doit ni importer ni déchiffrer des
+    // secrets provider dans son profil jetable avant d'atteindre /health.
+    recordSkippedStartupPhase("openai-secret");
+    recordSkippedStartupPhase("gemini-secret");
+    recordSkippedStartupPhase("integration-environment");
+  } else {
+    startupDiagnostics.record("openai-secret", "deferred", { reasonCode: "OPTIONAL_SECRET_ON_DEMAND" });
+    recordSkippedStartupPhase("openai-secret");
+    startupDiagnostics.record("gemini-secret", "deferred", { reasonCode: "OPTIONAL_SECRET_ON_DEMAND" });
+    recordSkippedStartupPhase("gemini-secret");
+    await measureStartupPhase("integration-environment", async () => loadLocalIntegrationEnvironment());
   }
-  loadEncryptedOpenAIKey();
-  loadEncryptedGeminiKey();
-  loadLocalIntegrationEnvironment();
-  logNoonEvent = createRotatingLogger(userDataDirectory);
+  await measureStartupPhase("logger", async () => {
+    logNoonEvent = createRotatingLogger(userDataDirectory);
+  });
+  startupTimingLoggerReady = true;
+  flushStartupPhaseTimings();
   logNoonEvent("info", "startup-begin", JSON.stringify({
     profile: buildProfile,
     safeMode: safeModeRequested,
     previousStartupState,
   }));
-  wakeWordService = new WakeWordService({ getAccessKey: () => loadEncryptedSecret("picovoice-access-key"), logger: logNoonEvent });
-  wakeWordService.on("status", () => rebuildTrayMenu());
-  wakeWordService.on("detected", () => {
-    shell.beep();
-    dispatchDeepLink("noon://wake");
-    scheduleWakeWordResume(90_000);
+  await measureStartupPhase("wake-word-service", async () => {
+    wakeWordService = new WakeWordService({ getAccessKey: () => loadEncryptedSecret("picovoice-access-key"), logger: logNoonEvent });
+    wakeWordService.on("status", () => rebuildTrayMenu());
+    wakeWordService.on("detected", () => {
+      shell.beep();
+      dispatchDeepLink("noon://wake");
+      scheduleWakeWordResume(90_000);
+    });
   });
-  const migration = migrateLegacyData(path.join(__dirname, ".."), userDataDirectory);
+  const migration = await measureStartupPhase("legacy-data-migration", async () => (
+    migrateLegacyData(path.join(__dirname, ".."), userDataDirectory)
+  ));
   logNoonEvent("audit", "data-migration", JSON.stringify({
     migrated: migration.migrated,
     skipped: migration.skipped,
   }));
-    localAuthSecret = getOrCreateLocalSecret();
-    configureSessionSecurity();
-    await requestMicrophoneAccess();
-  serverController = require(path.join(__dirname, "..", "server.js"));
+  localAuthSecret = await measureStartupPhase("local-auth", async () => (
+    smokeTestRequested
+      ? crypto.randomBytes(32).toString("base64url")
+      : getOrCreateLocalSecret()
+  ));
+  await measureStartupPhase("session-security", async () => configureSessionSecurity());
+  serverController = await measureStartupPhase("server-composition", async () => (
+    require(path.join(__dirname, "..", "server.js"))
+  ));
   try {
-    await serverController.startNoonServer({ authSecret: localAuthSecret, port: NOON_PORT });
+    await measureStartupPhase("server-start", async () => (
+      serverController.startNoonServer({ authSecret: localAuthSecret, port: NOON_PORT, loadOpenAIKey: () => deferredOpenAISecret.ensureSync(), loadGeminiKey: () => deferredGeminiSecret.ensureSync() })
+    ));
+    serverStartedLatencyMs = Date.now() - PROCESS_STARTED_AT;
     logNoonEvent("info", "server-started", `127.0.0.1:${NOON_PORT}`);
   }
   catch (error) {
@@ -752,6 +859,31 @@ async function startNoon() {
       throw new Error("Le port 3000 est occupé par une autre application.");
     }
   }
+  if (!safeModeRequested) {
+    startOptionalStartupPhase({
+      operation: () => measureStartupPhase(
+        "wake-word-config",
+        async () => initializeWakeWordConfiguration(migratedPreferences)
+      ),
+      onResolved: () => { void syncWakeWordState(); },
+      onRejected: (error) => {
+        wakeWordService?.setStatus("unavailable", "Réveil vocal indisponible.", {
+          error: String(error?.code || error?.name || "ERROR"),
+        });
+      },
+    });
+  }
+  microphonePermission = smokeTestRequested ? "skipped-smoke-test" : "waiting-permission";
+  startOptionalStartupPhase({
+    operation: () => measureStartupPhase("microphone-access", async () => requestMicrophoneAccess()),
+    onResolved: () => { void syncWakeWordState(); },
+    onRejected: (error) => {
+      microphonePermission = "unavailable";
+      logNoonEvent("error", "microphone-access", String(error?.code || error?.name || "ERROR"));
+      void syncWakeWordState();
+    },
+  });
+  flushStartupPhaseTimings();
   writeStartupState(startupMarker, "running", { profile: buildProfile });
   logNoonEvent("info", "startup-server-ready", JSON.stringify({ elapsedMs: Date.now() - PROCESS_STARTED_AT }));
 }
@@ -763,8 +895,24 @@ app.on("second-instance", (_event, argv) => {
   if (link) dispatchDeepLink(link);
 });
 
-if (hasSingleInstanceLock) {
+startupDiagnostics.record("app-when-ready", "start");
+if (benchmarkControlCommandError) {
+  app.whenReady().then(() => {
+    console.log(JSON.stringify(publicCommandError(benchmarkControlCommandError)));
+    app.exit(2);
+  });
+} else if (benchmarkControlCommand) {
   app.whenReady().then(async () => {
+    const result = await executeBenchmarkControlCommand(benchmarkControlCommand, { loadAuthSecret: loadExistingLocalSecret });
+    console.log(JSON.stringify(result));
+    app.exit(0);
+  }).catch((error) => {
+    console.log(JSON.stringify(publicCommandError(error)));
+    app.exit(1);
+  });
+} else if (hasSingleInstanceLock) {
+  app.whenReady().then(async () => {
+    startupDiagnostics.record("app-when-ready", "ok", { elapsedMs: Date.now() - PROCESS_STARTED_AT });
     app.setAsDefaultProtocolClient("noon");
     registerIpc();
     await startNoon();
@@ -779,6 +927,9 @@ if (hasSingleInstanceLock) {
         status: "ok",
         smoke: "packaged-startup",
         profile: buildProfile,
+        serverStartedObserved: true,
+        serverStartedLatencyMs,
+        healthReadyLatencyMs: Date.now() - PROCESS_STARTED_AT,
         elapsedMs: Date.now() - PROCESS_STARTED_AT,
       });
       console.log(JSON.stringify({ status: "ok", smoke: "packaged-startup", profile: buildProfile }));

@@ -4,12 +4,14 @@ const CURRENT = /\b(actuel(?:le)?s?|actuellement|aujourd['’ ]?hui|derni[eè]re
 const PUBLIC = /\b(internet|web|en ligne|source(?:s)? publique(?:s)?|cherche sur|recherche approfondie|documentation officielle|actualit[eé]|derni[eè]re? version|v[eé]rifie)\b/i;
 const PERSONAL = /\b(mon|ma|mes|notre|nos|on avait|conversation|m[eé]moire|focus|projet|fichier|gmail|agenda|note|rappel)\b/i;
 const NO_WEB = /\b(sans (?:internet|web)|ne cherche pas (?:sur )?(?:internet|le web)|hors ligne uniquement)\b/i;
+const FIND_REQUEST = /\b(?:trouve|cherche|recherche)(?:-moi|\s+moi)?\b/i;
+const LOCAL_LOOKUP = /\b(?:fichier|dossier|r[eé]pertoire|controller|contr[oô]leur|code|conversation|m[eé]moire|souvenir|ce que tu sais|dans (?:mon|ma|mes)|projet (?:local|fictif))\b/i;
 
 function resolveResearchScope(input = {}) {
   const text = String(input.query || "");
   if (input.scope && ["PERSONAL", "PUBLIC", "MIXED"].includes(input.scope)) return { scope: input.scope, explicit: true, reasonCodes: ["explicit_scope"] };
   if (NO_WEB.test(text) || input.webAllowed === false) return { scope: "PERSONAL", explicit: true, reasonCodes: ["user_disabled_web"] };
-  const publicNeeded = input.webRequested === true || PUBLIC.test(text) || CURRENT.test(text);
+  const publicNeeded = input.webRequested === true || PUBLIC.test(text) || CURRENT.test(text) || (FIND_REQUEST.test(text) && !LOCAL_LOOKUP.test(text));
   const personalNeeded = input.personalRequested === true || PERSONAL.test(text);
   if (publicNeeded && personalNeeded) return { scope: "MIXED", explicit: input.webRequested === true, reasonCodes: ["public_and_personal_required"] };
   if (publicNeeded) return { scope: "PUBLIC", explicit: input.webRequested === true, reasonCodes: [CURRENT.test(text) ? "current_information" : "public_research"] };

@@ -13,6 +13,7 @@ const DEFAULT_SKILLS = [
   require("./personal/update-execution-status"),
   require("./search/personal-search"),
   require("./search/synthesize-personal-sources"),
+  require("./dev/apply-edit"), require("./dev/run-validation"),
 ];
 
 const MODEL_TOOL_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
@@ -104,7 +105,7 @@ function createSkillRegistry(skills = DEFAULT_SKILLS, { auditLog = null } = {}) 
 
   return {
     getAllSkills: () => [...byName.values()], getSkillByName: (name) => byName.get(resolveName(name)) || null,
-    getToolDefinitions: ({ deferRare = false } = {}) => [...byName.values()].map((skill) => ({ ...skill.definition, name: skill.modelToolName || skill.definition.name, ...(deferRare && skill.deferred ? { defer_loading: true } : {}) })),
+    getToolDefinitions: ({ deferRare = false } = {}) => [...byName.values()].filter((skill) => skill.modelVisible !== false).map((skill) => ({ ...skill.definition, name: skill.modelToolName || skill.definition.name, ...(deferRare && skill.deferred ? { defer_loading: true } : {}) })),
     authorize, executeSkill, registerExtensionSkill, unregisterExtensionSkills,
     validateRegistry: () => ([...byName.values()].forEach(validateSkill), true),
   };

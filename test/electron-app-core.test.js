@@ -34,11 +34,13 @@ test("autorise uniquement l’URL OAuth Google canonique avec callback Noon inta
   assert.equal(isSafeGoogleAuthorizationUrl(url.href), false);
 });
 
-test("refuse les navigations externes qui ne sont pas HTTPS", () => {
+test("autorise HTTP(S) sans credentials et refuse les protocoles dangereux", () => {
   assert.equal(isSafeExternalUrl("https://openai.com/docs"), true);
   assert.equal(isSafeExternalUrl("https://accounts.google.com/o/oauth2/v2/auth"), true);
-  assert.equal(isSafeExternalUrl("http://openai.com"), false);
+  assert.equal(isSafeExternalUrl("http://example.com/test"), true);
+  assert.equal(isSafeExternalUrl("https://user:password@example.com/test"), false);
   assert.equal(isSafeExternalUrl("javascript:alert(1)"), false);
+  assert.equal(isSafeExternalUrl("data:text/html,<script>alert(1)</script>"), false);
   assert.equal(isSafeExternalUrl("file:///tmp/test"), false);
 });
 

@@ -15,6 +15,13 @@ const CONFIG_DEFINITIONS = Object.freeze([
   { key: "gemini.rollout", type: "enum", defaultValue: "SHADOW", allowedValues: ["OFF", "SHADOW", "LIMITED"], allowedScopes: ["MACHINE", "USER", "TEST"], sensitive: false, public: true, userEditable: true, restartRequired: "APP_RESTART" },
   { key: "gemini.tier", type: "enum", defaultValue: "UNKNOWN", allowedValues: ["UNKNOWN", "FREE", "PAID"], allowedScopes: ["MACHINE", "TEST"], sensitive: false, public: false, userEditable: false, restartRequired: "APP_RESTART" },
   { key: "routing.profileDefault", type: "enum", defaultValue: "balanced", allowedValues: ["economical", "balanced", "maximum"], allowedScopes: ["USER", "WORKSPACE", "SESSION", "TEST"], sensitive: false, public: true, userEditable: true, restartRequired: "SESSION" },
+  { key: "devBudget.enabled", type: "boolean", defaultValue: true, allowedScopes: ["USER", "TEST"], sensitive: false, public: true, userEditable: true, restartRequired: "LIVE" },
+  { key: "devBudget.currency", type: "enum", defaultValue: "USD", allowedValues: ["USD"], allowedScopes: ["USER", "TEST"], sensitive: false, public: true, userEditable: false, restartRequired: "LIVE" },
+  { key: "devBudget.taskLimitUsd", type: "number", defaultValue: 0, min: 0, max: 1000, allowedScopes: ["USER", "WORKSPACE", "SESSION", "TEST"], sensitive: false, public: true, userEditable: true, restartRequired: "LIVE" },
+  { key: "devBudget.dailyLimitUsd", type: "number", defaultValue: 0, min: 0, max: 1000, allowedScopes: ["USER", "TEST"], sensitive: false, public: true, userEditable: true, restartRequired: "LIVE" },
+  { key: "devBudget.monthlyLimitUsd", type: "number", defaultValue: 20, min: 0, max: 10000, allowedScopes: ["USER", "TEST"], sensitive: false, public: true, userEditable: true, restartRequired: "LIVE" },
+  { key: "devBudget.sameTierRepairAttempts", type: "integer", defaultValue: 2, min: 0, max: 5, allowedScopes: ["USER", "WORKSPACE", "SESSION", "TEST"], sensitive: false, public: true, userEditable: true, restartRequired: "LIVE" },
+  { key: "devBenchmark.maxCostUsd", type: "number", defaultValue: 0.5, min: 0, max: 1000, allowedScopes: ["MACHINE", "TEST"], sensitive: false, public: true, userEditable: false, restartRequired: "LIVE" },
   { key: "delegation.maxSubtasks", type: "integer", defaultValue: 3, min: 1, max: 4, allowedScopes: ["MACHINE", "USER", "WORKSPACE", "SESSION", "TEST"], sensitive: false, public: true, userEditable: true, restartRequired: "LIVE" },
   { key: "delegation.maxParallel", type: "integer", defaultValue: 2, min: 1, max: 2, allowedScopes: ["MACHINE", "USER", "WORKSPACE", "SESSION", "TEST"], sensitive: false, public: true, userEditable: true, restartRequired: "LIVE" },
   { key: "delegation.maxWallTimeMs", type: "integer", defaultValue: 45000, min: 1000, max: 120000, allowedScopes: ["MACHINE", "USER", "WORKSPACE", "SESSION", "TEST"], sensitive: false, public: true, userEditable: true, restartRequired: "LIVE" },
@@ -64,6 +71,7 @@ function createConfigRegistry(definitions = CONFIG_DEFINITIONS) {
     const entry = get(key);
     if (scope !== "BUILD" && !entry.allowedScopes.includes(scope)) throw Object.assign(new Error(`Scope ${scope} interdit pour ${key}`), { code: "CONFIG_SCOPE_FORBIDDEN" });
     if (entry.type === "integer" && (!Number.isInteger(value) || value < entry.min || value > entry.max)) throw Object.assign(new Error(`Valeur hors limites pour ${key}`), { code: "CONFIG_INVALID_VALUE" });
+    if (entry.type === "number" && (!Number.isFinite(value) || value < entry.min || value > entry.max)) throw Object.assign(new Error(`Valeur hors limites pour ${key}`), { code: "CONFIG_INVALID_VALUE" });
     if (entry.type === "string" && typeof value !== "string") throw Object.assign(new Error(`Type invalide pour ${key}`), { code: "CONFIG_INVALID_TYPE" });
     if (entry.type === "boolean" && typeof value !== "boolean") throw Object.assign(new Error(`Type invalide pour ${key}`), { code: "CONFIG_INVALID_TYPE" });
     if (entry.type === "enum" && !entry.allowedValues?.includes(value)) throw Object.assign(new Error(`Valeur invalide pour ${key}`), { code: "CONFIG_INVALID_VALUE" });

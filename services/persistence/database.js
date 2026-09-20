@@ -5,7 +5,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 15;
 
 function loadSqlite() {
   try { return require("node:sqlite"); }
@@ -462,6 +462,38 @@ function createSchema(database) {
       nonce_hash TEXT NOT NULL, decision TEXT NOT NULL, responded_at TEXT NOT NULL,
       state TEXT NOT NULL, UNIQUE(device_id, nonce_hash)
     );
+    CREATE TABLE IF NOT EXISTS benchmark_sessions (
+      id TEXT PRIMARY KEY, benchmark_id TEXT NOT NULL, suite_version TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL UNIQUE, state TEXT NOT NULL, next_run_index INTEGER NOT NULL DEFAULT 0,
+      cancel_requested INTEGER NOT NULL DEFAULT 0, version_metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS benchmark_sessions_benchmark_idx ON benchmark_sessions(benchmark_id, created_at);
+    CREATE INDEX IF NOT EXISTS benchmark_sessions_state_idx ON benchmark_sessions(state, updated_at);
+    CREATE TABLE IF NOT EXISTS benchmark_runs (
+      id TEXT PRIMARY KEY, session_id TEXT NOT NULL, run_index INTEGER NOT NULL, task_id TEXT NOT NULL,
+      participant TEXT NOT NULL, state TEXT NOT NULL, start_fingerprint TEXT, started_at TEXT, ended_at TEXT,
+      failure_category TEXT, participant_reported_status TEXT, final_verdict TEXT,
+      first_pass_success INTEGER, repair_cycles INTEGER, iterations INTEGER, duration_ms INTEGER,
+      regression_count INTEGER, scope_violations INTEGER, security_violations INTEGER,
+      user_intervention_count INTEGER NOT NULL DEFAULT 0, provider TEXT, initial_model TEXT, final_model TEXT,
+      retry_count INTEGER, fallback_count INTEGER, escalation_count INTEGER, input_tokens INTEGER,
+      output_tokens INTEGER, estimated_cost REAL, calculated_actual_cost REAL, cost_type TEXT,
+      validation_summary_json TEXT, result_finalized INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL,
+      UNIQUE(session_id, run_index), FOREIGN KEY(session_id) REFERENCES benchmark_sessions(id)
+    );
+    CREATE INDEX IF NOT EXISTS benchmark_runs_session_idx ON benchmark_runs(session_id, run_index);
+    CREATE INDEX IF NOT EXISTS benchmark_runs_state_idx ON benchmark_runs(state, updated_at);
+    CREATE TABLE IF NOT EXISTS benchmark_arms (
+      arm_id TEXT PRIMARY KEY, suite_version TEXT NOT NULL, state TEXT NOT NULL,
+      benchmark_session_id TEXT, approved_cap_usd REAL NOT NULL,
+      created_at TEXT NOT NULL, expires_at TEXT NOT NULL, bound_at TEXT,
+      completed_at TEXT, cancelled_at TEXT, failed_at TEXT, failure_reason TEXT,
+      previous_runtime_state_json TEXT NOT NULL DEFAULT '{}',
+      authorized_participants_json TEXT NOT NULL DEFAULT '[]', updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS benchmark_arms_state_expiry_idx ON benchmark_arms(state, expires_at);
+    CREATE INDEX IF NOT EXISTS benchmark_arms_session_idx ON benchmark_arms(benchmark_session_id);
   `);
   // Migration additive pour les bases v12 créées pendant le rollout SHADOW.
   try { database.exec("ALTER TABLE sync_changes ADD COLUMN base_field_versions_json TEXT NOT NULL DEFAULT '{}'"); } catch {}

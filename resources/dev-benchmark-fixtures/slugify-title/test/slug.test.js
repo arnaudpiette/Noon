@@ -1,0 +1,1 @@
+const test=require('node:test');const assert=require('node:assert/strict');const {slugifyTitle}=require('../src/slug');test('slugifies a title',()=>assert.equal(slugifyTitle('Hello World'),'hello-world'));

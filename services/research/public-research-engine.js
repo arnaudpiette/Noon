@@ -20,6 +20,10 @@ function confidence(results, conflicts, completeness) {
   if (!conflicts.length && high >= Math.min(2, results.length)) return "HIGH";
   return conflicts.length > 1 || results.every((item) => item.confidence === "LOW") ? "LOW" : "MEDIUM";
 }
+function sourceRank(item) {
+  const authority = { OFFICIAL: 50, PRIMARY: 45, ACADEMIC: 40, TECHNICAL: 35, NEWS: 30, UNKNOWN: 10, COMMUNITY: 5, COMMERCIAL: 0 }[item.sourceType] || 0;
+  return authority + (item.snippet ? 8 : 0) + (item.freshness?.level === "FRESH" ? 6 : 0) - (item.freshness?.stale ? 12 : 0);
+}
 
 function validateAdapterResults(results) {
   if (!Array.isArray(results)) {
@@ -86,7 +90,7 @@ function createPublicResearchEngine({ adapter, planner = createResearchPlanner()
     }
     const evaluationStarted = now(); const deduped = new Map();
     for (const raw of all) { const evaluated = evaluator.evaluate(raw, request); if (!evaluated.accepted) { emit("research_source_rejected", { researchId: request.researchId, sourceType: evaluated.sourceType, reason: evaluated.rejectionReason }); continue; } const key = normalizeKey(evaluated.url); const existing = deduped.get(key); if (!existing || (evaluated.snippet && !existing.snippet)) deduped.set(key, evaluated); }
-    const results = [...deduped.values()].slice(0, plan.sourceBudget.maxSources).map((item) => ({ ...item, evidenceId: `public_evidence_${hash(`${item.resultId}:${item.provenance.sourceFingerprint}`)}`, sourceId: item.url, locator: { url: item.url, passageRef: item.snippet ? `fingerprint:${hash(item.snippet, 32)}` : null }, provenance: { ...item.provenance, label: item.title, status: "current" }, sourceScope: "PUBLIC", profileScope: "public", localOnly: false, allowedForRemoteModel: true, untrustedContent: true }));
+    const results = [...deduped.values()].sort((left, right) => sourceRank(right) - sourceRank(left)).slice(0, plan.sourceBudget.maxSources).map((item) => ({ ...item, evidenceId: `public_evidence_${hash(`${item.resultId}:${item.provenance.sourceFingerprint}`)}`, sourceId: item.url, locator: { url: item.url, passageRef: item.snippet ? `fingerprint:${hash(item.snippet, 32)}` : null }, provenance: { ...item.provenance, label: item.title, status: "current" }, sourceScope: "PUBLIC", profileScope: "public", localOnly: false, allowedForRemoteModel: true, untrustedContent: true }));
     const citations = results.map((item) => ({ citationId: `public_citation_${hash(item.url)}`, evidenceId: item.evidenceId, sourceTitle: item.title, url: item.url, domain: item.sourceDomain, publishedAt: item.publishedAt || null, updatedAt: item.updatedAt || null, retrievedAt: item.retrievedAt, passageRef: item.snippet ? `fingerprint:${hash(item.snippet, 32)}` : null }));
     const conflicts = detectConflicts(results); const successful = attempts.filter((item) => item.status === "OK").length; const failed = attempts.length - successful;
     const completeness = results.length === 0 ? "INSUFFICIENT" : failed || results.some((item) => item.freshness.stale) ? "PARTIAL" : "COMPLETE_ENOUGH";

@@ -8,10 +8,10 @@ const path = require("node:path");
 const { createSkillRegistry } = require("../skills/registry");
 const { authorizeSkill } = require("../skills/permissions");
 
-test("charge quinze skills uniques avec des schémas stricts", () => {
+test("charge les skills publics et internes avec des schémas stricts", () => {
   const registry = createSkillRegistry();
   const skills = registry.getAllSkills();
-  assert.equal(skills.length, 15);
+  assert.equal(skills.length, 17);
   assert.equal(new Set(skills.map((skill) => skill.definition.name)).size, skills.length);
   for (const skill of skills) {
     assert.equal(skill.definition.strict, true);

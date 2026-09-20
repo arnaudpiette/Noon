@@ -1,0 +1,1 @@
+const test=require('node:test');const assert=require('node:assert/strict');const {patchUser}=require('../src/controller');test('updates a user',()=>assert.equal(patchUser({params:{id:'1'},body:{name:'Grace'}}).body.name,'Grace'));

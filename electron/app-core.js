@@ -27,7 +27,7 @@ function parseNoonDeepLink(rawUrl) {
 function isSafeExternalUrl(rawUrl) {
   try {
     const url = new URL(rawUrl);
-    return url.protocol === "https:" && Boolean(url.hostname);
+    return new Set(["https:", "http:"]).has(url.protocol) && Boolean(url.hostname) && !url.username && !url.password;
   } catch {
     return false;
   }

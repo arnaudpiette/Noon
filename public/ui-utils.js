@@ -49,6 +49,60 @@
     return category || "Autres";
   }
 
+  function normalizeSafeChatUrl(value) {
+    try {
+      const url = new URL(String(value || ""));
+      if (!new Set(["https:", "http:"]).has(url.protocol) || !url.hostname || url.username || url.password) return null;
+      return url.href;
+    } catch {
+      return null;
+    }
+  }
+
+  function tokenizeChatMarkdown(value) {
+    const text = String(value || "");
+    const pattern = /\[([^\]\n]+)\]\(([^)\s]+)\)|https?:\/\/[^\s<>"']+/gi;
+    const tokens = [];
+    let offset = 0;
+    for (const match of text.matchAll(pattern)) {
+      if (match.index > offset) tokens.push({ type: "text", value: text.slice(offset, match.index) });
+      const markdown = match[1] !== undefined;
+      let candidate = markdown ? match[2] : match[0];
+      let trailing = "";
+      if (!markdown) {
+        const trimmed = candidate.replace(/[.,!?;:]+$/g, "");
+        trailing = candidate.slice(trimmed.length);
+        candidate = trimmed;
+      }
+      const href = normalizeSafeChatUrl(candidate);
+      if (href) tokens.push({ type: "link", label: markdown ? match[1] : candidate, href });
+      else tokens.push({ type: "text", value: match[0] });
+      if (trailing) tokens.push({ type: "text", value: trailing });
+      offset = match.index + match[0].length;
+    }
+    if (offset < text.length) tokens.push({ type: "text", value: text.slice(offset) });
+    return tokens;
+  }
+
+  // Le contenu modèle reste du texte : seuls des noeuds <a> bornés sont créés.
+  function renderChatMarkdown(container, value) {
+    const doc = container.ownerDocument;
+    const fragment = doc.createDocumentFragment();
+    for (const token of tokenizeChatMarkdown(value)) {
+      if (token.type === "text") {
+        fragment.append(doc.createTextNode(token.value));
+        continue;
+      }
+      const link = doc.createElement("a");
+      link.href = token.href;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = token.label;
+      fragment.append(link);
+    }
+    container.replaceChildren(fragment);
+  }
+
   // No HTML parsing: all provider text becomes text nodes, including links and tags.
   function renderBriefMarkdown(container, value) {
     const doc = container.ownerDocument;
@@ -98,6 +152,9 @@
     createPastedTextFileName,
     maskPrivateMemoryValue,
     privateMemoryCategoryLabel,
+    normalizeSafeChatUrl,
+    tokenizeChatMarkdown,
+    renderChatMarkdown,
     renderBriefMarkdown,
   };
 

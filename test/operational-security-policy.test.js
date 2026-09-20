@@ -38,6 +38,17 @@ function evaluate(policy, input, skillPolicy = { level: "read", networkAccess: f
   return policy.evaluate({ actionRequest: input, skillPolicy, currentPermissions, pendingApproval: input.pendingApproval });
 }
 
+test("B18 scope telemetry est complète, relative et ne modifie pas la décision", () => {
+  const { root, policy, events, directory } = fixture(); const inside = path.join(root, "src", "safe.js"); fs.mkdirSync(path.dirname(inside)); fs.writeFileSync(inside, "FILE_CONTENT_SENTINEL");
+  const outside = path.join(directory, "SECRET_PROVIDER_KEY_SENTINEL"); fs.writeFileSync(outside, "LOCAL_AUTH_SECRET_SENTINEL");
+  for (const [pathValue, roots, level, expected] of [[inside, [root], "read", OUTCOMES.ALLOW], [outside, [root], "read", OUTCOMES.DENY], [inside, [], "read", OUTCOMES.DENY], [inside, [], "write", OUTCOMES.DENY], [null, [root], "read", OUTCOMES.ALLOW]]) {
+    const before = events.length; const decision = policy.evaluate({ actionRequest: { skillId: level === "write" ? "write_file" : "read_file", operation: level === "write" ? "write_file" : "read_file", args: pathValue ? { path: pathValue } : {}, origin: "explicit_user_chat", explicitOrder: true }, skillPolicy: { level }, currentPermissions: { allowed: true }, authorizedRoots: roots, authorizedWriteRoots: roots, scopeTelemetry: { benchmark: true, sessionId: "session-test", runId: "run-test", workspaceRoot: root } });
+    assert.equal(decision.outcome, expected); const scope = events.slice(before).filter((item) => item.event.startsWith("dev.benchmark_scope_")); assert.equal(scope.length, 3); assert.ok(scope[0].metadata.requestedPathSafe !== undefined); assert.ok(Array.isArray(scope[0].metadata.selectedRootsSafe)); assert.ok(Object.hasOwn(scope[1].metadata, "pathState")); assert.ok(Object.hasOwn(scope[2].metadata, "containment"));
+  }
+  const serialized = JSON.stringify(events.filter((item) => item.event.startsWith("dev.benchmark_scope_"))); for (const secret of ["FILE_CONTENT_SENTINEL", "SECRET_PROVIDER_KEY_SENTINEL", "LOCAL_AUTH_SECRET_SENTINEL", directory]) assert.doesNotMatch(serialized, new RegExp(secret.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(serialized, /src\/safe\.js/);
+});
+
 test("la lecture d’un fichier autorisé est permise", () => {
   const { root, policy } = fixture(); const file = path.join(root, "brief.md"); fs.writeFileSync(file, "ok");
   const decision = evaluate(policy, { skillId: "read_file", operation: "read_file", args: { path: file }, origin: "explicit_user_chat", explicitOrder: true });

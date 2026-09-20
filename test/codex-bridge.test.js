@@ -4,21 +4,24 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const {
   buildCodexArgs,
   findCodexExecutable,
   runCodexAnalysis,
 } = require("../lib/codex-bridge");
 
-test("détecte le chemin Codex explicitement configuré", () => {
+test("détecte le chemin Codex présent dans PATH", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "noon-codex-bridge-"));
+  const candidate = path.join(root, "codex"); fs.writeFileSync(candidate, "fixture\n"); fs.chmodSync(candidate, 0o755);
   const executable = findCodexExecutable({
-    env: { NOON_CODEX_PATH: "/opt/noon/codex" },
+    env: { PATH: root, NOON_CODEX_PATH: "/opt/noon/codex" },
     homeDirectory: "/Users/test",
-    existsSync: (candidate) => candidate === "/opt/noon/codex",
-    readdirSync: () => [],
   });
 
-  assert.equal(executable, "/opt/noon/codex");
+  assert.equal(executable, fs.realpathSync(candidate));
 });
 
 test("lance Codex dans le Focus avec un bac à sable en lecture seule", async () => {

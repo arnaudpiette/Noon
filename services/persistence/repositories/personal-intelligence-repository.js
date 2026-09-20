@@ -53,7 +53,7 @@ function createSqliteRepository(wrapper) {
     db.prepare(`INSERT INTO memory_items(id,type,subject,value_json,source_type,source_reference,status,confidence,created_at,updated_at,last_confirmed_at,expires_at,sensitivity,use_allowed,rejected_at,metadata_json)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET type=excluded.type,subject=excluded.subject,value_json=excluded.value_json,source_type=excluded.source_type,source_reference=excluded.source_reference,status=excluded.status,confidence=excluded.confidence,updated_at=excluded.updated_at,last_confirmed_at=excluded.last_confirmed_at,expires_at=excluded.expires_at,sensitivity=excluded.sensitivity,use_allowed=excluded.use_allowed,rejected_at=excluded.rejected_at,metadata_json=excluded.metadata_json`)
       .run(id, type, bounded(item.subject, 240) || "Information", json(item.value, {}), bounded(item.sourceType, 80) || "user", bounded(item.sourceReference, 300) || null, status, confidence, existing?.created_at || timestamp, timestamp, item.lastConfirmedAt || (status === "confirmed" ? timestamp : existing?.last_confirmed_at || null), item.expiresAt || null, bounded(item.sensitivity, 30) || "normal", item.useAllowed === false ? 0 : 1, status === "rejected" ? timestamp : null, json(item.metadata, {}));
-    if (wrapper.ftsAvailable) { db.prepare("DELETE FROM memory_items_fts WHERE id=?").run(id); db.prepare("INSERT INTO memory_items_fts(id,subject,value_text) VALUES(?,?,?)").run(id, bounded(item.subject, 240), bounded(typeof item.value === "string" ? item.value : json(item.value, {}), 4000)); }
+    if (wrapper.ftsAvailable) { db.prepare("DELETE FROM memory_items_fts WHERE id=?").run(id); db.prepare("INSERT INTO memory_items_fts(id,subject,value_text) VALUES(?,?,?)").run(id, bounded(item.subject, 240), bounded(`${item.sourceReference || ""} ${typeof item.value === "string" ? item.value : json(item.value, {})}`, 4000)); }
     return getMemory(id);
   }
   function getMemory(id) { return rowMemory(db.prepare("SELECT * FROM memory_items WHERE id=?").get(id)); }
@@ -67,9 +67,14 @@ function createSqliteRepository(wrapper) {
   function searchMemories(query, filters = {}) {
     const term = bounded(query, 200); if (!term) return listMemories(filters);
     if (wrapper.ftsAvailable) {
-      try { return db.prepare("SELECT m.* FROM memory_items_fts f JOIN memory_items m ON m.id=f.id WHERE memory_items_fts MATCH ? ORDER BY rank LIMIT ?").all(term.replace(/[^\p{L}\p{N}\s-]/gu, " "), Math.min(100, Number(filters.limit) || 50)).map(rowMemory); } catch {}
+      try {
+        const tokens = term.replace(/[^\p{L}\p{N}\s-]/gu, " ").trim().split(/\s+/).filter((t) => t.length > 2);
+        const matchPattern = tokens.length > 1 ? tokens.map((t) => `"${t}"*`).join(" OR ") : term.replace(/[^\p{L}\p{N}\s-]/gu, " ");
+        const results = db.prepare("SELECT m.* FROM memory_items_fts f JOIN memory_items m ON m.id=f.id WHERE memory_items_fts MATCH ? ORDER BY rank LIMIT ?").all(matchPattern, Math.min(100, Number(filters.limit) || 50)).map(rowMemory);
+        if (results.length) return results;
+      } catch {}
     }
-    return db.prepare("SELECT * FROM memory_items WHERE lower(subject) LIKE ? OR lower(value_json) LIKE ? ORDER BY updated_at DESC LIMIT ?").all(`%${term.toLowerCase()}%`, `%${term.toLowerCase()}%`, Math.min(100, Number(filters.limit) || 50)).map(rowMemory);
+    return db.prepare("SELECT * FROM memory_items WHERE lower(subject) LIKE ? OR lower(value_json) LIKE ? OR lower(source_reference) LIKE ? OR lower(metadata_json) LIKE ? ORDER BY updated_at DESC LIMIT ?").all(`%${term.toLowerCase()}%`, `%${term.toLowerCase()}%`, `%${term.toLowerCase()}%`, `%${term.toLowerCase()}%`, Math.min(100, Number(filters.limit) || 50)).map(rowMemory);
   }
   function updateMemory(id, changes) { const current = getMemory(id); if (!current) throw new Error("Souvenir introuvable."); return upsertMemory({ ...current, ...changes, id, explicitConfirmation: changes.explicitConfirmation }); }
   function confirmMemory(id) { return updateMemory(id, { status: "confirmed", confidence: 1, explicitConfirmation: true, lastConfirmedAt: nowIso() }); }

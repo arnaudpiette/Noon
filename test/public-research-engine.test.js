@@ -31,6 +31,18 @@ test("résout PERSONAL, PUBLIC et MIXED sans rechercher le Web pour une définit
   assert.equal(resolveResearchScope({ query: "Cherche sur Internet", webAllowed: false }).scope, "PERSONAL");
 });
 
+test("trouve-moi route les découvertes publiques vers le Web sans détourner fichiers et mémoire", () => {
+  for (const query of [
+    "Trouve-moi des offres de graphiste à Lille",
+    "Trouve-moi un tutoriel React",
+    "Trouve-moi la documentation de ExampleLib",
+    "Trouve-moi un restaurant japonais à Bordeaux",
+  ]) assert.ok(["PUBLIC", "MIXED"].includes(resolveResearchScope({ query }).scope));
+  assert.equal(resolveResearchScope({ query: "Trouve-moi le fichier portfolio dans mon dossier" }).scope, "PERSONAL");
+  assert.equal(resolveResearchScope({ query: "Trouve-moi dans ma mémoire ce que j’ai dit sur React" }).scope, "PERSONAL");
+  assert.equal(resolveResearchScope({ query: "Trouve-moi ce que tu sais sur mon projet fictif" }).scope, "PERSONAL");
+});
+
 test("MIXED reste explicitement désactivé tant que la fusion personnelle n’est pas câblée", () => {
   const resolution = resolveExecutableResearchScope({ requestedScope: "MIXED" });
   assert.equal(resolution.scope, "PUBLIC");
@@ -131,6 +143,14 @@ test("PUBLIC produit Evidence Pack, citations datées, déduplication et budget"
   assert.equal(pack.scope, "PUBLIC"); assert.equal(pack.results.length, 1); assert.equal(pack.citations.length, 1);
   assert.equal(pack.citations[0].retrievedAt, "2026-08-29T00:00:00.000Z"); assert.equal(pack.budget.usedQueries, 1);
   assert.equal(pack.results[0].untrustedContent, true); assert.equal(pack.results[0].sourceScope, "PUBLIC");
+});
+
+test("une source officielle est présentée avant un agrégateur", async () => {
+  const commercial = result({ resultId: "commercial", url: "https://compare.example/prisma", sourceDomain: "compare.example", title: "Prisma guide" });
+  const official = result({ resultId: "official", url: "https://www.prisma.io/docs", sourceDomain: "prisma.io", title: "Prisma documentation", official: true });
+  const engine = createPublicResearchEngine({ adapter: adapter([[commercial, official]]) });
+  const pack = await engine.research({ query: "Trouve-moi la documentation de Prisma", mode: "QUICK", freshnessRequirement: "EVERGREEN", maxQueries: 1 });
+  assert.equal(pack.results[0].url, "https://www.prisma.io/docs");
 });
 
 test("une source sans date ne reçoit aucune date inventée et signale la fraîcheur", async () => {
