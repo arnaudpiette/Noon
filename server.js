@@ -114,6 +114,9 @@ const { createMemoryEngine } = require("./services/memory/memory-engine");
 const { createLegacyMemoryMigration } = require("./services/memory/legacy-memory-migration");
 const { createHardRulesRegistry } = require("./services/rules/hard-rules-registry");
 const { createContextBuilder } = require("./services/context/context-builder");
+const { createCanonicalEntityResolver } = require("./services/context/canonical-entity-resolver");
+const { createAuthorizedContextSources, SOURCE_STATUSES } = require("./services/context/authorized-context-sources");
+const { inspectGitStatus } = require("./lib/git-status");
 const { createAmbientContextEngine } = require("./services/context/ambient-context-engine");
 const { createDecisionSupportEngine } = require("./services/decision/decision-support-engine");
 const { createGoalStrategyEngine } = require("./services/goals/goal-strategy-engine");
@@ -747,6 +750,96 @@ const portfolioCapacityEngine = createPortfolioCapacityEngine({
   featureMode: "SHADOW",
   audit: (event, metadata) => toolAuditLog.append(`portfolio.${event}`, metadata),
 });
+const canonicalEntityResolver = createCanonicalEntityResolver({
+  projectProvider: () => getValidRegisteredProjects(),
+  focusProvider: () => buildFocusCatalog(getAllowedDirectories()),
+  workspaceProvider: () => workspaceEngine?.list?.() || [],
+  observability: (event, metadata) => toolAuditLog.append(`context.${event}`, metadata),
+});
+function connectorContextStatus(connector, { local = false } = {}) {
+  const status = connector?.status;
+  if (local) return process.platform === "darwin" ? SOURCE_STATUSES.AVAILABLE : SOURCE_STATUSES.UNAVAILABLE;
+  if (status?.authState === "NOT_CONFIGURED") return SOURCE_STATUSES.NOT_CONFIGURED;
+  if (status?.authState === "AUTH_REQUIRED" || status?.authState === "PERMISSION_DENIED") return SOURCE_STATUSES.UNAUTHORIZED;
+  return connector?.connected ? SOURCE_STATUSES.AVAILABLE : SOURCE_STATUSES.UNAVAILABLE;
+}
+function projectPathForContext(projectId) {
+  return getValidRegisteredProjects().find((project) => project.id === projectId)?.rootPath || null;
+}
+const authorizedContextSources = createAuthorizedContextSources({
+  adapters: {
+    notes: {
+      status: () => connectorContextStatus(notesConnector, { local: true }),
+      read: async (request) => {
+        const notes = await notesConnector.searchNotes(request.query, { limit: request.limit, includeBody: false });
+        return notes.map((item) => ({ sourceId: item.id, timestamp: item.modifiedAt, relevance: item.relevance,
+          privacyClass: "PRIVATE", localOnly: true, payload: { title: item.title, excerpt: item.excerpt } }));
+      },
+    },
+    reminders: {
+      status: () => connectorContextStatus(remindersConnector, { local: true }),
+      read: async (request) => {
+        const reminders = await remindersConnector.listIncompleteReminders();
+        return reminders.filter((item) => !item.dueAt || Date.parse(item.dueAt) >= Date.now() - 86_400_000)
+          .sort((a, b) => String(a.dueAt || "").localeCompare(String(b.dueAt || ""))).slice(0, request.limit)
+          .map((item) => ({ sourceId: item.id, timestamp: item.dueAt, relevance: item.dueAt ? 0.9 : 0.6,
+            privacyClass: "PRIVATE", localOnly: true, payload: { summary: item.title, dueAt: item.dueAt, status: "active" } }));
+      },
+    },
+    calendar: {
+      status: () => connectorContextStatus(calendarConnector),
+      read: async (request) => {
+        const start = request.timeRange?.from ? new Date(request.timeRange.from) : new Date();
+        const end = request.timeRange?.to ? new Date(request.timeRange.to) : new Date(start.getTime() + 26 * 60 * 60 * 1000);
+        const data = await calendarConnector.listCalendarEvents({ timeMin: start.toISOString(), timeMax: end.toISOString() });
+        return (data.items || []).slice(0, request.limit).map((item) => ({ sourceId: item.id,
+          timestamp: item.start?.dateTime || item.start?.date || null, relevance: 0.9, privacyClass: "PRIVATE", localOnly: true,
+          payload: { start: item.start?.dateTime || item.start?.date || null, end: item.end?.dateTime || item.end?.date || null,
+            availability: item.transparency === "transparent" ? "free" : "busy", title: item.summary || null, calendarId: "primary" } }));
+      },
+    },
+    gmail: {
+      status: () => connectorContextStatus(gmailConnector),
+      read: async (request) => {
+        const result = await personalSearchEngine.search({ query: request.query, sourceScopes: ["email"],
+          maxResults: request.limit, resultsPerSource: request.limit, allowExpansion: false });
+        return result.results.map((item) => ({ sourceId: item.sourceId, timestamp: item.timestamp, relevance: item.score,
+          privacyClass: "PRIVATE", localOnly: true, payload: { threadId: item.locator?.threadId || null, subject: item.title, excerpt: item.snippet } }));
+      },
+    },
+    files: {
+      status: () => getAllowedDirectories().length ? SOURCE_STATUSES.AVAILABLE : SOURCE_STATUSES.UNAUTHORIZED,
+      read: async (request) => {
+        const result = await personalSearchEngine.search({ query: request.query, sourceScopes: ["file"], projectId: request.projectId || null,
+          projectPath: projectPathForContext(request.projectId), maxResults: request.limit, resultsPerSource: request.limit, allowExpansion: false });
+        return result.results.map((item) => ({ sourceId: item.sourceId, projectId: item.projectId, timestamp: item.timestamp, relevance: item.score,
+          privacyClass: "PRIVATE", localOnly: true, payload: { name: item.title, excerpt: item.snippet } }));
+      },
+    },
+    git: {
+      status: (request) => projectPathForContext(request?.projectId) ? SOURCE_STATUSES.AVAILABLE : SOURCE_STATUSES.UNAVAILABLE,
+      read: async (request) => {
+        const projectPath = projectPathForContext(request.projectId); if (!projectPath) return [];
+        const status = await inspectGitStatus(projectPath);
+        return status.available ? [{ sourceId: request.projectId, projectId: request.projectId, relevance: 1, privacyClass: "PRIVATE",
+          allowedForRemoteModel: true, payload: { repositoryDetected: true, branch: status.branch, dirty: status.modified + status.untracked > 0,
+            modifiedFilesCount: status.modified, untrackedCount: status.untracked, ahead: status.ahead, behind: status.behind,
+            latestCommit: status.lastCommit ? { hash: status.lastCommit.hash, date: status.lastCommit.date } : null } }] : [];
+      },
+    },
+    execution: {
+      status: () => SOURCE_STATUSES.AVAILABLE,
+      read: async (request) => {
+        const items = executionTrackingEngine.list({ subjectScope: "arnaud" }).filter((item) => !request.projectId || !item.projectId || item.projectId === request.projectId);
+        const counts = items.reduce((result, item) => ({ ...result, [item.status]: (result[item.status] || 0) + 1 }), {});
+        return [{ sourceId: "execution-summary", projectId: request.projectId || null, relevance: 0.9, privacyClass: "PRIVATE",
+          allowedForRemoteModel: true, payload: { pendingActions: (counts.planned || 0) + (counts.delayed || 0), runningActions: counts.in_progress || 0,
+            blockedActions: counts.blocked || 0, deferredActions: counts.deferred || 0 } }];
+      },
+    },
+  },
+  observability: (event, metadata) => toolAuditLog.append(event, metadata),
+});
 const contextBuilder = createContextBuilder({
   personalityProvider: () => NOON_PERSONALITY,
   hardRulesRegistry,
@@ -754,6 +847,8 @@ const contextBuilder = createContextBuilder({
   conversationProvider: ({ conversationId }) =>
     getConversationHistory(createConversationKey({ sessionId: conversationId })),
   workspaceProvider: (workspaceId) => workspaceEngine?.context(workspaceId) || null,
+  entityResolver: canonicalEntityResolver,
+  authorizedContextSources,
   ambientContextProvider: (input) => ambientContextEngine.buildContext(input),
   goalContextProvider: (input) => goalStrategyEngine.relevantGoals(input),
   permissionsProvider: () => localPermissionStore.load().roots.map((entry) => ({

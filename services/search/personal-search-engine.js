@@ -183,6 +183,7 @@ function createPersonalSearchEngine({ adapters = {}, metrics = null, audit = nul
       semantic: input.semantic !== false, exactTerms: Array.isArray(input.exactTerms) ? input.exactTerms.slice(0, 10) : [],
       privacyContext: input.privacyContext || {}, conversationId: input.conversationId || null,
       globalSearch: input.globalSearch === true,
+      allowExpansion: input.allowExpansion !== false,
     };
     if (!request.query) throw new TypeError("Requête de recherche vide.");
     const selection = selectSources(request.query, request.intent, request.sourceScopes);
@@ -197,7 +198,7 @@ function createPersonalSearchEngine({ adapters = {}, metrics = null, audit = nul
     const deadline = startedAt + overallTimeoutMs;
     let attempts = await runSources(selection.primary, request, deadline);
     let rawResults = attempts.flatMap((attempt) => attempt.results);
-    if (!rawResults.length && selection.expansion.length && now() < deadline) {
+    if (!rawResults.length && request.allowExpansion && selection.expansion.length && now() < deadline) {
       const expanded = await runSources(selection.expansion, request, deadline);
       attempts = [...attempts, ...expanded]; rawResults = attempts.flatMap((attempt) => attempt.results);
     }

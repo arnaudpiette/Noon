@@ -6,6 +6,7 @@ const { createContextBuilder, estimateTokens } = require("../services/context/co
 const { createHardRulesRegistry } = require("../services/rules/hard-rules-registry");
 const { PROVIDERS } = require("../services/models/model-registry");
 const { createProviderPrivacyPolicy } = require("../services/security/provider-privacy-policy");
+const { createCanonicalEntityResolver } = require("../services/context/canonical-entity-resolver");
 
 function memoryResult(overrides = {}) {
   return {
@@ -86,6 +87,114 @@ test("une mémoire local_only reste locale et disparaît du contexte distant", (
   assert.deepEqual(context.remoteModelContext.userContext.memories, []);
   assert.deepEqual(context.localContext.localOnly.map((item) => item.id), ["local-1"]);
   assert.equal(context.metadata.exclusionReasons.some((item) => item.id === "local-1" && item.reason === "local_only"), true);
+  assert.equal(context.excluded.some((item) => item.sourceId === "local-1" && item.privacyClassification === "LOCAL_ONLY"), true);
+});
+
+test("le contrat A1 expose une vue stable, sûre et sans duplication du contexte distant", () => {
+  const local = memory("local-contract", "VALEUR_PRIVEE_FICTIVE", { allowedForRemoteModel: false, apiPolicy: "local_only" });
+  const { builder } = createFixture(memoryResult({ remoteContext: [memory("remote-contract", "Préférence pertinente")], localOnlyContext: [local] }));
+  const context = builder.buildContext({ query: "Question de contrat", maxContextTokens: 1000 });
+  for (const field of ["localContext", "remoteModelContext", "sources", "included", "excluded", "budget", "privacy", "cache", "diagnostics"]) assert.ok(Object.hasOwn(context, field), field);
+  assert.equal(context.diagnostics.contractVersion, 1);
+  assert.notStrictEqual(context.localContext, context.remoteModelContext);
+  assert.doesNotMatch(JSON.stringify({ sources: context.sources, diagnostics: context.diagnostics, privacy: context.privacy, cache: context.cache }), /VALEUR_PRIVEE_FICTIVE/);
+  assert.equal(context.budget.maximumTokens, 1000);
+  assert.equal(context.budget.usedTokens, context.metadata.estimatedTokens);
+});
+
+test("le ContextBuilder utilise le resolver canonique sans injecter un projet ambigu", () => {
+  const resolver = createCanonicalEntityResolver({ projectProvider: () => [
+    { id: "portfolio", name: "Portfolio", aliases: ["portfolio", "site"] },
+    { id: "website", name: "Website", aliases: ["site"] },
+  ] });
+  const calls = [];
+  const registry = createHardRulesRegistry();
+  const builder = createContextBuilder({
+    personalityProvider: () => "Noon", hardRulesRegistry: registry, entityResolver: resolver,
+    memoryEngine: { getRelevantContext: (input) => { calls.push(input); return memoryResult(); } },
+  });
+  const resolved = builder.buildContext({ query: "continue mon portfolio" });
+  assert.equal(calls[0].projectId, "portfolio");
+  assert.deepEqual(resolved.diagnostics.entityResolution, {
+    status: "RESOLVED", type: "PROJECT", entityId: "portfolio", method: "alias_in_query",
+    source: "project_registry", confidence: 0.82, candidateCount: 1,
+  });
+  const ambiguous = builder.buildContext({ query: "continue le site" });
+  assert.equal(calls[1].projectId, null);
+  assert.equal(ambiguous.diagnostics.entityResolution.status, "AMBIGUOUS");
+});
+
+test("le contexte reste local et déterministe lorsque les providers sont indisponibles", () => {
+  const { builder } = createFixture(memoryResult({ localOnlyContext: [memory("offline-local", "Contexte local", { allowedForRemoteModel: false, apiPolicy: "local_only" })] }));
+  const context = builder.buildContext({ query: "Fonctionne hors ligne", provider: "down" });
+  assert.deepEqual(context.localContext.localOnly.map((item) => item.id), ["offline-local"]);
+  assert.deepEqual(context.remoteModelContext.userContext.memories, []);
+  assert.equal(context.diagnostics.contractVersion, 1);
+});
+
+test("A3 ajoute les sources autorisées au contexte local sans copier un item privé au modèle", async () => {
+  const registry = createHardRulesRegistry();
+  const builder = createContextBuilder({
+    personalityProvider: () => "Noon", hardRulesRegistry: registry,
+    memoryEngine: { getRelevantContext: () => memoryResult() },
+    authorizedContextSources: {
+      async collect() {
+        return {
+          items: [
+            { sourceType: "notes", sourceId: "private-note", relevance: 1, privacyClass: "PRIVATE", localOnly: true, payload: { excerpt: "Note privée" } },
+            { sourceType: "execution", sourceId: "summary", relevance: 0.9, privacyClass: "PRIVATE", allowedForRemoteModel: true, payload: { pendingActions: 2 } },
+          ],
+          diagnostics: { notes: { selected: true, status: "AVAILABLE", count: 1, truncated: false, durationMs: 2 }, execution: { selected: true, status: "AVAILABLE", count: 1, truncated: false, durationMs: 1 } },
+        };
+      },
+    },
+  });
+  const context = await builder.buildContextAsync({ query: "où en sont mes actions ?", maxContextTokens: 1000 });
+  assert.equal(context.localContext.authorizedSources.length, 2);
+  assert.deepEqual(context.remoteModelContext.userContext.authorizedSources.map((item) => item.sourceType), ["execution"]);
+  assert.equal(context.diagnostics.sourceDiagnostics.notes.status, "AVAILABLE");
+  assert.doesNotMatch(JSON.stringify(context.diagnostics), /Note privée/);
+});
+
+test("A3 respecte le budget A1 et conserve un contexte utilisable quand une source échoue", async () => {
+  const { builder } = createFixture();
+  const guarded = createContextBuilder({
+    personalityProvider: () => "Noon", hardRulesRegistry: createHardRulesRegistry(),
+    memoryEngine: { getRelevantContext: () => memoryResult() },
+    authorizedContextSources: { async collect() { return {
+      items: [{ sourceType: "gmail", sourceId: "mail", relevance: 1, localOnly: true, payload: { excerpt: "x".repeat(10_000) } }],
+      diagnostics: { gmail: { selected: true, status: "ERROR", count: 0, truncated: false, durationMs: 1 } },
+    }; } },
+  });
+  assert.ok(builder.buildContext({ query: "bonjour" }).remoteModelContext);
+  const context = await guarded.buildContextAsync({ query: "email", maxContextTokens: 256 });
+  assert.equal(context.localContext.authorizedSources.length, 0);
+  assert.equal(context.budget.usedTokens, context.metadata.estimatedTokens);
+  assert.equal(context.diagnostics.sourceDiagnostics.gmail.status, "ERROR");
+});
+
+test("le cache est réutilisé puis invalidé par mémoire, projet et permission", () => {
+  let permissions = [{ capability: "READ" }];
+  let memoryCalls = 0;
+  const registry = createHardRulesRegistry();
+  const builder = createContextBuilder({
+    personalityProvider: () => "Noon", hardRulesRegistry: registry,
+    memoryEngine: { getRelevantContext: () => { memoryCalls += 1; return memoryResult(); } },
+    permissionsProvider: () => permissions,
+  });
+  builder.buildContext({ query: "Même requête", projectId: "p1" });
+  const cached = builder.buildContext({ query: "Même requête", projectId: "p1" });
+  assert.ok(cached.cache.hits > 0);
+  assert.equal(memoryCalls, 1);
+  builder.invalidateMemory(); builder.buildContext({ query: "Même requête", projectId: "p1" });
+  assert.equal(memoryCalls, 2);
+  builder.invalidateProject("p1"); builder.buildContext({ query: "Même requête", projectId: "p1" });
+  assert.equal(memoryCalls, 3);
+  permissions = [];
+  const revoked = builder.buildContext({ query: "Même requête", projectId: "p1" });
+  assert.deepEqual(revoked.runtime.permissions, []);
+  builder.invalidatePermissions();
+  assert.equal(builder.cacheInspection().some((item) => item.segment === "dynamic"), false);
 });
 
 test("le contexte distant expose seulement des métadonnées de confidentialité sans contenu", () => {

@@ -986,7 +986,9 @@ function createNoonOrchestrator({
     trace("started", state);
     try {
       let started = now();
-      state.context = contextBuilder.buildContext(request.contextInput || request);
+      state.context = contextBuilder.buildContextAsync
+        ? await contextBuilder.buildContextAsync(request.contextInput || request)
+        : contextBuilder.buildContext(request.contextInput || request);
       if (request.runtimeCapabilitiesSnapshot) {
         state.context.runtime ||= {};
         state.context.runtime.capabilities = {

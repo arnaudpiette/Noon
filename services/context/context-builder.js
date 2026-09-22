@@ -67,6 +67,8 @@ function createContextBuilder({
   memoryEngine,
   conversationProvider = null,
   workspaceProvider = null,
+  entityResolver = null,
+  authorizedContextSources = null,
   ambientContextProvider = null,
   goalContextProvider = null,
   permissionsProvider = () => [],
@@ -82,7 +84,21 @@ function createContextBuilder({
     const startedAt = performance.now();
     const query = String(input.query || "").trim();
     const channel = String(input.channel || "chat");
-    const intent = String(input.intent || hardRulesRegistry.inferIntent(query, input.projectId));
+    let entityResolution = { status: "NOT_FOUND", query, candidates: [] };
+    if (entityResolver?.resolveEntity) {
+      try {
+        entityResolution = entityResolver.resolveEntity({
+          query, expectedType: "PROJECT", projectId: input.projectId || null,
+          workspaceId: input.workspaceId || null, conversationId: input.conversationId || null,
+          recentEntities: input.sessionContext?.recentEntities || [],
+        });
+      } catch {
+        entityResolution = { status: "NOT_FOUND", query, candidates: [] };
+      }
+    }
+    const projectId = entityResolution.status === "RESOLVED" && entityResolution.entity?.type === "PROJECT"
+      ? entityResolution.entity.id : input.projectId || null;
+    const intent = String(input.intent || hardRulesRegistry.inferIntent(query, projectId));
     const peopleIds = inferPeopleIds(query, input.peopleIds);
     const requestedTools = [...new Set((input.requestedTools || []).map(String))];
     const workspaceContext = input.workspaceContext || (
@@ -120,7 +136,7 @@ function createContextBuilder({
     }
     const memoryStartedAt = performance.now();
     const memoryDescriptor = {
-      query: normalize(query), intent, projectId: input.projectId || null, peopleIds,
+      query: normalize(query), intent, projectId, peopleIds,
       conversationId: input.conversationId || null,
       confirmedMemoryIds: [...(input.confirmedMemoryIds || [])].map(String).sort(),
       includePrivate: input.includePrivate !== false,
@@ -131,7 +147,7 @@ function createContextBuilder({
     const cachedMemoryResult = cached("memory", memoryDescriptor, () => memoryEngine.getRelevantContext({
       query,
       intent,
-      projectId: input.projectId || null,
+      projectId,
       peopleIds,
       conversationId: input.conversationId || null,
       confirmedMemoryIds: input.confirmedMemoryIds || [],
@@ -146,7 +162,7 @@ function createContextBuilder({
     }), {
       ttlMs: Math.max(100, Math.min(10_000, Number(input.memoryCacheTtlMs) || 1500)),
       copyOnRead: false,
-      scope: { sessionId: input.conversationId || null, projectId: input.projectId || null, profileIds: peopleIds },
+      scope: { sessionId: input.conversationId || null, projectId, profileIds: peopleIds },
     });
     let conversationContext = cachedMemoryResult.conversationContext || [];
     if (conversationProvider && input.includeConversation !== false && input.conversationId) {
@@ -171,25 +187,35 @@ function createContextBuilder({
     const staticStartedAt = performance.now();
     const staticSegment = cached("static", {
       version: versions.static, channel, intent, mode: input.mode || null,
-      project: Boolean(input.projectId), tools: requestedTools,
+      project: Boolean(projectId), tools: requestedTools,
     }, () => ({
       hardRules: hardRulesRegistry.getRulesForContext({
-        intent, tools: requestedTools, mode: input.mode, projectId: input.projectId, channel,
+        intent, tools: requestedTools, mode: input.mode, projectId, channel,
       }),
       personality: String(personalityProvider({ channel, intent, mode: input.mode }) || "").trim(),
     }), { scope: { version: versions.static }, copyOnRead: false });
     const hardRules = staticSegment.hardRules;
     const personality = staticSegment.personality;
     const hardRulesResolveMs = performance.now() - staticStartedAt;
+    // Une permission peut être révoquée hors de ce processus (notamment par
+    // Electron). Relire la vue bornée avant de consulter le cache évite qu'une
+    // entrée dynamique encore valide réintroduise une autorisation révoquée.
+    let permissionSnapshot = [];
+    try {
+      permissionSnapshot = permissionsProvider({
+        intent, requestedTools, projectId,
+      }) || [];
+    } catch {
+      permissionSnapshot = [];
+    }
     const permissions = cached("dynamic", {
-      intent, requestedTools, projectId: input.projectId || null,
+      intent, requestedTools, projectId,
       conversationId: input.conversationId || null, version: versions.permissions,
-    }, () => permissionsProvider({
-      intent, requestedTools, projectId: input.projectId || null,
-    }) || [], {
+      permissions: permissionSnapshot,
+    }, () => permissionSnapshot, {
       ttlMs: Math.max(100, Math.min(5_000, Number(input.dynamicCacheTtlMs) || 500)),
       copyOnRead: false,
-      scope: { sessionId: input.conversationId || null, projectId: input.projectId || null },
+      scope: { sessionId: input.conversationId || null, projectId },
     });
     const toolSegment = requestedTools.length > 0
       ? cached("tools", {
@@ -197,7 +223,7 @@ function createContextBuilder({
       }, () => ({ requested: requestedTools }), { scope: { sessionId: input.conversationId || null }, copyOnRead: false })
       : (cacheEvents.tools = { skipped: true }, { requested: [] });
     const hasSessionState = Boolean(
-      input.conversationId || input.mode || input.projectId || input.modelProfile || input.sessionContext
+      input.conversationId || input.mode || projectId || input.modelProfile || input.sessionContext
     );
     const continuity = input.sessionContext && typeof input.sessionContext === "object"
       ? input.sessionContext
@@ -209,7 +235,7 @@ function createContextBuilder({
       channel,
       purpose: input.purpose || "remote_model",
       modelProfile: input.modelProfile || null,
-      projectId: input.projectId || null,
+      projectId,
       continuityVersion: Number(input.sessionContext?.version || input.sessionVersion) || 0,
       checkpointId: input.sessionContext?.checkpointId || null,
       summaryVersion: Number(input.sessionContext?.summaryVersion) || 0,
@@ -229,7 +255,7 @@ function createContextBuilder({
       summary: typeof continuity.summary === "string" ? continuity.summary : null,
       summaryVersion: Number(continuity.summaryVersion) || 0,
       checkpointId: continuity.checkpointId || null,
-    }), { scope: { sessionId: input.conversationId || null, projectId: input.projectId || null }, copyOnRead: false })
+    }), { scope: { sessionId: input.conversationId || null, projectId }, copyOnRead: false })
       : (cacheEvents.session = { skipped: true }, {
         mode: null, channel, purpose: input.purpose || "remote_model", modelProfile: null,
       });
@@ -241,7 +267,7 @@ function createContextBuilder({
         ambient = ambientContextProvider({
           query,
           remote: (input.purpose || "remote_model") === "remote_model",
-          explicitWorkspaceId: input.workspaceId || input.projectId || null,
+          explicitWorkspaceId: input.workspaceId || projectId || null,
           explicitMode: input.mode || null,
         });
       } catch {
@@ -300,11 +326,11 @@ function createContextBuilder({
 
     const seen = new Set(hardRules.map((rule) => normalize(rule.statement)).filter(Boolean));
     const projects = deduplicate(memoryResult.projectContext, (item) => item.value, seen, metadata);
-    const projectItems = projects.length > 0 || input.projectId ? cached("project", {
-      projectId: input.projectId || null,
+    const projectItems = projects.length > 0 || projectId ? cached("project", {
+      projectId,
       version: versions.project,
       items: projects.map((item) => [item.id, item.updatedAt || null]),
-    }, () => projects, { scope: { projectId: input.projectId || null }, copyOnRead: false })
+    }, () => projects, { scope: { projectId }, copyOnRead: false })
       : (cacheEvents.project = { skipped: true }, projects);
     const remoteMemories = deduplicate(memoryResult.remoteContext, (item) => item.value, seen, metadata);
     // GoalStrategyEngine reste la source de vérité stratégique. Le builder ne
@@ -314,7 +340,7 @@ function createContextBuilder({
       try {
         relevantGoals = (goalContextProvider({
           query,
-          projectId: input.projectId || null,
+          projectId,
           workspaceId: input.workspaceId || null,
           profileScope: input.profileScope || peopleIds[0] || "arnaud",
           remote: (input.purpose || "remote_model") === "remote_model",
@@ -530,7 +556,58 @@ function createContextBuilder({
       tokensSaved: metadata.tokensSaved,
     });
 
-    return { system, userContext, conversation, runtime, localContext, remoteModelContext, segments, metadata };
+    // Contrat A1 : ces projections ne contiennent jamais les valeurs des
+    // sources. Les champs historiques restent inchangés pour les consommateurs
+    // existants; les consommateurs nouveaux peuvent s'appuyer sur cette vue
+    // stable et observable.
+    const privacyBySource = new Map();
+    for (const fragment of metadata.privacy.fragments) {
+      if (!privacyBySource.has(fragment.source)) privacyBySource.set(fragment.source, fragment.classification || "UNKNOWN");
+    }
+    const sources = [
+      ...metadata.inclusionReasons.map((item) => ({
+        source: item.source || "unknown", sourceId: item.id || null, included: true,
+        reason: item.reason, privacyClassification: privacyBySource.get(item.source) || "UNKNOWN",
+      })),
+      ...metadata.exclusionReasons.map((item) => ({
+        source: item.source || "memory", sourceId: item.id || null, included: false,
+        reason: item.reason, privacyClassification: privacyBySource.get(item.source) || (item.reason === "local_only" ? "LOCAL_ONLY" : "UNKNOWN"),
+      })),
+    ];
+    const budget = Object.freeze({
+      maximumTokens: maxContextTokens, usedTokens: metadata.estimatedTokens,
+      tokensBeforePruning: metadata.tokensBefore, tokensSaved: metadata.tokensSaved,
+      truncated: metadata.truncated,
+    });
+    const privacy = Object.freeze({
+      classificationCounts: { ...metadata.privacy.classificationCounts },
+      filteredPrivateCount: metadata.filteredPrivate, localOnlyCount: metadata.localOnly,
+    });
+    const cacheView = Object.freeze({
+      hits: metadata.cacheHits, misses: metadata.cacheMisses, hitRate: metadata.cacheHitRate,
+      entries: metadata.cacheEntries, events: { ...metadata.cache },
+    });
+    const entityResolutionDiagnostic = {
+      status: entityResolution.status,
+      type: entityResolution.entity?.type || null,
+      entityId: entityResolution.entity?.id || null,
+      method: entityResolution.matchedBy || null,
+      source: entityResolution.sources?.[0] || null,
+      confidence: entityResolution.confidence ?? null,
+      candidateCount: entityResolution.candidates?.length || 0,
+    };
+    const diagnostics = Object.freeze({
+      contractVersion: 1, intent, channel, durationMs: metadata.durationMs,
+      sourceCount: sources.length, includedCount: sources.filter((item) => item.included).length,
+      excludedCount: sources.filter((item) => !item.included).length,
+      entityResolution: entityResolutionDiagnostic,
+    });
+    metadata.contractVersion = 1;
+    return {
+      system, userContext, conversation, runtime, localContext, remoteModelContext, segments, metadata,
+      sources, included: sources.filter((item) => item.included), excluded: sources.filter((item) => !item.included),
+      budget, privacy, cache: cacheView, diagnostics,
+    };
   }
 
   function renderRemoteSystemContext(context) {
@@ -570,7 +647,66 @@ function createContextBuilder({
     if (remote.userContext.memories.length) {
       sections.push(`Contexte mémorisé pertinent : ${remote.userContext.memories.map((item) => textValue(item.value)).join(" | ")}`);
     }
+    if (remote.userContext.authorizedSources?.length) {
+      sections.push(`Sources opérationnelles autorisées : ${JSON.stringify(remote.userContext.authorizedSources)}`);
+    }
     return sections.filter(Boolean).join(" ");
+  }
+
+  // Les connecteurs sont potentiellement asynchrones. Cette API complète le
+  // contrat synchrone historique sans le casser : aucun adapter n'est appelé
+  // avant la sélection déterministe faite par la façade A3.
+  async function buildContextAsync(input = {}) {
+    const context = buildContext(input);
+    if (!authorizedContextSources?.collect) return context;
+    const sourceResult = await authorizedContextSources.collect({
+      query: String(input.query || "").trim(), intent: context.metadata.intent,
+      projectId: context.diagnostics.entityResolution.entityId || input.projectId || null,
+      workspaceId: input.workspaceId || null, conversationId: input.conversationId || null,
+      entityStatus: context.diagnostics.entityResolution.status,
+      timeRange: input.timeRange || null, permissions: context.runtime.permissions,
+    });
+    const maximumTokens = context.budget.maximumTokens;
+    let usedTokens = context.budget.usedTokens;
+    const localItems = []; const remoteItems = []; let truncated = context.budget.truncated;
+    for (const item of sourceResult.items || []) {
+      const cost = estimateTokens(item.payload);
+      if (usedTokens + cost > maximumTokens) { truncated = true; continue; }
+      usedTokens += cost; localItems.push(item);
+      const classified = typeof privacyClassifier === "function" ? privacyClassifier({
+        source: item.sourceType, classification: item.privacyClass, content: item.payload,
+        localOnly: item.localOnly, providerRestrictions: item.providerRestrictions || [],
+      }) : { localOnly: item.localOnly, classification: item.privacyClass };
+      if (item.allowedForRemoteModel === true && classified.localOnly !== true && classified.redactionRequired !== true) remoteItems.push(item);
+    }
+    const sourceDiagnostics = Object.fromEntries(Object.entries(sourceResult.diagnostics || {}).map(([source, detail]) => [source, {
+      selected: detail.selected === true, status: detail.status, count: Number(detail.count) || 0,
+      truncated: detail.truncated === true, durationMs: Number(detail.durationMs) || 0,
+    }]));
+    const metadata = {
+      ...context.metadata,
+      estimatedTokens: usedTokens, tokensAfter: usedTokens,
+      tokensSaved: Math.max(0, context.metadata.tokensBefore - usedTokens),
+      truncated, sourceDiagnostics,
+    };
+    const localContext = { ...context.localContext, authorizedSources: localItems };
+    const userContext = { ...context.userContext, authorizedSources: remoteItems };
+    const remoteModelContext = { ...context.remoteModelContext, userContext };
+    const segments = { ...context.segments, authorizedSources: { local: localItems, remote: remoteItems, diagnostics: sourceDiagnostics } };
+    const sourceEntries = Object.entries(sourceDiagnostics).map(([source, detail]) => ({
+      source, sourceId: null, included: detail.status === "AVAILABLE" && detail.count > 0,
+      reason: detail.selected ? "authorized_context_source" : "skipped_not_relevant",
+      privacyClassification: "UNKNOWN",
+    }));
+    const sources = [...context.sources, ...sourceEntries];
+    const budget = Object.freeze({ ...context.budget, usedTokens, tokensSaved: metadata.tokensSaved, truncated });
+    const diagnostics = Object.freeze({ ...context.diagnostics,
+      durationMs: context.diagnostics.durationMs + Object.values(sourceDiagnostics).reduce((sum, item) => sum + item.durationMs, 0),
+      sourceCount: sources.length, includedCount: sources.filter((item) => item.included).length,
+      excludedCount: sources.filter((item) => !item.included).length, sourceDiagnostics,
+    });
+    return { ...context, metadata, localContext, userContext, remoteModelContext, segments, sources,
+      included: sources.filter((item) => item.included), excluded: sources.filter((item) => !item.included), budget, diagnostics };
   }
 
   // La synthèse multi-source entre comme un bloc structuré compact. Les
@@ -605,10 +741,12 @@ function createContextBuilder({
     return cache.invalidate("memory", (scope) => !id || scope.profileIds?.includes(id));
   }
   function invalidateMemory() { return cache.invalidate("memory"); }
+  function invalidatePermissions() { return ["dynamic", "tools"].reduce((sum, segment) => sum + cache.invalidate(segment), 0); }
+  function invalidatePrivacy() { return ["memory", "dynamic", "project"].reduce((sum, segment) => sum + cache.invalidate(segment), 0); }
 
   return {
-    buildContext, renderRemoteSystemContext, renderStructuredSynthesis, clearContextCache,
-    invalidateMemory, invalidateProfile, invalidateProject, invalidateSession, invalidateStatic,
+    buildContext, buildContextAsync, renderRemoteSystemContext, renderStructuredSynthesis, clearContextCache,
+    invalidateMemory, invalidatePermissions, invalidatePrivacy, invalidateProfile, invalidateProject, invalidateSession, invalidateStatic,
     cacheStats: () => cache.stats(), cacheInspection: () => cache.inspect(),
   };
 }
