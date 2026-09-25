@@ -43,6 +43,39 @@ function stripMemoryScope(text) {
     .replace(/\s+(?:de|dans)\s+(?:la\s+)?m[eé]moire\s+(?:de\s+ce\s+projet|du\s+projet)\s*$/i, ""));
 }
 
+function normalizeFrenchCommand(text) {
+  return clean(text, 4000).toLocaleLowerCase("fr").normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "").replace(/[’']/g, " ").replace(/-/g, " ")
+    .replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function parseMemoryReadIntent(source) {
+  const normalized = normalizeFrenchCommand(source);
+  const hasMemoryNoun = /\b(?:memoire|memorise(?:e|es|s)?|retenu|garde(?:e|es|s|r)?|enregistre(?:e|es|s)?)\b/.test(normalized);
+  const questionShape = /^(?:noon )?(?:qu as tu|qu est ce que tu as|que sais tu|qu est ce que tu sais|quelles? informations? as tu|montre moi|affiche)/.test(normalized);
+  if (!questionShape || (!hasMemoryNoun && !/\b(?:sais tu|tu sais) sur moi\b/.test(normalized))) return null;
+
+  let requestedScope = requestedMemoryScope(source);
+  if (/\b(?:memoire privee|memoire sensible|garde localement)\b/.test(normalized)) requestedScope = "private";
+  if (/\b(?:sur ce projet|memoire (?:de ce|du) projet)\b/.test(normalized)) requestedScope = "project";
+  if (/\bmemoire (?:generale|persistante)\b/.test(normalized)) requestedScope = "general";
+
+  let query = "";
+  const targeted = normalized.match(/\b(?:concernant|sur)\s+(.+)$/);
+  if (targeted) query = targeted[1].replace(/^(?:moi|ce projet)$/, "").trim();
+  const temporal = /\baujourd hui\b/.test(normalized) ? "aujourd'hui" : "";
+  if (temporal) query = temporal;
+
+  return {
+    action: "memory_read",
+    intent: query ? "MEMORY_READ" : "MEMORY_INVENTORY",
+    subjectId: subjectFor(source),
+    query,
+    requestedScope,
+    revealPrivate: requestedScope === "private",
+  };
+}
+
 function subjectFor(text) {
   const normalized = String(text || "").toLocaleLowerCase("fr");
   if (/\balexandra\b/.test(normalized)) return "alexandra";
@@ -86,6 +119,9 @@ function parseConversationMemoryCommand(text) {
       rawQuery: source,
     };
   }
+
+  const memoryRead = parseMemoryReadIntent(source);
+  if (memoryRead) return memoryRead;
 
   // 2. Vérifier s'il s'agit d'une inspection de mémoire
   if (MEMORY_INSPECT_PATTERN.test(source)) {
@@ -160,6 +196,65 @@ function commandReceipt({ success, operation, scope, persisted, memoryIds = [] }
   return { success, operation, scope, automatic: false, persisted, created: operation === "create" && success ? 1 : 0, updated: operation === "update" && success ? 1 : 0, deleted: operation === "delete" && success ? 1 : 0, skipped: operation === "skip" && success ? 1 : 0, memoryIds };
 }
 
+function activeGeneralMemories(repository) {
+  if (!repository?.listMemories) return [];
+  return repository.listMemories({ limit: 500 }).filter((item) => item.useAllowed !== false && !["rejected", "expired", "blocked"].includes(item.status));
+}
+
+function activePrivateMemories(service) {
+  if (!service?.available) return [];
+  return service.listMemories({ includeDeleted: false }).filter((item) => item.status === "confirmed");
+}
+
+function memoryText(item) { return typeof item.value === "string" ? item.value : JSON.stringify(item.value); }
+function includesQuery(value, query) { return normalizeFrenchCommand(value).includes(normalizeFrenchCommand(query)); }
+
+function executeMemoryRead({ personalRepository, privateMemoryService }, command, options = {}) {
+  const dateRange = importDateRange(command.query);
+  const dateMatches = (value) => !dateRange || (() => { const key = localDateKey(value); return key >= dateRange.start && key <= dateRange.end; })();
+  let general = activeGeneralMemories(personalRepository).filter((item) => dateMatches(item.createdAt || item.updatedAt));
+  let privateItems = activePrivateMemories(privateMemoryService).filter((item) => dateMatches(item.createdAt || item.updatedAt));
+  const projectSubject = options.projectId ? `project:${options.projectId}` : null;
+  const project = projectSubject ? privateItems.filter((item) => item.subjectId === projectSubject) : [];
+  privateItems = privateItems.filter((item) => !item.subjectId.startsWith("project:"));
+
+  let query = command.query || "";
+  if (query && options.projectName && normalizeFrenchCommand(query) === normalizeFrenchCommand(options.projectName)) command.requestedScope = "project";
+  if (query && options.projectId && normalizeFrenchCommand(query) === normalizeFrenchCommand(options.projectId)) command.requestedScope = "project";
+  if (dateRange) query = "";
+  if (query) {
+    general = general.filter((item) => includesQuery(`${item.subject} ${memoryText(item)}`, query));
+    privateItems = privateItems.filter((item) => includesQuery(`${item.category} ${item.statement}`, query));
+    const projectMatches = project.filter((item) => includesQuery(`${item.category} ${item.statement} ${item.payload?.projectName || ""}`, query));
+    if (command.requestedScope === "private") general = [];
+    if (command.requestedScope === "general") privateItems = [];
+    const selectedProject = command.requestedScope === "project" || projectMatches.length ? projectMatches : [];
+    const values = [
+      ...general.slice(0, 10).map((item) => memoryText(item)),
+      ...(command.revealPrivate ? privateItems.slice(0, 10).map((item) => item.statement) : []),
+      ...selectedProject.slice(0, 10).map((item) => item.statement),
+    ];
+    if (!values.length && privateItems.length && !command.revealPrivate) return { status: "found", intent: command.intent, answer: `J’ai ${privateItems.length} information(s) privée(s) locale(s) correspondante(s). Demande-moi explicitement de montrer ma mémoire privée pour afficher leur contenu.`, generalCount: general.length, privateCount: privateItems.length, projectCount: selectedProject.length, memoryIds: privateItems.map((item) => item.id) };
+    return { status: values.length ? "found" : "not_found", intent: command.intent, answer: values.length ? values.join("\n") : "Je n’ai trouvé aucune mémoire persistante correspondante.", generalCount: general.length, privateCount: privateItems.length, projectCount: selectedProject.length, memoryIds: [...general, ...privateItems, ...selectedProject].map((item) => item.id) };
+  }
+
+  if (command.requestedScope === "private") {
+    return { status: privateItems.length ? "found" : "not_found", intent: command.intent, answer: privateItems.length ? `Mémoire privée locale :\n${privateItems.slice(0, 20).map((item) => `- ${item.statement}`).join("\n")}` : "Je n’ai actuellement aucune mémoire privée active.", generalCount: 0, privateCount: privateItems.length, projectCount: 0, memoryIds: privateItems.map((item) => item.id) };
+  }
+  if (command.requestedScope === "project") {
+    return { status: project.length ? "found" : "not_found", intent: command.intent, answer: project.length ? `Projet actif :\n${project.slice(0, 20).map((item) => `- ${item.statement}`).join("\n")}` : "Je n’ai actuellement aucune mémoire active pour ce projet.", generalCount: 0, privateCount: 0, projectCount: project.length, memoryIds: project.map((item) => item.id) };
+  }
+  if (!general.length && !privateItems.length && !project.length) return { status: "not_found", intent: command.intent, answer: "Je n’ai actuellement aucune mémoire persistante active.", generalCount: 0, privateCount: 0, projectCount: 0, memoryIds: [] };
+  const lines = [`J’ai actuellement ${general.length} information(s) générale(s), ${privateItems.length} information(s) privée(s) locale(s) et ${project.length} information(s) liée(s) au projet actif.`];
+  if (general.length) lines.push("", "Mémoire générale :", ...general.slice(0, 8).map((item) => `- ${memoryText(item)}`));
+  if (privateItems.length) {
+    const categories = [...new Set(privateItems.map((item) => item.category))].slice(0, 8);
+    lines.push("", `Mémoire privée locale : ${privateItems.length} information(s) dans les catégories ${categories.join(", ")}. Les valeurs sensibles ne sont pas affichées sans demande explicite.`);
+  }
+  if (project.length) lines.push("", "Projet actif :", ...project.slice(0, 8).map((item) => `- ${item.statement}`));
+  return { status: "inspected", intent: command.intent, answer: lines.join("\n"), generalCount: general.length, privateCount: privateItems.length, projectCount: project.length, memoryIds: [...general, ...privateItems, ...project].map((item) => item.id) };
+}
+
 function executeConversationMemoryCommand(serviceOrContext, command, options = {}) {
   // Support à la fois d'un simple service (ex: tests historiques) ou d'un contexte étendu
   const isContext = serviceOrContext && typeof serviceOrContext === "object" && ("privateMemoryService" in serviceOrContext || "personalRepository" in serviceOrContext);
@@ -174,6 +269,8 @@ function executeConversationMemoryCommand(serviceOrContext, command, options = {
     return { status: "unavailable", answer: "La mémoire locale est indisponible." };
   }
   if (!command || !SUBJECTS.has(command.subjectId)) return null;
+
+  if (command.action === "memory_read") return executeMemoryRead({ personalRepository: personalRepo, privateMemoryService: privateService }, command, options);
 
   // -------------------------------------------------------------
   // ACTION : IMPORT DOCUMENTAIRE
@@ -492,6 +589,8 @@ module.exports = {
   executeConversationMemoryCommand,
   importDateRange,
   parseConversationMemoryCommand,
+  parseMemoryReadIntent,
   requestedMemoryScope,
   stripMemoryScope,
+  executeMemoryRead,
 };
