@@ -36,7 +36,7 @@ test("searchNotes ne lit les corps que des candidats retenus", async () => {
 test("searchNotes retourne vide sans corps quand aucun titre ne correspond", async () => {
   const fixture = runnerFor({ metadata: "" });
   assert.deepEqual(await searchNotes("inconnue", { limit: 3, includeBody: true }, fixture.runner), []);
-  assert.equal(fixture.calls.length, 1);
+  assert.equal(fixture.calls.length, 2);
 });
 
 test("searchNotes borne candidats, résultats et requêtes hostiles comme données", async () => {

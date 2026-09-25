@@ -10,6 +10,9 @@ const SOURCE_STATUSES = Object.freeze({
 });
 const SOURCE_LIMITS = Object.freeze({ notes: 3, reminders: 5, calendar: 5, gmail: 3, files: 3, git: 1, execution: 4 });
 const DEFAULT_SOURCE_TIMEOUT_MS = 5_000;
+const SOURCE_TIMEOUTS_MS = Object.freeze({
+  notes: 12_000,
+});
 
 function normalize(value) {
   return String(value || "").toLocaleLowerCase("fr").normalize("NFD")
@@ -18,7 +21,7 @@ function normalize(value) {
 function matches(text, expression) { return expression.test(normalize(text)); }
 function sourceSelection({ query = "", intent = "", projectId = null, entityStatus = "NOT_FOUND" } = {}) {
   const text = normalize(query); const selected = new Set();
-  const schedule = matches(text, /\b(agenda|calendrier|calendar|rendez vous|reunion|cet apres midi|aujourd hui|demain|planning)\b/) || intent === "SCHEDULE";
+  const schedule = matches(text, /\b(agenda|calendrier|calendar|rendez vous|reunion|cet apres midi|aujourd hui|demain|hier|avant hier|apres demain|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|planning)\b/) || intent === "SCHEDULE";
   const email = matches(text, /\b(email|e mail|mail|gmail|recu|reponse)\b/) || intent === "EMAIL";
   const notes = matches(text, /\b(note|notes)\b/) || intent === "NOTES";
   const reminders = matches(text, /\b(rappel|reminder|tache|todo|a faire)\b/) || intent === "TASKS";
@@ -86,12 +89,13 @@ function createAuthorizedContextSources({ adapters = {}, now = () => new Date(),
       const status = safeStatus(adapter, input);
       if (status !== SOURCE_STATUSES.AVAILABLE) { diagnostic.status = status; return []; }
       const startedAt = performance.now();
+      const effectiveTimeoutMs = SOURCE_TIMEOUTS_MS[source] || sourceTimeoutMs;
       try {
         let timeoutId = null;
         const raw = await Promise.race([
           Promise.resolve(adapter.read({ ...input, source, limit: SOURCE_LIMITS[source], now: now() })),
           new Promise((_, reject) => {
-            timeoutId = setTimeout(() => reject(Object.assign(new Error("Authorized context source timeout"), { code: "CONTEXT_SOURCE_TIMEOUT" })), sourceTimeoutMs);
+            timeoutId = setTimeout(() => reject(Object.assign(new Error("Authorized context source timeout"), { code: "CONTEXT_SOURCE_TIMEOUT" })), effectiveTimeoutMs);
           }),
         ]).finally(() => clearTimeout(timeoutId));
         const values = Array.isArray(raw?.items) ? raw.items : Array.isArray(raw) ? raw : [];

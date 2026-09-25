@@ -31,7 +31,7 @@ function createMorningBriefService(deps) {
         return messages.map((message) => ({ ...message, content: String(message.content || "").slice(0, 2500), snippet: String(message.snippet || "").slice(0, 500) }));
       }),
       capture("apple-reminders", true, () => deps.reminders.listIncompleteReminders()),
-      capture("apple-notes", true, () => deps.notes.listRecentNotes()),
+      capture("apple-notes", true, () => deps.notes.listRecentNotes({ limit: 3, includeBody: true })),
     ]);
     const local = deps.localContext();
     const safeNotes = (notes.data || []).slice(0, 20).map((note) => ({ ...note, content: String(note.content || "").slice(0, 1500) }));

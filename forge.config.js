@@ -24,7 +24,10 @@ module.exports = {
     },
     // Les fixtures du pilot sont des entrées runtime en lecture seule. Elles
     // restent hors ASAR afin de conserver les sémantiques fs.realpath/fs.cp.
-    extraResource: [path.join(__dirname, "resources", "dev-benchmark-fixtures")],
+    extraResource: [
+      path.join(__dirname, "resources", "dev-benchmark-fixtures"),
+      path.join(__dirname, "resources", "native"),
+    ],
     arch: requestedArch,
     protocols: [{ name: "Noon", schemes: ["noon"] }],
     extendInfo: {

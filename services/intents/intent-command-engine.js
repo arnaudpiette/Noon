@@ -150,6 +150,19 @@ function createIntentCommandEngine({ workspaceEngine = null, commandRegistry = c
     if (/\b(?:agenda|calendar|calendrier)\b/i.test(text) && /\b(?:rappels?|reminders?)\b/i.test(text) && /\b(?:montre|affiche|show)\b/i.test(text)) {
       return make(envelope, { type: "COMPOUND", action: "parallel_reads", dependencyMode: "parallel", steps: [make(envelope, { type: "OPEN", action: "calendar", explicitOrder: true }), make(envelope, { type: "OPEN", action: "reminders", explicitOrder: true })], explicitOrder: true });
     }
+    const reminderRead =
+      /\b(?:rappels?|reminders?|t[âa]ches?|todos?)\b/i.test(text) &&
+      /\b(?:quels?|liste|montre|affiche|voir|consulte|en cours|actifs?|à faire|a faire)\b/i.test(text) &&
+      !/\b(?:rappelle(?:-moi)?|mets?\s*(?:moi|-moi)?\s+un\s+rappel|cr[eé]e|ajoute|create)\b/i.test(text);
+
+    if (reminderRead) {
+      return make(envelope, {
+        type: "OPEN",
+        action: "reminders",
+        explicitOrder: true,
+      });
+    }
+
     const reminder = /\b(?:rappelle(?:-moi)?|mets?\s*(?:moi|-moi)?\s+un\s+rappel|create\s+(?:a\s+)?reminder|recu[eé]rdame)\b/i.test(text);
     if (reminder) {
       const title = clean(text.replace(/^.*?\b(?:pour|de|to|que)\b\s*/i, ""), 500);

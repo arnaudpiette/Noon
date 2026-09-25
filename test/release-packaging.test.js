@@ -30,12 +30,29 @@ test("la vérification inspecte aussi l’index interne de l’ASAR", () => {
   assert.match(verifier, /runtime-files-in-bundle/);
 });
 
-test("le packaging embarque uniquement les fixtures benchmark runtime comme ressource explicite", () => {
+test("le packaging embarque les fixtures benchmark et les helpers natifs requis", () => {
   const forge = require("../forge.config");
   const resources = forge.packagerConfig.extraResource;
-  assert.equal(resources.length, 1);
-  assert.match(resources[0], /resources[\\/]dev-benchmark-fixtures$/);
-  const verifier = fs.readFileSync(require.resolve("../scripts/verify-macos-package"), "utf8");
+
+  assert.equal(resources.length, 2);
+
+  assert.ok(
+    resources.some((resource) =>
+      /resources[\\/]dev-benchmark-fixtures$/.test(resource)
+    )
+  );
+
+  assert.ok(
+    resources.some((resource) =>
+      /resources[\\/]native$/.test(resource)
+    )
+  );
+
+  const verifier = fs.readFileSync(
+    require.resolve("../scripts/verify-macos-package"),
+    "utf8"
+  );
+
   assert.match(verifier, /benchmark-fixture:missing/);
   assert.match(verifier, /benchmark-fixture:content-mismatch/);
 });

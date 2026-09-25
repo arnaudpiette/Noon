@@ -621,6 +621,17 @@ function registerIpc() {
     await shell.openExternal(String(rawUrl));
     return true;
   });
+
+  registerTrustedHandler("noon:open-external", async (_event, rawUrl) => {
+    if (!isSafeExternalUrl(rawUrl)) {
+      const error = new Error("URL externe invalide ou non autorisée.");
+      error.code = "EXTERNAL_URL_INVALID";
+      throw error;
+    }
+
+    await shell.openExternal(String(rawUrl));
+    return true;
+  });
   registerTrustedHandler("noon:set-live-active", (_event, active) => {
     liveVoiceActive = Boolean(active);
     if (liveVoiceActive) void wakeWordService?.stop(); else scheduleWakeWordResume();

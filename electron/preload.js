@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld("noon", Object.freeze({
   setPrivateMemoryPassword: (password) => invoke("noon:set-private-memory-password", password),
   authenticatePrivateMemory: (payload) => invoke("noon:authenticate-private-memory", payload),
   openGoogleAuthorization: (url) => invoke("noon:open-google-authorization", url),
+  openExternal: (url) => invoke("noon:open-external", url),
   setLiveActive: (active) => invoke("noon:set-live-active", Boolean(active)),
   getWakeWordStatus: () => invoke("noon:get-wake-word-status"),
   setPicovoiceKey: (value) => invoke("noon:set-picovoice-key", value),

@@ -779,9 +779,10 @@ const authorizedContextSources = createAuthorizedContextSources({
     reminders: {
       status: () => connectorContextStatus(remindersConnector, { local: true }),
       read: async (request) => {
-        const reminders = await remindersConnector.listIncompleteReminders();
-        return reminders.filter((item) => !item.dueAt || Date.parse(item.dueAt) >= Date.now() - 86_400_000)
-          .sort((a, b) => String(a.dueAt || "").localeCompare(String(b.dueAt || ""))).slice(0, request.limit)
+        const reminders = await remindersConnector.listIncompleteReminders(request.limit);
+        return reminders
+          .sort((a, b) => String(a.dueAt || "").localeCompare(String(b.dueAt || "")))
+          .slice(0, request.limit)
           .map((item) => ({ sourceId: item.id, timestamp: item.dueAt, relevance: item.dueAt ? 0.9 : 0.6,
             privacyClass: "PRIVATE", localOnly: true, payload: { summary: item.title, dueAt: item.dueAt, status: "active" } }));
       },
@@ -2937,9 +2938,153 @@ async function askAI(
   continuityContext = null,
   signal = null,
   onTextDelta = null,
-  runtimeNetworkState = "ONLINE"
+  runtimeNetworkState = "ONLINE",
+  compoundDepth = 0
 ) {
   const createdArtifacts = [];
+
+  const explicitCompoundQuestions =
+    compoundDepth === 0
+      ? String(question || "")
+          .replace(/\r/g, "")
+          .match(/[^?\n]+(?:\?|$)/g)
+          ?.map((item) => item.trim())
+          .filter(
+            (item) =>
+              item.length >= 3 &&
+              item !== "?"
+          )
+          .slice(0, 6) || []
+      : [];
+
+  const realCompoundQuestions =
+    explicitCompoundQuestions.filter(
+      (item) => item.endsWith("?")
+    );
+
+  if (realCompoundQuestions.length >= 2) {
+    setSessionActivity(
+      sessionId,
+      "thinking",
+      `Traitement de ${realCompoundQuestions.length} questions…`
+    );
+
+    const compoundResults = [];
+
+    for (const subQuestion of realCompoundQuestions) {
+      try {
+        const subResult = await askAI(
+          subQuestion,
+          focus,
+          focusPath,
+          mode,
+          history,
+          sessionId,
+          attachments,
+          visualDetail,
+          webSearchEnabled,
+          maxWebToolCalls,
+          intelligenceProfile,
+          workspaceId,
+
+          // L'intention du message complet ne doit pas polluer
+          // l'analyse de chaque sous-question.
+          null,
+
+          continuityContext,
+          signal,
+
+          // Ne pas streamer plusieurs réponses simultanément.
+          null,
+
+          runtimeNetworkState,
+          compoundDepth + 1
+        );
+
+        compoundResults.push({
+          question: subQuestion,
+          result: subResult,
+        });
+      } catch (error) {
+        compoundResults.push({
+          question: subQuestion,
+          error,
+        });
+      }
+    }
+
+    const answer = compoundResults
+      .map((entry, index) => {
+        const heading =
+          `${index + 1}. ${entry.question}`;
+
+        if (entry.error) {
+          return (
+            `${heading}\n` +
+            "Je n’ai pas pu traiter cette question."
+          );
+        }
+
+        const content =
+          String(
+            entry.result?.answer ||
+            "Aucune réponse disponible."
+          ).trim();
+
+        return `${heading}\n${content}`;
+      })
+      .join("\n\n");
+
+    const sources = compoundResults
+      .flatMap(
+        (entry) =>
+          entry.result?.sources || []
+      );
+
+    const artifacts = compoundResults
+      .flatMap(
+        (entry) =>
+          entry.result?.artifacts || []
+      );
+
+    const webSearchCalls =
+      compoundResults.reduce(
+        (total, entry) =>
+          total +
+          Number(
+            entry.result?.webSearchCalls || 0
+          ),
+        0
+      );
+
+    setSessionActivity(
+      sessionId,
+      "done",
+      `${realCompoundQuestions.length} questions traitées.`
+    );
+
+    return {
+      status: "completed",
+      answer,
+      sources,
+      artifacts,
+      webSearchCalls,
+      executionId: null,
+      runtime: {
+        state: "COMPOUND",
+        remoteCalls:
+          compoundResults.reduce(
+            (total, entry) =>
+              total +
+              Number(
+                entry.result?.runtime
+                  ?.remoteCalls || 0
+              ),
+            0
+          ),
+      },
+    };
+  }
   const continuitySessionId = continuityContext?.sessionId || null;
   const rememberContinuityEntity = (entity, options) => {
     if (!continuitySessionId) return;
@@ -2999,6 +3144,679 @@ async function askAI(
     setSessionActivity(sessionId, "done", "Mode en ligne réactivé.");
     return { status: "completed", answer: "Mode équilibré réactivé. Les services distants pourront de nouveau être utilisés lorsque la connexion est disponible et que la demande le nécessite.", sources: [], artifacts: [], webSearchCalls: 0, executionId: null };
   }
+
+    const deterministicReminderRead =
+      (
+        normalizedIntent?.type === "OPEN" &&
+        normalizedIntent?.action === "reminders"
+      ) ||
+      (
+        /\b(?:rappels?|reminders?|t[âa]ches?|todos?)\b/i.test(question) &&
+        /\b(?:quels?|liste|montre|affiche|voir|consulte|en cours|actifs?|à faire|a faire)\b/i.test(question) &&
+        !/\b(?:rappelle(?:-moi)?|mets?\s*(?:moi|-moi)?\s+un\s+rappel|cr[eé]e|ajoute|create)\b/i.test(question)
+      );
+
+    if (deterministicReminderRead) {
+      setSessionActivity(sessionId, "thinking", "Lecture des rappels…");
+
+      try {
+        const reminders =
+          await remindersConnector.listIncompleteReminders(20);
+
+        const activeReminders = reminders
+          .filter((item) => item && item.completed !== true)
+          .slice(0, 20);
+
+        const answer = activeReminders.length
+          ? `Tu as ${activeReminders.length} rappel${activeReminders.length > 1 ? "s" : ""} en cours :\n\n${activeReminders
+              .map((item) =>
+                `- ${String(item.title || "Rappel sans titre")
+                  .replace(/\s+/g, " ")
+                  .trim()}`
+              )
+              .join("\n")}`
+          : "Tu n’as aucun rappel en cours.";
+
+        setSessionActivity(sessionId, "done", "Rappels récupérés.");
+
+        return {
+          status: "completed",
+          answer,
+          sources: [],
+          artifacts: [],
+          webSearchCalls: 0,
+          executionId: null,
+          runtime: {
+            state: "LOCAL",
+            remoteCalls: 0,
+          },
+        };
+      } catch (error) {
+        setSessionActivity(
+          sessionId,
+          "done",
+          "Rappels indisponibles."
+        );
+
+        return {
+          status: "completed",
+          answer:
+            error?.status === 403
+              ? "Noon n’a pas l’autorisation d’accéder à tes rappels."
+              : "Je n’arrive pas à lire tes rappels pour le moment.",
+          sources: [],
+          artifacts: [],
+          webSearchCalls: 0,
+          executionId: null,
+          runtime: {
+            state: "LOCAL",
+            remoteCalls: 0,
+          },
+        };
+      }
+    }
+
+    const noteQuestion = String(question || "").trim();
+
+    const deterministicRecentNotesRead =
+      /\bnotes?\b/i.test(noteQuestion) &&
+      /\b(?:récentes?|recentes?|dernières?|dernieres?|quelles?|liste|montre|affiche)\b/i.test(noteQuestion) &&
+      !/\b(?:cherche|recherche|trouve|retrouve)\b/i.test(noteQuestion);
+
+    const deterministicNoteSearch =
+      /\bnotes?\b/i.test(noteQuestion) &&
+      /\b(?:cherche|recherche|trouve|retrouve|parle(?:nt)?\s+de|contient|contenant|mentionne)\b/i.test(noteQuestion);
+
+    if (deterministicRecentNotesRead) {
+      setSessionActivity(
+        sessionId,
+        "thinking",
+        "Lecture des notes récentes…"
+      );
+
+      try {
+        const notes = await notesConnector.listRecentNotes({
+          limit: 5,
+          includeBody: false,
+        });
+
+        const answer = notes.length
+          ? `Voici tes ${notes.length} notes les plus récentes :\n\n${notes
+              .map((note) => `- ${String(note.title || "Note sans titre").trim()}`)
+              .join("\n")}`
+          : "Je n’ai trouvé aucune note récente.";
+
+        setSessionActivity(
+          sessionId,
+          "done",
+          "Notes récupérées."
+        );
+
+        return {
+          status: "completed",
+          answer,
+          sources: [],
+          artifacts: [],
+          webSearchCalls: 0,
+          executionId: null,
+          runtime: {
+            state: "LOCAL",
+            remoteCalls: 0,
+          },
+        };
+      } catch (error) {
+        setSessionActivity(
+          sessionId,
+          "done",
+          "Notes indisponibles."
+        );
+
+        return {
+          status: "completed",
+          answer:
+            error?.status === 403
+              ? "Noon n’a pas l’autorisation d’accéder à Apple Notes."
+              : "Je n’arrive pas à lire Apple Notes pour le moment.",
+          sources: [],
+          artifacts: [],
+          webSearchCalls: 0,
+          executionId: null,
+          runtime: {
+            state: "LOCAL",
+            remoteCalls: 0,
+          },
+        };
+      }
+    }
+
+    if (deterministicNoteSearch) {
+      let noteQuery = null;
+
+      const quotedMatch =
+        noteQuestion.match(/[«"“](.+?)[»"”]/);
+
+      const contentMatch =
+        noteQuestion.match(
+          /\b(?:parle(?:nt)?\s+de|contient|contenant|mentionne|sur|à propos de|a propos de)\s+(.+?)(?:[?.!]|$)/i
+        );
+
+      if (quotedMatch?.[1]) {
+        noteQuery = quotedMatch[1];
+      } else if (contentMatch?.[1]) {
+        noteQuery = contentMatch[1];
+      }
+
+      noteQuery = String(noteQuery || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 500);
+
+      if (noteQuery) {
+        setSessionActivity(
+          sessionId,
+          "thinking",
+          "Recherche dans Apple Notes…"
+        );
+
+        try {
+          const results = await notesConnector.searchNotes(
+            noteQuery,
+            {
+              limit: 5,
+              includeBody: false,
+            }
+          );
+
+          const answer = results.length
+            ? `J’ai trouvé ${results.length} note${results.length > 1 ? "s" : ""} correspondant à « ${noteQuery} » :\n\n${results
+                .map((note) => {
+                  const location =
+                    note.matchType === "body"
+                      ? "mention dans le contenu"
+                      : "correspondance dans le titre";
+
+                  return `- ${String(note.title || "Note sans titre").trim()} — ${location}`;
+                })
+                .join("\n")}`
+            : `Je n’ai trouvé aucune note correspondant à « ${noteQuery} ».`;
+
+          setSessionActivity(
+            sessionId,
+            "done",
+            "Recherche Notes terminée."
+          );
+
+          return {
+            status: "completed",
+            answer,
+            sources: [],
+            artifacts: [],
+            webSearchCalls: 0,
+            executionId: null,
+            runtime: {
+              state: "LOCAL",
+              remoteCalls: 0,
+            },
+          };
+        } catch (error) {
+          setSessionActivity(
+            sessionId,
+            "done",
+            "Recherche Notes indisponible."
+          );
+
+          return {
+            status: "completed",
+            answer:
+              error?.status === 403
+                ? "Noon n’a pas l’autorisation d’accéder à Apple Notes."
+                : "Je n’arrive pas à rechercher dans Apple Notes pour le moment.",
+            sources: [],
+            artifacts: [],
+            webSearchCalls: 0,
+            executionId: null,
+            runtime: {
+              state: "LOCAL",
+              remoteCalls: 0,
+            },
+          };
+        }
+      }
+    }
+
+    const calendarQuestion = String(question || "").trim();
+
+    const calendarNormalized = calendarQuestion
+      .toLocaleLowerCase("fr")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+
+    const calendarReadCue =
+      /\b(?:agenda|calendar|calendrier|evenements?|rdv|rendez vous|reunions?)\b/.test(
+        calendarNormalized
+      );
+
+    const calendarTemporalCue =
+      /\b(?:hier|avant hier|aujourd hui|demain|apres demain|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\b/.test(
+        calendarNormalized
+      );
+
+    const calendarExplicitDateCue =
+      /\b(?:[0-3]?\d)\s+(?:janvier|fevrier|mars|avril|mai|juin|juillet|aout|septembre|octobre|novembre|decembre)(?:\s+\d{4})?\b/.test(
+        calendarNormalized
+      );
+
+    const calendarQuestionCue =
+      /\b(?:qu ai je|qu est ce que j ai|j ai quoi|j avais quoi|prevu|programme|programmee|programmes)\b/.test(
+        calendarNormalized
+      );
+
+    const calendarWriteCue =
+      /\b(?:cree|creer|ajoute|ajouter|planifie|planifier|deplace|deplacer|supprime|supprimer|annule|annuler)\b/.test(
+        calendarNormalized
+      );
+
+    const deterministicCalendarRead =
+      !calendarWriteCue &&
+      (
+        calendarReadCue ||
+        ((calendarTemporalCue || calendarExplicitDateCue) && calendarQuestionCue)
+      );
+
+    if (deterministicCalendarRead) {
+      setSessionActivity(
+        sessionId,
+        "thinking",
+        "Lecture de Google Calendar…"
+      );
+
+      try {
+        const now = new Date();
+
+        const target = new Date(now);
+        target.setSeconds(0, 0);
+
+        const months = {
+          janvier: 0,
+          fevrier: 1,
+          mars: 2,
+          avril: 3,
+          mai: 4,
+          juin: 5,
+          juillet: 6,
+          aout: 7,
+          septembre: 8,
+          octobre: 9,
+          novembre: 10,
+          decembre: 11,
+        };
+
+        const explicitDate =
+          calendarNormalized.match(
+            /\b([0-3]?\d)\s+(janvier|fevrier|mars|avril|mai|juin|juillet|aout|septembre|octobre|novembre|decembre)(?:\s+(\d{4}))?\b/
+          );
+
+        if (explicitDate) {
+          const day = Number(explicitDate[1]);
+          const month = months[explicitDate[2]];
+          const year = explicitDate[3]
+            ? Number(explicitDate[3])
+            : now.getFullYear();
+
+          target.setFullYear(year, month, day);
+        } else if (/\bavant hier\b/.test(calendarNormalized)) {
+          target.setDate(target.getDate() - 2);
+        } else if (/\bhier\b/.test(calendarNormalized)) {
+          target.setDate(target.getDate() - 1);
+        } else if (/\bapres demain\b/.test(calendarNormalized)) {
+          target.setDate(target.getDate() + 2);
+        } else if (/\bdemain\b/.test(calendarNormalized)) {
+          target.setDate(target.getDate() + 1);
+        } else if (/\baujourd hui\b/.test(calendarNormalized)) {
+          // target reste aujourd'hui
+        } else {
+          const weekdays = {
+            dimanche: 0,
+            lundi: 1,
+            mardi: 2,
+            mercredi: 3,
+            jeudi: 4,
+            vendredi: 5,
+            samedi: 6,
+          };
+
+          const weekdayMatch =
+            calendarNormalized.match(
+              /\b(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)(?:\s+(dernier|derniere|prochain|prochaine))?\b/
+            );
+
+          if (weekdayMatch) {
+            const wanted = weekdays[weekdayMatch[1]];
+            const qualifier = weekdayMatch[2] || "prochain";
+
+            if (
+              qualifier === "dernier" ||
+              qualifier === "derniere"
+            ) {
+              let distance =
+                (now.getDay() - wanted + 7) % 7;
+
+              if (distance === 0) {
+                distance = 7;
+              }
+
+              target.setDate(
+                target.getDate() - distance
+              );
+            } else {
+              let distance =
+                (wanted - now.getDay() + 7) % 7;
+
+              if (distance === 0) {
+                distance = 7;
+              }
+
+              target.setDate(
+                target.getDate() + distance
+              );
+            }
+          }
+        }
+
+        const from = new Date(target);
+        from.setHours(0, 0, 0, 0);
+
+        const to = new Date(from);
+        to.setDate(to.getDate() + 1);
+
+        const result =
+          await calendarConnector.listCalendarEvents({
+            timeMin: from.toISOString(),
+            timeMax: to.toISOString(),
+          });
+
+        const events = (result.items || [])
+          .slice()
+          .sort((left, right) => {
+            const leftStart =
+              left.start?.dateTime ||
+              left.start?.date ||
+              "";
+
+            const rightStart =
+              right.start?.dateTime ||
+              right.start?.date ||
+              "";
+
+            return String(leftStart).localeCompare(
+              String(rightStart)
+            );
+          });
+
+        const dayLabel = from.toLocaleDateString(
+          "fr-FR",
+          {
+            weekday: "long",
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+          }
+        );
+
+        const answer = events.length
+          ? `Voici ton agenda du ${dayLabel} :\n\n${events
+              .map((event) => {
+                const allDay =
+                  Boolean(event.start?.date) &&
+                  !event.start?.dateTime;
+
+                let timeLabel = "Toute la journée";
+
+                if (
+                  !allDay &&
+                  event.start?.dateTime
+                ) {
+                  const start =
+                    new Date(event.start.dateTime);
+
+                  timeLabel =
+                    start.toLocaleTimeString(
+                      "fr-FR",
+                      {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      }
+                    );
+                }
+
+                const title =
+                  event.summary ||
+                  "Événement sans titre";
+
+                const location =
+                  event.location
+                    ? ` — ${event.location}`
+                    : "";
+
+                return `• ${timeLabel} — ${title}${location}`;
+              })
+              .join("\n")}`
+          : `Tu n’as aucun événement dans ton agenda le ${dayLabel}.`;
+
+        setSessionActivity(
+          sessionId,
+          "done",
+          "Agenda récupéré."
+        );
+
+        return {
+          status: "completed",
+          answer,
+          sources: [],
+          artifacts: [],
+          webSearchCalls: 0,
+          executionId: null,
+          runtime: {
+            state: "LOCAL",
+            remoteCalls: 0,
+          },
+        };
+      } catch (error) {
+        setSessionActivity(
+          sessionId,
+          "done",
+          "Google Calendar indisponible."
+        );
+
+        const authRequired =
+          error?.status === 401 ||
+          error?.code === "AUTH_MISSING" ||
+          calendarConnector.status?.authState ===
+            "AUTH_REQUIRED";
+
+        return {
+          status: "completed",
+          answer: authRequired
+            ? "La connexion Google Calendar doit être renouvelée."
+            : "Je n’arrive pas à lire Google Calendar pour le moment.",
+          sources: [],
+          artifacts: [],
+          webSearchCalls: 0,
+          executionId: null,
+          runtime: {
+            state: "LOCAL",
+            remoteCalls: 0,
+          },
+        };
+      }
+    }
+
+    const gmailQuestion = String(question || "").trim();
+
+    const deterministicRecentEmailRead =
+      /\b(?:mails?|emails?|e-mails?|gmail|courriels?)\b/i.test(gmailQuestion) &&
+      /\b(?:derniers?|dernières?|dernieres?|récents?|recents?|récentes?|recentes?|nouveaux?|nouveaux|quels?|liste|montre|affiche|reçus?|recus?|bo[iî]te)\b/i.test(gmailQuestion) &&
+      !/\b(?:envoie|envoyer|écris|ecris|rédige|redige|réponds|reponds|répondre|repondre|brouillon|supprime|archive)\b/i.test(gmailQuestion);
+
+    if (deterministicRecentEmailRead) {
+      setSessionActivity(
+        sessionId,
+        "thinking",
+        "Lecture des derniers e-mails…"
+      );
+
+      try {
+        const searchResult =
+          await gmailConnector.searchGmailMessages(
+            "in:inbox",
+            { maxResults: 5 }
+          );
+
+        const refs = (searchResult.messages || [])
+          .slice(0, 5);
+
+        const rawMessages = await Promise.all(
+          refs.map((item) =>
+            gmailConnector.getGmailMessage(item.id)
+          )
+        );
+
+        const messages = rawMessages.map((message) => {
+          const headers =
+            Array.isArray(message?.payload?.headers)
+              ? message.payload.headers
+              : [];
+
+          const header = (name) => {
+            const found = headers.find(
+              (item) =>
+                String(item?.name || "")
+                  .toLowerCase() ===
+                String(name).toLowerCase()
+            );
+
+            return String(found?.value || "").trim();
+          };
+
+          const subject =
+            header("Subject") || "Sans objet";
+
+          const from =
+            header("From") || "Expéditeur inconnu";
+
+          const rawDate = header("Date");
+
+          let date = rawDate;
+
+          if (rawDate) {
+            const parsed = new Date(rawDate);
+
+            if (!Number.isNaN(parsed.getTime())) {
+              date = parsed.toLocaleString("fr-FR", {
+                dateStyle: "short",
+                timeStyle: "short",
+              });
+            }
+          }
+
+          const snippet = String(
+            message?.snippet || ""
+          )
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 220);
+
+          return {
+            id: message?.id || null,
+            threadId: message?.threadId || null,
+            subject,
+            from,
+            date,
+            snippet,
+            gmailUrl: (message?.threadId || message?.id)
+              ? `https://mail.google.com/mail/u/0/#inbox/${encodeURIComponent(
+                  message.threadId || message.id
+                )}`
+              : null,
+          };
+        });
+
+        const answer = messages.length
+          ? `Voici tes ${messages.length} derniers e-mails dans la boîte de réception :\n\n${messages
+              .map((mail, index) => {
+                const safeSubject = String(
+                  mail.subject || "Sans objet"
+                ).replace(/[\[\]]/g, "");
+
+                const details = [
+                  mail.gmailUrl
+                    ? `[${index + 1}. ${safeSubject}](${mail.gmailUrl})`
+                    : `${index + 1}. ${safeSubject}`,
+                  `De : ${mail.from}`,
+                  mail.date
+                    ? `Date : ${mail.date}`
+                    : null,
+                  mail.snippet
+                    ? `${mail.snippet}${mail.snippet.length >= 220 ? "…" : ""}`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join("\n");
+
+                return details;
+              })
+              .join("\n\n")}`
+          : "Je n’ai trouvé aucun e-mail dans ta boîte de réception.";
+
+        setSessionActivity(
+          sessionId,
+          "done",
+          "E-mails récupérés."
+        );
+
+        return {
+          status: "completed",
+          answer,
+          sources: [],
+          artifacts: [],
+          webSearchCalls: 0,
+          executionId: null,
+          runtime: {
+            state: "LOCAL",
+            remoteCalls: 0,
+          },
+        };
+      } catch (error) {
+        setSessionActivity(
+          sessionId,
+          "done",
+          "Gmail indisponible."
+        );
+
+        const authRequired =
+          error?.status === 401 ||
+          error?.code === "AUTH_MISSING" ||
+          gmailConnector.status?.authState ===
+            "AUTH_REQUIRED";
+
+        return {
+          status: "completed",
+          answer: authRequired
+            ? "La connexion Gmail doit être renouvelée."
+            : "Je n’arrive pas à lire Gmail pour le moment.",
+          sources: [],
+          artifacts: [],
+          webSearchCalls: 0,
+          executionId: null,
+          runtime: {
+            state: "LOCAL",
+            remoteCalls: 0,
+          },
+        };
+      }
+    }
 
   const runtimeCapabilitiesSnapshot = localIntelligenceRuntime.snapshot({
     internetAvailable: runtimeNetworkState !== "OFFLINE",
