@@ -1,0 +1,943 @@
+"use strict";
+
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const { spawn, execFileSync } = require("node:child_process");
+
+const { redactSecrets } = require("../security/redaction");
+const { OUTCOMES } = require("../security/operational-security-policy");
+const {
+  COMMAND_CLASSES,
+  classifyDevCommand,
+} = require("../delegation/dev-command-policy");
+
+const TERMINAL_STATUSES = Object.freeze([
+  "IDLE",
+  "RUNNING",
+  "EXITED",
+  "CLOSED",
+]);
+
+const TERMINAL_OWNERS = Object.freeze([
+  "USER",
+  "NOON",
+]);
+
+const MAX_COMMAND_LENGTH = 8_000;
+const MAX_OUTPUT_CHUNK = 16_000;
+const MAX_OUTPUT_EVENTS = 400;
+
+class DevWorkspaceError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = "DevWorkspaceError";
+    this.code = code;
+  }
+}
+
+function clean(value, max = 200) {
+  return String(value || "")
+    .replace(/[\0\r\n]+/g, " ")
+    .trim()
+    .slice(0, max);
+}
+
+function sanitizedTerminalEnvironment(source = process.env) {
+  const allowed = [
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "TERM",
+  ];
+
+  const environment = Object.fromEntries(
+    allowed
+      .filter((key) => source[key] != null)
+      .map((key) => [key, source[key]])
+  );
+
+  environment.CI = "1";
+  environment.NO_COLOR = "1";
+
+  return environment;
+}
+
+function gitState(root) {
+  try {
+    return {
+      branch:
+        execFileSync(
+          "git",
+          ["-C", root, "branch", "--show-current"],
+          {
+            encoding: "utf8",
+            timeout: 2_000,
+            stdio: ["ignore", "pipe", "ignore"],
+          }
+        ).trim() || null,
+
+      dirty: Boolean(
+        execFileSync(
+          "git",
+          ["-C", root, "status", "--porcelain"],
+          {
+            encoding: "utf8",
+            timeout: 2_000,
+            stdio: ["ignore", "pipe", "ignore"],
+          }
+        ).trim()
+      ),
+    };
+  } catch {
+    return {
+      branch: null,
+      dirty: null,
+    };
+  }
+}
+
+function contractFor(classification) {
+  return {
+    SAFE_READ: "read",
+    WORKSPACE_WRITE: "write",
+    PACKAGE_INSTALL: "write",
+    GIT_LOCAL: "write",
+    REMOTE: "external",
+    SYSTEM: "destructive",
+    DESTRUCTIVE: "destructive",
+  }[classification] || "external";
+}
+
+function actionFor(classification) {
+  return `terminal_${String(classification || "").toLowerCase()}`;
+}
+
+function createDevWorkspaceTerminalService({
+  workspaceEngine,
+  operationalSecurityPolicy,
+  observability = null,
+  now = () => Date.now(),
+  spawnProcess = spawn,
+  environment = process.env,
+} = {}) {
+  if (!workspaceEngine?.context) {
+    throw new TypeError("WorkspaceEngine requis.");
+  }
+
+  if (!operationalSecurityPolicy?.evaluate) {
+    throw new TypeError("OperationalSecurityPolicy requise.");
+  }
+
+  const sessions = new Map();
+
+  const emit = (event, metadata = {}) => {
+    try {
+      observability?.(event, metadata);
+    } catch {}
+  };
+
+  const iso = () => new Date(now()).toISOString();
+
+  function rootFor(workspaceId, requestedRoot = null) {
+    const context = workspaceEngine.context(
+      clean(workspaceId, 160)
+    );
+
+    const roots = (context.roots || [])
+      .filter((root) => root?.path)
+      .map((root) => {
+        try {
+          return {
+            ...root,
+            path: fs.realpathSync(root.path),
+          };
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+
+    if (!roots.length) {
+      throw new DevWorkspaceError(
+        "WORKSPACE_ROOT_REQUIRED",
+        "Cet espace DEV n’a aucun dépôt autorisé."
+      );
+    }
+
+    let selected;
+
+    if (requestedRoot) {
+      let requestedReal;
+
+      try {
+        requestedReal = fs.realpathSync(
+          String(requestedRoot)
+        );
+      } catch {
+        throw new DevWorkspaceError(
+          "WORKSPACE_ROOT_UNAVAILABLE",
+          "Le dépôt demandé est indisponible."
+        );
+      }
+
+      selected = roots.find(
+        (root) => root.path === requestedReal
+      );
+    } else {
+      selected = roots[0];
+    }
+
+    if (!selected) {
+      throw new DevWorkspaceError(
+        "WORKSPACE_ROOT_DENIED",
+        "Le dépôt demandé n’est pas lié à cet espace autorisé."
+      );
+    }
+
+    return {
+      context,
+      root: selected,
+    };
+  }
+
+  function publicTerminal(terminal) {
+    return {
+      id: terminal.id,
+      title: terminal.title,
+      owner: terminal.owner,
+      pid: terminal.child?.pid || null,
+      cwd: terminal.cwd,
+      status: terminal.status,
+      createdAt: terminal.createdAt,
+      lastActivityAt: terminal.lastActivityAt,
+      exitCode: terminal.exitCode,
+      signal: terminal.signal,
+      running: Boolean(terminal.child),
+    };
+  }
+
+  function publicSession(session) {
+    return {
+      id: session.id,
+      workspaceId: session.workspaceId,
+      repositoryRoot: session.repositoryRoot,
+      projectName: session.projectName,
+      branch: session.branch,
+      dirty: session.dirty,
+
+      terminalSessions: [
+        ...session.terminals.values(),
+      ].map(publicTerminal),
+
+      activeTerminalId: session.activeTerminalId,
+
+      preview: {
+        target: null,
+        status: "UNCONFIGURED",
+      },
+
+      gitDiff: {
+        status: "UNCONFIGURED",
+      },
+
+      problems: {
+        status: "UNCONFIGURED",
+      },
+
+      output: {
+        status: "READY",
+      },
+
+      lastValidationState:
+        session.lastValidationState,
+
+      executionState:
+        session.executionState,
+
+      createdAt:
+        session.createdAt,
+    };
+  }
+
+  function refreshExecutionState(session) {
+    session.executionState = [
+      ...session.terminals.values(),
+    ].some((terminal) => Boolean(terminal.child))
+      ? "RUNNING"
+      : "READY";
+  }
+
+  function createSession(input = {}) {
+    const { context, root } = rootFor(
+      input.workspaceId,
+      input.repositoryRoot
+    );
+
+    const id =
+      `dev-workspace-${crypto.randomUUID()}`;
+
+    const git = gitState(root.path);
+
+    const session = {
+      id,
+      workspaceId: context.workspaceId,
+      repositoryRoot: root.path,
+      rootMode: root.mode,
+      projectName:
+        context.activeProject?.name ||
+        context.displayName,
+      branch: git.branch,
+      dirty: git.dirty,
+      terminals: new Map(),
+      activeTerminalId: null,
+      lastValidationState: null,
+      executionState: "READY",
+      createdAt: iso(),
+    };
+
+    sessions.set(id, session);
+
+    emit("dev_workspace_created", {
+      workspaceId: session.workspaceId,
+    });
+
+    return publicSession(session);
+  }
+
+  function requireSession(id) {
+    const session = sessions.get(
+      clean(id, 160)
+    );
+
+    if (!session) {
+      throw new DevWorkspaceError(
+        "DEV_WORKSPACE_NOT_FOUND",
+        "Session DEV introuvable."
+      );
+    }
+
+    return session;
+  }
+
+  function createTerminal(input = {}) {
+    const session = requireSession(
+      input.sessionId
+    );
+
+    const owner = String(
+      input.owner || "USER"
+    ).toUpperCase();
+
+    if (!TERMINAL_OWNERS.includes(owner)) {
+      throw new DevWorkspaceError(
+        "TERMINAL_OWNER_INVALID",
+        "Propriétaire de terminal invalide."
+      );
+    }
+
+    const terminal = {
+      id: `terminal-${crypto.randomUUID()}`,
+      title: clean(
+        input.title ||
+          `Terminal ${session.terminals.size + 1}`,
+        80
+      ),
+      owner,
+      cwd: session.repositoryRoot,
+      status: "IDLE",
+      createdAt: iso(),
+      lastActivityAt: iso(),
+      exitCode: null,
+      signal: null,
+      child: null,
+      output: [],
+    };
+
+    session.terminals.set(
+      terminal.id,
+      terminal
+    );
+
+    session.activeTerminalId =
+      terminal.id;
+
+    emit("dev_terminal_created", {
+      workspaceId: session.workspaceId,
+      terminalId: terminal.id,
+      owner,
+    });
+
+    return publicTerminal(terminal);
+  }
+
+  function terminalFor(
+    session,
+    terminalId
+  ) {
+    const terminal = session.terminals.get(
+      clean(terminalId, 160)
+    );
+
+    if (
+      !terminal ||
+      terminal.status === "CLOSED"
+    ) {
+      throw new DevWorkspaceError(
+        "TERMINAL_NOT_FOUND",
+        "Terminal introuvable."
+      );
+    }
+
+    return terminal;
+  }
+
+  function append(
+    terminal,
+    type,
+    content
+  ) {
+    const value = redactSecrets(
+      String(content || "")
+    ).slice(0, MAX_OUTPUT_CHUNK);
+
+    if (!value) return;
+
+    terminal.output.push({
+      type,
+      text: value,
+      at: iso(),
+    });
+
+    if (
+      terminal.output.length >
+      MAX_OUTPUT_EVENTS
+    ) {
+      terminal.output.splice(
+        0,
+        terminal.output.length -
+          MAX_OUTPUT_EVENTS
+      );
+    }
+
+    terminal.lastActivityAt = iso();
+  }
+
+  function assertTerminalOrigin(
+    terminal,
+    origin
+  ) {
+    const normalized = String(
+      origin || terminal.owner
+    ).toUpperCase();
+
+    if (
+      terminal.owner === "USER" &&
+      normalized !== "USER"
+    ) {
+      throw new DevWorkspaceError(
+        "USER_TERMINAL_AUTOMATION_DENIED",
+        "Un terminal utilisateur ne peut pas recevoir une commande automatique."
+      );
+    }
+
+    if (
+      terminal.owner === "NOON" &&
+      normalized !== "NOON"
+    ) {
+      throw new DevWorkspaceError(
+        "NOON_TERMINAL_ORIGIN_DENIED",
+        "Ce terminal est réservé à Noon."
+      );
+    }
+
+    return normalized;
+  }
+
+  function policyFor(
+    session,
+    classification
+  ) {
+    const readOnly =
+      session.rootMode !== "read-write";
+
+    const mutating =
+      classification !== "SAFE_READ";
+
+    if (readOnly && mutating) {
+      throw new DevWorkspaceError(
+        "WORKSPACE_READ_ONLY",
+        "Ce workspace est en lecture seule."
+      );
+    }
+
+    const decision =
+      operationalSecurityPolicy.evaluate({
+        actionRequest: {
+          origin: "trusted_ui",
+          skillId: "terminal",
+          operation:
+            actionFor(classification),
+          args: {
+            path:
+              session.repositoryRoot,
+          },
+          workspaceId:
+            session.workspaceId,
+          explicitOrder: true,
+          localOnly: true,
+        },
+
+        skillPolicy: {
+          level:
+            contractFor(classification),
+          networkAccess:
+            classification === "REMOTE",
+          destructive:
+            classification ===
+            "DESTRUCTIVE",
+        },
+
+        currentPermissions: {
+          allowed:
+            classification ===
+              "SAFE_READ" ||
+            session.rootMode ===
+              "read-write",
+
+          code:
+            session.rootMode ===
+            "read-write"
+              ? "READ_WRITE_WORKSPACE"
+              : "READ_ONLY_WORKSPACE",
+        },
+      });
+
+    if (
+      ![
+        OUTCOMES.ALLOW,
+        OUTCOMES.ALLOW_WITH_CONSTRAINTS,
+      ].includes(decision.outcome)
+    ) {
+      throw new DevWorkspaceError(
+        decision.requiredApproval
+          ? "TERMINAL_APPROVAL_REQUIRED"
+          : "TERMINAL_COMMAND_DENIED",
+
+        decision.requiredApproval
+          ? "Cette commande exige une approbation Noon."
+          : "Cette commande est refusée par la politique Noon."
+      );
+    }
+
+    return decision;
+  }
+
+  function runCommand(input = {}) {
+    const session = requireSession(
+      input.sessionId
+    );
+
+    const terminal = terminalFor(
+      session,
+      input.terminalId
+    );
+
+    if (terminal.child) {
+      throw new DevWorkspaceError(
+        "TERMINAL_BUSY",
+        "Ce terminal exécute déjà une commande."
+      );
+    }
+
+    assertTerminalOrigin(
+      terminal,
+      input.origin
+    );
+
+    const command = String(
+      input.command || ""
+    ).trim();
+
+    if (
+      !command ||
+      command.length >
+        MAX_COMMAND_LENGTH
+    ) {
+      throw new DevWorkspaceError(
+        "COMMAND_INVALID",
+        "Commande terminal invalide."
+      );
+    }
+
+    const commandDecision =
+      classifyDevCommand(command);
+
+    if (
+      commandDecision.allowed !== true ||
+      !Array.isArray(
+        commandDecision.execution
+      ) ||
+      typeof
+        commandDecision.execution[0] !==
+        "string" ||
+      !Array.isArray(
+        commandDecision.execution[1]
+      )
+    ) {
+      throw new DevWorkspaceError(
+        commandDecision.reasonCode ||
+          "COMMAND_NOT_ALLOWLISTED",
+        "Cette commande n’est pas autorisée dans le terminal DEV."
+      );
+    }
+
+    policyFor(
+      session,
+      commandDecision.classification
+    );
+
+    const [
+      executable,
+      args,
+    ] = commandDecision.execution;
+
+    const startedAt = now();
+
+    terminal.status = "RUNNING";
+    terminal.exitCode = null;
+    terminal.signal = null;
+
+    append(
+      terminal,
+      "input",
+      `$ ${command}`
+    );
+
+    let child;
+
+    try {
+      child = spawnProcess(
+        executable,
+        [...args],
+        {
+          cwd: terminal.cwd,
+          env:
+            sanitizedTerminalEnvironment(
+              environment
+            ),
+          stdio: [
+            "ignore",
+            "pipe",
+            "pipe",
+          ],
+          detached: false,
+          shell: false,
+        }
+      );
+    } catch (error) {
+      terminal.status = "EXITED";
+
+      append(
+        terminal,
+        "stderr",
+        error?.message ||
+          "Impossible de démarrer la commande."
+      );
+
+      throw new DevWorkspaceError(
+        "TERMINAL_SPAWN_FAILED",
+        "Impossible de démarrer la commande."
+      );
+    }
+
+    terminal.child = child;
+
+    refreshExecutionState(session);
+
+    let finalized = false;
+
+    const finalize = (
+      code,
+      signal,
+      error = null
+    ) => {
+      if (finalized) return;
+      finalized = true;
+
+      terminal.child = null;
+
+      if (
+        terminal.status !== "CLOSED"
+      ) {
+        terminal.status = "EXITED";
+      }
+
+      terminal.exitCode =
+        Number.isInteger(code)
+          ? code
+          : null;
+
+      terminal.signal =
+        signal || null;
+
+      terminal.lastActivityAt =
+        iso();
+
+      session.lastValidationState = {
+        command:
+          commandDecision.classification ===
+          "SAFE_READ"
+            ? command
+            : null,
+
+        classification:
+          commandDecision.classification,
+
+        reasonCode:
+          commandDecision.reasonCode,
+
+        exitCode:
+          terminal.exitCode,
+
+        signal:
+          terminal.signal,
+
+        durationMs:
+          now() - startedAt,
+
+        status:
+          error
+            ? "FAILED"
+            : terminal.exitCode === 0
+              ? "PASS"
+              : "FAIL",
+      };
+
+      refreshExecutionState(session);
+
+      emit("dev_terminal_exited", {
+        workspaceId:
+          session.workspaceId,
+        terminalId:
+          terminal.id,
+        owner:
+          terminal.owner,
+        classification:
+          commandDecision.classification,
+        exitCode:
+          terminal.exitCode,
+        signal:
+          terminal.signal,
+        durationMs:
+          now() - startedAt,
+      });
+    };
+
+    child.stdout?.on(
+      "data",
+      (chunk) =>
+        append(
+          terminal,
+          "stdout",
+          chunk
+        )
+    );
+
+    child.stderr?.on(
+      "data",
+      (chunk) =>
+        append(
+          terminal,
+          "stderr",
+          chunk
+        )
+    );
+
+    child.once?.(
+      "error",
+      (error) => {
+        append(
+          terminal,
+          "stderr",
+          error?.message ||
+            "Erreur terminal."
+        );
+
+        finalize(
+          null,
+          null,
+          error
+        );
+      }
+    );
+
+    child.once?.(
+      "close",
+      (code, signal) => {
+        finalize(
+          code,
+          signal
+        );
+      }
+    );
+
+    return {
+      terminal:
+        publicTerminal(terminal),
+
+      classification:
+        commandDecision.classification,
+
+      reasonCode:
+        commandDecision.reasonCode,
+
+      execution: {
+        executable,
+        args: [...args],
+      },
+    };
+  }
+
+  function poll(input = {}) {
+    const terminal = terminalFor(
+      requireSession(input.sessionId),
+      input.terminalId
+    );
+
+    const from = Math.max(
+      0,
+      Number(input.from) || 0
+    );
+
+    return {
+      terminal:
+        publicTerminal(terminal),
+
+      output:
+        terminal.output.slice(from),
+
+      next:
+        terminal.output.length,
+    };
+  }
+
+  function closeTerminal(
+    input = {}
+  ) {
+    const session = requireSession(
+      input.sessionId
+    );
+
+    const terminal = terminalFor(
+      session,
+      input.terminalId
+    );
+
+    const child =
+      terminal.child;
+
+    terminal.status = "CLOSED";
+    terminal.child = null;
+    terminal.lastActivityAt = iso();
+
+    if (
+      child &&
+      !child.killed
+    ) {
+      try {
+        child.kill("SIGTERM");
+      } catch {}
+    }
+
+    if (
+      session.activeTerminalId ===
+      terminal.id
+    ) {
+      session.activeTerminalId = [
+        ...session.terminals.values(),
+      ].find(
+        (item) =>
+          item.status !== "CLOSED"
+      )?.id || null;
+    }
+
+    refreshExecutionState(session);
+
+    emit("dev_terminal_closed", {
+      workspaceId:
+        session.workspaceId,
+      terminalId:
+        terminal.id,
+      owner:
+        terminal.owner,
+    });
+
+    return {
+      closed: true,
+      activeTerminalId:
+        session.activeTerminalId,
+    };
+  }
+
+  function closeSession(id) {
+    const session =
+      requireSession(id);
+
+    for (
+      const terminal of
+      session.terminals.values()
+    ) {
+      const child =
+        terminal.child;
+
+      terminal.status =
+        "CLOSED";
+
+      terminal.child = null;
+
+      if (
+        child &&
+        !child.killed
+      ) {
+        try {
+          child.kill("SIGTERM");
+        } catch {}
+      }
+    }
+
+    sessions.delete(
+      session.id
+    );
+
+    return {
+      closed: true,
+    };
+  }
+
+  return {
+    createSession,
+    getSession: (id) =>
+      publicSession(
+        requireSession(id)
+      ),
+    createTerminal,
+    runCommand,
+    poll,
+    closeTerminal,
+    closeSession,
+    commandClasses:
+      COMMAND_CLASSES,
+    terminalOwners:
+      TERMINAL_OWNERS,
+  };
+}
+
+module.exports = {
+  COMMAND_CLASSES,
+  DevWorkspaceError,
+  TERMINAL_OWNERS,
+  TERMINAL_STATUSES,
+  createDevWorkspaceTerminalService,
+  sanitizedTerminalEnvironment,
+};
