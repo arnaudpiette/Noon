@@ -414,6 +414,87 @@
             <p>Bonjour. Je suis prêt.</p>
           </div>
         </section>
+
+        <!-- Terminal sécurisé du Mode DEV. -->
+        <section
+          id="devTerminalPanel"
+          class="dev-terminal-panel"
+          aria-label="Terminal de développement"
+          hidden
+        >
+          <header class="dev-terminal-header">
+            <div class="dev-terminal-heading">
+              <span class="label">DEV Workspace</span>
+              <strong id="devTerminalProject">Aucun Focus</strong>
+              <small id="devTerminalMeta">Sélectionne un projet DEV.</small>
+            </div>
+
+            <div class="dev-terminal-actions">
+              <button
+                id="devTerminalAdd"
+                type="button"
+                aria-label="Créer un terminal"
+                title="Nouveau terminal"
+              >
+                +
+              </button>
+            </div>
+          </header>
+
+          <div
+            id="devTerminalTabs"
+            class="dev-terminal-tabs"
+            role="tablist"
+            aria-label="Terminaux ouverts"
+          ></div>
+
+          <pre
+            id="devTerminalOutput"
+            class="dev-terminal-output"
+            role="log"
+            aria-live="polite"
+            aria-label="Sortie du terminal"
+          >Terminal DEV prêt.</pre>
+
+          <form
+            id="devTerminalForm"
+            class="dev-terminal-command"
+            autocomplete="off"
+          >
+            <span aria-hidden="true">$</span>
+
+            <label class="sr-only" for="devTerminalInput">
+              Commande terminal
+            </label>
+
+            <input
+              id="devTerminalInput"
+              type="text"
+              spellcheck="false"
+              autocomplete="off"
+              placeholder="npm test, npm run lint, git diff --check…"
+            >
+
+            <button id="devTerminalRun" type="submit">
+              Exécuter
+            </button>
+          </form>
+
+          <div class="dev-terminal-footer">
+            <span
+              id="devTerminalStatus"
+              class="dev-terminal-status"
+              data-state="idle"
+              role="status"
+            >
+              En attente
+            </span>
+
+            <small>
+              Terminal USER sécurisé · commandes autorisées uniquement
+            </small>
+          </div>
+        </section>
       </section>
 
       <section id="briefView" class="view brief-view">

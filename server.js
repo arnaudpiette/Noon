@@ -8402,10 +8402,68 @@ if (
     const body =
       await readJsonBody(req, 16 * 1024);
 
+    let workspaceId =
+      String(body.workspaceId || "").trim();
+
+    if (
+      body.focusId &&
+      body.repositoryRoot
+    ) {
+      const focusId =
+        String(body.focusId).trim();
+
+      if (!focusId) {
+        throw Object.assign(
+          new Error("Focus DEV invalide."),
+          {
+            statusCode: 400,
+            code: "DEV_FOCUS_INVALID",
+          }
+        );
+      }
+
+      workspaceId =
+        workspaceEngine.ensureLegacy({
+          legacyId: focusId,
+          name:
+            String(
+              body.focusName ||
+              focusId
+            ).trim() || focusId,
+          rootPath:
+            String(
+              body.repositoryRoot
+            ),
+          type:
+            focusId.startsWith("projet-")
+              ? "learning"
+              : "project",
+
+          // Un terminal DEV n'obtient jamais
+          // implicitement un droit d'écriture.
+          // WorkspaceEngine vérifie que cette
+          // racine figure bien dans les
+          // permissions read-write locales.
+          mode: "read-write",
+        }).id;
+    }
+
+    if (!workspaceId) {
+      throw Object.assign(
+        new Error(
+          "Workspace ou Focus DEV requis."
+        ),
+        {
+          statusCode: 400,
+          code:
+            "DEV_WORKSPACE_REQUIRED",
+        }
+      );
+    }
+
     const session =
       devWorkspaceTerminalService.createSession({
-        workspaceId:
-          String(body.workspaceId || ""),
+        workspaceId,
         repositoryRoot:
           body.repositoryRoot
             ? String(body.repositoryRoot)

@@ -352,6 +352,7 @@ function createDevWorkspaceTerminalService({
       signal: null,
       child: null,
       output: [],
+      outputCursor: 0,
     };
 
     session.terminals.set(
@@ -392,18 +393,19 @@ function createDevWorkspaceTerminalService({
     return terminal;
   }
 
-  function append(
-    terminal,
-    type,
-    content
-  ) {
+  function append(terminal, type, text) {
     const value = redactSecrets(
-      String(content || "")
+      String(text || "")
     ).slice(0, MAX_OUTPUT_CHUNK);
 
-    if (!value) return;
+    if (!value) {
+      return;
+    }
+
+    terminal.outputCursor += 1;
 
     terminal.output.push({
+      sequence: terminal.outputCursor,
       type,
       text: value,
       at: iso(),
@@ -810,15 +812,22 @@ function createDevWorkspaceTerminalService({
       Number(input.from) || 0
     );
 
+    const output = terminal.output
+      .filter(
+        (event) =>
+          event.sequence > from
+      )
+      .map(
+        ({
+          sequence: _sequence,
+          ...event
+        }) => event
+      );
+
     return {
-      terminal:
-        publicTerminal(terminal),
-
-      output:
-        terminal.output.slice(from),
-
-      next:
-        terminal.output.length,
+      terminal: publicTerminal(terminal),
+      output,
+      next: terminal.outputCursor,
     };
   }
 

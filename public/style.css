@@ -530,3 +530,297 @@ body.sidebar-collapsed .sidebar-toggle{left:calc(var(--sidebar-rail-width) + 16p
 .message>p a{color:#287df0;text-decoration:underline;text-decoration-color:rgba(40,125,240,.38);text-decoration-thickness:1px;text-underline-offset:3px;cursor:pointer;overflow-wrap:anywhere;word-break:break-word}
 .message>p a:hover{color:#155fc0;text-decoration-color:currentColor}.message>p a:focus-visible{border-radius:3px;outline:2px solid var(--orange);outline-offset:2px}
 .message-source-card__snippet{margin:3px 0 0!important;padding:0!important;border:0!important;color:#65696d;font-size:11px!important;line-height:1.45!important;white-space:normal!important}
+
+
+/* ============================================================
+   DEV TERMINAL WORKSPACE
+   Terminal USER sécurisé — aucune exécution renderer directe.
+   ============================================================ */
+
+.dev-terminal-panel[hidden]{
+  display:none!important
+}
+
+.chat-view.dev-terminal-active{
+  position:relative;
+  padding-bottom:500px
+}
+
+.chat-view.dev-terminal-active .conversation{
+  height:calc(100vh - 640px);
+  min-height:130px
+}
+
+.dev-terminal-panel{
+  position:absolute;
+  right:26px;
+  bottom:104px;
+  left:26px;
+  display:grid;
+  height:330px;
+  grid-template-rows:auto auto minmax(0,1fr) auto auto;
+  overflow:hidden;
+  border:1px solid rgba(0,0,0,.12);
+  border-radius:16px;
+  background:#111;
+  box-shadow:0 14px 38px rgba(0,0,0,.12);
+  color:#f4f4f1
+}
+
+.dev-terminal-header{
+  display:flex;
+  min-height:55px;
+  padding:11px 14px;
+  align-items:center;
+  justify-content:space-between;
+  gap:14px;
+  border-bottom:1px solid rgba(255,255,255,.1)
+}
+
+.dev-terminal-heading{
+  display:grid;
+  min-width:0;
+  gap:2px
+}
+
+.dev-terminal-heading .label{
+  color:var(--figma-green);
+  font-size:9px;
+  font-weight:800;
+  letter-spacing:.14em
+}
+
+.dev-terminal-heading strong{
+  overflow:hidden;
+  color:#fff;
+  font-size:13px;
+  text-overflow:ellipsis;
+  white-space:nowrap
+}
+
+.dev-terminal-heading small{
+  overflow:hidden;
+  color:#8e9297;
+  font-size:9px;
+  text-overflow:ellipsis;
+  white-space:nowrap
+}
+
+.dev-terminal-actions{
+  display:flex;
+  flex:0 0 auto;
+  gap:6px
+}
+
+.dev-terminal-actions button{
+  display:grid;
+  width:30px;
+  height:30px;
+  padding:0;
+  place-items:center;
+  border:1px solid rgba(255,255,255,.12);
+  border-radius:8px;
+  background:#1d1d1d;
+  color:var(--figma-green);
+  font-size:20px;
+  cursor:pointer
+}
+
+.dev-terminal-actions button:hover{
+  background:#292929
+}
+
+.dev-terminal-tabs{
+  display:flex;
+  min-height:35px;
+  padding:5px 8px 0;
+  gap:4px;
+  overflow-x:auto;
+  border-bottom:1px solid rgba(255,255,255,.08)
+}
+
+.dev-terminal-tab-shell{
+  display:flex;
+  height:29px;
+  flex:0 0 auto;
+  overflow:hidden;
+  border-radius:7px 7px 0 0;
+  background:#191919
+}
+
+.dev-terminal-tab{
+  max-width:220px;
+  padding:6px 8px 6px 10px;
+  overflow:hidden;
+  border:0;
+  background:transparent;
+  color:#8f9499;
+  font:inherit;
+  font-size:9px;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  cursor:pointer
+}
+
+.dev-terminal-tab[data-active="true"]{
+  background:#272727;
+  color:#fff
+}
+
+.dev-terminal-tab-close{
+  width:25px;
+  padding:0;
+  border:0;
+  background:transparent;
+  color:#777;
+  font-size:14px;
+  cursor:pointer
+}
+
+.dev-terminal-tab-close:hover{
+  color:#fff;
+  background:rgba(255,255,255,.06)
+}
+
+.dev-terminal-output{
+  min-height:0;
+  margin:0;
+  padding:12px 14px;
+  overflow:auto;
+  color:#d7ddd2;
+  background:#111;
+  font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+  font-size:11px;
+  line-height:1.55;
+  white-space:pre-wrap;
+  word-break:break-word
+}
+
+.dev-terminal-command{
+  display:grid;
+  min-height:42px;
+  padding:6px 9px;
+  grid-template-columns:18px minmax(0,1fr) auto;
+  align-items:center;
+  gap:4px;
+  border-top:1px solid rgba(255,255,255,.09);
+  background:#171717
+}
+
+.dev-terminal-command>span{
+  color:var(--figma-green);
+  font-family:"SFMono-Regular",Consolas,monospace;
+  font-size:12px;
+  text-align:center
+}
+
+.dev-terminal-command input{
+  min-width:0;
+  height:30px;
+  padding:4px 7px;
+  border:0;
+  outline:0;
+  background:transparent;
+  color:#fff;
+  font-family:"SFMono-Regular",Consolas,monospace;
+  font-size:11px
+}
+
+.dev-terminal-command input::placeholder{
+  color:#65696d
+}
+
+.dev-terminal-command button{
+  height:28px;
+  padding:0 11px;
+  border:0;
+  border-radius:7px;
+  background:var(--figma-green);
+  color:#111;
+  font:inherit;
+  font-size:9px;
+  font-weight:800;
+  cursor:pointer
+}
+
+.dev-terminal-command button:disabled,
+.dev-terminal-command input:disabled{
+  cursor:wait;
+  opacity:.5
+}
+
+.dev-terminal-footer{
+  display:flex;
+  min-height:27px;
+  padding:5px 10px;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  border-top:1px solid rgba(255,255,255,.07);
+  color:#6f7478;
+  font-size:8px
+}
+
+.dev-terminal-status{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  color:#8d9397
+}
+
+.dev-terminal-status::before{
+  width:6px;
+  height:6px;
+  border-radius:50%;
+  background:#72777b;
+  content:""
+}
+
+.dev-terminal-status[data-state="ready"]::before{
+  background:var(--figma-green)
+}
+
+.dev-terminal-status[data-state="running"]::before{
+  background:#4086f7;
+  box-shadow:0 0 7px rgba(64,134,247,.75)
+}
+
+.dev-terminal-status[data-state="error"]{
+  color:#ff7f87
+}
+
+.dev-terminal-status[data-state="error"]::before{
+  background:#ff4d5f
+}
+
+@media(max-width:720px){
+  .chat-view.dev-terminal-active{
+    padding-bottom:430px
+  }
+
+  .chat-view.dev-terminal-active .conversation{
+    height:calc(100vh - 565px);
+    min-height:100px
+  }
+
+  .dev-terminal-panel{
+    right:12px;
+    bottom:88px;
+    left:12px;
+    height:285px;
+    border-radius:13px
+  }
+
+  .dev-terminal-header{
+    min-height:50px;
+    padding:9px 11px
+  }
+
+  .dev-terminal-footer small{
+    display:none
+  }
+
+  .dev-terminal-tab{
+    max-width:150px
+  }
+}

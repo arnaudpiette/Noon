@@ -32,6 +32,17 @@ const focusCatalogStatus = document.getElementById("focusCatalogStatus");
 const focusAvailability = document.getElementById("focusAvailability");
 const refreshProjectsButton = document.getElementById("refreshProjectsButton");
 const conversationTitle = document.getElementById("conversationTitle");
+const chatView = document.getElementById("chatView");
+const devTerminalPanel = document.getElementById("devTerminalPanel");
+const devTerminalProject = document.getElementById("devTerminalProject");
+const devTerminalMeta = document.getElementById("devTerminalMeta");
+const devTerminalTabs = document.getElementById("devTerminalTabs");
+const devTerminalOutput = document.getElementById("devTerminalOutput");
+const devTerminalForm = document.getElementById("devTerminalForm");
+const devTerminalInput = document.getElementById("devTerminalInput");
+const devTerminalRun = document.getElementById("devTerminalRun");
+const devTerminalAddButton = document.getElementById("devTerminalAdd");
+const devTerminalStatus = document.getElementById("devTerminalStatus");
 const clearChatButton = document.getElementById("clearChat");
 const newConversationButton = document.getElementById(
   "newConversationButton"
@@ -349,6 +360,891 @@ let currentFocusPath = localStorage.getItem(
   FOCUS_PATH_STORAGE_KEY
 );
 let currentFocusId = localStorage.getItem(FOCUS_ID_STORAGE_KEY);
+
+// DEV_TERMINAL_UI_START
+// Le renderer n'exécute aucune commande directement.
+// Toutes les opérations passent par l'API locale sécurisée,
+// qui force elle-même owner/origin à USER.
+
+const devTerminalState = {
+  session: null,
+  terminals: new Map(),
+  outputByTerminal: new Map(),
+  offsetByTerminal: new Map(),
+  activeTerminalId: null,
+  contextKey: null,
+  pollTimer: null,
+  syncSerial: 0,
+};
+
+function setDevTerminalStatus(message, state = "idle") {
+  devTerminalStatus.textContent = message;
+  devTerminalStatus.dataset.state = state;
+}
+
+async function devTerminalRequest(
+  route,
+  {
+    method = "GET",
+    body,
+  } = {}
+) {
+  const headers = {
+    "X-Noon-Request": "1",
+  };
+
+  if (body !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  const response = await fetch(route, {
+    method,
+    headers,
+    cache: "no-store",
+    body:
+      body === undefined
+        ? undefined
+        : JSON.stringify(body),
+  });
+
+  let data = null;
+
+  try {
+    data = await response.json();
+  } catch {
+    data = {};
+  }
+
+  if (!response.ok) {
+    const error = new Error(
+      data?.message ||
+      "Terminal DEV indisponible."
+    );
+
+    error.code =
+      data?.code ||
+      "DEV_TERMINAL_REQUEST_FAILED";
+
+    error.httpStatus =
+      response.status;
+
+    throw error;
+  }
+
+  return data;
+}
+
+function stopDevTerminalPolling() {
+  if (devTerminalState.pollTimer !== null) {
+    window.clearInterval(
+      devTerminalState.pollTimer
+    );
+
+    devTerminalState.pollTimer = null;
+  }
+}
+
+function devTerminalBuffer(terminalId) {
+  if (
+    !devTerminalState.outputByTerminal.has(
+      terminalId
+    )
+  ) {
+    devTerminalState.outputByTerminal.set(
+      terminalId,
+      []
+    );
+  }
+
+  return devTerminalState.outputByTerminal.get(
+    terminalId
+  );
+}
+
+function formatDevTerminalEvent(event) {
+  const text = String(event?.text || "");
+
+  if (event?.type === "command") {
+    return `$ ${text}\n`;
+  }
+
+  return text;
+}
+
+function renderDevTerminalOutput() {
+  const terminalId =
+    devTerminalState.activeTerminalId;
+
+  if (!terminalId) {
+    devTerminalOutput.textContent =
+      "Aucun terminal ouvert.\nClique sur + pour en créer un.";
+
+    return;
+  }
+
+  const buffer =
+    devTerminalBuffer(terminalId);
+
+  devTerminalOutput.textContent =
+    buffer.length
+      ? buffer
+          .map(formatDevTerminalEvent)
+          .join("")
+      : "Terminal prêt.\n";
+
+  devTerminalOutput.scrollTop =
+    devTerminalOutput.scrollHeight;
+}
+
+function updateDevTerminalHeader() {
+  const session =
+    devTerminalState.session;
+
+  if (!session) {
+    devTerminalProject.textContent =
+      currentFocus ||
+      "Aucun Focus";
+
+    devTerminalMeta.textContent =
+      currentFocusPath
+        ? "Session terminal non ouverte."
+        : "Sélectionne un projet Focus.";
+
+    return;
+  }
+
+  devTerminalProject.textContent =
+    session.projectName ||
+    currentFocus ||
+    "Projet DEV";
+
+  const branch =
+    session.branch
+      ? `branche ${session.branch}`
+      : "sans dépôt Git";
+
+  const dirty =
+    session.dirty === true
+      ? " · modifications locales"
+      : session.dirty === false
+        ? " · Git propre"
+        : "";
+
+  devTerminalMeta.textContent =
+    `${branch}${dirty}`;
+}
+
+function renderDevTerminalTabs() {
+  devTerminalTabs.replaceChildren();
+
+  for (
+    const terminal of
+    devTerminalState.terminals.values()
+  ) {
+    const wrapper =
+      document.createElement("div");
+
+    wrapper.className =
+      "dev-terminal-tab-shell";
+
+    const select =
+      document.createElement("button");
+
+    select.type = "button";
+    select.className =
+      "dev-terminal-tab";
+
+    select.dataset.active =
+      String(
+        terminal.id ===
+        devTerminalState.activeTerminalId
+      );
+
+    select.setAttribute(
+      "role",
+      "tab"
+    );
+
+    select.setAttribute(
+      "aria-selected",
+      String(
+        terminal.id ===
+        devTerminalState.activeTerminalId
+      )
+    );
+
+    const state =
+      terminal.running
+        ? "RUNNING"
+        : terminal.status;
+
+    select.textContent =
+      `${terminal.title} · ${state}`;
+
+    select.addEventListener(
+      "click",
+      () => {
+        devTerminalState.activeTerminalId =
+          terminal.id;
+
+        renderDevTerminalTabs();
+        renderDevTerminalOutput();
+
+        void pollActiveDevTerminal();
+      }
+    );
+
+    const close =
+      document.createElement("button");
+
+    close.type = "button";
+    close.className =
+      "dev-terminal-tab-close";
+
+    close.textContent = "×";
+
+    close.setAttribute(
+      "aria-label",
+      `Fermer ${terminal.title}`
+    );
+
+    close.addEventListener(
+      "click",
+      async (event) => {
+        event.stopPropagation();
+
+        await closeDevTerminal(
+          terminal.id
+        );
+      }
+    );
+
+    wrapper.append(
+      select,
+      close
+    );
+
+    devTerminalTabs.append(wrapper);
+  }
+}
+
+function applyDevTerminal(terminal) {
+  if (!terminal?.id) return;
+
+  devTerminalState.terminals.set(
+    terminal.id,
+    terminal
+  );
+
+  if (
+    !devTerminalState.activeTerminalId
+  ) {
+    devTerminalState.activeTerminalId =
+      terminal.id;
+  }
+
+  renderDevTerminalTabs();
+
+  if (
+    terminal.id ===
+    devTerminalState.activeTerminalId
+  ) {
+    setDevTerminalStatus(
+      terminal.running
+        ? "Commande en cours"
+        : terminal.status === "EXITED"
+          ? `Terminé${
+              terminal.exitCode === null
+                ? ""
+                : ` · code ${terminal.exitCode}`
+            }`
+          : "Prêt",
+      terminal.running
+        ? "running"
+        : terminal.exitCode
+          ? "error"
+          : "ready"
+    );
+  }
+}
+
+async function createDevTerminal() {
+  if (!devTerminalState.session) {
+    setDevTerminalStatus(
+      "Aucune session DEV.",
+      "error"
+    );
+
+    return null;
+  }
+
+  const number =
+    devTerminalState.terminals.size + 1;
+
+  const data =
+    await devTerminalRequest(
+      `/api/dev/workspace-terminal/sessions/${
+        encodeURIComponent(
+          devTerminalState.session.id
+        )
+      }/terminals`,
+      {
+        method: "POST",
+        body: {
+          title: `USER ${number}`,
+        },
+      }
+    );
+
+  const terminal =
+    data.terminal;
+
+  devTerminalState.terminals.set(
+    terminal.id,
+    terminal
+  );
+
+  devTerminalState.outputByTerminal.set(
+    terminal.id,
+    []
+  );
+
+  devTerminalState.offsetByTerminal.set(
+    terminal.id,
+    0
+  );
+
+  devTerminalState.activeTerminalId =
+    terminal.id;
+
+  applyDevTerminal(terminal);
+  renderDevTerminalOutput();
+
+  devTerminalInput.focus();
+
+  return terminal;
+}
+
+async function pollActiveDevTerminal() {
+  const session =
+    devTerminalState.session;
+
+  const terminalId =
+    devTerminalState.activeTerminalId;
+
+  if (
+    !session ||
+    !terminalId
+  ) {
+    return;
+  }
+
+  const from =
+    devTerminalState.offsetByTerminal.get(
+      terminalId
+    ) || 0;
+
+  try {
+    const data =
+      await devTerminalRequest(
+        `/api/dev/workspace-terminal/sessions/${
+          encodeURIComponent(session.id)
+        }/terminals/${
+          encodeURIComponent(terminalId)
+        }/output?from=${
+          encodeURIComponent(from)
+        }`
+      );
+
+    if (
+      Array.isArray(data.output) &&
+      data.output.length
+    ) {
+      devTerminalBuffer(
+        terminalId
+      ).push(...data.output);
+    }
+
+    devTerminalState.offsetByTerminal.set(
+      terminalId,
+      Number(data.next) || 0
+    );
+
+    applyDevTerminal(
+      data.terminal
+    );
+
+    renderDevTerminalOutput();
+  } catch (error) {
+    if (
+      error.code ===
+      "TERMINAL_NOT_FOUND"
+    ) {
+      devTerminalState.terminals.delete(
+        terminalId
+      );
+
+      devTerminalState.activeTerminalId =
+        [...devTerminalState.terminals.keys()][0] ||
+        null;
+
+      renderDevTerminalTabs();
+      renderDevTerminalOutput();
+
+      return;
+    }
+
+    setDevTerminalStatus(
+      error.message,
+      "error"
+    );
+  }
+}
+
+function startDevTerminalPolling() {
+  stopDevTerminalPolling();
+
+  devTerminalState.pollTimer =
+    window.setInterval(
+      () => {
+        void pollActiveDevTerminal();
+      },
+      750
+    );
+}
+
+async function closeDevTerminal(
+  terminalId
+) {
+  const session =
+    devTerminalState.session;
+
+  if (
+    !session ||
+    !terminalId
+  ) {
+    return;
+  }
+
+  try {
+    await devTerminalRequest(
+      `/api/dev/workspace-terminal/sessions/${
+        encodeURIComponent(session.id)
+      }/terminals/${
+        encodeURIComponent(terminalId)
+      }/close`,
+      {
+        method: "POST",
+        body: {},
+      }
+    );
+  } catch (error) {
+    setDevTerminalStatus(
+      error.message,
+      "error"
+    );
+
+    return;
+  }
+
+  devTerminalState.terminals.delete(
+    terminalId
+  );
+
+  devTerminalState.outputByTerminal.delete(
+    terminalId
+  );
+
+  devTerminalState.offsetByTerminal.delete(
+    terminalId
+  );
+
+  if (
+    devTerminalState.activeTerminalId ===
+    terminalId
+  ) {
+    devTerminalState.activeTerminalId =
+      [...devTerminalState.terminals.keys()][0] ||
+      null;
+  }
+
+  renderDevTerminalTabs();
+  renderDevTerminalOutput();
+
+  if (
+    devTerminalState.activeTerminalId
+  ) {
+    void pollActiveDevTerminal();
+  } else {
+    setDevTerminalStatus(
+      "Aucun terminal",
+      "idle"
+    );
+  }
+}
+
+async function closeDevTerminalSession({
+  silent = true,
+} = {}) {
+  const sessionId =
+    devTerminalState.session?.id ||
+    null;
+
+  stopDevTerminalPolling();
+
+  devTerminalState.session = null;
+  devTerminalState.terminals.clear();
+  devTerminalState.outputByTerminal.clear();
+  devTerminalState.offsetByTerminal.clear();
+  devTerminalState.activeTerminalId = null;
+  devTerminalState.contextKey = null;
+
+  renderDevTerminalTabs();
+  renderDevTerminalOutput();
+  updateDevTerminalHeader();
+
+  if (!sessionId) return;
+
+  try {
+    await devTerminalRequest(
+      `/api/dev/workspace-terminal/sessions/${
+        encodeURIComponent(sessionId)
+      }/close`,
+      {
+        method: "POST",
+        body: {},
+      }
+    );
+  } catch (error) {
+    if (!silent) {
+      setDevTerminalStatus(
+        error.message,
+        "error"
+      );
+    }
+  }
+}
+
+async function openDevTerminalSession(
+  expectedSerial
+) {
+  const data =
+    await devTerminalRequest(
+      "/api/dev/workspace-terminal/sessions",
+      {
+        method: "POST",
+        body: {
+          focusId:
+            currentFocusId,
+          focusName:
+            currentFocus,
+          repositoryRoot:
+            currentFocusPath,
+        },
+      }
+    );
+
+  if (
+    expectedSerial !==
+    devTerminalState.syncSerial
+  ) {
+    try {
+      await devTerminalRequest(
+        `/api/dev/workspace-terminal/sessions/${
+          encodeURIComponent(
+            data.session.id
+          )
+        }/close`,
+        {
+          method: "POST",
+          body: {},
+        }
+      );
+    } catch {}
+
+    return;
+  }
+
+  devTerminalState.session =
+    data.session;
+
+  devTerminalState.contextKey =
+    `${currentFocusId}:${currentFocusPath}`;
+
+  updateDevTerminalHeader();
+
+  await createDevTerminal();
+
+  startDevTerminalPolling();
+
+  setDevTerminalStatus(
+    "Terminal prêt",
+    "ready"
+  );
+}
+
+async function syncDevTerminalPanel() {
+  const serial =
+    ++devTerminalState.syncSerial;
+
+  const devMode =
+    currentMode === "DEV";
+
+  devTerminalPanel.hidden =
+    !devMode;
+
+  chatView.classList.toggle(
+    "dev-terminal-active",
+    devMode
+  );
+
+  if (!devMode) {
+    await closeDevTerminalSession({
+      silent: true,
+    });
+
+    return;
+  }
+
+  devTerminalProject.textContent =
+    currentFocus ||
+    "Aucun Focus";
+
+  if (
+    !currentFocusId ||
+    !currentFocusPath
+  ) {
+    await closeDevTerminalSession({
+      silent: true,
+    });
+
+    if (
+      serial !==
+      devTerminalState.syncSerial
+    ) {
+      return;
+    }
+
+    devTerminalPanel.hidden = false;
+
+    devTerminalProject.textContent =
+      currentFocus ||
+      "Aucun Focus";
+
+    devTerminalMeta.textContent =
+      "Sélectionne un projet Focus disposant d’un dossier local.";
+
+    setDevTerminalStatus(
+      "Focus DEV requis",
+      "idle"
+    );
+
+    renderDevTerminalOutput();
+
+    return;
+  }
+
+  const contextKey =
+    `${currentFocusId}:${currentFocusPath}`;
+
+  if (
+    devTerminalState.session &&
+    devTerminalState.contextKey ===
+      contextKey
+  ) {
+    updateDevTerminalHeader();
+    startDevTerminalPolling();
+
+    return;
+  }
+
+  await closeDevTerminalSession({
+    silent: true,
+  });
+
+  if (
+    serial !==
+    devTerminalState.syncSerial
+  ) {
+    return;
+  }
+
+  setDevTerminalStatus(
+    "Ouverture du workspace…",
+    "running"
+  );
+
+  devTerminalMeta.textContent =
+    "Vérification des permissions locales…";
+
+  try {
+    await openDevTerminalSession(
+      serial
+    );
+  } catch (error) {
+    if (
+      serial !==
+      devTerminalState.syncSerial
+    ) {
+      return;
+    }
+
+    updateDevTerminalHeader();
+
+    setDevTerminalStatus(
+      error.message,
+      "error"
+    );
+
+    devTerminalOutput.textContent =
+      [
+        "Impossible d’ouvrir le terminal DEV.",
+        "",
+        error.message,
+        "",
+        "Le dossier du projet doit être autorisé en lecture et création dans Noon.",
+      ].join("\n");
+  }
+}
+
+devTerminalAddButton.addEventListener(
+  "click",
+  async () => {
+    try {
+      await createDevTerminal();
+    } catch (error) {
+      setDevTerminalStatus(
+        error.message,
+        "error"
+      );
+    }
+  }
+);
+
+devTerminalForm.addEventListener(
+  "submit",
+  async (event) => {
+    event.preventDefault();
+
+    const command =
+      devTerminalInput.value.trim();
+
+    const session =
+      devTerminalState.session;
+
+    const terminalId =
+      devTerminalState.activeTerminalId;
+
+    if (!command) return;
+
+    if (
+      !session ||
+      !terminalId
+    ) {
+      setDevTerminalStatus(
+        "Ouvre d’abord un terminal.",
+        "error"
+      );
+
+      return;
+    }
+
+    devTerminalBuffer(
+      terminalId
+    ).push({
+      type: "command",
+      text: command,
+    });
+
+    renderDevTerminalOutput();
+
+    devTerminalInput.value = "";
+    devTerminalInput.disabled = true;
+    devTerminalRun.disabled = true;
+
+    setDevTerminalStatus(
+      "Commande en cours",
+      "running"
+    );
+
+    try {
+      const data =
+        await devTerminalRequest(
+          `/api/dev/workspace-terminal/sessions/${
+            encodeURIComponent(session.id)
+          }/terminals/${
+            encodeURIComponent(terminalId)
+          }/run`,
+          {
+            method: "POST",
+            body: {
+              command,
+            },
+          }
+        );
+
+      applyDevTerminal(
+        data.result?.terminal
+      );
+
+      await pollActiveDevTerminal();
+    } catch (error) {
+      devTerminalBuffer(
+        terminalId
+      ).push({
+        type: "stderr",
+        text:
+          `Commande refusée : ${error.message}\n`,
+      });
+
+      renderDevTerminalOutput();
+
+      setDevTerminalStatus(
+        error.message,
+        "error"
+      );
+    } finally {
+      devTerminalInput.disabled = false;
+      devTerminalRun.disabled = false;
+      devTerminalInput.focus();
+    }
+  }
+);
+
+window.addEventListener(
+  "noon-context-change",
+  () => {
+    void syncDevTerminalPanel();
+  }
+);
+
+window.addEventListener(
+  "pagehide",
+  () => {
+    const sessionId =
+      devTerminalState.session?.id;
+
+    if (!sessionId) return;
+
+    void fetch(
+      `/api/dev/workspace-terminal/sessions/${
+        encodeURIComponent(sessionId)
+      }/close`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type":
+            "application/json",
+          "X-Noon-Request": "1",
+        },
+        body: "{}",
+        keepalive: true,
+      }
+    ).catch(() => {});
+  }
+);
+
+// DEV_TERMINAL_UI_END
 
 const SESSION_STORAGE_KEY = "noonSessionId";
 const CONVERSATION_STORAGE_KEY = "noonDisplayedConversation";

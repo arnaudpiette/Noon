@@ -627,3 +627,88 @@ test("l’environnement terminal est strictement allowlisté", () => {
     false
   );
 });
+
+test(
+  "le curseur de polling progresse au-delà du buffer borné",
+  (context) => {
+    const data = fixture(context);
+
+    const { session, terminal } =
+      createSessionAndTerminal(data);
+
+    data.service.runCommand({
+      sessionId: session.id,
+      terminalId: terminal.id,
+      origin: "USER",
+      command: "npm test",
+    });
+
+    const child = data.children[0];
+
+    for (let index = 0; index < 405; index += 1) {
+      child.stdout.emit(
+        "data",
+        `line-${index}\n`
+      );
+    }
+
+    const first = data.service.poll({
+      sessionId: session.id,
+      terminalId: terminal.id,
+      from: 0,
+    });
+
+    // 1 événement "input" + 405 stdout = 406 événements,
+    // mais seulement les 400 derniers sont conservés.
+    assert.equal(
+      first.output.length,
+      400
+    );
+
+    assert.equal(
+      first.next,
+      406
+    );
+
+    assert.equal(
+      first.output[0].text,
+      "line-5\n"
+    );
+
+    const cursor =
+      first.next;
+
+    child.stdout.emit(
+      "data",
+      "line-405\n"
+    );
+
+    const second = data.service.poll({
+      sessionId: session.id,
+      terminalId: terminal.id,
+      from: cursor,
+    });
+
+    assert.equal(
+      second.output.length,
+      1
+    );
+
+    assert.equal(
+      second.output[0].text,
+      "line-405\n"
+    );
+
+    assert.equal(
+      second.next,
+      407
+    );
+
+    // Le compteur interne ne fuit pas
+    // dans le contrat public HTTP/UI.
+    assert.deepEqual(
+      Object.keys(second.output[0]).sort(),
+      ["at", "text", "type"].sort()
+    );
+  }
+);

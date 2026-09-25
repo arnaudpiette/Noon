@@ -291,3 +291,57 @@ test(
     );
   }
 );
+
+test(
+  "la création de session traduit le Focus UI en workspace legacy read-write",
+  () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "..", "server.js"),
+      "utf8"
+    );
+
+    const start = source.indexOf(
+      'requestPath ===\n    "/api/dev/workspace-terminal/sessions"'
+    );
+
+    const end = source.indexOf(
+      "const devTerminalSessionRead",
+      start
+    );
+
+    assert.ok(start >= 0);
+    assert.ok(end > start);
+
+    const route = source.slice(start, end);
+
+    assert.match(
+      route,
+      /workspaceEngine\.ensureLegacy/
+    );
+
+    assert.match(
+      route,
+      /legacyId:\s*focusId/
+    );
+
+    assert.match(
+      route,
+      /mode:\s*"read-write"/
+    );
+
+    assert.match(
+      route,
+      /devWorkspaceTerminalService\.createSession/
+    );
+
+    assert.doesNotMatch(
+      route,
+      /mode:\s*body\./
+    );
+
+    assert.doesNotMatch(
+      route,
+      /workspaceId:\s*body\.workspaceId/
+    );
+  }
+);
