@@ -81,6 +81,31 @@ test("une demande explicite d’image est routée sans modèle texte intermédia
   assert.match(intent.entities.prompt, /bulldog/);
 });
 
+test("les formulations créatives explicites sont routées vers la génération d’image", async () => {
+  const { engine } = fixture();
+  for (const text of [
+    "Fais-moi un visuel d’un phare minimaliste sur fond bleu.",
+    "Dessine-moi un phare minimaliste sur fond bleu.",
+    "Crée une image d’un phare minimaliste sur fond bleu.",
+  ]) {
+    const intent = await engine.parse("chat", { text });
+    assert.equal(intent.type, "GENERATE");
+    assert.equal(intent.action, "image");
+  }
+});
+
+test("la recherche d’images et les questions sur la génération restent du texte ou de la recherche", async () => {
+  const { engine } = fixture();
+  const search = await engine.parse("chat", { text: "Trouve-moi des images du phare de Cordouan." });
+  assert.equal(search.action, "public_research");
+  const explanation = await engine.parse("chat", { text: "Explique-moi comment générer une image avec CSS." });
+  assert.equal(explanation.type, "ASK");
+  assert.equal(explanation.action, "explain");
+  const advice = await engine.parse("chat", { text: "Quel format d’image choisir pour mon portfolio ?" });
+  assert.equal(advice.type, "ASK");
+  assert.equal(advice.action, "answer");
+});
+
 test("les recherches publiques explicites et les recherches locales restent séparées", async () => {
   const { engine } = fixture();
   const web = await engine.parse("chat", { text: "Trouve-moi un tutoriel React" });

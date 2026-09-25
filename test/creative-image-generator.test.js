@@ -107,9 +107,42 @@ test("retente une seule fois un échec transitoire puis produit l’asset", asyn
     if (calls === 1) throw Object.assign(new Error("temporary"), { status: 503 });
     return { data: [{ b64_json: await pngBase64() }] };
   } } };
-  const result = await generateCreativeImage({ prompt: "Fixture synthétique", title: "Retry" }, { client, previewDirectory: directory, sleep: async () => {} });
+  const result = await generateCreativeImage({ prompt: "Fixture synthétique", title: "Retry" }, { client, previewDirectory: directory, maxRetries: 1, sleep: async () => {} });
   assert.equal(calls, 2);
   assert.equal(result.artifact.creative, true);
+});
+
+test("une demande image ne retente pas automatiquement un appel provider coûteux", async (context) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "noon-image-single-call-"));
+  context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  let calls = 0;
+  const client = { images: { generate: async () => {
+    calls += 1;
+    throw Object.assign(new Error("temporary"), { status: 503 });
+  } } };
+  await assert.rejects(
+    generateCreativeImage({ prompt: "Fixture synthétique", title: "Single call" }, { client, previewDirectory: directory }),
+    { code: "PROVIDER_UNAVAILABLE" }
+  );
+  assert.equal(calls, 1);
+});
+
+test("un provider image qui ne répond pas expire proprement sans créer de fichier", async (context) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "noon-image-timeout-"));
+  context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  let calls = 0;
+  const client = { images: { generate: (_options, { signal }) => {
+    calls += 1;
+    return new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })), { once: true });
+    });
+  } } };
+  await assert.rejects(
+    generateCreativeImage({ prompt: "Fixture synthétique", title: "Timeout" }, { client, previewDirectory: directory, timeoutMs: 1_000 }),
+    { code: "TIMEOUT" }
+  );
+  assert.equal(calls, 1);
+  assert.deepEqual(fs.readdirSync(directory), []);
 });
 
 test("normalise les échecs sans recopier de secret dans le message", () => {
@@ -124,6 +157,16 @@ test("un résultat provider vide devient INVALID_RESPONSE et ne laisse aucun PNG
   context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   await assert.rejects(
     generateCreativeImage({ prompt: "Fixture synthétique", title: "Empty" }, { client: { images: { generate: async () => ({ data: [] }) } }, previewDirectory: directory }),
+    { code: "INVALID_RESPONSE" }
+  );
+  assert.deepEqual(fs.readdirSync(directory), []);
+});
+
+test("un payload image invalide est rejeté sans créer de fichier", async (context) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "noon-image-invalid-"));
+  context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  await assert.rejects(
+    generateCreativeImage({ prompt: "Fixture synthétique", title: "Invalid" }, { client: { images: { generate: async () => ({ data: [{ b64_json: "not-image" }] }) } }, previewDirectory: directory }),
     { code: "INVALID_RESPONSE" }
   );
   assert.deepEqual(fs.readdirSync(directory), []);

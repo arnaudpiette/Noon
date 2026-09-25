@@ -16,7 +16,8 @@ const HYPOTHETICAL_PATTERN = /\b(?:que se passerait|qu'arriverait|qu’arriverai
 const NEGATION_PATTERN = /\b(?:ne|n')\s*(?:le\s+|la\s+|les\s+)?(?:supprime|efface|envoie|modifie|écrase)\s+pas\b|\b(?:don'?t|do not|no)\s+(?:delete|send|remove)\b/i;
 const PRONOUN_PATTERN = /\b(?:ça|cela|ce fichier|ce document|ce projet|cette synthèse|cette presentation|cette présentation|celui-là|celui la|celle-là|celle la|le précédent|la précédente|la dernière version|le|la|en)\b/i;
 const FORMAT_PATTERN = /\b(pdf|docx|word|xlsx|excel|pptx|powerpoint|png|markdown|md|html|rtf|csv)\b/i;
-const IMAGE_GENERATION_PATTERN = /\b(?:g[eé]n[eè]re|g[eé]n[eé]rer|cr[eé]e|cr[eé]er|fabrique|produis)(?:-moi|\s+moi)?\b[^.!?]{0,160}\b(?:image|illustration|visuel|photo)\b|\b(?:image|illustration|visuel|photo)\b[^.!?]{0,80}\b(?:g[eé]n[eé]r[eé]e?|cr[eé][eé]e?)\b/i;
+const IMAGE_GENERATION_PATTERN = /\b(?:g[eé]n[eè]re|g[eé]n[eé]rer|cr[eé]e|cr[eé]er|fabrique|produis|fais)(?:-moi|\s+moi)?\b[^.!?]{0,160}\b(?:image|illustration|visuel|photo)\b|\b(?:dessine|dessiner)(?:-moi|\s+moi)?\b|\b(?:image|illustration|visuel|photo)\b[^.!?]{0,80}\b(?:g[eé]n[eé]r[eé]e?|cr[eé][eé]e?|fais|dessine)\b/i;
+const IMAGE_GENERATION_EXPLANATION_PATTERN = /\b(?:comment|explique(?:-moi)?|expliquer)\b[^.!?]{0,160}\b(?:g[eé]n[eè]re|g[eé]n[eé]rer|cr[eé]e|cr[eé]er|dessine|dessiner|fais|faire)\b[^.!?]{0,160}\b(?:image|illustration|visuel|photo)\b/i;
 
 function clean(value, max = 4000) { return String(value || "").replace(/[\0\r]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max); }
 function fingerprint(value) { return crypto.createHash("sha256").update(String(value || "")).digest("hex").slice(0, 20); }
@@ -130,6 +131,9 @@ function createIntentCommandEngine({ workspaceEngine = null, commandRegistry = c
       return make(envelope, { type: "CANCEL", action: "active_operation", ambiguity: [ambiguity(operations.length > 1 ? "multiple_operations" : "missing_target", "executionId", operations, "HIGH")] });
     }
 
+    if (IMAGE_GENERATION_EXPLANATION_PATTERN.test(text)) {
+      return make(envelope, { type: "ASK", action: "explain" });
+    }
     if (IMAGE_GENERATION_PATTERN.test(text)) {
       return make(envelope, { type: "GENERATE", action: "image", entities: { prompt: clean(text, 12_000) }, explicitOrder: true, requiresTool: true });
     }

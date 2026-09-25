@@ -19,6 +19,7 @@ const MAX_PROMPT_LENGTH = 12_000;
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 const MAX_TEMPORARY_PREVIEWS = 20;
 const MAX_PREVIEW_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const IMAGE_GENERATION_TIMEOUT_MS = 45_000;
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 const RETRYABLE_CODES = new Set(["ETIMEDOUT", "ECONNRESET", "ENOTFOUND", "EAI_AGAIN", "ENETUNREACH"]);
 
@@ -70,7 +71,7 @@ function pruneCreativePreviews(directory, now = Date.now()) {
 
 async function generateCreativeImage(
   { prompt, title, project = "Noon", quality = "medium", size = "1024x1024" },
-  { client, previewDirectory, signal = null, maxRetries = 1, retryDelayMs = 150, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), observability = null } = {}
+  { client, previewDirectory, signal = null, maxRetries = 0, retryDelayMs = 150, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), timeoutMs = IMAGE_GENERATION_TIMEOUT_MS, observability = null } = {}
 ) {
   const normalizedPrompt = String(prompt || "").trim().slice(0, MAX_PROMPT_LENGTH);
   if (!normalizedPrompt) throw new Error("La description de l’image est obligatoire.");
@@ -84,8 +85,18 @@ async function generateCreativeImage(
 
   const selectedQuality = ALLOWED_QUALITIES.has(quality) ? quality : "medium";
   const selectedSize = ALLOWED_SIZES.has(size) ? size : "1024x1024";
+  const boundedTimeoutMs = Math.max(1_000, Math.min(120_000, Number(timeoutMs) || IMAGE_GENERATION_TIMEOUT_MS));
   const destination = nextVersionedPath(directory, project, title || "Image-creative", "png");
   const temporary = `${destination}.tmp-${process.pid}-${Date.now()}`;
+  const requestController = new AbortController();
+  let timedOut = false;
+  const abortFromParent = () => requestController.abort(signal?.reason);
+  if (signal?.aborted) abortFromParent();
+  else signal?.addEventListener("abort", abortFromParent, { once: true });
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    requestController.abort();
+  }, boundedTimeoutMs);
 
   try {
     let response;
@@ -102,18 +113,20 @@ async function generateCreativeImage(
           size: selectedSize,
           background: "opaque",
           output_format: "png",
-        }, signal ? { signal } : undefined);
+        }, { signal: requestController.signal });
         observability?.("image_generation_provider_success", { provider: "openai", model: IMAGE_MODEL, attempt, durationMs: Date.now() - startedAt });
         break;
       } catch (error) {
-        const normalized = normalizeImageGenerationError(error);
+        const normalized = timedOut
+          ? new ImageGenerationError("TIMEOUT", "Le fournisseur d’image n’a pas répondu à temps.", { cause: error })
+          : normalizeImageGenerationError(error);
         observability?.("image_generation_provider_failure", { provider: normalized.provider, model: normalized.model, attempt, code: normalized.code, status: normalized.status, retryable: normalized.retryable, durationMs: Date.now() - startedAt });
         if (!normalized.retryable || attempt === attempts || signal?.aborted) throw normalized;
         await sleep(retryDelayMs);
       }
     }
     const encodedImage = response?.data?.[0]?.b64_json;
-    if (typeof encodedImage !== "string" || !encodedImage) {
+    if (typeof encodedImage !== "string" || !/^[A-Za-z0-9+/]+={0,2}$/.test(encodedImage) || encodedImage.length % 4 !== 0) {
       throw new ImageGenerationError("INVALID_RESPONSE", "Le fournisseur d’image n’a retourné aucun visuel exploitable.");
     }
     const imageBuffer = Buffer.from(encodedImage, "base64");
@@ -122,9 +135,11 @@ async function generateCreativeImage(
     }
     try { fs.writeFileSync(temporary, imageBuffer, { flag: "wx" }); }
     catch (error) { throw new ImageGenerationError("ASSET_WRITE_FAILED", "L’aperçu temporaire n’a pas pu être écrit.", { cause: error }); }
-    const metadata = await sharp(temporary).metadata();
+    let metadata;
+    try { metadata = await sharp(temporary).metadata(); }
+    catch (error) { throw new ImageGenerationError("INVALID_RESPONSE", "Le fournisseur d’image n’a retourné aucun visuel exploitable.", { cause: error }); }
     if (metadata.format !== "png" || !metadata.width || !metadata.height) {
-      throw new Error("L’image générée n’est pas un PNG valide.");
+      throw new ImageGenerationError("INVALID_RESPONSE", "Le fournisseur d’image n’a retourné aucun visuel exploitable.");
     }
     try { fs.renameSync(temporary, destination); }
     catch (error) { throw new ImageGenerationError("ASSET_WRITE_FAILED", "L’aperçu temporaire n’a pas pu être finalisé.", { cause: error }); }
@@ -152,6 +167,9 @@ async function generateCreativeImage(
   } catch (error) {
     try { fs.unlinkSync(temporary); } catch {}
     throw normalizeImageGenerationError(error);
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", abortFromParent);
   }
 }
 
@@ -160,6 +178,7 @@ module.exports = {
   ALLOWED_SIZES,
   IMAGE_MODEL,
   IMAGE_PROVIDER,
+  IMAGE_GENERATION_TIMEOUT_MS,
   ImageGenerationError,
   generateCreativeImage,
   normalizeImageGenerationError,
