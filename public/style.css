@@ -543,11 +543,11 @@ body.sidebar-collapsed .sidebar-toggle{left:calc(var(--sidebar-rail-width) + 16p
 
 .chat-view.dev-terminal-active{
   position:relative;
-  padding-bottom:500px
+  padding-bottom:calc(var(--dev-terminal-height,330px) + 170px)
 }
 
 .chat-view.dev-terminal-active .conversation{
-  height:calc(100vh - 640px);
+  height:calc(100vh - var(--dev-terminal-height,330px) - 310px);
   min-height:130px
 }
 
@@ -557,7 +557,7 @@ body.sidebar-collapsed .sidebar-toggle{left:calc(var(--sidebar-rail-width) + 16p
   bottom:104px;
   left:26px;
   display:grid;
-  height:330px;
+  height:var(--dev-terminal-height,330px);
   grid-template-rows:auto auto minmax(0,1fr) auto auto;
   overflow:hidden;
   border:1px solid rgba(0,0,0,.12);
@@ -822,5 +822,162 @@ body.sidebar-collapsed .sidebar-toggle{left:calc(var(--sidebar-rail-width) + 16p
 
   .dev-terminal-tab{
     max-width:150px
+  }
+}
+
+
+/* ============================================================
+   DEV TERMINAL V2 ERGONOMY
+   ============================================================ */
+
+.dev-terminal-resize-handle{
+  position:absolute;
+  z-index:4;
+  top:-5px;
+  right:12px;
+  left:12px;
+  height:10px;
+  cursor:ns-resize;
+  touch-action:none
+}
+
+.dev-terminal-resize-handle::after{
+  position:absolute;
+  top:4px;
+  left:50%;
+  width:42px;
+  height:2px;
+  border-radius:999px;
+  background:rgba(255,255,255,.18);
+  content:"";
+  transform:translateX(-50%);
+  transition:background-color 140ms ease,width 140ms ease
+}
+
+.dev-terminal-resize-handle:hover::after,
+.dev-terminal-resize-handle:focus-visible::after{
+  width:64px;
+  background:var(--figma-green)
+}
+
+.dev-terminal-resize-handle:focus-visible{
+  outline:0
+}
+
+body.dev-terminal-resizing{
+  cursor:ns-resize;
+  user-select:none
+}
+
+body.dev-terminal-resizing *{
+  cursor:ns-resize!important
+}
+
+.dev-terminal-panel.is-collapsed{
+  height:55px!important;
+  grid-template-rows:1fr
+}
+
+.dev-terminal-panel.is-collapsed
+.dev-terminal-resize-handle,
+.dev-terminal-panel.is-collapsed
+.dev-terminal-tabs,
+.dev-terminal-panel.is-collapsed
+.dev-terminal-output,
+.dev-terminal-panel.is-collapsed
+.dev-terminal-command,
+.dev-terminal-panel.is-collapsed
+.dev-terminal-footer{
+  display:none
+}
+
+.dev-terminal-panel.is-collapsed
+.dev-terminal-header{
+  border-bottom:0
+}
+
+.chat-view.dev-terminal-active.dev-terminal-collapsed{
+  padding-bottom:190px
+}
+
+.chat-view.dev-terminal-active.dev-terminal-collapsed
+.conversation{
+  height:calc(100vh - 330px);
+  min-height:130px
+}
+
+.dev-terminal-panel.is-maximized{
+  z-index:35;
+  top:70px;
+  right:20px;
+  bottom:92px;
+  left:20px;
+  height:auto!important
+}
+
+.dev-terminal-panel.is-maximized
+.dev-terminal-resize-handle{
+  display:none
+}
+
+.dev-terminal-output-chunk{
+  white-space:pre-wrap
+}
+
+.dev-terminal-output-chunk--stdout{
+  color:#d7ddd2
+}
+
+.dev-terminal-output-chunk--stderr{
+  color:#ff858d
+}
+
+.dev-terminal-output-chunk--command,
+.dev-terminal-output-chunk--input{
+  color:var(--figma-green);
+  font-weight:700
+}
+
+.dev-terminal-tab{
+  transition:
+    background-color 130ms ease,
+    color 130ms ease
+}
+
+.dev-terminal-status[data-state="running"]{
+  color:#8eb4ff
+}
+
+.dev-terminal-status[data-state="ready"]{
+  color:#b8f900
+}
+
+@media(max-width:720px){
+  .chat-view.dev-terminal-active{
+    padding-bottom:calc(var(--dev-terminal-height,285px) + 145px)
+  }
+
+  .chat-view.dev-terminal-active .conversation{
+    height:calc(100vh - var(--dev-terminal-height,285px) - 280px)
+  }
+
+  .chat-view.dev-terminal-active.dev-terminal-collapsed{
+    padding-bottom:180px
+  }
+
+  .chat-view.dev-terminal-active.dev-terminal-collapsed
+  .conversation{
+    height:calc(100vh - 320px)
+  }
+
+  .dev-terminal-panel{
+    height:var(--dev-terminal-height,285px)
+  }
+
+  .dev-terminal-panel.is-maximized{
+    top:64px;
+    right:10px;
+    bottom:78px;
+    left:10px
   }
 }

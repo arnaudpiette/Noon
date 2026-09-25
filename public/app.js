@@ -42,6 +42,15 @@ const devTerminalForm = document.getElementById("devTerminalForm");
 const devTerminalInput = document.getElementById("devTerminalInput");
 const devTerminalRun = document.getElementById("devTerminalRun");
 const devTerminalAddButton = document.getElementById("devTerminalAdd");
+const devTerminalCollapseButton = document.getElementById(
+  "devTerminalCollapse"
+);
+const devTerminalMaximizeButton = document.getElementById(
+  "devTerminalMaximize"
+);
+const devTerminalResizeHandle = document.getElementById(
+  "devTerminalResizeHandle"
+);
 const devTerminalStatus = document.getElementById("devTerminalStatus");
 const clearChatButton = document.getElementById("clearChat");
 const newConversationButton = document.getElementById(
@@ -366,6 +375,83 @@ let currentFocusId = localStorage.getItem(FOCUS_ID_STORAGE_KEY);
 // Toutes les opérations passent par l'API locale sécurisée,
 // qui force elle-même owner/origin à USER.
 
+// DEV_TERMINAL_V2_START
+const DEV_TERMINAL_HEIGHT_STORAGE_KEY =
+  "noonDevTerminalHeight";
+
+const DEV_TERMINAL_HISTORY_STORAGE_KEY =
+  "noonDevTerminalHistory";
+
+const DEV_TERMINAL_MIN_HEIGHT = 220;
+const DEV_TERMINAL_MAX_HISTORY = 100;
+
+function defaultDevTerminalHeight() {
+  return window.matchMedia(
+    "(max-width: 720px)"
+  ).matches
+    ? 285
+    : 330;
+}
+
+function maxDevTerminalHeight() {
+  return Math.max(
+    DEV_TERMINAL_MIN_HEIGHT,
+    window.innerHeight - 175
+  );
+}
+
+function clampDevTerminalHeight(value) {
+  const numeric = Number(value);
+
+  if (!Number.isFinite(numeric)) {
+    return defaultDevTerminalHeight();
+  }
+
+  return Math.min(
+    maxDevTerminalHeight(),
+    Math.max(
+      DEV_TERMINAL_MIN_HEIGHT,
+      Math.round(numeric)
+    )
+  );
+}
+
+function loadDevTerminalHeight() {
+  return clampDevTerminalHeight(
+    localStorage.getItem(
+      DEV_TERMINAL_HEIGHT_STORAGE_KEY
+    ) ||
+    defaultDevTerminalHeight()
+  );
+}
+
+function loadDevTerminalHistory() {
+  try {
+    const parsed = JSON.parse(
+      localStorage.getItem(
+        DEV_TERMINAL_HISTORY_STORAGE_KEY
+      ) || "[]"
+    );
+
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .filter(
+        (command) =>
+          typeof command === "string" &&
+          command.trim()
+      )
+      .slice(
+        -DEV_TERMINAL_MAX_HISTORY
+      );
+  } catch {
+    return [];
+  }
+}
+// DEV_TERMINAL_V2_END
+
 const devTerminalState = {
   session: null,
   terminals: new Map(),
@@ -375,6 +461,15 @@ const devTerminalState = {
   contextKey: null,
   pollTimer: null,
   syncSerial: 0,
+  collapsed: false,
+  maximized: false,
+  height: loadDevTerminalHeight(),
+  history: loadDevTerminalHistory(),
+  historyIndex: null,
+  historyDraft: "",
+  resizing: false,
+  resizeStartY: 0,
+  resizeStartHeight: 0,
 };
 
 function setDevTerminalStatus(message, state = "idle") {
@@ -444,6 +539,243 @@ function stopDevTerminalPolling() {
   }
 }
 
+function setDevTerminalHeight(
+  height,
+  persist = true
+) {
+  devTerminalState.height =
+    clampDevTerminalHeight(height);
+
+  const value =
+    `${devTerminalState.height}px`;
+
+  devTerminalPanel.style.setProperty(
+    "--dev-terminal-height",
+    value
+  );
+
+  chatView.style.setProperty(
+    "--dev-terminal-height",
+    value
+  );
+
+  if (persist) {
+    localStorage.setItem(
+      DEV_TERMINAL_HEIGHT_STORAGE_KEY,
+      String(devTerminalState.height)
+    );
+  }
+}
+
+function applyDevTerminalLayoutState() {
+  devTerminalPanel.classList.toggle(
+    "is-collapsed",
+    devTerminalState.collapsed
+  );
+
+  devTerminalPanel.classList.toggle(
+    "is-maximized",
+    devTerminalState.maximized
+  );
+
+  chatView.classList.toggle(
+    "dev-terminal-collapsed",
+    devTerminalState.collapsed
+  );
+
+  chatView.classList.toggle(
+    "dev-terminal-maximized",
+    devTerminalState.maximized
+  );
+
+  devTerminalCollapseButton.setAttribute(
+    "aria-expanded",
+    String(!devTerminalState.collapsed)
+  );
+
+  devTerminalCollapseButton.setAttribute(
+    "aria-label",
+    devTerminalState.collapsed
+      ? "Restaurer le terminal"
+      : "Réduire le terminal"
+  );
+
+  devTerminalCollapseButton.title =
+    devTerminalState.collapsed
+      ? "Restaurer le terminal"
+      : "Réduire le terminal";
+
+  devTerminalCollapseButton.textContent =
+    devTerminalState.collapsed
+      ? "⌃"
+      : "⌄";
+
+  devTerminalMaximizeButton.setAttribute(
+    "aria-pressed",
+    String(devTerminalState.maximized)
+  );
+
+  devTerminalMaximizeButton.setAttribute(
+    "aria-label",
+    devTerminalState.maximized
+      ? "Restaurer la taille du terminal"
+      : "Maximiser le terminal"
+  );
+
+  devTerminalMaximizeButton.title =
+    devTerminalState.maximized
+      ? "Restaurer la taille du terminal"
+      : "Maximiser le terminal";
+
+  devTerminalMaximizeButton.textContent =
+    devTerminalState.maximized
+      ? "↙"
+      : "□";
+}
+
+function setDevTerminalCollapsed(collapsed) {
+  devTerminalState.collapsed =
+    Boolean(collapsed);
+
+  if (devTerminalState.collapsed) {
+    devTerminalState.maximized = false;
+  }
+
+  applyDevTerminalLayoutState();
+
+  if (!devTerminalState.collapsed) {
+    requestAnimationFrame(() => {
+      devTerminalInput.focus();
+    });
+  }
+}
+
+function toggleDevTerminalCollapsed() {
+  setDevTerminalCollapsed(
+    !devTerminalState.collapsed
+  );
+}
+
+function toggleDevTerminalMaximized() {
+  devTerminalState.maximized =
+    !devTerminalState.maximized;
+
+  if (devTerminalState.maximized) {
+    devTerminalState.collapsed = false;
+  }
+
+  applyDevTerminalLayoutState();
+
+  requestAnimationFrame(() => {
+    devTerminalInput.focus();
+  });
+}
+
+function persistDevTerminalHistory() {
+  localStorage.setItem(
+    DEV_TERMINAL_HISTORY_STORAGE_KEY,
+    JSON.stringify(
+      devTerminalState.history.slice(
+        -DEV_TERMINAL_MAX_HISTORY
+      )
+    )
+  );
+}
+
+function rememberDevTerminalCommand(command) {
+  const value =
+    String(command || "").trim();
+
+  if (!value) return;
+
+  const last =
+    devTerminalState.history.at(-1);
+
+  if (last !== value) {
+    devTerminalState.history.push(
+      value
+    );
+
+    if (
+      devTerminalState.history.length >
+      DEV_TERMINAL_MAX_HISTORY
+    ) {
+      devTerminalState.history.splice(
+        0,
+        devTerminalState.history.length -
+          DEV_TERMINAL_MAX_HISTORY
+      );
+    }
+
+    persistDevTerminalHistory();
+  }
+
+  devTerminalState.historyIndex = null;
+  devTerminalState.historyDraft = "";
+}
+
+function navigateDevTerminalHistory(direction) {
+  const history =
+    devTerminalState.history;
+
+  if (!history.length) {
+    return false;
+  }
+
+  if (
+    devTerminalState.historyIndex ===
+    null
+  ) {
+    devTerminalState.historyDraft =
+      devTerminalInput.value;
+
+    devTerminalState.historyIndex =
+      history.length;
+  }
+
+  const nextIndex =
+    Math.max(
+      0,
+      Math.min(
+        history.length,
+        devTerminalState.historyIndex +
+          direction
+      )
+    );
+
+  devTerminalState.historyIndex =
+    nextIndex;
+
+  if (
+    nextIndex === history.length
+  ) {
+    devTerminalInput.value =
+      devTerminalState.historyDraft;
+  } else {
+    devTerminalInput.value =
+      history[nextIndex];
+  }
+
+  requestAnimationFrame(() => {
+    const end =
+      devTerminalInput.value.length;
+
+    devTerminalInput.setSelectionRange(
+      end,
+      end
+    );
+  });
+
+  return true;
+}
+
+setDevTerminalHeight(
+  devTerminalState.height,
+  false
+);
+
+applyDevTerminalLayoutState();
+
 function devTerminalBuffer(terminalId) {
   if (
     !devTerminalState.outputByTerminal.has(
@@ -485,17 +817,42 @@ function renderDevTerminalOutput() {
   const buffer =
     devTerminalBuffer(terminalId);
 
-  devTerminalOutput.textContent =
-    buffer.length
-      ? buffer
-          .map(formatDevTerminalEvent)
-          .join("")
-      : "Terminal prêt.\n";
+  if (!buffer.length) {
+    devTerminalOutput.textContent =
+      "Terminal prêt.\n";
+
+    return;
+  }
+
+  const fragment =
+    document.createDocumentFragment();
+
+  for (const event of buffer) {
+    const line =
+      document.createElement("span");
+
+    const type =
+      String(
+        event?.type ||
+        "stdout"
+      ).toLowerCase();
+
+    line.className =
+      `dev-terminal-output-chunk dev-terminal-output-chunk--${type}`;
+
+    line.textContent =
+      formatDevTerminalEvent(event);
+
+    fragment.append(line);
+  }
+
+  devTerminalOutput.replaceChildren(
+    fragment
+  );
 
   devTerminalOutput.scrollTop =
     devTerminalOutput.scrollHeight;
 }
-
 function updateDevTerminalHeader() {
   const session =
     devTerminalState.session;
@@ -762,7 +1119,12 @@ async function pollActiveDevTerminal() {
     ) {
       devTerminalBuffer(
         terminalId
-      ).push(...data.output);
+      ).push(
+        ...data.output.filter(
+          (event) =>
+            event?.type !== "input"
+        )
+      );
     }
 
     devTerminalState.offsetByTerminal.set(
@@ -998,6 +1360,8 @@ async function syncDevTerminalPanel() {
     devMode
   );
 
+  applyDevTerminalLayoutState();
+
   if (!devMode) {
     await closeDevTerminalSession({
       silent: true,
@@ -1149,6 +1513,10 @@ devTerminalForm.addEventListener(
       return;
     }
 
+    rememberDevTerminalCommand(
+      command
+    );
+
     devTerminalBuffer(
       terminalId
     ).push({
@@ -1208,6 +1576,200 @@ devTerminalForm.addEventListener(
       devTerminalRun.disabled = false;
       devTerminalInput.focus();
     }
+  }
+);
+
+devTerminalCollapseButton.addEventListener(
+  "click",
+  () => {
+    toggleDevTerminalCollapsed();
+  }
+);
+
+devTerminalMaximizeButton.addEventListener(
+  "click",
+  () => {
+    toggleDevTerminalMaximized();
+  }
+);
+
+devTerminalInput.addEventListener(
+  "keydown",
+  (event) => {
+    if (
+      event.key === "ArrowUp" &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey
+    ) {
+      if (
+        navigateDevTerminalHistory(-1)
+      ) {
+        event.preventDefault();
+      }
+
+      return;
+    }
+
+    if (
+      event.key === "ArrowDown" &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey
+    ) {
+      if (
+        navigateDevTerminalHistory(1)
+      ) {
+        event.preventDefault();
+      }
+    }
+  }
+);
+
+devTerminalResizeHandle.addEventListener(
+  "pointerdown",
+  (event) => {
+    if (
+      devTerminalState.collapsed ||
+      devTerminalState.maximized
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+
+    devTerminalState.resizing = true;
+    devTerminalState.resizeStartY =
+      event.clientY;
+    devTerminalState.resizeStartHeight =
+      devTerminalState.height;
+
+    devTerminalResizeHandle.setPointerCapture?.(
+      event.pointerId
+    );
+
+    document.body.classList.add(
+      "dev-terminal-resizing"
+    );
+  }
+);
+
+window.addEventListener(
+  "pointermove",
+  (event) => {
+    if (
+      !devTerminalState.resizing
+    ) {
+      return;
+    }
+
+    const delta =
+      devTerminalState.resizeStartY -
+      event.clientY;
+
+    setDevTerminalHeight(
+      devTerminalState.resizeStartHeight +
+        delta,
+      false
+    );
+  }
+);
+
+function finishDevTerminalResize() {
+  if (
+    !devTerminalState.resizing
+  ) {
+    return;
+  }
+
+  devTerminalState.resizing = false;
+
+  document.body.classList.remove(
+    "dev-terminal-resizing"
+  );
+
+  setDevTerminalHeight(
+    devTerminalState.height,
+    true
+  );
+}
+
+window.addEventListener(
+  "pointerup",
+  finishDevTerminalResize
+);
+
+window.addEventListener(
+  "pointercancel",
+  finishDevTerminalResize
+);
+
+devTerminalResizeHandle.addEventListener(
+  "keydown",
+  (event) => {
+    if (
+      !["ArrowUp", "ArrowDown"].includes(
+        event.key
+      ) ||
+      devTerminalState.collapsed ||
+      devTerminalState.maximized
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const step =
+      event.shiftKey
+        ? 50
+        : 20;
+
+    setDevTerminalHeight(
+      devTerminalState.height +
+        (
+          event.key === "ArrowUp"
+            ? step
+            : -step
+        )
+    );
+  }
+);
+
+window.addEventListener(
+  "resize",
+  () => {
+    setDevTerminalHeight(
+      devTerminalState.height,
+      false
+    );
+  }
+);
+
+// Raccourci inspiré des IDE : affiche/réduit
+// le panneau sans fermer ses terminaux.
+document.addEventListener(
+  "keydown",
+  (event) => {
+    const commandKey =
+      event.metaKey ||
+      event.ctrlKey;
+
+    if (
+      !commandKey ||
+      event.key.toLowerCase() !== "j" ||
+      currentMode !== "DEV"
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+
+    if (devTerminalPanel.hidden) {
+      void syncDevTerminalPanel();
+      return;
+    }
+
+    toggleDevTerminalCollapsed();
   }
 );
 

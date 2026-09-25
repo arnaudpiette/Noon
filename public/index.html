@@ -422,6 +422,15 @@
           aria-label="Terminal de développement"
           hidden
         >
+          <div
+            id="devTerminalResizeHandle"
+            class="dev-terminal-resize-handle"
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Redimensionner le terminal"
+            tabindex="0"
+          ></div>
+
           <header class="dev-terminal-header">
             <div class="dev-terminal-heading">
               <span class="label">DEV Workspace</span>
@@ -437,6 +446,26 @@
                 title="Nouveau terminal"
               >
                 +
+              </button>
+
+              <button
+                id="devTerminalCollapse"
+                type="button"
+                aria-label="Réduire le terminal"
+                aria-expanded="true"
+                title="Réduire le terminal"
+              >
+                ⌄
+              </button>
+
+              <button
+                id="devTerminalMaximize"
+                type="button"
+                aria-label="Maximiser le terminal"
+                aria-pressed="false"
+                title="Maximiser le terminal"
+              >
+                □
               </button>
             </div>
           </header>
