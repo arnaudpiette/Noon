@@ -133,6 +133,7 @@ const { createDelegationEngine } = require("./services/delegation/delegation-eng
 const { createCodexSpecialistAgent } = require("./services/delegation/codex-specialist-agent");
 const { createDevDelegationRunner } = require("./services/delegation/dev-delegation-runner");
 const { createNativeDevCoordinator } = require("./services/dev/native-dev-coordinator");
+const { createDevWorkspaceTerminalService } = require("./services/dev/workspace-terminal-service");
 const { createDevTaskJournal } = require("./services/dev/dev-task-journal");
 const { createNativeDevReasoner } = require("./services/dev/native-dev-reasoner");
 const { createDevCostBudgetService } = require("./services/dev/dev-cost-budget-service");
@@ -1205,6 +1206,13 @@ const operationalSecurityPolicy = createOperationalSecurityPolicy({
   allowedRootsProvider: () => getAllowedDirectories(),
   allowedWriteRootsProvider: () => localPermissionStore.roots("read-write"),
   observability: (event, metadata) => toolAuditLog.append(event, metadata),
+});
+
+const devWorkspaceTerminalService = createDevWorkspaceTerminalService({
+  workspaceEngine,
+  operationalSecurityPolicy,
+  observability: (event, metadata) =>
+    toolAuditLog.append(`dev.terminal.${event}`, metadata),
 });
 const openAIMediaAnalyzer = createOpenAIMediaAnalyzer({
   client: getOpenAIClient,
@@ -8304,6 +8312,430 @@ if (benchmarkRead && req.method === "GET") {
   if (req.headers["x-noon-request"] !== "1") { res.writeHead(403); return res.end(); }
   try { const result = benchmarkControlPlane.read(benchmarkRead[1], decodeURIComponent(benchmarkRead[2])); res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" }); return res.end(JSON.stringify({ status: "ok", ...result })); }
   catch (error) { res.writeHead(400, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ status: "error", code: error.code || "BENCHMARK_READ_FAILED" })); }
+}
+
+
+function requireTrustedDevUi(req) {
+  if (req.headers["x-noon-request"] !== "1") {
+    throw Object.assign(
+      new Error("Requête Noon refusée."),
+      {
+        statusCode: 403,
+        code: "TRUSTED_UI_REQUIRED",
+      }
+    );
+  }
+}
+
+function devTerminalHttpStatus(error) {
+  if (
+    [
+      "WORKSPACE_ROOT_DENIED",
+      "WORKSPACE_READ_ONLY",
+      "USER_TERMINAL_AUTOMATION_DENIED",
+      "NOON_TERMINAL_ORIGIN_DENIED",
+      "COMMAND_NOT_ALLOWLISTED",
+      "COMMAND_DENIED",
+      "GIT_REMOTE_DENIED",
+      "PACKAGE_INSTALL_APPROVAL_REQUIRED",
+      "TERMINAL_COMMAND_DENIED",
+    ].includes(error?.code)
+  ) {
+    return 403;
+  }
+
+  if (
+    [
+      "DEV_WORKSPACE_NOT_FOUND",
+      "TERMINAL_NOT_FOUND",
+    ].includes(error?.code)
+  ) {
+    return 404;
+  }
+
+  if (
+    [
+      "TERMINAL_BUSY",
+      "TERMINAL_APPROVAL_REQUIRED",
+    ].includes(error?.code)
+  ) {
+    return 409;
+  }
+
+  if (error?.code === "TERMINAL_SPAWN_FAILED") {
+    return 500;
+  }
+
+  return error?.statusCode || 400;
+}
+
+function sendDevTerminalError(res, error) {
+  res.writeHead(
+    devTerminalHttpStatus(error),
+    {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+    }
+  );
+
+  return res.end(
+    JSON.stringify({
+      status: "error",
+      code:
+        error?.code ||
+        "DEV_TERMINAL_FAILURE",
+      message:
+        error?.message ||
+        "Erreur terminal DEV.",
+    })
+  );
+}
+
+if (
+  requestPath ===
+    "/api/dev/workspace-terminal/sessions" &&
+  req.method === "POST"
+) {
+  try {
+    requireTrustedDevUi(req);
+
+    const body =
+      await readJsonBody(req, 16 * 1024);
+
+    const session =
+      devWorkspaceTerminalService.createSession({
+        workspaceId:
+          String(body.workspaceId || ""),
+        repositoryRoot:
+          body.repositoryRoot
+            ? String(body.repositoryRoot)
+            : null,
+      });
+
+    res.writeHead(
+      201,
+      {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+      }
+    );
+
+    return res.end(
+      JSON.stringify({
+        status: "ok",
+        session,
+      })
+    );
+  } catch (error) {
+    return sendDevTerminalError(
+      res,
+      error
+    );
+  }
+}
+
+const devTerminalSessionRead =
+  requestPath.match(
+    /^\/api\/dev\/workspace-terminal\/sessions\/([^/]+)$/
+  );
+
+if (
+  devTerminalSessionRead &&
+  req.method === "GET"
+) {
+  try {
+    requireTrustedDevUi(req);
+
+    const sessionId =
+      decodeURIComponent(
+        devTerminalSessionRead[1]
+      );
+
+    const session =
+      devWorkspaceTerminalService.getSession(
+        sessionId
+      );
+
+    res.writeHead(
+      200,
+      {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+      }
+    );
+
+    return res.end(
+      JSON.stringify({
+        status: "ok",
+        session,
+      })
+    );
+  } catch (error) {
+    return sendDevTerminalError(
+      res,
+      error
+    );
+  }
+}
+
+const devTerminalCreate =
+  requestPath.match(
+    /^\/api\/dev\/workspace-terminal\/sessions\/([^/]+)\/terminals$/
+  );
+
+if (
+  devTerminalCreate &&
+  req.method === "POST"
+) {
+  try {
+    requireTrustedDevUi(req);
+
+    const body =
+      await readJsonBody(req, 8 * 1024);
+
+    const terminal =
+      devWorkspaceTerminalService.createTerminal({
+        sessionId:
+          decodeURIComponent(
+            devTerminalCreate[1]
+          ),
+
+        title:
+          body.title
+            ? String(body.title)
+            : undefined,
+
+        // IMPORTANT :
+        // une requête renderer ne peut créer
+        // qu'un terminal USER.
+        owner: "USER",
+      });
+
+    res.writeHead(
+      201,
+      {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+      }
+    );
+
+    return res.end(
+      JSON.stringify({
+        status: "ok",
+        terminal,
+      })
+    );
+  } catch (error) {
+    return sendDevTerminalError(
+      res,
+      error
+    );
+  }
+}
+
+const devTerminalRun =
+  requestPath.match(
+    /^\/api\/dev\/workspace-terminal\/sessions\/([^/]+)\/terminals\/([^/]+)\/run$/
+  );
+
+if (
+  devTerminalRun &&
+  req.method === "POST"
+) {
+  try {
+    requireTrustedDevUi(req);
+
+    const body =
+      await readJsonBody(req, 16 * 1024);
+
+    const result =
+      devWorkspaceTerminalService.runCommand({
+        sessionId:
+          decodeURIComponent(
+            devTerminalRun[1]
+          ),
+
+        terminalId:
+          decodeURIComponent(
+            devTerminalRun[2]
+          ),
+
+        // Le renderer n'a jamais le droit
+        // de se présenter comme NOON.
+        origin: "USER",
+
+        command:
+          String(body.command || ""),
+      });
+
+    res.writeHead(
+      202,
+      {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+      }
+    );
+
+    return res.end(
+      JSON.stringify({
+        status: "ok",
+        result,
+      })
+    );
+  } catch (error) {
+    return sendDevTerminalError(
+      res,
+      error
+    );
+  }
+}
+
+const devTerminalOutput =
+  requestPath.match(
+    /^\/api\/dev\/workspace-terminal\/sessions\/([^/]+)\/terminals\/([^/]+)\/output$/
+  );
+
+if (
+  devTerminalOutput &&
+  req.method === "GET"
+) {
+  try {
+    requireTrustedDevUi(req);
+
+    const url = new URL(
+      req.url,
+      `http://${req.headers.host || DEFAULT_HOST}`
+    );
+
+    const result =
+      devWorkspaceTerminalService.poll({
+        sessionId:
+          decodeURIComponent(
+            devTerminalOutput[1]
+          ),
+
+        terminalId:
+          decodeURIComponent(
+            devTerminalOutput[2]
+          ),
+
+        from:
+          Math.max(
+            0,
+            Number(
+              url.searchParams.get("from")
+            ) || 0
+          ),
+      });
+
+    res.writeHead(
+      200,
+      {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+      }
+    );
+
+    return res.end(
+      JSON.stringify({
+        status: "ok",
+        ...result,
+      })
+    );
+  } catch (error) {
+    return sendDevTerminalError(
+      res,
+      error
+    );
+  }
+}
+
+const devTerminalClose =
+  requestPath.match(
+    /^\/api\/dev\/workspace-terminal\/sessions\/([^/]+)\/terminals\/([^/]+)\/close$/
+  );
+
+if (
+  devTerminalClose &&
+  req.method === "POST"
+) {
+  try {
+    requireTrustedDevUi(req);
+
+    const result =
+      devWorkspaceTerminalService.closeTerminal({
+        sessionId:
+          decodeURIComponent(
+            devTerminalClose[1]
+          ),
+
+        terminalId:
+          decodeURIComponent(
+            devTerminalClose[2]
+          ),
+      });
+
+    res.writeHead(
+      200,
+      {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+      }
+    );
+
+    return res.end(
+      JSON.stringify({
+        status: "ok",
+        ...result,
+      })
+    );
+  } catch (error) {
+    return sendDevTerminalError(
+      res,
+      error
+    );
+  }
+}
+
+const devTerminalSessionClose =
+  requestPath.match(
+    /^\/api\/dev\/workspace-terminal\/sessions\/([^/]+)\/close$/
+  );
+
+if (
+  devTerminalSessionClose &&
+  req.method === "POST"
+) {
+  try {
+    requireTrustedDevUi(req);
+
+    const result =
+      devWorkspaceTerminalService.closeSession(
+        decodeURIComponent(
+          devTerminalSessionClose[1]
+        )
+      );
+
+    res.writeHead(
+      200,
+      {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+      }
+    );
+
+    return res.end(
+      JSON.stringify({
+        status: "ok",
+        ...result,
+      })
+    );
+  } catch (error) {
+    return sendDevTerminalError(
+      res,
+      error
+    );
+  }
 }
 
 if (requestPath === "/api/dev/native/tasks" && req.method === "POST") {
