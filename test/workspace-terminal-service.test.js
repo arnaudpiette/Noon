@@ -712,3 +712,546 @@ test(
     );
   }
 );
+
+test(
+  "une session DEV expose Problems vide avant toute validation",
+  (context) => {
+    const data =
+      fixture(context);
+
+    const session =
+      data.service.createSession({
+        workspaceId:
+          "workspace-test",
+      });
+
+    assert.deepEqual(
+      session.problems,
+      {
+        status: "EMPTY",
+        source: null,
+        command: null,
+        terminalId: null,
+        exitCode: null,
+        counts: {
+          total: 0,
+          error: 0,
+          warning: 0,
+          info: 0,
+        },
+        truncated: false,
+        problems: [],
+      }
+    );
+  }
+);
+
+test(
+  "Problems passe RUNNING pendant une validation",
+  (context) => {
+    const data =
+      fixture(context);
+
+    const {
+      session,
+      terminal,
+    } =
+      createSessionAndTerminal(
+        data
+      );
+
+    data.service.runCommand({
+      sessionId:
+        session.id,
+      terminalId:
+        terminal.id,
+      origin: "USER",
+      command: "npm test",
+    });
+
+    const current =
+      data.service.getSession(
+        session.id
+      );
+
+    assert.equal(
+      current.problems.status,
+      "RUNNING"
+    );
+
+    assert.equal(
+      current.problems.source,
+      "test"
+    );
+
+    assert.equal(
+      current.problems.command,
+      "npm test"
+    );
+
+    assert.equal(
+      current.problems
+        .terminalId,
+      terminal.id
+    );
+
+    assert.deepEqual(
+      current.problems.counts,
+      {
+        total: 0,
+        error: 0,
+        warning: 0,
+        info: 0,
+      }
+    );
+  }
+);
+
+test(
+  "la fin d'une validation publie les Problems structurés",
+  (context) => {
+    const data =
+      fixture(context);
+
+    const {
+      session,
+      terminal,
+    } =
+      createSessionAndTerminal(
+        data
+      );
+
+    data.service.runCommand({
+      sessionId:
+        session.id,
+      terminalId:
+        terminal.id,
+      origin: "USER",
+      command: "npm test",
+    });
+
+    const child =
+      data.children[0];
+
+    child.stdout.emit(
+      "data",
+      [
+        "not ok 1 - exemple",
+        `location: '${session.repositoryRoot}/test/example.test.js:42:3'`,
+        "failureType: 'testCodeFailure'",
+        "error: 'Expected true but received false'",
+        "code: 'ERR_ASSERTION'",
+        "",
+      ].join("\n")
+    );
+
+    child.emit(
+      "close",
+      1,
+      null
+    );
+
+    const current =
+      data.service.getSession(
+        session.id
+      );
+
+    assert.equal(
+      current.problems.status,
+      "READY"
+    );
+
+    assert.equal(
+      current.problems.exitCode,
+      1
+    );
+
+    assert.equal(
+      current.problems.counts.error,
+      1
+    );
+
+    assert.equal(
+      current.problems.counts.total,
+      1
+    );
+
+    assert.equal(
+      current.problems.problems
+        .length,
+      1
+    );
+
+    assert.equal(
+      current.problems.problems[0]
+        .file,
+      "test/example.test.js"
+    );
+
+    assert.equal(
+      current.problems.problems[0]
+        .line,
+      42
+    );
+
+    assert.equal(
+      current.problems.problems[0]
+        .column,
+      3
+    );
+
+    assert.equal(
+      current.problems.problems[0]
+        .code,
+      "ERR_ASSERTION"
+    );
+
+    assert.match(
+      current.problems.problems[0]
+        .message,
+      /Expected true/
+    );
+  }
+);
+
+test(
+  "une validation suivante ne reparcourt pas les anciens outputs",
+  (context) => {
+    const data =
+      fixture(context);
+
+    const {
+      session,
+      terminal,
+    } =
+      createSessionAndTerminal(
+        data
+      );
+
+    data.service.runCommand({
+      sessionId:
+        session.id,
+      terminalId:
+        terminal.id,
+      origin: "USER",
+      command: "npm test",
+    });
+
+    const firstChild =
+      data.children[0];
+
+    firstChild.stderr.emit(
+      "data",
+      [
+        "AssertionError [ERR_ASSERTION]: ancien problème",
+        `    at TestContext.<anonymous> (${session.repositoryRoot}/test/old.test.js:19:7)`,
+        "",
+      ].join("\n")
+    );
+
+    firstChild.emit(
+      "close",
+      1,
+      null
+    );
+
+    assert.equal(
+      data.service.getSession(
+        session.id
+      ).problems.counts.total,
+      1
+    );
+
+    data.service.runCommand({
+      sessionId:
+        session.id,
+      terminalId:
+        terminal.id,
+      origin: "USER",
+      command: "npm test",
+    });
+
+    const secondChild =
+      data.children[1];
+
+    secondChild.stdout.emit(
+      "data",
+      [
+        "1..1",
+        "# pass 1",
+        "# fail 0",
+        "",
+      ].join("\n")
+    );
+
+    secondChild.emit(
+      "close",
+      0,
+      null
+    );
+
+    const current =
+      data.service.getSession(
+        session.id
+      );
+
+    assert.equal(
+      current.problems.status,
+      "EMPTY"
+    );
+
+    assert.equal(
+      current.problems.exitCode,
+      0
+    );
+
+    assert.equal(
+      current.problems.counts.total,
+      0
+    );
+
+    assert.deepEqual(
+      current.problems.problems,
+      []
+    );
+  }
+);
+
+test(
+  "le contrat Problems public n'expose jamais la sortie terminal brute",
+  (context) => {
+    const data =
+      fixture(context);
+
+    const {
+      session,
+      terminal,
+    } =
+      createSessionAndTerminal(
+        data
+      );
+
+    data.service.runCommand({
+      sessionId:
+        session.id,
+      terminalId:
+        terminal.id,
+      origin: "USER",
+      command:
+        "npm run lint",
+    });
+
+    const child =
+      data.children[0];
+
+    child.stderr.emit(
+      "data",
+      `${session.repositoryRoot}/public/app.js:12\nSyntaxError: boom\n`
+    );
+
+    child.emit(
+      "close",
+      1,
+      null
+    );
+
+    const problems =
+      data.service.getSession(
+        session.id
+      ).problems;
+
+    assert.equal(
+      Object.hasOwn(
+        problems,
+        "stdout"
+      ),
+      false
+    );
+
+    assert.equal(
+      Object.hasOwn(
+        problems,
+        "stderr"
+      ),
+      false
+    );
+
+    assert.equal(
+      Object.hasOwn(
+        problems,
+        "output"
+      ),
+      false
+    );
+
+    assert.doesNotMatch(
+      JSON.stringify(problems),
+      /terminal\.output/
+    );
+  }
+);
+
+
+test(
+  "une validation plus ancienne ne remplace pas Problems d'une validation plus récente",
+  (context) => {
+    const data =
+      fixture(context);
+
+    const session =
+      data.service.createSession({
+        workspaceId:
+          "workspace-test",
+      });
+
+    const olderTerminal =
+      data.service.createTerminal({
+        sessionId:
+          session.id,
+      });
+
+    const newerTerminal =
+      data.service.createTerminal({
+        sessionId:
+          session.id,
+      });
+
+    data.service.runCommand({
+      sessionId:
+        session.id,
+      terminalId:
+        olderTerminal.id,
+      origin: "USER",
+      command: "npm test",
+    });
+
+    const olderChild =
+      data.children[0];
+
+    data.service.runCommand({
+      sessionId:
+        session.id,
+      terminalId:
+        newerTerminal.id,
+      origin: "USER",
+      command:
+        "npm run lint",
+    });
+
+    const newerChild =
+      data.children[1];
+
+    let current =
+      data.service.getSession(
+        session.id
+      );
+
+    assert.equal(
+      current.problems.status,
+      "RUNNING"
+    );
+
+    assert.equal(
+      current.problems.terminalId,
+      newerTerminal.id
+    );
+
+    assert.equal(
+      current.problems.source,
+      "lint"
+    );
+
+    olderChild.stderr.emit(
+      "data",
+      [
+        "AssertionError [ERR_ASSERTION]: ancien problème",
+        `    at TestContext.<anonymous> (${session.repositoryRoot}/test/old.test.js:19:7)`,
+        "",
+      ].join("\n")
+    );
+
+    olderChild.emit(
+      "close",
+      1,
+      null
+    );
+
+    current =
+      data.service.getSession(
+        session.id
+      );
+
+    assert.equal(
+      current.problems.status,
+      "RUNNING"
+    );
+
+    assert.equal(
+      current.problems.terminalId,
+      newerTerminal.id
+    );
+
+    assert.equal(
+      current.problems.source,
+      "lint"
+    );
+
+    assert.equal(
+      current.problems.counts.total,
+      0
+    );
+
+    newerChild.stderr.emit(
+      "data",
+      [
+        `${session.repositoryRoot}/src/new.js:12`,
+        "SyntaxError: problème récent",
+        "",
+      ].join("\n")
+    );
+
+    newerChild.emit(
+      "close",
+      1,
+      null
+    );
+
+    current =
+      data.service.getSession(
+        session.id
+      );
+
+    assert.equal(
+      current.problems.status,
+      "READY"
+    );
+
+    assert.equal(
+      current.problems.terminalId,
+      newerTerminal.id
+    );
+
+    assert.equal(
+      current.problems.source,
+      "lint"
+    );
+
+    assert.equal(
+      current.problems.counts.total,
+      1
+    );
+
+    assert.equal(
+      current.problems.problems[0]
+        .file,
+      "src/new.js"
+    );
+
+    assert.doesNotMatch(
+      JSON.stringify(
+        current.problems
+      ),
+      /old\.test\.js/
+    );
+  }
+);

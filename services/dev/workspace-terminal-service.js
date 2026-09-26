@@ -10,6 +10,10 @@ const {
   COMMAND_CLASSES,
   classifyDevCommand,
 } = require("../delegation/dev-command-policy");
+const {
+  inferDevProblemSource,
+  parseDevProblems,
+} = require("./dev-problems-service");
 
 const TERMINAL_STATUSES = Object.freeze([
   "IDLE",
@@ -201,6 +205,74 @@ function createDevWorkspaceTerminalService({
     };
   }
 
+  function emptyProblems() {
+    return {
+      status: "EMPTY",
+      source: null,
+      command: null,
+      terminalId: null,
+      exitCode: null,
+      counts: {
+        total: 0,
+        error: 0,
+        warning: 0,
+        info: 0,
+      },
+      truncated: false,
+      problems: [],
+    };
+  }
+
+  function publicProblems(value) {
+    const problems =
+      value || emptyProblems();
+
+    return {
+      status:
+        problems.status,
+      source:
+        problems.source,
+      command:
+        problems.command,
+      terminalId:
+        problems.terminalId,
+      exitCode:
+        problems.exitCode,
+      counts: {
+        total:
+          Number(
+            problems.counts?.total
+          ) || 0,
+        error:
+          Number(
+            problems.counts?.error
+          ) || 0,
+        warning:
+          Number(
+            problems.counts?.warning
+          ) || 0,
+        info:
+          Number(
+            problems.counts?.info
+          ) || 0,
+      },
+      truncated:
+        Boolean(
+          problems.truncated
+        ),
+      problems:
+        Array.isArray(
+          problems.problems
+        )
+          ? problems.problems.map(
+              (problem) => ({
+                ...problem,
+              })
+            )
+          : [],
+    };
+  }
+
   function publicTerminal(terminal) {
     return {
       id: terminal.id,
@@ -241,9 +313,10 @@ function createDevWorkspaceTerminalService({
         status: "UNCONFIGURED",
       },
 
-      problems: {
-        status: "UNCONFIGURED",
-      },
+      problems:
+        publicProblems(
+          session.problems
+        ),
 
       output: {
         status: "READY",
@@ -291,6 +364,9 @@ function createDevWorkspaceTerminalService({
       dirty: git.dirty,
       terminals: new Map(),
       activeTerminalId: null,
+      problems:
+        emptyProblems(),
+      activeProblemsRunId: null,
       lastValidationState: null,
       executionState: "READY",
       createdAt: iso(),
@@ -606,6 +682,15 @@ function createDevWorkspaceTerminalService({
 
     const startedAt = now();
 
+    const outputStartCursor =
+      terminal.outputCursor;
+
+    const problemRunId =
+      commandDecision.classification ===
+      "SAFE_READ"
+        ? crypto.randomUUID()
+        : null;
+
     terminal.status = "RUNNING";
     terminal.exitCode = null;
     terminal.signal = null;
@@ -655,6 +740,34 @@ function createDevWorkspaceTerminalService({
 
     terminal.child = child;
 
+    if (
+      commandDecision.classification ===
+      "SAFE_READ"
+    ) {
+      session.activeProblemsRunId =
+        problemRunId;
+
+      session.problems = {
+        status: "RUNNING",
+        source:
+          inferDevProblemSource(
+            command
+          ),
+        command,
+        terminalId:
+          terminal.id,
+        exitCode: null,
+        counts: {
+          total: 0,
+          error: 0,
+          warning: 0,
+          info: 0,
+        },
+        truncated: false,
+        problems: [],
+      };
+    }
+
     refreshExecutionState(session);
 
     let finalized = false;
@@ -685,6 +798,52 @@ function createDevWorkspaceTerminalService({
 
       terminal.lastActivityAt =
         iso();
+
+      if (
+        commandDecision.classification ===
+          "SAFE_READ" &&
+        session.activeProblemsRunId ===
+          problemRunId
+      ) {
+        const commandOutput =
+          terminal.output.filter(
+            (event) =>
+              event.sequence >
+              outputStartCursor
+          );
+
+        const parsedProblems =
+          parseDevProblems({
+            command,
+            repositoryRoot:
+              session.repositoryRoot,
+            exitCode:
+              terminal.exitCode,
+            output:
+              commandOutput,
+          });
+
+        if (
+          (
+            error ||
+            terminal.signal
+          ) &&
+          parsedProblems.status ===
+            "EMPTY"
+        ) {
+          parsedProblems.status =
+            "UNRESOLVED";
+        }
+
+        session.problems = {
+          ...parsedProblems,
+          terminalId:
+            terminal.id,
+        };
+
+        session.activeProblemsRunId =
+          null;
+      }
 
       session.lastValidationState = {
         command:
