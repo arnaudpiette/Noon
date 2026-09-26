@@ -134,6 +134,7 @@ const { createCodexSpecialistAgent } = require("./services/delegation/codex-spec
 const { createDevDelegationRunner } = require("./services/delegation/dev-delegation-runner");
 const { createNativeDevCoordinator } = require("./services/dev/native-dev-coordinator");
 const { createDevWorkspaceTerminalService } = require("./services/dev/workspace-terminal-service");
+const { createDevWorkspaceAgentExecutionLoop } = require("./services/dev/workspace-agent-execution-loop");
 const { createDevTaskJournal } = require("./services/dev/dev-task-journal");
 const { createNativeDevReasoner } = require("./services/dev/native-dev-reasoner");
 const { createDevCostBudgetService } = require("./services/dev/dev-cost-budget-service");
@@ -1213,6 +1214,13 @@ const devWorkspaceTerminalService = createDevWorkspaceTerminalService({
   operationalSecurityPolicy,
   observability: (event, metadata) =>
     toolAuditLog.append(`dev.terminal.${event}`, metadata),
+});
+const devWorkspaceAgentExecutionLoop = createDevWorkspaceAgentExecutionLoop({
+  terminalService: devWorkspaceTerminalService,
+  operationalSecurityPolicy,
+  approvalEngine: approvalManager,
+  observability: (event, metadata) =>
+    toolAuditLog.append(`dev.workspace-agent.${event}`, metadata),
 });
 const openAIMediaAnalyzer = createOpenAIMediaAnalyzer({
   client: getOpenAIClient,
@@ -8913,6 +8921,61 @@ if (
       res,
       error
     );
+  }
+}
+
+if (requestPath === "/api/dev/workspace-agent/executions" && req.method === "POST") {
+  try {
+    requireTrustedDevUi(req);
+    const body = await readJsonBody(req, 32 * 1024);
+    const execution = devWorkspaceAgentExecutionLoop.start({
+      workspaceSessionId: String(body.workspaceSessionId || ""),
+      task: String(body.task || ""),
+      actionCommand: String(body.actionCommand || ""),
+      validationCommand: String(body.validationCommand || ""),
+      plan: body.plan && typeof body.plan === "object" ? body.plan : null,
+      previewObservation: body.previewObservation && typeof body.previewObservation === "object"
+        ? body.previewObservation
+        : null,
+    });
+    res.writeHead(202, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    return res.end(JSON.stringify({ status: "ok", execution }));
+  } catch (error) {
+    return sendDevTerminalError(res, error);
+  }
+}
+
+const devWorkspaceAgentCancel = requestPath.match(
+  /^\/api\/dev\/workspace-agent\/executions\/([^/]+)\/cancel$/
+);
+
+if (devWorkspaceAgentCancel && req.method === "POST") {
+  try {
+    requireTrustedDevUi(req);
+    const result = devWorkspaceAgentExecutionLoop.cancel(
+      decodeURIComponent(devWorkspaceAgentCancel[1])
+    );
+    res.writeHead(result.cancelled ? 200 : 409, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    return res.end(JSON.stringify({ status: result.cancelled ? "ok" : "error", ...result }));
+  } catch (error) {
+    return sendDevTerminalError(res, error);
+  }
+}
+
+const devWorkspaceAgentStatus = requestPath.match(
+  /^\/api\/dev\/workspace-agent\/executions\/([^/]+)$/
+);
+
+if (devWorkspaceAgentStatus && req.method === "GET") {
+  try {
+    requireTrustedDevUi(req);
+    const execution = devWorkspaceAgentExecutionLoop.get(
+      decodeURIComponent(devWorkspaceAgentStatus[1])
+    );
+    res.writeHead(execution ? 200 : 404, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    return res.end(JSON.stringify(execution ? { status: "ok", execution } : { status: "error", code: "EXECUTION_NOT_FOUND" }));
+  } catch (error) {
+    return sendDevTerminalError(res, error);
   }
 }
 

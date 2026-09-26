@@ -42,6 +42,9 @@ const devTerminalForm = document.getElementById("devTerminalForm");
 const devTerminalInput = document.getElementById("devTerminalInput");
 const devTerminalRun = document.getElementById("devTerminalRun");
 const devTerminalAddButton = document.getElementById("devTerminalAdd");
+const devWorkspaceAgentState = document.getElementById("devWorkspaceAgentState");
+const devWorkspaceAgentRun = document.getElementById("devWorkspaceAgentRun");
+const devWorkspaceAgentCancel = document.getElementById("devWorkspaceAgentCancel");
 const devTerminalCollapseButton = document.getElementById(
   "devTerminalCollapse"
 );
@@ -3815,6 +3818,10 @@ async function pollActiveDevTerminal() {
     if (shouldRefreshDevProblems()) {
       await refreshDevProblems();
     }
+
+    if (devWorkspaceAgentExecutionId) {
+      await refreshDevWorkspaceAgent();
+    }
   } catch (error) {
     if (
       error.code ===
@@ -3935,6 +3942,7 @@ async function closeDevTerminalSession({
   clearDevSourceControl({
     close: true,
   });
+  clearDevWorkspaceAgent();
 
   devTerminalState.session = null;
   devTerminalState.terminals.clear();
@@ -4505,6 +4513,91 @@ window.addEventListener(
     ).catch(() => {});
   }
 );
+
+// DEV_WORKSPACE_AGENT_UI_START
+let devWorkspaceAgentExecutionId = null;
+let devWorkspaceAgentSerial = 0;
+
+function clearDevWorkspaceAgent() {
+  devWorkspaceAgentSerial += 1;
+  devWorkspaceAgentExecutionId = null;
+  devWorkspaceAgentState.textContent = "Noon prêt";
+  devWorkspaceAgentState.dataset.state = "idle";
+  devWorkspaceAgentRun.disabled = false;
+  devWorkspaceAgentCancel.hidden = true;
+}
+
+function renderDevWorkspaceAgent(execution) {
+  if (!execution || execution.executionId !== devWorkspaceAgentExecutionId) return;
+  const labels = { PLAN: "Planning…", ACTION: "Running…", VALIDATION: "Validating…", OBSERVATION: "Observing…" };
+  const terminal = ["COMPLETED", "FAILED", "BLOCKED", "CANCELLED"].includes(execution.status);
+  devWorkspaceAgentState.textContent = terminal
+    ? execution.status === "COMPLETED" ? "Done" : execution.status === "BLOCKED" ? "Blocked" : execution.status === "CANCELLED" ? "Cancelled" : "Failed"
+    : labels[execution.phase] || execution.status;
+  devWorkspaceAgentState.dataset.state = execution.status.toLowerCase();
+  devWorkspaceAgentRun.disabled = !terminal;
+  devWorkspaceAgentCancel.hidden = terminal;
+  if (terminal) devWorkspaceAgentExecutionId = null;
+}
+
+async function refreshDevWorkspaceAgent() {
+  const executionId = devWorkspaceAgentExecutionId;
+  const serial = devWorkspaceAgentSerial;
+  const sessionId = devTerminalState.session?.id || null;
+  const contextKey = devTerminalState.contextKey;
+  if (!executionId || !sessionId || !contextKey) return;
+  try {
+    const data = await devTerminalRequest(`/api/dev/workspace-agent/executions/${encodeURIComponent(executionId)}`);
+    if (serial !== devWorkspaceAgentSerial || executionId !== devWorkspaceAgentExecutionId ||
+      sessionId !== devTerminalState.session?.id || contextKey !== devTerminalState.contextKey || currentMode !== "DEV") return;
+    renderDevWorkspaceAgent(data.execution);
+  } catch {
+    if (serial === devWorkspaceAgentSerial) clearDevWorkspaceAgent();
+  }
+}
+
+devWorkspaceAgentRun.addEventListener("click", async () => {
+  const command = devTerminalInput.value.trim();
+  const sessionId = devTerminalState.session?.id || null;
+  if (!command || !sessionId || currentMode !== "DEV") {
+    setDevTerminalStatus("Saisis une validation autorisée pour Noon.", "error");
+    return;
+  }
+  const serial = ++devWorkspaceAgentSerial;
+  devWorkspaceAgentRun.disabled = true;
+  devWorkspaceAgentState.textContent = "Planning…";
+  try {
+    const data = await devTerminalRequest("/api/dev/workspace-agent/executions", {
+      method: "POST",
+      body: JSON.stringify({
+        workspaceSessionId: sessionId,
+        task: `Valider le Workspace avec ${command}`,
+        validationCommand: command,
+        previewObservation: {
+          url: devPreviewState.native.url || null,
+          status: devPreviewIsOpen() ? "READY" : "CLOSED",
+          loadState: devPreviewState.native.loading ? "LOADING" : "IDLE",
+        },
+      }),
+    });
+    if (serial !== devWorkspaceAgentSerial || sessionId !== devTerminalState.session?.id) return;
+    devWorkspaceAgentExecutionId = data.execution.executionId;
+    renderDevWorkspaceAgent(data.execution);
+  } catch {
+    if (serial === devWorkspaceAgentSerial) clearDevWorkspaceAgent();
+  }
+});
+
+devWorkspaceAgentCancel.addEventListener("click", async () => {
+  const executionId = devWorkspaceAgentExecutionId;
+  if (!executionId) return;
+  try {
+    await devTerminalRequest(`/api/dev/workspace-agent/executions/${encodeURIComponent(executionId)}/cancel`, { method: "POST", body: "{}" });
+  } finally {
+    if (executionId === devWorkspaceAgentExecutionId) clearDevWorkspaceAgent();
+  }
+});
+// DEV_WORKSPACE_AGENT_UI_END
 
 // DEV_TERMINAL_UI_END
 
