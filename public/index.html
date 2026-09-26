@@ -590,6 +590,17 @@
               </button>
 
               <button
+                id="devSourceControlToggle"
+                class="dev-terminal-source-button"
+                type="button"
+                aria-label="Afficher Source Control"
+                aria-pressed="false"
+                title="Source Control"
+              >
+                Git
+              </button>
+
+              <button
                 id="devTerminalCollapse"
                 type="button"
                 aria-label="Réduire le terminal"
@@ -617,6 +628,102 @@
             role="tablist"
             aria-label="Terminaux ouverts"
           ></div>
+
+          <section
+            id="devSourceControlPanel"
+            class="dev-source-control-panel"
+            aria-label="Source Control"
+            hidden
+          >
+            <header class="dev-source-control-header">
+              <div class="dev-source-control-heading">
+                <strong>SOURCE CONTROL</strong>
+                <span id="devSourceControlBranch">—</span>
+              </div>
+
+              <button
+                id="devSourceControlRefresh"
+                type="button"
+                aria-label="Rafraîchir Source Control"
+                title="Rafraîchir"
+              >
+                ↻
+              </button>
+            </header>
+
+            <div class="dev-source-control-summary">
+              <span id="devSourceControlTotal">0 fichier</span>
+              <span id="devSourceControlStaged">0 staged</span>
+              <span id="devSourceControlUnstaged">0 modifié</span>
+              <span id="devSourceControlUntracked">0 untracked</span>
+              <span id="devSourceControlConflicted">0 conflit</span>
+            </div>
+
+            <div class="dev-source-control-body">
+              <nav
+                id="devSourceControlFiles"
+                class="dev-source-control-files"
+                aria-label="Fichiers modifiés"
+              ></nav>
+
+              <section
+                class="dev-source-control-diff"
+                aria-label="Diff du fichier sélectionné"
+              >
+                <header class="dev-source-control-diff-header">
+                  <strong id="devSourceControlSelected">
+                    Aucun fichier
+                  </strong>
+
+                  <div
+                    class="dev-source-control-scopes"
+                    role="group"
+                    aria-label="Portée du diff"
+                  >
+                    <button
+                      id="devSourceControlWorktree"
+                      type="button"
+                      data-scope="WORKTREE"
+                      aria-pressed="true"
+                    >
+                      WORKTREE
+                    </button>
+
+                    <button
+                      id="devSourceControlStagedScope"
+                      type="button"
+                      data-scope="STAGED"
+                      aria-pressed="false"
+                    >
+                      STAGED
+                    </button>
+                  </div>
+                </header>
+
+                <pre
+                  id="devSourceControlPatch"
+                  class="dev-source-control-patch"
+                  tabindex="0"
+                >Sélectionne un fichier.</pre>
+              </section>
+            </div>
+
+            <footer class="dev-source-control-footer">
+              <span
+                id="devSourceControlState"
+                role="status"
+              >
+                Source Control prêt
+              </span>
+
+              <span
+                id="devSourceControlTruncated"
+                hidden
+              >
+                Liste tronquée
+              </span>
+            </footer>
+          </section>
 
           <section
             id="devProblemsPanel"

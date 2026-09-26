@@ -1487,3 +1487,297 @@ body.dev-preview-resizing *{
   position:absolute!important;
   inset:0!important
 }
+
+
+/* DEV SOURCE CONTROL UI */
+
+.dev-source-control-panel[hidden]{
+  display:none!important
+}
+
+.dev-terminal-source-button[aria-pressed="true"]{
+  background:rgba(184,249,0,.12)!important;
+  color:var(--figma-green)!important
+}
+
+.dev-terminal-panel.is-source-control{
+  grid-template-rows:auto minmax(0,1fr)
+}
+
+.dev-terminal-panel.is-source-control
+.dev-terminal-tabs,
+.dev-terminal-panel.is-source-control
+.dev-problems-panel,
+.dev-terminal-panel.is-source-control
+.dev-terminal-output,
+.dev-terminal-panel.is-source-control
+.dev-terminal-command,
+.dev-terminal-panel.is-source-control
+.dev-terminal-footer{
+  display:none
+}
+
+.dev-terminal-panel.is-source-control
+.dev-source-control-panel{
+  display:grid
+}
+
+.dev-source-control-panel{
+  min-width:0;
+  min-height:0;
+  grid-template-rows:auto auto minmax(0,1fr) auto;
+  overflow:hidden;
+  background:#111;
+  color:#d7ddd2
+}
+
+.dev-source-control-header{
+  display:flex;
+  min-height:38px;
+  padding:6px 10px;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  border-bottom:1px solid rgba(255,255,255,.08);
+  background:#151515
+}
+
+.dev-source-control-heading{
+  display:flex;
+  min-width:0;
+  align-items:center;
+  gap:9px
+}
+
+.dev-source-control-heading strong{
+  color:var(--figma-green);
+  font-size:9px;
+  letter-spacing:.12em
+}
+
+.dev-source-control-heading span{
+  overflow:hidden;
+  color:#8f9499;
+  font-size:9px;
+  text-overflow:ellipsis;
+  white-space:nowrap
+}
+
+.dev-source-control-header button{
+  width:27px;
+  height:27px;
+  padding:0;
+  border:0;
+  border-radius:7px;
+  background:transparent;
+  color:#a9ada9;
+  cursor:pointer
+}
+
+.dev-source-control-header button:hover:not(:disabled){
+  background:rgba(255,255,255,.07);
+  color:#fff
+}
+
+.dev-source-control-header button:disabled{
+  cursor:wait;
+  opacity:.45
+}
+
+.dev-source-control-summary{
+  display:flex;
+  min-height:28px;
+  padding:5px 10px;
+  align-items:center;
+  gap:12px;
+  overflow:auto hidden;
+  border-bottom:1px solid rgba(255,255,255,.06);
+  color:#80858a;
+  font-size:8px;
+  white-space:nowrap
+}
+
+.dev-source-control-body{
+  display:grid;
+  min-width:0;
+  min-height:0;
+  grid-template-columns:minmax(180px,30%) minmax(0,1fr);
+  overflow:hidden
+}
+
+.dev-source-control-files{
+  min-width:0;
+  min-height:0;
+  overflow:auto;
+  border-right:1px solid rgba(255,255,255,.08);
+  background:#151515
+}
+
+.dev-source-control-file{
+  display:grid;
+  width:100%;
+  min-height:31px;
+  padding:6px 9px;
+  grid-template-columns:minmax(0,1fr) auto;
+  align-items:center;
+  gap:8px;
+  border:0;
+  border-bottom:1px solid rgba(255,255,255,.045);
+  background:transparent;
+  color:#bfc4bf;
+  text-align:left;
+  cursor:pointer
+}
+
+.dev-source-control-file:hover{
+  background:rgba(255,255,255,.04)
+}
+
+.dev-source-control-file[data-active="true"]{
+  background:#262826;
+  color:#fff
+}
+
+.dev-source-control-file-name{
+  min-width:0;
+  overflow:hidden;
+  font-family:"SFMono-Regular",Consolas,monospace;
+  font-size:9px;
+  text-overflow:ellipsis;
+  white-space:nowrap
+}
+
+.dev-source-control-file-status{
+  color:var(--figma-green);
+  font-size:8px;
+  font-weight:800;
+  white-space:nowrap
+}
+
+.dev-source-control-diff{
+  display:grid;
+  min-width:0;
+  min-height:0;
+  grid-template-rows:auto minmax(0,1fr);
+  overflow:hidden
+}
+
+.dev-source-control-diff-header{
+  display:flex;
+  min-height:36px;
+  padding:5px 9px;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  border-bottom:1px solid rgba(255,255,255,.07);
+  background:#171717
+}
+
+.dev-source-control-diff-header>strong{
+  min-width:0;
+  overflow:hidden;
+  color:#d9ddd9;
+  font-family:"SFMono-Regular",Consolas,monospace;
+  font-size:9px;
+  font-weight:500;
+  text-overflow:ellipsis;
+  white-space:nowrap
+}
+
+.dev-source-control-scopes{
+  display:flex;
+  flex:0 0 auto;
+  gap:3px
+}
+
+.dev-source-control-scopes button{
+  height:23px;
+  padding:0 7px;
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:5px;
+  background:transparent;
+  color:#71777b;
+  font-size:7px;
+  font-weight:800;
+  cursor:pointer
+}
+
+.dev-source-control-scopes button[aria-pressed="true"]{
+  border-color:rgba(184,249,0,.25);
+  background:rgba(184,249,0,.08);
+  color:var(--figma-green)
+}
+
+.dev-source-control-scopes button:disabled{
+  cursor:default;
+  opacity:.28
+}
+
+.dev-source-control-patch{
+  min-width:0;
+  min-height:0;
+  margin:0;
+  padding:12px 14px;
+  overflow:auto;
+  background:#0e0e0e;
+  color:#d7ddd2;
+  font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+  font-size:10px;
+  line-height:1.5;
+  white-space:pre;
+  tab-size:2
+}
+
+.dev-source-control-footer{
+  display:flex;
+  min-height:27px;
+  padding:5px 10px;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  border-top:1px solid rgba(255,255,255,.07);
+  color:#747a7e;
+  font-size:8px
+}
+
+#devSourceControlState[data-state="running"]{
+  color:#8eb4ff
+}
+
+#devSourceControlState[data-state="error"]{
+  color:#ff858d
+}
+
+#devSourceControlState[data-state="ready"]{
+  color:#b8f900
+}
+
+#devSourceControlTruncated{
+  color:#f0b35c
+}
+
+.dev-terminal-panel.is-collapsed
+.dev-source-control-panel{
+  display:none
+}
+
+@media(max-width:720px){
+  .dev-source-control-body{
+    grid-template-columns:1fr;
+    grid-template-rows:minmax(90px,38%) minmax(0,1fr)
+  }
+
+  .dev-source-control-files{
+    border-right:0;
+    border-bottom:1px solid rgba(255,255,255,.08)
+  }
+
+  .dev-source-control-summary{
+    gap:8px
+  }
+
+  .dev-source-control-diff-header{
+    align-items:flex-start;
+    flex-direction:column
+  }
+}
