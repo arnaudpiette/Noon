@@ -3,7 +3,7 @@
 const {
   app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage,
   Notification, powerMonitor, safeStorage, screen, session, shell,
-  systemPreferences, Tray,
+  systemPreferences, Tray, WebContentsView,
 } = require("electron");
 const crypto = require("crypto");
 const fs = require("fs");
@@ -23,6 +23,10 @@ const { isDueToday, nextRunAt } = require("../lib/creative-brief");
 const { createLocalPermissionStore } = require("../lib/local-permissions");
 const { createPasswordVerifier, verifyPassword } = require("../services/security/local-password-verifier");
 const { executeBenchmarkControlCommand, parseBenchmarkControlCommand, publicCommandError } = require("./benchmark-control-client");
+const {
+  createDevPreviewController,
+  normalizeDevPreviewUrl,
+} = require("./dev-preview-controller");
 const { createDeferredOptionalLoader, createStartupDiagnostics, startOptionalStartupPhase } = require("./startup-diagnostics");
 
 const smokeArgument = (name) => process.argv.find((value) => value.startsWith(`--${name}=`))?.split("=").slice(1).join("=");
@@ -48,6 +52,7 @@ if (smokeTestRequested && smokeUserData) {
 // Le smoke test utilise un profil et un port isolés ; il ne doit pas réveiller l'instance quotidienne.
 const hasSingleInstanceLock = benchmarkControlCommand || benchmarkControlCommandError ? true : smokeTestRequested || app.requestSingleInstanceLock();
 let mainWindow = null;
+let devPreviewController = null;
 let tray = null;
 let serverController = null;
 let localAuthSecret = null;
@@ -332,6 +337,42 @@ async function openExternalUrl(rawUrl) {
   await shell.openExternal(rawUrl);
   return true;
 }
+function ensureDevPreviewController() {
+  if (devPreviewController) {
+    return devPreviewController;
+  }
+
+  devPreviewController =
+    createDevPreviewController({
+      WebContentsView,
+      session,
+      getMainWindow: () => mainWindow,
+      noonOrigin: NOON_ORIGIN,
+      openExternalUrl,
+      devTools:
+        buildProfile === "development" ||
+        buildProfile === "test",
+    });
+
+  devPreviewController.onState(
+    (state) => {
+      if (
+        !mainWindow ||
+        mainWindow.isDestroyed()
+      ) {
+        return;
+      }
+
+      mainWindow.webContents.send(
+        "noon:dev-preview-state",
+        state
+      );
+    }
+  );
+
+  return devPreviewController;
+}
+
 function boundsAreVisible(bounds) {
   return screen.getAllDisplays().some(({ workArea }) =>
     bounds.x < workArea.x + workArea.width && bounds.x + bounds.width > workArea.x &&
@@ -430,7 +471,11 @@ function createWindow() {
     writeJson("window-state.json", mainWindow.getBounds());
     mainWindow.hide();
   });
-  mainWindow.on("closed", () => { mainWindow = null; });
+  mainWindow.on("closed", () => {
+    devPreviewController?.close();
+    devPreviewController = null;
+    mainWindow = null;
+  });
   mainWindow.loadURL(`${NOON_ORIGIN}/app`);
   mainWindow.once("ready-to-show", () => {
     logNoonEvent("info", "startup-window-ready", JSON.stringify({
@@ -632,6 +677,88 @@ function registerIpc() {
     await shell.openExternal(String(rawUrl));
     return true;
   });
+  registerTrustedHandler(
+    "noon:dev-preview-open",
+    async (_event, payload = {}) =>
+      ensureDevPreviewController().open({
+        url: payload.url,
+        bounds: payload.bounds,
+      })
+  );
+
+  registerTrustedHandler(
+    "noon:dev-preview-navigate",
+    async (_event, rawUrl) =>
+      ensureDevPreviewController().navigate(
+        rawUrl
+      )
+  );
+
+  registerTrustedHandler(
+    "noon:dev-preview-set-bounds",
+    (_event, bounds) =>
+      ensureDevPreviewController().setBounds(
+        bounds
+      )
+  );
+
+  registerTrustedHandler(
+    "noon:dev-preview-set-visible",
+    (_event, visible) =>
+      ensureDevPreviewController().setVisible(
+        Boolean(visible)
+      )
+  );
+
+  registerTrustedHandler(
+    "noon:dev-preview-reload",
+    () =>
+      ensureDevPreviewController().reload()
+  );
+
+  registerTrustedHandler(
+    "noon:dev-preview-back",
+    () =>
+      ensureDevPreviewController().back()
+  );
+
+  registerTrustedHandler(
+    "noon:dev-preview-forward",
+    () =>
+      ensureDevPreviewController().forward()
+  );
+
+  registerTrustedHandler(
+    "noon:dev-preview-close",
+    () =>
+      ensureDevPreviewController().close()
+  );
+
+  registerTrustedHandler(
+    "noon:dev-preview-open-external",
+    async (_event, rawUrl) => {
+      const target =
+        normalizeDevPreviewUrl(
+          rawUrl,
+          {
+            noonOrigin: NOON_ORIGIN,
+          }
+        );
+
+      await shell.openExternal(
+        target
+      );
+
+      return true;
+    }
+  );
+
+  registerTrustedHandler(
+    "noon:dev-preview-state",
+    () =>
+      ensureDevPreviewController().state()
+  );
+
   registerTrustedHandler("noon:set-live-active", (_event, active) => {
     liveVoiceActive = Boolean(active);
     if (liveVoiceActive) void wakeWordService?.stop(); else scheduleWakeWordResume();

@@ -554,7 +554,7 @@ body.sidebar-collapsed .sidebar-toggle{left:calc(var(--sidebar-rail-width) + 16p
 .dev-terminal-panel{
   position:absolute;
   right:26px;
-  bottom:104px;
+  bottom:var(--dev-workspace-bottom,104px);
   left:26px;
   display:grid;
   height:var(--dev-terminal-height,330px);
@@ -805,7 +805,7 @@ body.sidebar-collapsed .sidebar-toggle{left:calc(var(--sidebar-rail-width) + 16p
 
   .dev-terminal-panel{
     right:12px;
-    bottom:88px;
+    bottom:var(--dev-workspace-bottom,104px);
     left:12px;
     height:285px;
     border-radius:13px
@@ -910,7 +910,7 @@ body.dev-terminal-resizing *{
   z-index:35;
   top:70px;
   right:20px;
-  bottom:92px;
+  bottom:var(--dev-workspace-bottom,104px);
   left:20px;
   height:auto!important
 }
@@ -977,7 +977,393 @@ body.dev-terminal-resizing *{
   .dev-terminal-panel.is-maximized{
     top:64px;
     right:10px;
-    bottom:78px;
+    bottom:var(--dev-workspace-bottom,104px);
     left:10px
   }
+}
+
+
+/* ============================================================
+   DEV PREVIEW WORKSPACE
+   WebContentsView natif isolé — aucune balise webview/iframe.
+   ============================================================ */
+
+.dev-preview-panel[hidden]{
+  display:none!important
+}
+
+.dev-preview-panel{
+  position:absolute;
+  z-index:14;
+  top:76px;
+  right:26px;
+  bottom:var(--dev-workspace-bottom,104px);
+  left:46%;
+  display:grid;
+  min-width:360px;
+  min-height:180px;
+  grid-template-rows:auto auto minmax(0,1fr) auto;
+  overflow:hidden;
+  border:1px solid rgba(0,0,0,.12);
+  border-radius:16px;
+  background:#f5f5f2;
+  box-shadow:0 14px 38px rgba(0,0,0,.10)
+}
+
+.chat-view.dev-preview-active
+.conversation{
+  width:calc(46% - 42px);
+  max-width:none;
+  margin-right:auto
+}
+
+.chat-view.dev-preview-active
+.dev-terminal-panel:not(.is-maximized){
+  right:55%
+}
+
+.chat-view.dev-terminal-maximized
+.dev-preview-panel{
+  visibility:hidden;
+  pointer-events:none
+}
+
+.dev-preview-header{
+  display:flex;
+  min-height:52px;
+  padding:9px 11px 9px 14px;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  border-bottom:1px solid rgba(0,0,0,.08);
+  background:#fafaf8
+}
+
+.dev-preview-heading{
+  display:grid;
+  min-width:0;
+  gap:2px
+}
+
+.dev-preview-heading .label{
+  color:#767a75;
+  font-size:9px;
+  font-weight:800;
+  letter-spacing:.09em;
+  text-transform:uppercase
+}
+
+.dev-preview-heading strong{
+  overflow:hidden;
+  font-size:12px;
+  text-overflow:ellipsis;
+  white-space:nowrap
+}
+
+.dev-preview-toolbar{
+  display:grid;
+  min-height:42px;
+  padding:6px 8px;
+  grid-template-columns:auto auto auto minmax(120px,1fr) auto auto;
+  align-items:center;
+  gap:5px;
+  border-bottom:1px solid rgba(0,0,0,.08);
+  background:#fff
+}
+
+.dev-preview-toolbar input{
+  min-width:0;
+  height:29px;
+  padding:4px 9px;
+  border:1px solid rgba(0,0,0,.11);
+  border-radius:7px;
+  outline:0;
+  background:#f5f5f3;
+  color:#202220;
+  font-family:"SFMono-Regular",Consolas,monospace;
+  font-size:10px
+}
+
+.dev-preview-toolbar input:focus{
+  border-color:rgba(0,0,0,.28);
+  background:#fff
+}
+
+.dev-preview-toolbar>button[type="submit"]{
+  height:29px;
+  padding:0 10px;
+  border:0;
+  border-radius:7px;
+  background:#171817;
+  color:#fff;
+  font-size:9px;
+  font-weight:800;
+  cursor:pointer
+}
+
+.dev-preview-icon-button{
+  display:grid;
+  width:29px;
+  height:29px;
+  padding:0;
+  place-items:center;
+  border:0;
+  border-radius:7px;
+  background:transparent;
+  color:#343634;
+  font-size:14px;
+  cursor:pointer
+}
+
+.dev-preview-icon-button:hover:not(:disabled){
+  background:rgba(0,0,0,.055)
+}
+
+.dev-preview-icon-button:disabled,
+.dev-preview-toolbar>button[type="submit"]:disabled{
+  cursor:default;
+  opacity:.32
+}
+
+.dev-preview-viewport{
+  position:relative;
+  min-width:0;
+  min-height:0;
+  overflow:hidden;
+  background:#fff
+}
+
+.dev-preview-placeholder{
+  position:absolute;
+  inset:0;
+  display:grid;
+  padding:28px;
+  place-content:center;
+  gap:8px;
+  color:#777b76;
+  text-align:center
+}
+
+.dev-preview-placeholder strong{
+  color:#383b38;
+  font-size:13px
+}
+
+.dev-preview-placeholder span{
+  max-width:300px;
+  font-size:10px;
+  line-height:1.5
+}
+
+.dev-preview-footer{
+  display:flex;
+  min-height:27px;
+  padding:5px 9px;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  border-top:1px solid rgba(0,0,0,.08);
+  background:#fafaf8;
+  color:#747873;
+  font-size:9px
+}
+
+.dev-preview-status{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  white-space:nowrap
+}
+
+.dev-preview-status::before{
+  width:6px;
+  height:6px;
+  border-radius:50%;
+  background:#9a9d98;
+  content:""
+}
+
+.dev-preview-status[data-state="ready"]{
+  color:#427013
+}
+
+.dev-preview-status[data-state="ready"]::before{
+  background:#71ac2c
+}
+
+.dev-preview-status[data-state="running"]{
+  color:#3e6ca8
+}
+
+.dev-preview-status[data-state="running"]::before{
+  background:#5d8fd0
+}
+
+.dev-preview-status[data-state="error"]{
+  color:#b9444e
+}
+
+.dev-preview-status[data-state="error"]::before{
+  background:#e0505e
+}
+
+@media(max-width:1100px){
+  .dev-preview-panel{
+    right:12px;
+    left:50%;
+    min-width:0
+  }
+
+  .chat-view.dev-preview-active
+  .conversation{
+    width:calc(50% - 30px)
+  }
+
+  .chat-view.dev-preview-active
+  .dev-terminal-panel:not(.is-maximized){
+    right:52%
+  }
+}
+
+
+/* ============================================================
+   DEV WORKSPACE CONSERVATIVE V5
+   Aucun wrapper, aucun reparentage DOM.
+   ============================================================ */
+
+.dev-preview-resize-handle[hidden]{
+  display:none!important
+}
+
+/* Preview : reste absolument positionné,
+   seule sa largeur devient variable. */
+.chat-view.dev-preview-active
+.dev-preview-panel{
+  right:26px!important;
+  left:auto!important;
+  width:var(--dev-preview-width,52%)!important;
+  min-width:300px!important
+}
+
+/* Conversation : s'arrête avant le Preview. */
+.chat-view.dev-preview-active
+.conversation{
+  width:calc(
+    100% -
+    var(--dev-preview-width,52%) -
+    54px
+  )!important;
+  max-width:none!important;
+  margin-right:auto!important
+}
+
+/* Terminal : s'arrête également avant le Preview. */
+.chat-view.dev-preview-active
+.dev-terminal-panel:not(.is-maximized){
+  right:calc(
+    26px +
+    var(--dev-preview-width,52%) +
+    16px
+  )!important
+}
+
+/* Splitter indépendant entre gauche et Preview. */
+.chat-view.dev-preview-active
+.dev-preview-resize-handle{
+  position:absolute;
+  z-index:18;
+  top:76px;
+  right:calc(
+    26px +
+    var(--dev-preview-width,52%)
+  );
+  bottom:var(--dev-workspace-bottom,104px);
+  display:block;
+  width:12px;
+  cursor:ew-resize;
+  touch-action:none
+}
+
+.dev-preview-resize-handle::after{
+  position:absolute;
+  top:10px;
+  bottom:10px;
+  left:5px;
+  width:2px;
+  border-radius:999px;
+  background:rgba(0,0,0,.10);
+  content:"";
+  transition:
+    width 140ms ease,
+    background-color 140ms ease
+}
+
+.dev-preview-resize-handle:hover::after,
+.dev-preview-resize-handle:focus-visible::after{
+  width:3px;
+  background:var(--figma-green)
+}
+
+.dev-preview-resize-handle:focus-visible{
+  outline:0
+}
+
+body.dev-preview-resizing{
+  cursor:ew-resize;
+  user-select:none
+}
+
+body.dev-preview-resizing *{
+  cursor:ew-resize!important
+}
+
+.chat-view.dev-terminal-maximized
+.dev-preview-resize-handle{
+  visibility:hidden;
+  pointer-events:none
+}
+
+@media(max-width:1100px){
+  .chat-view.dev-preview-active
+  .dev-preview-panel{
+    right:12px!important;
+    left:auto!important
+  }
+
+  .chat-view.dev-preview-active
+  .conversation{
+    width:calc(
+      100% -
+      var(--dev-preview-width,44%) -
+      40px
+    )!important
+  }
+
+  .chat-view.dev-preview-active
+  .dev-terminal-panel:not(.is-maximized){
+    right:calc(
+      12px +
+      var(--dev-preview-width,44%) +
+      16px
+    )!important
+  }
+
+  .chat-view.dev-preview-active
+  .dev-preview-resize-handle{
+    right:calc(
+      12px +
+      var(--dev-preview-width,44%)
+    )
+  }
+}
+
+
+/* ============================================================
+   DEV CHAT FIXED CONTAINING BLOCK
+   Le Terminal ne doit jamais agrandir son propre contenant.
+   ============================================================ */
+
+.chat-view.dev-terminal-active{
+  position:absolute!important;
+  inset:0!important
 }

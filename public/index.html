@@ -415,6 +415,147 @@
           </div>
         </section>
 
+        <!-- Resize horizontal du Preview DEV. -->
+        <div
+          id="devPreviewResizeHandle"
+          class="dev-preview-resize-handle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Redimensionner le Preview"
+          tabindex="0"
+          hidden
+        ></div>
+
+        <!-- Preview natif isolé du Mode DEV. -->
+        <section
+          id="devPreviewPanel"
+          class="dev-preview-panel"
+          aria-label="Aperçu du projet de développement"
+          hidden
+        >
+          <header class="dev-preview-header">
+            <div class="dev-preview-heading">
+              <span class="label">DEV Preview</span>
+              <strong id="devPreviewProject">Projet DEV</strong>
+            </div>
+
+            <button
+              id="devPreviewClose"
+              class="dev-preview-icon-button"
+              type="button"
+              aria-label="Fermer le Preview"
+              title="Fermer le Preview"
+              disabled
+            >
+              ×
+            </button>
+          </header>
+
+          <form
+            id="devPreviewForm"
+            class="dev-preview-toolbar"
+            autocomplete="off"
+          >
+            <button
+              id="devPreviewBack"
+              class="dev-preview-icon-button"
+              type="button"
+              aria-label="Page précédente"
+              title="Page précédente"
+              disabled
+            >
+              ←
+            </button>
+
+            <button
+              id="devPreviewForward"
+              class="dev-preview-icon-button"
+              type="button"
+              aria-label="Page suivante"
+              title="Page suivante"
+              disabled
+            >
+              →
+            </button>
+
+            <button
+              id="devPreviewReload"
+              class="dev-preview-icon-button"
+              type="button"
+              aria-label="Actualiser"
+              title="Actualiser"
+              disabled
+            >
+              ↻
+            </button>
+
+            <label
+              class="sr-only"
+              for="devPreviewUrl"
+            >
+              URL locale du projet
+            </label>
+
+            <input
+              id="devPreviewUrl"
+              type="text"
+              inputmode="url"
+              spellcheck="false"
+              placeholder="localhost:5173 ou 127.0.0.1:4321"
+              aria-label="URL locale du Preview"
+            >
+
+            <button
+              id="devPreviewOpen"
+              type="submit"
+            >
+              Ouvrir
+            </button>
+
+            <button
+              id="devPreviewExternal"
+              class="dev-preview-icon-button"
+              type="button"
+              aria-label="Ouvrir dans le navigateur"
+              title="Ouvrir dans le navigateur"
+              disabled
+            >
+              ↗
+            </button>
+          </form>
+
+          <div
+            id="devPreviewViewport"
+            class="dev-preview-viewport"
+            aria-label="Zone du navigateur Preview"
+          >
+            <div
+              id="devPreviewPlaceholder"
+              class="dev-preview-placeholder"
+            >
+              <strong>Preview prêt</strong>
+              <span>
+                Lance le serveur du projet dans le terminal puis saisis son URL locale.
+              </span>
+            </div>
+          </div>
+
+          <footer class="dev-preview-footer">
+            <span
+              id="devPreviewStatus"
+              class="dev-preview-status"
+              data-state="idle"
+              aria-live="polite"
+            >
+              En attente
+            </span>
+
+            <small>
+              HTTP local uniquement · localhost / 127.0.0.1
+            </small>
+          </footer>
+        </section>
+
         <!-- Terminal sécurisé du Mode DEV. -->
         <section
           id="devTerminalPanel"

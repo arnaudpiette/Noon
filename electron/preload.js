@@ -16,6 +16,16 @@ contextBridge.exposeInMainWorld("noon", Object.freeze({
   authenticatePrivateMemory: (payload) => invoke("noon:authenticate-private-memory", payload),
   openGoogleAuthorization: (url) => invoke("noon:open-google-authorization", url),
   openExternal: (url) => invoke("noon:open-external", url),
+  devPreviewOpen: (payload) => invoke("noon:dev-preview-open", payload),
+  devPreviewNavigate: (url) => invoke("noon:dev-preview-navigate", url),
+  devPreviewSetBounds: (bounds) => invoke("noon:dev-preview-set-bounds", bounds),
+  devPreviewSetVisible: (visible) => invoke("noon:dev-preview-set-visible", Boolean(visible)),
+  devPreviewReload: () => invoke("noon:dev-preview-reload"),
+  devPreviewBack: () => invoke("noon:dev-preview-back"),
+  devPreviewForward: () => invoke("noon:dev-preview-forward"),
+  devPreviewClose: () => invoke("noon:dev-preview-close"),
+  devPreviewState: () => invoke("noon:dev-preview-state"),
+  devPreviewOpenExternal: (url) => invoke("noon:dev-preview-open-external", url),
   setLiveActive: (active) => invoke("noon:set-live-active", Boolean(active)),
   getWakeWordStatus: () => invoke("noon:get-wake-word-status"),
   setPicovoiceKey: (value) => invoke("noon:set-picovoice-key", value),
@@ -32,6 +42,12 @@ contextBridge.exposeInMainWorld("noon", Object.freeze({
   revealArtifact: (targetPath) => invoke("noon:reveal-artifact", targetPath),
   previewArtifact: (targetPath) => invoke("noon:preview-artifact", targetPath),
   downloadArtifact: (targetPath) => invoke("noon:download-artifact", targetPath),
+  onDevPreviewState: (callback) => {
+    if (typeof callback !== "function") return () => {};
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on("noon:dev-preview-state", listener);
+    return () => ipcRenderer.removeListener("noon:dev-preview-state", listener);
+  },
   onDeepLink: (callback) => {
     if (typeof callback !== "function") return () => {};
     const listener = (_event, value) => callback(value);
