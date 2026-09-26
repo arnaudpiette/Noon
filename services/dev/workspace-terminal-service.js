@@ -15,6 +15,10 @@ const {
   parseDevProblems,
 } = require("./dev-problems-service");
 
+const {
+  createDevGitDiffService,
+} = require("./dev-git-diff-service");
+
 const TERMINAL_STATUSES = Object.freeze([
   "IDLE",
   "RUNNING",
@@ -120,6 +124,8 @@ function actionFor(classification) {
 function createDevWorkspaceTerminalService({
   workspaceEngine,
   operationalSecurityPolicy,
+  gitDiffService =
+    createDevGitDiffService(),
   observability = null,
   now = () => Date.now(),
   spawnProcess = spawn,
@@ -131,6 +137,15 @@ function createDevWorkspaceTerminalService({
 
   if (!operationalSecurityPolicy?.evaluate) {
     throw new TypeError("OperationalSecurityPolicy requise.");
+  }
+
+  if (
+    !gitDiffService?.inspect ||
+    !gitDiffService?.readDiff
+  ) {
+    throw new TypeError(
+      "DevGitDiffService requis."
+    );
   }
 
   const sessions = new Map();
@@ -273,6 +288,115 @@ function createDevWorkspaceTerminalService({
     };
   }
 
+  function emptyGitDiff() {
+    return {
+      status: "UNCONFIGURED",
+      branch: null,
+      detached: false,
+      counts: {
+        total: 0,
+        staged: 0,
+        unstaged: 0,
+        untracked: 0,
+        conflicted: 0,
+      },
+      truncated: false,
+      unsafeOmitted: 0,
+      files: [],
+    };
+  }
+
+  function publicGitDiff(value) {
+    const gitDiff =
+      value || emptyGitDiff();
+
+    return {
+      status:
+        gitDiff.status,
+      branch:
+        gitDiff.branch || null,
+      detached:
+        Boolean(
+          gitDiff.detached
+        ),
+      counts: {
+        total:
+          Number(
+            gitDiff.counts?.total
+          ) || 0,
+        staged:
+          Number(
+            gitDiff.counts?.staged
+          ) || 0,
+        unstaged:
+          Number(
+            gitDiff.counts?.unstaged
+          ) || 0,
+        untracked:
+          Number(
+            gitDiff.counts?.untracked
+          ) || 0,
+        conflicted:
+          Number(
+            gitDiff.counts?.conflicted
+          ) || 0,
+      },
+      truncated:
+        Boolean(
+          gitDiff.truncated
+        ),
+      unsafeOmitted:
+        Math.max(
+          0,
+          Number(
+            gitDiff.unsafeOmitted
+          ) || 0
+        ),
+      files:
+        Array.isArray(
+          gitDiff.files
+        )
+          ? gitDiff.files.map(
+              (file) => ({
+                file:
+                  file.file,
+                originalFile:
+                  file.originalFile ||
+                  null,
+                indexStatus:
+                  file.indexStatus,
+                worktreeStatus:
+                  file.worktreeStatus,
+                changeType:
+                  file.changeType,
+                status:
+                  file.status,
+                staged:
+                  Boolean(
+                    file.staged
+                  ),
+                unstaged:
+                  Boolean(
+                    file.unstaged
+                  ),
+                untracked:
+                  Boolean(
+                    file.untracked
+                  ),
+                conflicted:
+                  Boolean(
+                    file.conflicted
+                  ),
+                sensitive:
+                  Boolean(
+                    file.sensitive
+                  ),
+              })
+            )
+          : [],
+    };
+  }
+
   function publicTerminal(terminal) {
     return {
       id: terminal.id,
@@ -309,9 +433,10 @@ function createDevWorkspaceTerminalService({
         status: "UNCONFIGURED",
       },
 
-      gitDiff: {
-        status: "UNCONFIGURED",
-      },
+      gitDiff:
+        publicGitDiff(
+          session.gitDiff
+        ),
 
       problems:
         publicProblems(
@@ -364,6 +489,9 @@ function createDevWorkspaceTerminalService({
       dirty: git.dirty,
       terminals: new Map(),
       activeTerminalId: null,
+      gitDiff:
+        emptyGitDiff(),
+      activeGitDiffRunId: null,
       problems:
         emptyProblems(),
       activeProblemsRunId: null,
@@ -1048,6 +1176,206 @@ function createDevWorkspaceTerminalService({
     };
   }
 
+  async function inspectGitDiff(
+    input = {}
+  ) {
+    const session =
+      requireSession(
+        input.sessionId
+      );
+
+    const runId =
+      crypto.randomUUID();
+
+    session.activeGitDiffRunId =
+      runId;
+
+    try {
+      const result =
+        await gitDiffService.inspect({
+          repositoryRoot:
+            session.repositoryRoot,
+        });
+
+      const counts = {
+        total:
+          Number(
+            result.counts?.total
+          ) || 0,
+        staged:
+          Number(
+            result.counts?.staged
+          ) || 0,
+        unstaged:
+          Number(
+            result.counts?.unstaged
+          ) || 0,
+        untracked:
+          Number(
+            result.counts?.untracked
+          ) || 0,
+        conflicted:
+          Number(
+            result.counts?.conflicted
+          ) || 0,
+      };
+
+      const unsafeOmitted =
+        Math.max(
+          0,
+          Number(
+            result.unsafeOmitted
+          ) || 0
+        );
+
+      const nextGitDiff = {
+        status:
+          counts.total > 0 ||
+          unsafeOmitted > 0
+            ? "READY"
+            : "EMPTY",
+        branch:
+          result.branch || null,
+        detached:
+          Boolean(
+            result.detached
+          ),
+        counts,
+        truncated:
+          Boolean(
+            result.truncated
+          ),
+        unsafeOmitted,
+        files:
+          Array.isArray(
+            result.files
+          )
+            ? result.files
+            : [],
+      };
+
+      if (
+        session.activeGitDiffRunId ===
+        runId
+      ) {
+        session.activeGitDiffRunId =
+          null;
+
+        session.gitDiff =
+          nextGitDiff;
+
+        session.branch =
+          result.branch || null;
+
+        session.dirty =
+          counts.total > 0 ||
+          unsafeOmitted > 0;
+
+        emit(
+          "dev_git_diff_inspected",
+          {
+            workspaceId:
+              session.workspaceId,
+            changedFiles:
+              counts.total,
+            truncated:
+              nextGitDiff.truncated,
+            unsafeOmitted,
+          }
+        );
+      } else {
+        emit(
+          "dev_git_diff_stale_ignored",
+          {
+            workspaceId:
+              session.workspaceId,
+          }
+        );
+      }
+
+      return publicGitDiff(
+        session.gitDiff
+      );
+    } catch (error) {
+      if (
+        session.activeGitDiffRunId ===
+        runId
+      ) {
+        session.activeGitDiffRunId =
+          null;
+
+        session.gitDiff = {
+          ...emptyGitDiff(),
+          status: "UNAVAILABLE",
+        };
+
+        emit(
+          "dev_git_diff_failed",
+          {
+            workspaceId:
+              session.workspaceId,
+            code:
+              error?.code ||
+              "GIT_READ_FAILED",
+          }
+        );
+      } else {
+        emit(
+          "dev_git_diff_stale_ignored",
+          {
+            workspaceId:
+              session.workspaceId,
+          }
+        );
+      }
+
+      throw error;
+    }
+  }
+
+  async function readGitDiff(
+    input = {}
+  ) {
+    const session =
+      requireSession(
+        input.sessionId
+      );
+
+    const result =
+      await gitDiffService.readDiff({
+        repositoryRoot:
+          session.repositoryRoot,
+        file:
+          input.file,
+        scope:
+          input.scope,
+      });
+
+    emit(
+      "dev_git_diff_file_read",
+      {
+        workspaceId:
+          session.workspaceId,
+        status:
+          result?.status ||
+          null,
+        scope:
+          result?.scope ||
+          null,
+        sensitive:
+          Boolean(
+            result?.sensitive
+          ),
+        truncated:
+          Boolean(
+            result?.truncated
+          ),
+      }
+    );
+
+    return result;
+  }
+
   function closeSession(id) {
     const session =
       requireSession(id);
@@ -1089,6 +1417,8 @@ function createDevWorkspaceTerminalService({
       publicSession(
         requireSession(id)
       ),
+    inspectGitDiff,
+    readGitDiff,
     createTerminal,
     runCommand,
     poll,

@@ -8362,7 +8362,20 @@ function devTerminalHttpStatus(error) {
     return 409;
   }
 
-  if (error?.code === "TERMINAL_SPAWN_FAILED") {
+  if (
+    [
+      "GIT_ROOT_UNAVAILABLE",
+      "GIT_REPOSITORY_UNAVAILABLE",
+      "GIT_ROOT_MISMATCH",
+    ].includes(error?.code)
+  ) {
+    return 409;
+  }
+
+  if (
+    error?.code === "GIT_READ_FAILED" ||
+    error?.code === "TERMINAL_SPAWN_FAILED"
+  ) {
     return 500;
   }
 
@@ -8526,6 +8539,113 @@ if (
       JSON.stringify({
         status: "ok",
         session,
+      })
+    );
+  } catch (error) {
+    return sendDevTerminalError(
+      res,
+      error
+    );
+  }
+}
+
+const devGitDiffRead =
+  requestPath.match(
+    /^\/api\/dev\/workspace-terminal\/sessions\/([^/]+)\/git-diff$/
+  );
+
+if (
+  devGitDiffRead &&
+  req.method === "GET"
+) {
+  try {
+    requireTrustedDevUi(req);
+
+    const sessionId =
+      decodeURIComponent(
+        devGitDiffRead[1]
+      );
+
+    const gitDiff =
+      await devWorkspaceTerminalService
+        .inspectGitDiff({
+          sessionId,
+        });
+
+    res.writeHead(
+      200,
+      {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+      }
+    );
+
+    return res.end(
+      JSON.stringify({
+        status: "ok",
+        gitDiff,
+      })
+    );
+  } catch (error) {
+    return sendDevTerminalError(
+      res,
+      error
+    );
+  }
+}
+
+const devGitDiffFileRead =
+  requestPath.match(
+    /^\/api\/dev\/workspace-terminal\/sessions\/([^/]+)\/git-diff\/file$/
+  );
+
+if (
+  devGitDiffFileRead &&
+  req.method === "GET"
+) {
+  try {
+    requireTrustedDevUi(req);
+
+    const sessionId =
+      decodeURIComponent(
+        devGitDiffFileRead[1]
+      );
+
+    const requestUrl =
+      new URL(
+        req.url,
+        "http://127.0.0.1"
+      );
+
+    const file =
+      requestUrl.searchParams
+        .get("file") || "";
+
+    const scope =
+      requestUrl.searchParams
+        .get("scope") ||
+      "WORKTREE";
+
+    const diff =
+      await devWorkspaceTerminalService
+        .readGitDiff({
+          sessionId,
+          file,
+          scope,
+        });
+
+    res.writeHead(
+      200,
+      {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+      }
+    );
+
+    return res.end(
+      JSON.stringify({
+        status: "ok",
+        diff,
       })
     );
   } catch (error) {

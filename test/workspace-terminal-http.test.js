@@ -85,6 +85,90 @@ test.after(async () => {
   await stopNoonServer();
 });
 
+
+test(
+  "les routes Git Diff réelles exigent l’auth locale",
+  async () => {
+    const result =
+      await request(
+        "/api/dev/workspace-terminal/sessions/missing/git-diff",
+        {
+          auth: false,
+          trusted: true,
+        }
+      );
+
+    assert.equal(
+      result.status,
+      401
+    );
+  }
+);
+
+test(
+  "les routes Git Diff réelles exigent l’UI de confiance",
+  async () => {
+    const result =
+      await request(
+        "/api/dev/workspace-terminal/sessions/missing/git-diff",
+        {
+          auth: true,
+          trusted: false,
+        }
+      );
+
+    assert.equal(
+      result.status,
+      403
+    );
+
+    assert.equal(
+      result.payload?.code,
+      "TRUSTED_UI_REQUIRED"
+    );
+  }
+);
+
+test(
+  "la route inventaire Git Diff atteint réellement la session",
+  async () => {
+    const result =
+      await request(
+        "/api/dev/workspace-terminal/sessions/missing/git-diff"
+      );
+
+    assert.equal(
+      result.status,
+      404
+    );
+
+    assert.equal(
+      result.payload?.code,
+      "DEV_WORKSPACE_NOT_FOUND"
+    );
+  }
+);
+
+test(
+  "la route fichier Git Diff atteint réellement la session",
+  async () => {
+    const result =
+      await request(
+        "/api/dev/workspace-terminal/sessions/missing/git-diff/file?file=tracked.txt&scope=WORKTREE"
+      );
+
+    assert.equal(
+      result.status,
+      404
+    );
+
+    assert.equal(
+      result.payload?.code,
+      "DEV_WORKSPACE_NOT_FOUND"
+    );
+  }
+);
+
 test(
   "les routes terminal exigent l’auth locale",
   async () => {
