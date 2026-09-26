@@ -224,6 +224,66 @@ test(
 );
 
 test(
+  "parse un bloc node:test TAP YAML comme un seul Problem",
+  () => {
+    const result =
+      parseDevProblems({
+        command:
+          "node --test test/example.test.js",
+        repositoryRoot:
+          ROOT,
+        exitCode: 1,
+        stdout: [
+          "not ok 1 - validation",
+          `location: '${ROOT}/test/example.test.js:3:1'`,
+          "failureType: 'testCodeFailure'",
+          "error: |-",
+          "  Expected values to be strictly equal:",
+          "  1 !== 2",
+          "code: 'ERR_ASSERTION'",
+          "stack: |-",
+          `  helper (${ROOT}/test/example.test.js:2:26)`,
+          `  TestContext.<anonymous> (${ROOT}/test/example.test.js:3:17)`,
+        ].join("\n"),
+      });
+
+    assert.equal(
+      result.problems.length,
+      1
+    );
+
+    assert.deepEqual(
+      {
+        source:
+          result.problems[0]
+            .source,
+        file:
+          result.problems[0]
+            .file,
+        line:
+          result.problems[0]
+            .line,
+        column:
+          result.problems[0]
+            .column,
+        message:
+          result.problems[0]
+            .message,
+      },
+      {
+        source: "test",
+        file:
+          "test/example.test.js",
+        line: 3,
+        column: 1,
+        message:
+          "Expected values to be strictly equal:",
+      }
+    );
+  }
+);
+
+test(
   "parse une stack Node interne au projet",
   () => {
     const result =

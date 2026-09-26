@@ -356,6 +356,129 @@ function contextualDetails(
   };
 }
 
+function tapYamlDetails(
+  lines,
+  index
+) {
+  let message = null;
+  let code = null;
+  let scalarField = null;
+  let scalarIndent = -1;
+  const ignoredLines = new Set();
+
+  for (
+    let position = index + 1;
+    position < lines.length;
+    position += 1
+  ) {
+    const rawLine =
+      String(lines[position] || "");
+
+    if (
+      /^\s*(?:not )?ok\b/i.test(
+        rawLine
+      ) ||
+      /^\s*\.\.\.\s*$/.test(
+        rawLine
+      )
+    ) {
+      break;
+    }
+
+    const trimmed =
+      rawLine.trim();
+
+    if (!trimmed) continue;
+
+    const indentation =
+      rawLine.match(/^\s*/)[0]
+        .length;
+
+    if (
+      scalarField &&
+      indentation > scalarIndent
+    ) {
+      if (
+        scalarField === "error" &&
+        !message
+      ) {
+        message =
+          clean(
+            trimmed,
+            MAX_MESSAGE_LENGTH
+          );
+      }
+
+      if (scalarField === "stack") {
+        ignoredLines.add(position);
+      }
+
+      continue;
+    }
+
+    scalarField = null;
+    scalarIndent = -1;
+
+    const field =
+      rawLine.match(
+        /^(\s*)([A-Za-z][A-Za-z0-9_-]*):\s*(.*)$/
+      );
+
+    if (!field) continue;
+
+    const name =
+      field[2].toLowerCase();
+
+    const value =
+      field[3].trim();
+
+    if (
+      (name === "error" ||
+        name === "stack") &&
+      /^[|>][+-]?$/.test(value)
+    ) {
+      scalarField = name;
+      scalarIndent =
+        field[1].length;
+      continue;
+    }
+
+    if (
+      name === "error" &&
+      value
+    ) {
+      message =
+        clean(
+          value.replace(
+            /^(['"])(.*)\1$/,
+            "$2"
+          ),
+          MAX_MESSAGE_LENGTH
+        );
+    }
+
+    if (
+      name === "code" &&
+      value
+    ) {
+      code =
+        clean(
+          value.replace(
+            /^(['"])(.*)\1$/,
+            "$2"
+          ),
+          100
+        );
+    }
+  }
+
+  return {
+    message,
+    code,
+    ignoredLines,
+  };
+}
+
 function stableProblemId(problem) {
   return crypto
     .createHash("sha256")
@@ -405,6 +528,7 @@ function parseDevProblems(
 
   const problems = [];
   const seen = new Set();
+  const ignoredLines = new Set();
   let truncated = false;
 
   function addProblem({
@@ -507,6 +631,10 @@ function parseDevProblems(
     index < lines.length;
     index += 1
   ) {
+    if (ignoredLines.has(index)) {
+      continue;
+    }
+
     const rawLine =
       lines[index];
 
@@ -595,6 +723,21 @@ function parseDevProblems(
       );
 
     if (tapLocation) {
+      const tapDetails =
+        tapYamlDetails(
+          lines,
+          index
+        );
+
+      for (
+        const ignoredLine of
+          tapDetails.ignoredLines
+      ) {
+        ignoredLines.add(
+          ignoredLine
+        );
+      }
+
       const context =
         contextualDetails(
           lines,
@@ -611,9 +754,11 @@ function parseDevProblems(
         severity:
           "error",
         message:
+          tapDetails.message ||
           context.message ||
           "Test en échec.",
         code:
+          tapDetails.code ||
           context.code,
       });
 
