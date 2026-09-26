@@ -52,6 +52,14 @@ const devTerminalResizeHandle = document.getElementById(
   "devTerminalResizeHandle"
 );
 const devTerminalStatus = document.getElementById("devTerminalStatus");
+const devProblemsPanel = document.getElementById("devProblemsPanel");
+const devProblemsTotal = document.getElementById("devProblemsTotal");
+const devProblemsErrors = document.getElementById("devProblemsErrors");
+const devProblemsWarnings = document.getElementById("devProblemsWarnings");
+const devProblemsInfos = document.getElementById("devProblemsInfos");
+const devProblemsState = document.getElementById("devProblemsState");
+const devProblemsList = document.getElementById("devProblemsList");
+const devProblemsTruncated = document.getElementById("devProblemsTruncated");
 const clearChatButton = document.getElementById("clearChat");
 const newConversationButton = document.getElementById(
   "newConversationButton"
@@ -1679,12 +1687,14 @@ function loadDevTerminalHistory() {
 
 const devTerminalState = {
   session: null,
+  problems: null,
   terminals: new Map(),
   outputByTerminal: new Map(),
   offsetByTerminal: new Map(),
   activeTerminalId: null,
   contextKey: null,
   pollTimer: null,
+  problemsRefreshPending: false,
   syncSerial: 0,
   collapsed: false,
   maximized: false,
@@ -1696,6 +1706,396 @@ const devTerminalState = {
   resizeStartY: 0,
   resizeStartHeight: 0,
 };
+
+// DEV_PROBLEMS_UI_START
+
+const DEV_PROBLEMS_STATUSES =
+  new Set([
+    "EMPTY",
+    "RUNNING",
+    "READY",
+    "UNRESOLVED",
+  ]);
+
+const DEV_PROBLEM_SEVERITIES =
+  new Set([
+    "error",
+    "warning",
+    "info",
+  ]);
+
+function emptyDevProblems() {
+  return {
+    status: "EMPTY",
+    counts: {
+      total: 0,
+      error: 0,
+      warning: 0,
+      info: 0,
+    },
+    truncated: false,
+    problems: [],
+  };
+}
+
+function positiveDevProblemInteger(value) {
+  const number = Number(value);
+
+  return Number.isSafeInteger(number) &&
+    number > 0
+    ? number
+    : null;
+}
+
+function safeDevProblemFile(value) {
+  const file =
+    String(value || "")
+      .trim()
+      .replace(/\\/g, "/");
+
+  if (
+    !file ||
+    file.startsWith("/") ||
+    /^[A-Za-z]:\//.test(file) ||
+    /^[A-Za-z][A-Za-z0-9+.-]*:/.test(
+      file
+    ) ||
+    file.split("/").includes("..")
+  ) {
+    return null;
+  }
+
+  return file;
+}
+
+function clearDevProblemsPanel() {
+  devTerminalState.problems =
+    emptyDevProblems();
+  devTerminalState.problemsRefreshPending =
+    false;
+
+  devProblemsPanel.hidden = true;
+  devProblemsTotal.textContent = "0";
+  devProblemsErrors.textContent =
+    "0 erreur";
+  devProblemsWarnings.textContent =
+    "0 warning";
+  devProblemsInfos.textContent =
+    "0 info";
+  devProblemsState.textContent =
+    "Aucun problème détecté";
+  devProblemsState.dataset.state =
+    "EMPTY";
+  devProblemsList.replaceChildren();
+  devProblemsTruncated.hidden = true;
+  devProblemsTruncated.textContent = "";
+}
+
+function devProblemsPanelIsAllowed() {
+  if (
+    currentMode !== "DEV" ||
+    !currentFocusId ||
+    !currentFocusPath ||
+    !devTerminalState.session ||
+    !devTerminalState.contextKey
+  ) {
+    return false;
+  }
+
+  return (
+    devTerminalState.contextKey ===
+    `${currentFocusId}:${currentFocusPath}`
+  );
+}
+
+function renderDevProblems(problems) {
+  if (!devProblemsPanelIsAllowed()) {
+    clearDevProblemsPanel();
+    return;
+  }
+
+  const value =
+    problems &&
+    typeof problems === "object"
+      ? problems
+      : emptyDevProblems();
+
+  const status =
+    DEV_PROBLEMS_STATUSES.has(
+      value.status
+    )
+      ? value.status
+      : "UNRESOLVED";
+
+  const diagnostics =
+    status === "READY" &&
+    Array.isArray(value.problems)
+      ? value.problems
+          .slice(0, 200)
+          .map((problem) => {
+            const file =
+              safeDevProblemFile(
+                problem?.file
+              );
+
+            const line =
+              positiveDevProblemInteger(
+                problem?.line
+              );
+
+            if (!file || !line) {
+              return null;
+            }
+
+            const severity =
+              DEV_PROBLEM_SEVERITIES.has(
+                problem?.severity
+              )
+                ? problem.severity
+                : "error";
+
+            return {
+              problem,
+              file,
+              line,
+              column:
+                positiveDevProblemInteger(
+                  problem?.column
+                ) || 1,
+              severity,
+            };
+          })
+          .filter(Boolean)
+      : [];
+
+  const severityCount = (severity) =>
+    diagnostics.filter(
+      (diagnostic) =>
+        diagnostic.severity === severity
+    ).length;
+
+  const total = diagnostics.length;
+  const errors = severityCount("error");
+  const warnings = severityCount("warning");
+  const infos = severityCount("info");
+
+  devTerminalState.problems = value;
+  devTerminalState.problemsRefreshPending =
+    status === "RUNNING";
+  devProblemsPanel.hidden = false;
+  devProblemsPanel.dataset.state = status;
+  devProblemsTotal.textContent =
+    String(total);
+  devProblemsErrors.textContent =
+    `${errors} erreur${
+      errors === 1 ? "" : "s"
+    }`;
+  devProblemsWarnings.textContent =
+    `${warnings} warning${
+      warnings === 1 ? "" : "s"
+    }`;
+  devProblemsInfos.textContent =
+    `${infos} info${
+      infos === 1 ? "" : "s"
+    }`;
+
+  const stateMessages = {
+    RUNNING: "Validation en cours",
+    EMPTY: "Aucun problème détecté",
+    READY: total
+      ? "Diagnostics de validation"
+      : "Aucun problème détecté",
+    UNRESOLVED:
+      "Validation échouée sans diagnostic localisable",
+  };
+
+  devProblemsState.textContent =
+    stateMessages[status];
+  devProblemsState.dataset.state = status;
+
+  const fragment =
+    document.createDocumentFragment();
+
+  let displayed = 0;
+
+  if (status === "READY") {
+    for (const diagnostic of diagnostics) {
+      const {
+        problem,
+        file,
+        line,
+        column,
+        severity,
+      } = diagnostic;
+
+      const item =
+        document.createElement("article");
+
+      item.className =
+        `dev-problem dev-problem--${severity}`;
+      item.setAttribute(
+        "role",
+        "listitem"
+      );
+
+      const severityLabel =
+        document.createElement("span");
+      severityLabel.className =
+        "dev-problem-severity";
+      severityLabel.textContent =
+        severity.toUpperCase();
+
+      const location =
+        document.createElement("span");
+      location.className =
+        "dev-problem-location";
+      location.textContent =
+        `${file}:${line}:${column}`;
+
+      const message =
+        document.createElement("span");
+      message.className =
+        "dev-problem-message";
+      message.textContent =
+        String(
+          problem?.message ||
+          "Erreur de validation."
+        ).slice(0, 600);
+
+      const meta =
+        document.createElement("span");
+      meta.className =
+        "dev-problem-meta";
+
+      const source =
+        String(problem?.source || "")
+          .slice(0, 40);
+
+      const code =
+        String(problem?.code || "")
+          .slice(0, 100);
+
+      meta.textContent =
+        [code, source]
+          .filter(Boolean)
+          .join(" · ");
+
+      item.append(
+        severityLabel,
+        location,
+        message
+      );
+
+      if (meta.textContent) {
+        item.append(meta);
+      }
+
+      fragment.append(item);
+      displayed += 1;
+    }
+  }
+
+  devProblemsList.replaceChildren(
+    fragment
+  );
+
+  devProblemsTruncated.hidden =
+    value.truncated !== true;
+
+  devProblemsTruncated.textContent =
+    value.truncated === true
+      ? `Liste tronquée · ${displayed} résultat${
+          displayed === 1 ? "" : "s"
+        } affiché${
+          displayed === 1 ? "" : "s"
+        }`
+      : "";
+}
+
+async function refreshDevProblems() {
+  const sessionId =
+    devTerminalState.session?.id ||
+    null;
+
+  const contextKey =
+    devTerminalState.contextKey;
+
+  const syncSerial =
+    devTerminalState.syncSerial;
+
+  if (
+    !sessionId ||
+    !contextKey ||
+    !devProblemsPanelIsAllowed()
+  ) {
+    clearDevProblemsPanel();
+    return;
+  }
+
+  try {
+    const data =
+      await devTerminalRequest(
+        `/api/dev/workspace-terminal/sessions/${
+          encodeURIComponent(sessionId)
+        }`
+      );
+
+    if (
+      currentMode !== "DEV" ||
+      !currentFocusId ||
+      !currentFocusPath ||
+      syncSerial !==
+        devTerminalState.syncSerial ||
+      contextKey !==
+        devTerminalState.contextKey ||
+      contextKey !==
+        `${currentFocusId}:${currentFocusPath}` ||
+      sessionId !==
+        devTerminalState.session?.id ||
+      data.session?.id !== sessionId
+    ) {
+      return;
+    }
+
+    renderDevProblems(
+      data.session.problems
+    );
+  } catch (error) {
+    if (
+      currentMode !== "DEV" ||
+      !currentFocusId ||
+      !currentFocusPath ||
+      syncSerial !==
+        devTerminalState.syncSerial ||
+      contextKey !==
+        devTerminalState.contextKey ||
+      contextKey !==
+        `${currentFocusId}:${currentFocusPath}` ||
+      sessionId !==
+        devTerminalState.session?.id
+    ) {
+      return;
+    }
+
+    if (
+      error.code ===
+      "DEV_WORKSPACE_NOT_FOUND"
+    ) {
+      clearDevProblemsPanel();
+    }
+  }
+}
+
+function shouldRefreshDevProblems() {
+  return (
+    devTerminalState
+      .problemsRefreshPending === true ||
+    devTerminalState.problems?.status ===
+      "RUNNING"
+  );
+}
+
+// DEV_PROBLEMS_UI_END
 
 function setDevTerminalStatus(message, state = "idle") {
   devTerminalStatus.textContent = message;
@@ -2362,6 +2762,10 @@ async function pollActiveDevTerminal() {
     );
 
     renderDevTerminalOutput();
+
+    if (shouldRefreshDevProblems()) {
+      await refreshDevProblems();
+    }
   } catch (error) {
     if (
       error.code ===
@@ -2478,6 +2882,7 @@ async function closeDevTerminalSession({
     null;
 
   stopDevTerminalPolling();
+  clearDevProblemsPanel();
 
   devTerminalState.session = null;
   devTerminalState.terminals.clear();
@@ -2559,6 +2964,10 @@ async function openDevTerminalSession(
     `${currentFocusId}:${currentFocusPath}`;
 
   updateDevTerminalHeader();
+
+  renderDevProblems(
+    data.session.problems
+  );
 
   await createDevTerminal();
 
@@ -2779,6 +3188,14 @@ devTerminalForm.addEventListener(
       applyDevTerminal(
         data.result?.terminal
       );
+
+      if (
+        data.result?.classification ===
+        "SAFE_READ"
+      ) {
+        devTerminalState.problemsRefreshPending =
+          true;
+      }
 
       await pollActiveDevTerminal();
     } catch (error) {

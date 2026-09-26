@@ -558,7 +558,7 @@ body.sidebar-collapsed .sidebar-toggle{left:calc(var(--sidebar-rail-width) + 16p
   left:26px;
   display:grid;
   height:var(--dev-terminal-height,330px);
-  grid-template-rows:auto auto minmax(0,1fr) auto auto;
+  grid-template-rows:auto auto auto minmax(0,1fr) auto auto;
   overflow:hidden;
   border:1px solid rgba(0,0,0,.12);
   border-radius:16px;
@@ -680,6 +680,124 @@ body.sidebar-collapsed .sidebar-toggle{left:calc(var(--sidebar-rail-width) + 16p
 .dev-terminal-tab-close:hover{
   color:#fff;
   background:rgba(255,255,255,.06)
+}
+
+.dev-problems-panel[hidden]{
+  display:none!important
+}
+
+.dev-problems-panel{
+  display:grid;
+  min-height:49px;
+  max-height:min(150px,35%);
+  grid-template-rows:auto auto minmax(0,1fr) auto;
+  overflow:hidden;
+  border-bottom:1px solid rgba(255,255,255,.08);
+  background:#151515
+}
+
+.dev-problems-header{
+  display:flex;
+  min-height:28px;
+  padding:6px 10px;
+  align-items:center;
+  gap:8px;
+  color:#858b8f;
+  font-size:8px
+}
+
+.dev-problems-header strong{
+  color:var(--figma-green);
+  font-size:9px;
+  letter-spacing:.12em
+}
+
+.dev-problems-header span{
+  white-space:nowrap
+}
+
+.dev-problems-state,
+.dev-problems-truncated{
+  margin:0;
+  padding:5px 10px;
+  color:#92979a;
+  font-size:9px
+}
+
+.dev-problems-list{
+  min-height:0;
+  overflow:auto
+}
+
+.dev-problem{
+  display:grid;
+  padding:6px 10px;
+  grid-template-columns:48px minmax(120px,auto) minmax(0,1fr) auto;
+  align-items:baseline;
+  gap:8px;
+  border-top:1px solid rgba(255,255,255,.05);
+  color:#c9cdca;
+  font-size:9px
+}
+
+.dev-problem-severity{
+  color:#ff858d;
+  font-size:8px;
+  font-weight:800
+}
+
+.dev-problem--warning .dev-problem-severity{
+  color:#f0b35c
+}
+
+.dev-problem--info .dev-problem-severity{
+  color:#8eb4ff
+}
+
+.dev-problem-location,
+.dev-problem-message,
+.dev-problem-meta{
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap
+}
+
+.dev-problem-location{
+  color:#aeb4b0;
+  font-family:"SFMono-Regular",Consolas,monospace
+}
+
+.dev-problem-message{
+  color:#eef0ed
+}
+
+.dev-problem-meta{
+  color:#747a7e
+}
+
+.dev-problems-state[data-state="RUNNING"]{
+  color:#8eb4ff
+}
+
+.dev-problems-state[data-state="UNRESOLVED"]{
+  color:#ff858d
+}
+
+.dev-problems-truncated{
+  border-top:1px solid rgba(255,255,255,.06);
+  color:#f0b35c
+}
+
+@media(max-width:720px){
+  .dev-problem{
+    grid-template-columns:44px minmax(0,1fr)
+  }
+
+  .dev-problem-message,
+  .dev-problem-meta{
+    grid-column:2
+  }
 }
 
 .dev-terminal-output{
@@ -882,6 +1000,8 @@ body.dev-terminal-resizing *{
 .dev-terminal-resize-handle,
 .dev-terminal-panel.is-collapsed
 .dev-terminal-tabs,
+.dev-terminal-panel.is-collapsed
+.dev-problems-panel,
 .dev-terminal-panel.is-collapsed
 .dev-terminal-output,
 .dev-terminal-panel.is-collapsed

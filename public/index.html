@@ -618,6 +618,41 @@
             aria-label="Terminaux ouverts"
           ></div>
 
+          <section
+            id="devProblemsPanel"
+            class="dev-problems-panel"
+            aria-label="Problèmes de validation"
+            hidden
+          >
+            <header class="dev-problems-header">
+              <strong>PROBLEMS</strong>
+              <span id="devProblemsTotal">0</span>
+              <span id="devProblemsErrors">0 erreur</span>
+              <span id="devProblemsWarnings">0 warning</span>
+              <span id="devProblemsInfos">0 info</span>
+            </header>
+
+            <p
+              id="devProblemsState"
+              class="dev-problems-state"
+              role="status"
+            >
+              Aucun problème détecté
+            </p>
+
+            <div
+              id="devProblemsList"
+              class="dev-problems-list"
+              role="list"
+            ></div>
+
+            <p
+              id="devProblemsTruncated"
+              class="dev-problems-truncated"
+              hidden
+            ></p>
+          </section>
+
           <pre
             id="devTerminalOutput"
             class="dev-terminal-output"
