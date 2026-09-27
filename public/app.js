@@ -1760,6 +1760,9 @@ const devTerminalState = {
   offsetByTerminal: new Map(),
   activeTerminalId: null,
   contextKey: null,
+  lastAuthorizedValidationCommand: null,
+  lastAuthorizedValidationSessionId: null,
+  lastAuthorizedValidationContextKey: null,
   pollTimer: null,
   problemsRefreshPending: false,
   syncSerial: 0,
@@ -1781,6 +1784,7 @@ const DEV_PROBLEMS_STATUSES =
     "EMPTY",
     "RUNNING",
     "READY",
+    "CANCELLED",
     "UNRESOLVED",
   ]);
 
@@ -1972,6 +1976,8 @@ function renderDevProblems(problems) {
     READY: total
       ? "Diagnostics de validation"
       : "Aucun problème détecté",
+    CANCELLED:
+      "Validation arrêtée par l’utilisateur",
     UNRESOLVED:
       "Validation échouée sans diagnostic localisable",
   };
@@ -3154,6 +3160,20 @@ function setDevTerminalStatus(message, state = "idle") {
   devTerminalStatus.dataset.state = state;
 }
 
+function clearLastAuthorizedDevValidation() {
+  devTerminalState.lastAuthorizedValidationCommand = null;
+  devTerminalState.lastAuthorizedValidationSessionId = null;
+  devTerminalState.lastAuthorizedValidationContextKey = null;
+}
+
+function lastAuthorizedDevValidationForActiveSession() {
+  const sessionId = devTerminalState.session?.id || null;
+  if (!sessionId ||
+    devTerminalState.lastAuthorizedValidationSessionId !== sessionId ||
+    devTerminalState.lastAuthorizedValidationContextKey !== devTerminalState.contextKey) return null;
+  return devTerminalState.lastAuthorizedValidationCommand;
+}
+
 async function devTerminalRequest(
   route,
   {
@@ -3950,6 +3970,7 @@ async function closeDevTerminalSession({
   devTerminalState.offsetByTerminal.clear();
   devTerminalState.activeTerminalId = null;
   devTerminalState.contextKey = null;
+  clearLastAuthorizedDevValidation();
 
   renderDevTerminalTabs();
   renderDevTerminalOutput();
@@ -4193,6 +4214,9 @@ devTerminalForm.addEventListener(
     const terminalId =
       devTerminalState.activeTerminalId;
 
+    const contextKey =
+      devTerminalState.contextKey;
+
     if (!command) return;
 
     if (
@@ -4253,6 +4277,11 @@ devTerminalForm.addEventListener(
         data.result?.classification ===
         "SAFE_READ"
       ) {
+        if (session.id === devTerminalState.session?.id && contextKey === devTerminalState.contextKey) {
+          devTerminalState.lastAuthorizedValidationCommand = command;
+          devTerminalState.lastAuthorizedValidationSessionId = session.id;
+          devTerminalState.lastAuthorizedValidationContextKey = contextKey;
+        }
         devTerminalState.problemsRefreshPending =
           true;
       }
@@ -4524,20 +4553,34 @@ function clearDevWorkspaceAgent() {
   devWorkspaceAgentState.textContent = "Noon prêt";
   devWorkspaceAgentState.dataset.state = "idle";
   devWorkspaceAgentRun.disabled = false;
-  devWorkspaceAgentCancel.hidden = true;
+  devWorkspaceAgentCancel.disabled = true;
 }
 
 function renderDevWorkspaceAgent(execution) {
   if (!execution || execution.executionId !== devWorkspaceAgentExecutionId) return;
-  const labels = { PLAN: "Planning…", ACTION: "Running…", VALIDATION: "Validating…", OBSERVATION: "Observing…" };
+  const labels = { PLAN: "Planning…", ACTION: "Running…", VALIDATION: "Validating…", OBSERVATION: "Observing…", STOP: "Deciding…" };
   const terminal = ["COMPLETED", "FAILED", "BLOCKED", "CANCELLED"].includes(execution.status);
   devWorkspaceAgentState.textContent = terminal
     ? execution.status === "COMPLETED" ? "Done" : execution.status === "BLOCKED" ? "Blocked" : execution.status === "CANCELLED" ? "Cancelled" : "Failed"
     : labels[execution.phase] || execution.status;
   devWorkspaceAgentState.dataset.state = execution.status.toLowerCase();
   devWorkspaceAgentRun.disabled = !terminal;
-  devWorkspaceAgentCancel.hidden = terminal;
+  devWorkspaceAgentCancel.disabled = terminal;
   if (terminal) devWorkspaceAgentExecutionId = null;
+}
+
+async function showDevWorkspaceAgentTerminal(execution, sessionId, serial) {
+  const terminalId = execution?.terminalExecutionRefs?.at(-1)?.terminalSessionId;
+  if (!terminalId || devTerminalState.terminals.has(terminalId)) return;
+  const data = await devTerminalRequest(`/api/dev/workspace-terminal/sessions/${encodeURIComponent(sessionId)}`);
+  if (serial !== devWorkspaceAgentSerial || sessionId !== devTerminalState.session?.id || execution.executionId !== devWorkspaceAgentExecutionId) return;
+  const terminal = data.session?.terminalSessions?.find((item) => item.id === terminalId);
+  if (!terminal) return;
+  devTerminalState.offsetByTerminal.set(terminal.id, 0);
+  devTerminalState.activeTerminalId = terminal.id;
+  applyDevTerminal(terminal);
+  renderDevTerminalOutput();
+  await pollActiveDevTerminal();
 }
 
 async function refreshDevWorkspaceAgent() {
@@ -4550,6 +4593,7 @@ async function refreshDevWorkspaceAgent() {
     const data = await devTerminalRequest(`/api/dev/workspace-agent/executions/${encodeURIComponent(executionId)}`);
     if (serial !== devWorkspaceAgentSerial || executionId !== devWorkspaceAgentExecutionId ||
       sessionId !== devTerminalState.session?.id || contextKey !== devTerminalState.contextKey || currentMode !== "DEV") return;
+    await showDevWorkspaceAgentTerminal(data.execution, sessionId, serial);
     renderDevWorkspaceAgent(data.execution);
   } catch {
     if (serial === devWorkspaceAgentSerial) clearDevWorkspaceAgent();
@@ -4557,10 +4601,10 @@ async function refreshDevWorkspaceAgent() {
 }
 
 devWorkspaceAgentRun.addEventListener("click", async () => {
-  const command = devTerminalInput.value.trim();
+  const command = lastAuthorizedDevValidationForActiveSession();
   const sessionId = devTerminalState.session?.id || null;
   if (!command || !sessionId || currentMode !== "DEV") {
-    setDevTerminalStatus("Saisis une validation autorisée pour Noon.", "error");
+    setDevTerminalStatus("Exécute d’abord une validation autorisée pour Noon.", "error");
     return;
   }
   const serial = ++devWorkspaceAgentSerial;
@@ -4569,7 +4613,7 @@ devWorkspaceAgentRun.addEventListener("click", async () => {
   try {
     const data = await devTerminalRequest("/api/dev/workspace-agent/executions", {
       method: "POST",
-      body: JSON.stringify({
+      body: {
         workspaceSessionId: sessionId,
         task: `Valider le Workspace avec ${command}`,
         validationCommand: command,
@@ -4578,11 +4622,12 @@ devWorkspaceAgentRun.addEventListener("click", async () => {
           status: devPreviewIsOpen() ? "READY" : "CLOSED",
           loadState: devPreviewState.native.loading ? "LOADING" : "IDLE",
         },
-      }),
+      },
     });
     if (serial !== devWorkspaceAgentSerial || sessionId !== devTerminalState.session?.id) return;
     devWorkspaceAgentExecutionId = data.execution.executionId;
     renderDevWorkspaceAgent(data.execution);
+    void refreshDevWorkspaceAgent();
   } catch {
     if (serial === devWorkspaceAgentSerial) clearDevWorkspaceAgent();
   }
@@ -4591,8 +4636,11 @@ devWorkspaceAgentRun.addEventListener("click", async () => {
 devWorkspaceAgentCancel.addEventListener("click", async () => {
   const executionId = devWorkspaceAgentExecutionId;
   if (!executionId) return;
+  devWorkspaceAgentCancel.disabled = true;
+  devWorkspaceAgentState.textContent = "Stopping…";
+  devWorkspaceAgentState.dataset.state = "cancelling";
   try {
-    await devTerminalRequest(`/api/dev/workspace-agent/executions/${encodeURIComponent(executionId)}/cancel`, { method: "POST", body: "{}" });
+    await devTerminalRequest(`/api/dev/workspace-agent/executions/${encodeURIComponent(executionId)}/cancel`, { method: "POST", body: {} });
   } finally {
     if (executionId === devWorkspaceAgentExecutionId) clearDevWorkspaceAgent();
   }

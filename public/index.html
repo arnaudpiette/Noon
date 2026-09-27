@@ -581,48 +581,52 @@
 
             <div class="dev-terminal-actions">
               <span id="devWorkspaceAgentState" class="dev-workspace-agent-state" role="status">Noon prêt</span>
-              <button id="devWorkspaceAgentRun" type="button" aria-label="Valider avec Noon" title="Valider avec Noon">Noon</button>
-              <button id="devWorkspaceAgentCancel" type="button" aria-label="Arrêter l’exécution Noon" title="Arrêter" hidden>Stop</button>
+              <div class="dev-terminal-action-group dev-workspace-agent-actions" role="group" aria-label="Agent Noon">
+                <button id="devWorkspaceAgentRun" type="button" aria-label="Lancer Noon" title="Lancer Noon">Noon</button>
+                <button id="devWorkspaceAgentCancel" type="button" aria-label="Arrêter l’exécution Noon" title="Arrêter Noon" disabled>Stop</button>
+              </div>
 
-              <button
-                id="devTerminalAdd"
-                type="button"
-                aria-label="Créer un terminal"
-                title="Nouveau terminal"
-              >
-                +
-              </button>
+              <div class="dev-terminal-action-group dev-workspace-actions" role="group" aria-label="Workspace">
+                <button
+                  id="devTerminalAdd"
+                  type="button"
+                  aria-label="Créer un terminal"
+                  title="Nouveau terminal"
+                >
+                  +
+                </button>
 
-              <button
-                id="devSourceControlToggle"
-                class="dev-terminal-source-button"
-                type="button"
-                aria-label="Afficher Source Control"
-                aria-pressed="false"
-                title="Source Control"
-              >
-                Git
-              </button>
+                <button
+                  id="devSourceControlToggle"
+                  class="dev-terminal-source-button"
+                  type="button"
+                  aria-label="Afficher Source Control"
+                  aria-pressed="false"
+                  title="Source Control"
+                >
+                  Git
+                </button>
 
-              <button
-                id="devTerminalCollapse"
-                type="button"
-                aria-label="Réduire le terminal"
-                aria-expanded="true"
-                title="Réduire le terminal"
-              >
-                ⌄
-              </button>
+                <button
+                  id="devTerminalCollapse"
+                  type="button"
+                  aria-label="Réduire le terminal"
+                  aria-expanded="true"
+                  title="Réduire le terminal"
+                >
+                  ⌄
+                </button>
 
-              <button
-                id="devTerminalMaximize"
-                type="button"
-                aria-label="Maximiser le terminal"
-                aria-pressed="false"
-                title="Maximiser le terminal"
-              >
-                □
-              </button>
+                <button
+                  id="devTerminalMaximize"
+                  type="button"
+                  aria-label="Maximiser le terminal"
+                  aria-pressed="false"
+                  title="Maximiser le terminal"
+                >
+                  □
+                </button>
+              </div>
             </div>
           </header>
 

@@ -183,13 +183,15 @@ test("cancel est borné au terminal NOON de l’exécution", async () => {
   let polling = true;
   const { loop, terminalService, terminals } = fixture();
   terminalService.poll = (value) => ({ terminal: { ...terminals.get(value.terminalId), running: polling }, output: [], next: 0 });
-  terminalService.closeTerminal = (value) => { polling = false; terminals.get(value.terminalId).closed = true; return { closed: true }; };
+  let closeRequest = null;
+  terminalService.closeTerminal = (value) => { closeRequest = value; polling = false; terminals.get(value.terminalId).closed = true; return { closed: true }; };
   const started = loop.start(input());
   assert.equal(loop.cancel(started.executionId).cancelled, true);
   await Promise.resolve();
   await Promise.resolve();
   assert.equal(loop.get(started.executionId).status, "CANCELLED");
   assert.equal([...terminals.values()][0].closed, true);
+  assert.equal(closeRequest.reason, "USER_CANCELLED");
 });
 
 test("rejette une session Workspace stale", async () => {

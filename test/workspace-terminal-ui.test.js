@@ -147,9 +147,11 @@ test(
       "RUNNING",
       "EMPTY",
       "READY",
+      "CANCELLED",
       "UNRESOLVED",
       "Validation en cours",
       "Aucun problème détecté",
+      "Validation arrêtée par l’utilisateur",
       "Validation échouée sans diagnostic localisable",
       "Liste tronquée",
     ]) {

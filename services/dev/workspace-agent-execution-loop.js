@@ -327,7 +327,7 @@ function createDevWorkspaceAgentExecutionLoop({
     controllers.get(execution.executionId)?.abort();
     const active = execution.terminalExecutionRefs.at(-1);
     if (active?.terminalSessionId && !active.endedAt) {
-      try { terminalService.closeTerminal({ sessionId: execution.workspaceSessionId, terminalId: active.terminalSessionId }); } catch {}
+      try { terminalService.closeTerminal({ sessionId: execution.workspaceSessionId, terminalId: active.terminalSessionId, reason: "USER_CANCELLED" }); } catch {}
     }
     return { cancelled: true, executionId: execution.executionId };
   }

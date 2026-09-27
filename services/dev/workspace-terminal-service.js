@@ -554,6 +554,7 @@ function createDevWorkspaceTerminalService({
       lastActivityAt: iso(),
       exitCode: null,
       signal: null,
+      cancelReason: null,
       child: null,
       output: [],
       outputCursor: 0,
@@ -951,14 +952,9 @@ function createDevWorkspaceTerminalService({
               commandOutput,
           });
 
-        if (
-          (
-            error ||
-            terminal.signal
-          ) &&
-          parsedProblems.status ===
-            "EMPTY"
-        ) {
+        if (terminal.cancelReason === "USER_CANCELLED") {
+          parsedProblems.status = "CANCELLED";
+        } else if ((error || terminal.signal) && parsedProblems.status === "EMPTY") {
           parsedProblems.status =
             "UNRESOLVED";
         }
@@ -996,7 +992,9 @@ function createDevWorkspaceTerminalService({
           now() - startedAt,
 
         status:
-          error
+          terminal.cancelReason === "USER_CANCELLED"
+            ? "CANCELLED"
+            : error
             ? "FAILED"
             : terminal.exitCode === 0
               ? "PASS"
@@ -1134,6 +1132,7 @@ function createDevWorkspaceTerminalService({
       terminal.child;
 
     terminal.status = "CLOSED";
+    terminal.cancelReason = input.reason === "USER_CANCELLED" ? "USER_CANCELLED" : null;
     terminal.child = null;
     terminal.lastActivityAt = iso();
 

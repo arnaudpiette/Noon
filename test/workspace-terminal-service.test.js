@@ -520,6 +520,31 @@ test("la fermeture d’un terminal tue uniquement son process", (context) => {
   assert.equal(secondChild.killed, false);
 });
 
+test("une validation Noon annulée par l’utilisateur ne devient jamais UNRESOLVED", (context) => {
+  const data = fixture(context);
+  const session = data.service.createSession({ workspaceId: "workspace-test" });
+  const failedTerminal = data.service.createTerminal({ sessionId: session.id });
+
+  data.service.runCommand({
+    sessionId: session.id,
+    terminalId: failedTerminal.id,
+    origin: "USER",
+    command: "npm test",
+  });
+
+  data.children[0].emit("close", 1, null);
+  assert.equal(data.service.getSession(session.id).problems.status, "UNRESOLVED");
+
+  const terminal = data.service.createTerminal({ sessionId: session.id, owner: "NOON" });
+  data.service.runCommand({ sessionId: session.id, terminalId: terminal.id, origin: "NOON", command: "npm test" });
+  const child = data.children[1];
+  data.service.closeTerminal({ sessionId: session.id, terminalId: terminal.id, reason: "USER_CANCELLED" });
+  child.emit("close", null, "SIGTERM");
+  const current = data.service.getSession(session.id);
+  assert.equal(current.problems.status, "CANCELLED");
+  assert.equal(current.lastValidationState.status, "CANCELLED");
+});
+
 test("la fermeture d’une session ferme tous ses terminaux", (context) => {
   const data = fixture(context);
 
