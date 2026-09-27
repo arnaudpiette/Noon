@@ -42,6 +42,12 @@ const devTerminalForm = document.getElementById("devTerminalForm");
 const devTerminalInput = document.getElementById("devTerminalInput");
 const devTerminalRun = document.getElementById("devTerminalRun");
 const devTerminalAddButton = document.getElementById("devTerminalAdd");
+const devTerminalCopyOutputButton = document.getElementById(
+  "devTerminalCopyOutput"
+);
+const devTerminalExportOutputButton = document.getElementById(
+  "devTerminalExportOutput"
+);
 const devWorkspaceAgentState = document.getElementById("devWorkspaceAgentState");
 const devWorkspaceAgentRun = document.getElementById("devWorkspaceAgentRun");
 const devWorkspaceAgentCancel = document.getElementById("devWorkspaceAgentCancel");
@@ -1758,6 +1764,8 @@ const devTerminalState = {
   terminals: new Map(),
   outputByTerminal: new Map(),
   offsetByTerminal: new Map(),
+  scrollByTerminal: new Map(),
+  followOutputByTerminal: new Map(),
   activeTerminalId: null,
   contextKey: null,
   lastAuthorizedValidationCommand: null,
@@ -3500,7 +3508,187 @@ function formatDevTerminalEvent(event) {
   return text;
 }
 
+let devTerminalSelectingOutput = false;
+
+function hasActiveDevTerminalSelection() {
+  const selection =
+    window.getSelection();
+
+  if (
+    !selection ||
+    selection.isCollapsed ||
+    selection.rangeCount === 0
+  ) {
+    return false;
+  }
+
+  const anchorInside =
+    selection.anchorNode &&
+    devTerminalOutput.contains(
+      selection.anchorNode
+    );
+
+  const focusInside =
+    selection.focusNode &&
+    devTerminalOutput.contains(
+      selection.focusNode
+    );
+
+  return Boolean(
+    anchorInside ||
+    focusInside
+  );
+}
+
+function isDevTerminalNearBottom() {
+  const remaining =
+    devTerminalOutput.scrollHeight -
+    devTerminalOutput.scrollTop -
+    devTerminalOutput.clientHeight;
+
+  return remaining <= 24;
+}
+
+function rememberDevTerminalScrollState() {
+  const terminalId =
+    devTerminalState.activeTerminalId;
+
+  if (!terminalId) return;
+
+  devTerminalState.scrollByTerminal.set(
+    terminalId,
+    devTerminalOutput.scrollTop
+  );
+
+  devTerminalState.followOutputByTerminal.set(
+    terminalId,
+    isDevTerminalNearBottom()
+  );
+}
+
+function getActiveDevTerminalOutputText() {
+  const terminalId =
+    devTerminalState.activeTerminalId;
+
+  if (!terminalId) {
+    return "";
+  }
+
+  return devTerminalBuffer(terminalId)
+    .map((event) =>
+      formatDevTerminalEvent(event)
+    )
+    .join("");
+}
+
+function safeDevTerminalLogName() {
+  const terminal =
+    devTerminalState.terminals.get(
+      devTerminalState.activeTerminalId
+    );
+
+  const title =
+    String(
+      terminal?.title ||
+      "terminal"
+    )
+      .normalize("NFKD")
+      .replace(/[\\/:*?"<>|]+/g, "-")
+      .replace(/\s+/g, "-")
+      .replace(/[^a-zA-Z0-9._-]/g, "")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 60) ||
+    "terminal";
+
+  const stamp =
+    new Date()
+      .toISOString()
+      .replace(/[:.]/g, "-");
+
+  return `noon-${title}-${stamp}.log`;
+}
+
+async function copyActiveDevTerminalOutput() {
+  const text =
+    getActiveDevTerminalOutputText();
+
+  if (!text) {
+    setDevTerminalStatus(
+      "Aucune sortie à copier",
+      "idle"
+    );
+
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(
+      text
+    );
+
+    setDevTerminalStatus(
+      "Sortie copiée",
+      "ready"
+    );
+  } catch {
+    setDevTerminalStatus(
+      "Copie impossible",
+      "error"
+    );
+  }
+}
+
+function exportActiveDevTerminalOutput() {
+  const text =
+    getActiveDevTerminalOutputText();
+
+  if (!text) {
+    setDevTerminalStatus(
+      "Aucune sortie à exporter",
+      "idle"
+    );
+
+    return;
+  }
+
+  const url =
+    URL.createObjectURL(
+      new Blob(
+        [text],
+        {
+          type: "text/plain;charset=utf-8",
+        }
+      )
+    );
+
+  const link =
+    document.createElement("a");
+
+  link.href = url;
+  link.download =
+    safeDevTerminalLogName();
+
+  document.body.append(link);
+  link.click();
+  link.remove();
+
+  URL.revokeObjectURL(url);
+
+  setDevTerminalStatus(
+    "Log exporté",
+    "ready"
+  );
+}
+
 function renderDevTerminalOutput() {
+  if (
+    devTerminalSelectingOutput ||
+    hasActiveDevTerminalSelection()
+  ) {
+    return;
+  }
+
   const terminalId =
     devTerminalState.activeTerminalId;
 
@@ -3511,12 +3699,24 @@ function renderDevTerminalOutput() {
     return;
   }
 
+  const shouldFollow =
+    devTerminalState.followOutputByTerminal.get(
+      terminalId
+    ) !== false;
+
+  const savedScrollTop =
+    devTerminalState.scrollByTerminal.get(
+      terminalId
+    ) || 0;
+
   const buffer =
     devTerminalBuffer(terminalId);
 
   if (!buffer.length) {
     devTerminalOutput.textContent =
       "Terminal prêt.\n";
+
+    devTerminalOutput.scrollTop = 0;
 
     return;
   }
@@ -3547,9 +3747,46 @@ function renderDevTerminalOutput() {
     fragment
   );
 
-  devTerminalOutput.scrollTop =
-    devTerminalOutput.scrollHeight;
+  if (shouldFollow) {
+    devTerminalOutput.scrollTop =
+      devTerminalOutput.scrollHeight;
+  } else {
+    devTerminalOutput.scrollTop =
+      savedScrollTop;
+  }
 }
+
+devTerminalOutput.addEventListener(
+  "scroll",
+  () => {
+    rememberDevTerminalScrollState();
+  },
+  {
+    passive: true,
+  }
+);
+
+devTerminalOutput.addEventListener(
+  "pointerdown",
+  () => {
+    devTerminalSelectingOutput = true;
+  }
+);
+
+window.addEventListener(
+  "pointerup",
+  () => {
+    if (!devTerminalSelectingOutput) {
+      return;
+    }
+
+    devTerminalSelectingOutput = false;
+
+    if (!hasActiveDevTerminalSelection()) {
+      renderDevTerminalOutput();
+    }
+  }
+);
 function updateDevTerminalHeader() {
   const session =
     devTerminalState.session;
@@ -3968,6 +4205,8 @@ async function closeDevTerminalSession({
   devTerminalState.terminals.clear();
   devTerminalState.outputByTerminal.clear();
   devTerminalState.offsetByTerminal.clear();
+  devTerminalState.scrollByTerminal.clear();
+  devTerminalState.followOutputByTerminal.clear();
   devTerminalState.activeTerminalId = null;
   devTerminalState.contextKey = null;
   clearLastAuthorizedDevValidation();
@@ -4197,6 +4436,20 @@ devTerminalAddButton.addEventListener(
         "error"
       );
     }
+  }
+);
+
+devTerminalCopyOutputButton.addEventListener(
+  "click",
+  () => {
+    void copyActiveDevTerminalOutput();
+  }
+);
+
+devTerminalExportOutputButton.addEventListener(
+  "click",
+  () => {
+    exportActiveDevTerminalOutput();
   }
 );
 

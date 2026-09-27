@@ -811,3 +811,246 @@ test(
     );
   }
 );
+
+
+// TERMINAL UX #5.3 — scroll, sélection, copie et export
+
+test(
+  "Terminal #5.3 conserve un scroll indépendant par terminal",
+  () => {
+    const source =
+      terminalUiSource();
+
+    assert.match(
+      source,
+      /scrollByTerminal:\s*new Map\(\)/
+    );
+
+    assert.match(
+      source,
+      /followOutputByTerminal:\s*new Map\(\)/
+    );
+
+    assert.match(
+      source,
+      /function isDevTerminalNearBottom\(\)/
+    );
+
+    assert.match(
+      source,
+      /remaining <= 24/
+    );
+
+    assert.match(
+      source,
+      /shouldFollow[\s\S]*followOutputByTerminal/
+    );
+
+    assert.match(
+      source,
+      /savedScrollTop[\s\S]*scrollByTerminal/
+    );
+
+    assert.match(
+      source,
+      /if \(shouldFollow\)[\s\S]*scrollHeight[\s\S]*else[\s\S]*savedScrollTop/
+    );
+  }
+);
+
+test(
+  "Terminal #5.3 ne force pas le rendu pendant une sélection utilisateur",
+  () => {
+    const source =
+      terminalUiSource();
+
+    assert.match(
+      source,
+      /let devTerminalSelectingOutput = false/
+    );
+
+    assert.match(
+      source,
+      /function hasActiveDevTerminalSelection\(\)/
+    );
+
+    assert.match(
+      source,
+      /window\.getSelection\(\)/
+    );
+
+    assert.match(
+      source,
+      /selection\.isCollapsed/
+    );
+
+    assert.match(
+      source,
+      /devTerminalOutput\.contains/
+    );
+
+    assert.match(
+      source,
+      /devTerminalSelectingOutput \|\|[\s\S]*hasActiveDevTerminalSelection\(\)[\s\S]*return/
+    );
+
+    assert.match(
+      source,
+      /"pointerdown"[\s\S]*devTerminalSelectingOutput = true/
+    );
+
+    assert.match(
+      source,
+      /"pointerup"[\s\S]*devTerminalSelectingOutput = false/
+    );
+  }
+);
+
+test(
+  "Terminal #5.3 expose Copier et Exporter dans le Workspace existant",
+  () => {
+    assert.match(
+      html,
+      /id="devTerminalCopyOutput"/
+    );
+
+    assert.match(
+      html,
+      /id="devTerminalExportOutput"/
+    );
+
+    assert.match(
+      html,
+      /aria-label="Copier la sortie du terminal"/
+    );
+
+    assert.match(
+      html,
+      /aria-label="Exporter le log du terminal"/
+    );
+
+    assert.doesNotMatch(
+      html,
+      /id="devTerminalExportOutput"[\s\S]{0,300}<form/
+    );
+  }
+);
+
+test(
+  "Terminal #5.3 copie uniquement le buffer public du terminal actif",
+  () => {
+    const source =
+      terminalUiSource();
+
+    assert.match(
+      source,
+      /function getActiveDevTerminalOutputText\(\)/
+    );
+
+    assert.match(
+      source,
+      /devTerminalState\.activeTerminalId/
+    );
+
+    assert.match(
+      source,
+      /devTerminalBuffer\(terminalId\)/
+    );
+
+    assert.match(
+      source,
+      /\.map\(\(event\)[\s\S]*formatDevTerminalEvent\(event\)/
+    );
+
+    assert.match(
+      source,
+      /navigator\.clipboard\.writeText/
+    );
+
+    assert.doesNotMatch(
+      source,
+      /clipboard\.writeText\([\s\S]{0,120}(stdout|stderr|child|repositoryRoot)/
+    );
+  }
+);
+
+test(
+  "Terminal #5.3 exporte seulement la sortie publique en fichier texte local",
+  () => {
+    const source =
+      terminalUiSource();
+
+    assert.match(
+      source,
+      /function exportActiveDevTerminalOutput\(\)/
+    );
+
+    assert.match(
+      source,
+      /new Blob\([\s\S]*text\/plain;charset=utf-8/
+    );
+
+    assert.match(
+      source,
+      /URL\.createObjectURL/
+    );
+
+    assert.match(
+      source,
+      /link\.download\s*=[\s\S]*safeDevTerminalLogName/
+    );
+
+    assert.match(
+      source,
+      /URL\.revokeObjectURL/
+    );
+
+    assert.doesNotMatch(
+      source,
+      /shell\s*:\s*true/
+    );
+
+    assert.doesNotMatch(
+      source,
+      /exec\(|spawn\(|writeFile/
+    );
+  }
+);
+
+test(
+  "Terminal #5.3 autorise sélection et scroll natifs sans casser la sécurité du rendu",
+  () => {
+    assert.match(
+      css,
+      /\.dev-terminal-output\{[\s\S]*overflow:auto/
+    );
+
+    assert.match(
+      css,
+      /\.dev-terminal-output\{[\s\S]*overscroll-behavior:contain/
+    );
+
+    assert.match(
+      css,
+      /\.dev-terminal-output\{[\s\S]*scrollbar-gutter:stable/
+    );
+
+    assert.match(
+      css,
+      /\.dev-terminal-output\{[\s\S]*user-select:text/
+    );
+
+    const source =
+      terminalUiSource();
+
+    assert.doesNotMatch(
+      source,
+      /devTerminalOutput\.innerHTML/
+    );
+
+    assert.match(
+      source,
+      /line\.textContent/
+    );
+  }
+);
