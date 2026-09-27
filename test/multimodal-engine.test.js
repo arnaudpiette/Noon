@@ -217,3 +217,328 @@ test("un média local-only est refusé avant toute résolution du client distant
   );
   assert.equal(clientCalls, 0);
 });
+
+
+test("une analyse transitoire ne conserve ni asset, cache, index ni lien workspace", async () => {
+  let visionCalls = 0;
+  let indexCalls = 0;
+  let linkCalls = 0;
+
+  const engine = createMultimodalEngine({
+    intake: fixtureIntake(),
+    inspect: async () => ({}),
+
+    vision: async () => {
+      visionCalls += 1;
+
+      return {
+        evidence: [{
+          type: "VISUAL_OBSERVATION",
+          content: "Preview visible",
+          confidence: "HIGH",
+          observationType: "OBSERVATION",
+        }],
+      };
+    },
+
+    indexEvidence: async () => {
+      indexCalls += 1;
+    },
+
+    workspaceLink: async () => {
+      linkCalls += 1;
+    },
+  });
+
+  const run = async () =>
+    engine.analyzeTransient({
+      source: {
+        filename: "preview.png",
+      },
+      sourceType: "SCREEN_CAPTURE",
+      sourceScope: "PERSONAL",
+      workspaceId: "workspace-a",
+      userIntent: "Inspecte la Preview",
+      privacyContext: {
+        allowRemote: true,
+      },
+    });
+
+  const first = await run();
+
+  assert.equal(
+    first.evidence.length,
+    1
+  );
+
+  assert.equal(
+    visionCalls,
+    1
+  );
+
+  assert.equal(
+    engine.listAssets().length,
+    0
+  );
+
+  assert.equal(
+    engine.cache.size(),
+    0
+  );
+
+  assert.equal(
+    engine.search({
+      query: "Preview",
+      workspaceId: "workspace-a",
+    }).length,
+    0
+  );
+
+  assert.equal(
+    indexCalls,
+    0
+  );
+
+  assert.equal(
+    linkCalls,
+    0
+  );
+
+  await run();
+
+  assert.equal(
+    visionCalls,
+    2
+  );
+
+  assert.equal(
+    engine.listAssets().length,
+    0
+  );
+
+  assert.equal(
+    engine.cache.size(),
+    0
+  );
+});
+
+test("une analyse transitoire identique à un asset persistant ne le supprime pas", async () => {
+  let visionCalls = 0;
+
+  const engine = createMultimodalEngine({
+    intake: fixtureIntake(),
+    inspect: async () => ({}),
+
+    vision: async () => {
+      visionCalls += 1;
+
+      return {
+        evidence: [{
+          content: "Même image",
+          confidence: "HIGH",
+        }],
+      };
+    },
+  });
+
+  const persistent =
+    await engine.ingest({
+      source: {
+        filename: "same.png",
+      },
+      workspaceId: "workspace-a",
+    });
+
+  await engine.analyze({
+    assetIds: [
+      persistent.asset.assetId,
+    ],
+    userIntent: "Analyse",
+  });
+
+  const persistentCacheSize =
+    engine.cache.size();
+
+  await engine.analyzeTransient({
+    source: {
+      filename: "same.png",
+    },
+    sourceType: "SCREEN_CAPTURE",
+    workspaceId: "workspace-a",
+    userIntent: "Analyse transient",
+    privacyContext: {
+      allowRemote: true,
+    },
+  });
+
+  assert.equal(
+    engine.listAssets().length,
+    1
+  );
+
+  assert.equal(
+    engine.getAsset(
+      persistent.asset.assetId
+    ).assetId,
+    persistent.asset.assetId
+  );
+
+  assert.equal(
+    engine.cache.size(),
+    persistentCacheSize
+  );
+
+  assert.equal(
+    engine.search({
+      query: "image",
+      workspaceId: "workspace-a",
+    }).length,
+    1
+  );
+
+  assert.equal(
+    visionCalls,
+    2
+  );
+});
+
+test("une analyse transitoire annulée libère quand même sa capture", async () => {
+  const controller =
+    new AbortController();
+
+  controller.abort();
+
+  const engine =
+    createMultimodalEngine({
+      intake: fixtureIntake(),
+      inspect: async () => ({}),
+
+      vision: async () => ({
+        evidence: [],
+      }),
+    });
+
+  await assert.rejects(
+    engine.analyzeTransient({
+      source: {
+        filename:
+          "cancelled-preview.png",
+      },
+
+      sourceType:
+        "SCREEN_CAPTURE",
+
+      userIntent:
+        "Inspecte",
+
+      privacyContext: {
+        allowRemote: true,
+      },
+
+      signal:
+        controller.signal,
+    }),
+
+    (error) =>
+      error.code ===
+      "ABORT_ERR"
+  );
+
+  assert.equal(
+    engine.listAssets().length,
+    0
+  );
+
+  assert.equal(
+    engine.cache.size(),
+    0
+  );
+});
+
+test("le mode transitoire ne peut pas être activé par les API publiques", async () => {
+  let visionCalls = 0;
+
+  const engine =
+    createMultimodalEngine({
+      intake: fixtureIntake(),
+      inspect: async () => ({}),
+
+      vision: async () => {
+        visionCalls += 1;
+
+        return {
+          evidence: [{
+            content:
+              "Observation publique",
+            confidence:
+              "HIGH",
+          }],
+        };
+      },
+    });
+
+  const { asset } =
+    await engine.ingest({
+      source: {
+        filename:
+          "public.png",
+      },
+
+      workspaceId:
+        "workspace-public",
+
+      transient: true,
+    });
+
+  assert.equal(
+    asset.transient,
+    undefined
+  );
+
+  assert.equal(
+    engine.listAssets().length,
+    1
+  );
+
+  const analyzePublic =
+    () =>
+      engine.analyze({
+        assetIds: [
+          asset.assetId,
+        ],
+
+        userIntent:
+          "Analyse publique",
+
+        transient: true,
+      });
+
+  await analyzePublic();
+  await analyzePublic();
+
+  assert.equal(
+    visionCalls,
+    1
+  );
+
+  assert.equal(
+    engine.cache.size(),
+    1
+  );
+
+  assert.equal(
+    engine.listAssets().length,
+    1
+  );
+
+  assert.equal(
+    engine.search({
+      query:
+        "publique",
+
+      workspaceId:
+        "workspace-public",
+    }).length,
+    1
+  );
+});

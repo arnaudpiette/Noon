@@ -101,8 +101,41 @@ function createMultimodalEngine({
   const emit = (event, metadata = {}) => { try { observability?.(event, metadata); } catch {} };
   const fail = (asset, error) => { asset.processingState = error.code === "MEDIA_UNSUPPORTED" ? "UNSUPPORTED" : error.code === "ABORT_ERR" ? "INTERRUPTED" : "FAILED"; emit("media_analysis_failed", { assetId: asset.assetId, assetType: asset.mediaType, errorCode: error.code || error.name || "ERROR" }); try { reliability?.recordFailure?.(`multimodal-${asset.mediaType.toLowerCase()}`, error); } catch {} };
 
-  async function ingest(input = {}) {
-    const result = await intakeService.ingest(input); const existing = assets.get(result.asset.assetId);
+  function releaseTransientAsset(assetId) {
+    const id = String(assetId || "");
+    const asset = assets.get(id);
+
+    if (!asset || asset.transient !== true) {
+      return false;
+    }
+
+    assets.delete(id);
+    payloads.delete(id);
+    analyses.delete(id);
+
+    emit("media_transient_released", {
+      assetId: id,
+      assetType: asset.mediaType,
+    });
+
+    return true;
+  }
+
+  async function ingestInternal(
+    input = {},
+    { transient = false } = {}
+  ) {
+    const result =
+      await intakeService.ingest(input);
+
+    if (transient) {
+      result.asset.assetId =
+        `media-transient-${crypto.randomUUID()}`;
+      result.asset.transient = true;
+    }
+
+    const existing =
+      assets.get(result.asset.assetId);
     if (existing) return { asset: structuredClone(existing), duplicate: true };
     result.asset.processingState = "INSPECTING"; assets.set(result.asset.assetId, result.asset); payloads.set(result.asset.assetId, result.payload);
     emit("media_registered", { assetId: result.asset.assetId, assetType: result.asset.mediaType, sizeBytes: result.asset.sizeBytes });
@@ -116,12 +149,27 @@ function createMultimodalEngine({
     return { asset: structuredClone(result.asset), duplicate: false };
   }
 
+  async function ingest(input = {}) {
+    const safeInput = {
+      ...input,
+    };
+
+    delete safeInput.transient;
+
+    return ingestInternal(
+      safeInput,
+      { transient: false }
+    );
+  }
+
   function requireAsset(assetId) { const asset = assets.get(String(assetId)); if (!asset) throw new MediaError("MEDIA_NOT_FOUND", "Média introuvable.", 404); return asset; }
   async function analyze(input = {}) {
     const request = normalizeMultimodalRequest(input); const started = now(); const evidence = []; const uncertainties = []; const analyzedAssets = [];
     for (const assetId of request.assetIds) {
       if (input.signal?.aborted) throw Object.assign(new Error("Analyse interrompue."), { name: "AbortError", code: "ABORT_ERR" });
       const asset = requireAsset(assetId); const payload = payloads.get(assetId);
+      const transientAnalysis =
+        asset.transient === true;
       const strategy = selectMediaStrategy(asset, asset.inspection, request);
       if (strategy.strategy === "UNSUPPORTED") { asset.processingState = "UNSUPPORTED"; uncertainties.push({ assetId, code: "MEDIA_UNSUPPORTED", message: "Ce format n’est pas pris en charge." }); analyzedAssets.push(structuredClone(asset)); continue; }
       const requiresRemoteMediaProvider = strategy.requiredCapabilities.some(
@@ -142,7 +190,10 @@ function createMultimodalEngine({
         if (!hasLocal) { asset.processingState = "PARTIAL"; uncertainties.push({ assetId, code: "MEDIA_LOCAL_ONLY_REMOTE_BLOCKED", message: "Analyse distante interdite pour ce média local-only." }); analyzedAssets.push(structuredClone(asset)); continue; }
       }
       const cacheInput = { fingerprint: asset.fingerprint, strategy: strategy.strategy, analysisVersion: ANALYSIS_VERSION, userIntent: request.userIntent };
-      const cached = cache.get(cacheInput);
+      const cached =
+        transientAnalysis
+          ? null
+          : cache.get(cacheInput);
       if (cached) { evidence.push(...cached.evidence); analyzedAssets.push(cached.asset); emit("media_cache_hit", { assetId, assetType: asset.mediaType }); continue; }
       emit("media_cache_miss", { assetId, assetType: asset.mediaType });
       asset.processingState = "ANALYZING"; emit("media_analysis_started", { assetId, assetType: asset.mediaType, analysisStrategy: strategy.strategy });
@@ -165,9 +216,40 @@ function createMultimodalEngine({
         const rows = (raw.evidence || []).map((item, index) => normalizeEvidence(asset, item, index, now)).filter(Boolean);
         asset.processingState = raw.partial ? "PARTIAL" : "READY";
         const result = { asset: structuredClone(asset), evidence: rows, summary: cleanEvidenceText(raw.summary, 2000), strategy, metrics: { ...(raw.metrics || {}), totalMs: now() - started } };
-        cache.set(cacheInput, result); analyses.set(assetId, result); evidence.push(...rows); analyzedAssets.push(result.asset);
-        if (indexEvidence && rows.length) { await indexEvidence(result.asset, rows); emit("media_indexed", { assetId, evidenceCount: rows.length }); }
-        if (request.workspaceId && workspaceLink) { await workspaceLink(request.workspaceId, result.asset); emit("media_linked_workspace", { assetId, workspaceId: request.workspaceId }); }
+        if (!transientAnalysis) {
+          cache.set(cacheInput, result);
+          analyses.set(assetId, result);
+
+          if (indexEvidence && rows.length) {
+            await indexEvidence(result.asset, rows);
+            emit("media_indexed", {
+              assetId,
+              evidenceCount: rows.length,
+            });
+          }
+
+          if (
+            request.workspaceId &&
+            workspaceLink
+          ) {
+            await workspaceLink(
+              request.workspaceId,
+              result.asset
+            );
+
+            emit(
+              "media_linked_workspace",
+              {
+                assetId,
+                workspaceId:
+                  request.workspaceId,
+              }
+            );
+          }
+        }
+
+        evidence.push(...rows);
+        analyzedAssets.push(result.asset);
         emit(raw.partial ? "media_analysis_partial" : "media_analysis_completed", { assetId, assetType: asset.mediaType, analysisStrategy: strategy.strategy, evidenceCount: rows.length, durationMs: now() - started });
         try { reliability?.recordSuccess?.(`multimodal-${asset.mediaType.toLowerCase()}`, { latencyMs: now() - started, noData: rows.length === 0 }); } catch {}
       } catch (error) { fail(asset, error); uncertainties.push({ assetId, code: error.code || error.name || "MEDIA_ANALYSIS_FAILED", message: clean(error.message, 240) }); analyzedAssets.push(structuredClone(asset)); }
@@ -176,6 +258,33 @@ function createMultimodalEngine({
     const pack = buildPack(request, analyzedAssets, evidence, uncertainties, started, now);
     if (synthesis && request.assetIds.length > 1 && evidence.length) synthesisResult = await synthesis(pack, { mode: /compare/i.test(request.userIntent) ? "COMPARE" : "SUMMARY", purpose: "remote_model", maxSources: 30, maxEvidenceTokens: 6000 });
     return { ...pack, synthesis: synthesisResult };
+  }
+
+  async function analyzeTransient(input = {}) {
+    const requestInput = {
+      ...input,
+    };
+
+    delete requestInput.transient;
+    delete requestInput.assetIds;
+
+    const ingested =
+      await ingestInternal(
+        requestInput,
+        { transient: true }
+      );
+
+    const assetId =
+      ingested.asset.assetId;
+
+    try {
+      return await analyze({
+        ...requestInput,
+        assetIds: [assetId],
+      });
+    } finally {
+      releaseTransientAsset(assetId);
+    }
   }
 
   function buildPack(request, packAssets, evidence, uncertainties, started, clock) {
@@ -205,6 +314,7 @@ function createMultimodalEngine({
 
   return {
     analyze,
+    analyzeTransient,
     cache,
     getAsset: (id) => structuredClone(requireAsset(id)),
     ingest,
