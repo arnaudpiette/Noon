@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld("noon", Object.freeze({
   devPreviewForward: () => invoke("noon:dev-preview-forward"),
   devPreviewClose: () => invoke("noon:dev-preview-close"),
   devPreviewState: () => invoke("noon:dev-preview-state"),
+  devPreviewCapture: () => invoke("noon:dev-preview-capture"),
   devPreviewOpenExternal: (url) => invoke("noon:dev-preview-open-external", url),
   setLiveActive: (active) => invoke("noon:set-live-active", Boolean(active)),
   getWakeWordStatus: () => invoke("noon:get-wake-word-status"),

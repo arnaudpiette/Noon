@@ -64,6 +64,7 @@ test(
       "noon:dev-preview-forward",
       "noon:dev-preview-close",
       "noon:dev-preview-state",
+      "noon:dev-preview-capture",
       "noon:dev-preview-open-external",
     ];
 
@@ -98,6 +99,7 @@ test(
         "devPreviewForward",
         "devPreviewClose",
         "devPreviewState",
+        "devPreviewCapture",
         "devPreviewOpenExternal",
         "onDevPreviewState",
       ]

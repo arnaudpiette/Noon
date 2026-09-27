@@ -735,6 +735,12 @@ function registerIpc() {
   );
 
   registerTrustedHandler(
+    "noon:dev-preview-capture",
+    async () =>
+      ensureDevPreviewController().capture()
+  );
+
+  registerTrustedHandler(
     "noon:dev-preview-open-external",
     async (_event, rawUrl) => {
       const target =

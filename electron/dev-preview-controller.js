@@ -914,6 +914,110 @@ function createDevPreviewController({
     return currentState();
   }
 
+  async function capture() {
+    const preview = view;
+    const contents = preview?.webContents;
+    const state = currentState();
+
+    if (
+      !preview ||
+      state.status !== "READY" ||
+      !state.url
+    ) {
+      throw previewError(
+        "DEV_PREVIEW_CAPTURE_NOT_READY",
+        "La Preview doit être chargée avant la capture."
+      );
+    }
+
+    if (
+      !contents ||
+      contents.isDestroyed?.()
+    ) {
+      throw previewError(
+        "DEV_PREVIEW_CAPTURE_UNAVAILABLE",
+        "Preview indisponible pour la capture."
+      );
+    }
+
+    const normalizedUrl =
+      normalizeDevPreviewUrl(
+        state.url,
+        {
+          noonOrigin,
+        }
+      );
+
+    const image =
+      await contents.capturePage();
+
+    if (
+      !image ||
+      image.isEmpty?.()
+    ) {
+      throw previewError(
+        "DEV_PREVIEW_CAPTURE_EMPTY",
+        "La capture Preview est vide."
+      );
+    }
+
+    const size =
+      image.getSize?.() || {
+        width: 0,
+        height: 0,
+      };
+
+    const maxWidth = 1440;
+
+    const bounded =
+      size.width > maxWidth &&
+      typeof image.resize === "function"
+        ? image.resize({
+            width: maxWidth,
+          })
+        : image;
+
+    const boundedSize =
+      bounded.getSize?.() || size;
+
+    const jpeg =
+      bounded.toJPEG?.(78);
+
+    if (
+      !Buffer.isBuffer(jpeg) ||
+      jpeg.length === 0
+    ) {
+      throw previewError(
+        "DEV_PREVIEW_CAPTURE_ENCODING_FAILED",
+        "Encodage de la capture Preview impossible."
+      );
+    }
+
+    const maxBytes =
+      4 * 1024 * 1024;
+
+    if (jpeg.length > maxBytes) {
+      throw previewError(
+        "DEV_PREVIEW_CAPTURE_TOO_LARGE",
+        "Capture Preview trop volumineuse."
+      );
+    }
+
+    return {
+      status: "READY",
+      source: "DEV_PREVIEW",
+      url: normalizedUrl,
+      mimeType: "image/jpeg",
+      width:
+        Number(boundedSize.width) || 0,
+      height:
+        Number(boundedSize.height) || 0,
+      bytes: jpeg.length,
+      dataUrl:
+        `data:image/jpeg;base64,${jpeg.toString("base64")}`,
+    };
+  }
+
   function setVisible(visible) {
     if (!view) {
       return currentState();
@@ -988,6 +1092,7 @@ function createDevPreviewController({
     reload,
     back,
     forward,
+    capture,
     setVisible,
     close,
   };
