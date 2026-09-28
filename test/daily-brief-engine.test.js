@@ -98,11 +98,81 @@ test("le créatif et demain sont des sections du même objet", async () => {
   assert.equal(brief.title, "Brief Noon — 2026-08-28");
 });
 
+test("le Daily Brief expose rappels et notes structurés", async () => {
+  const { engine } = fixture({
+    collect: async () => ({
+      sources: [],
+      actions: [],
+      calendarEvents: [],
+      emails: [],
+      reminders: [
+        { id: "r1", title: "Appeler", dueAt: "2026-08-28T15:00:00Z", completed: false },
+        { id: "r2", title: "Déjà fait", completed: true },
+      ],
+      notes: [
+        { id: "n1", title: "À préparer", content: "Préparer la soutenance." },
+      ],
+    }),
+  });
+
+  const brief = await engine.generate({ at: new Date("2026-08-28T07:00:00Z") });
+
+  assert.deepEqual(brief.reminders, [{
+    id: "r1",
+    title: "Appeler",
+    dueAt: "2026-08-28T15:00:00Z",
+    completed: false,
+    priority: null,
+  }]);
+
+  assert.equal(brief.notes.length, 1);
+  assert.equal(brief.notes[0].title, "À préparer");
+  assert.equal(brief.notes[0].content, "Préparer la soutenance.");
+});
+
+test("demain utilise la vraie date locale Europe Paris", async () => {
+  const { engine } = fixture({
+    collect: async () => ({
+      sources: [],
+      actions: [],
+      emails: [],
+      reminders: [],
+      notes: [],
+      calendarEvents: [
+        {
+          id: "late-today",
+          title: "Encore aujourd’hui",
+          start: "2026-08-28T21:30:00Z",
+        },
+        {
+          id: "tomorrow-morning",
+          title: "Demain matin",
+          start: "2026-08-29T06:00:00Z",
+        },
+        {
+          id: "day-after",
+          title: "Après-demain",
+          start: "2026-08-30T06:00:00Z",
+        },
+      ],
+    }),
+  });
+
+  const brief = await engine.generate({
+    at: new Date("2026-08-28T20:30:00Z"),
+  });
+
+  assert.deepEqual(
+    brief.tomorrow.map((item) => item.id),
+    ["tomorrow-morning"]
+  );
+});
+
 test("un échec du modèle produit un brief déterministe dégradé", async () => {
   const { engine, getState } = fixture({ compose: async () => { throw Object.assign(new Error("Réseau absent"), { code: "NETWORK" }); } });
   const brief = await engine.generate({ at: new Date("2026-08-28T09:00:00Z") });
   assert.equal(brief.metadata.degraded, true);
-  assert.match(brief.content, /ACTIONS PRIORITAIRES/);
+  assert.match(brief.content, /🎯 Tes priorités/);
   assert.equal(getState().status, "ready");
 });
 
@@ -114,6 +184,39 @@ test("le moteur expose les métriques sans contenu privé", async () => {
   assert.equal(brief.metrics.slots_proposed, 1);
   assert.equal(counts.context, 1);
   assert.equal(brief.metadata.context.purpose, "daily_brief");
+});
+
+test("le Daily Brief persiste les propositions structurées", async () => {
+  const centralPlan = {
+    calendarAvailability: "confirmed",
+    plannedBlocks: [],
+    proposedBlocks: [{
+      actionId: "reminder:1",
+      title: "Préparer le dossier",
+      status: "proposed",
+      start: "2026-08-28T08:00:00Z",
+      end: "2026-08-28T08:30:00Z",
+      validationRequired: true,
+    }],
+    unscheduledActions: [],
+    summary: {},
+  };
+
+  const { engine } = fixture({
+    schedule: async () => ({
+      plan: centralPlan,
+      blocks: centralPlan.proposedBlocks,
+    }),
+  });
+
+  const brief = await engine.generate({
+    at: new Date("2026-08-28T07:00:00Z"),
+  });
+
+  assert.equal(brief.proposals.length, 1);
+  assert.equal(brief.proposals[0].type, "scheduled_action");
+  assert.equal(brief.proposals[0].confirmedSlot, true);
+  assert.equal(brief.proposals[0].actionId, "reminder:1");
 });
 
 test("le Daily Brief expose exactement le Daily Plan central", async () => {

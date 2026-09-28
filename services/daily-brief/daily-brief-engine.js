@@ -25,27 +25,193 @@ function deduplicateDailyActions(actions = []) {
   return [...selected.values()];
 }
 
+function nextLocalDateKey(at) {
+  const [year, month, day] = localDateKey(at, TIME_ZONE).split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + 1)).toISOString().slice(0, 10);
+}
+
+function normalizeReminder(reminder = {}) {
+  return {
+    id: reminder.id || null,
+    title: String(reminder.title || reminder.name || "Rappel").slice(0, 240),
+    dueAt: reminder.dueAt || reminder.dueDate || reminder.due || null,
+    completed: reminder.completed === true,
+    priority: reminder.priority ?? null,
+  };
+}
+
+function normalizeNote(note = {}) {
+  return {
+    id: note.id || null,
+    title: String(note.title || "Note").slice(0, 240),
+    content: String(note.content || note.body || "").slice(0, 1500),
+    updatedAt: note.updatedAt || note.modifiedAt || null,
+  };
+}
+
+function buildDailyProposals({
+  priorities = [],
+  scheduledBlocks = [],
+  dailyPlan = null,
+} = {}) {
+  const proposals = [];
+  const seenActions = new Set();
+  const calendarConfirmed = dailyPlan?.calendarAvailability === "confirmed";
+
+  if (calendarConfirmed) {
+    for (const block of scheduledBlocks) {
+      if (block.status !== "proposed") continue;
+      if (!block.title) continue;
+
+      proposals.push({
+        type: "scheduled_action",
+        actionId: block.actionId || null,
+        title: String(block.title).slice(0, 300),
+        start: block.start || null,
+        end: block.end || null,
+        confirmedSlot: true,
+        validationRequired: block.validationRequired !== false,
+        reason: block.reason || null,
+      });
+
+      if (block.actionId) seenActions.add(String(block.actionId));
+      if (proposals.length >= 3) return proposals;
+    }
+  }
+
+  for (const priority of priorities) {
+    if (proposals.length >= 3) break;
+
+    const actionId = priority.id || priority.actionId || null;
+    if (actionId && seenActions.has(String(actionId))) continue;
+
+    proposals.push({
+      type: "priority_action",
+      actionId,
+      title: String(priority.title || "Action prioritaire").slice(0, 300),
+      start: null,
+      end: null,
+      confirmedSlot: false,
+      validationRequired: false,
+      reason: priority.reasons?.[0] || priority.priorityLevel || null,
+    });
+
+    if (actionId) seenActions.add(String(actionId));
+  }
+
+  return proposals;
+}
+
 function deterministicBrief(structured) {
-  const lines = [
-    "Bonjour Arnaud.",
-    structured.summary || "Voici l’essentiel disponible pour organiser ta journée.",
-  ];
-  if (structured.priorities.length) {
-    lines.push("", "ACTIONS PRIORITAIRES");
-    structured.priorities.slice(0, 3).forEach((item, index) => {
+  const lines = ["☀️ Bonjour Arnaud"];
+  const priorities = Array.isArray(structured.priorities) ? structured.priorities : [];
+  const calendar = Array.isArray(structured.calendar) ? structured.calendar : [];
+  const scheduledBlocks = Array.isArray(structured.scheduledBlocks) ? structured.scheduledBlocks : [];
+  const reminders = Array.isArray(structured.reminders) ? structured.reminders : [];
+  const projects = Array.isArray(structured.projects) ? structured.projects : [];
+  const emails = Array.isArray(structured.emails) ? structured.emails : [];
+  const tomorrow = Array.isArray(structured.tomorrow) ? structured.tomorrow : [];
+  const creative = Array.isArray(structured.creative) ? structured.creative : [];
+  const calendarConfirmed = structured.dailyPlan?.calendarAvailability === "confirmed";
+  const calendarSource = structured.sourceStatus?.["google-calendar"] || structured.sourceStatus?.calendar || null;
+
+  if (calendar.length) {
+    lines.push("", "📅 Aujourd’hui");
+    calendar.slice(0, 8).forEach((item) => {
+      const timing = [item.start, item.end].filter(Boolean).join(" → ");
+      lines.push(`- ${item.title || "Événement"}${timing ? ` · ${timing}` : ""}`);
+    });
+  } else if (calendarSource && !["ready", "ok"].includes(calendarSource)) {
+    lines.push("", "📅 Aujourd’hui", "Je ne peux pas confirmer ton agenda aujourd’hui : Calendar n’est pas disponible.");
+  }
+
+  if (priorities.length) {
+    lines.push("", "🎯 Tes priorités");
+    priorities.slice(0, 3).forEach((item, index) => {
       lines.push(`${index + 1}. ${item.title} — ${item.reasons?.[0] || item.priorityLevel || "à traiter"}.`);
     });
   }
-  if (structured.calendar.length) lines.push("", "TON AGENDA", `${structured.calendar.length} rendez-vous ou blocs ont été identifiés.`);
-  if (structured.scheduledBlocks.length) {
-    lines.push("", "CRÉNEAUX PROPOSÉS");
-    structured.scheduledBlocks.filter((item) => item.status === "proposed").slice(0, 3)
-      .forEach((item) => lines.push(`- ${item.title} : ${item.start} → ${item.end} (validation requise).`));
+
+  const proposed = scheduledBlocks
+    .filter((item) => item.status === "proposed")
+    .slice(0, 3);
+
+  if (calendarConfirmed && proposed.length) {
+    lines.push("", "🕳️ Créneaux disponibles");
+    proposed.forEach((item) => {
+      lines.push(`- ${item.start} → ${item.end} · ${item.title} (proposition à valider)`);
+    });
+  } else if (proposed.length && !calendarConfirmed) {
+    lines.push("", "🕳️ Créneaux disponibles", "Je ne peux pas confirmer tes créneaux aujourd’hui : la disponibilité Calendar n’est pas confirmée.");
   }
-  if (structured.emails.length) lines.push("", "EMAILS / MESSAGES", `${structured.emails.length} message(s) pertinent(s) à vérifier.`);
-  if (structured.projects.length) lines.push("", "PROJETS À SURVEILLER", `${structured.projects.length} projet(s) actif(s) remontent aujourd’hui.`);
-  if (structured.creative.length) lines.push("", "VEILLE CRÉATIVE", ...structured.creative.slice(0, 3).map((item) => `- ${item.title || item}`));
-  if (structured.tomorrow.length) lines.push("", "À ANTICIPER POUR DEMAIN", ...structured.tomorrow.slice(0, 3).map((item) => `- ${item.title || item.summary || item}`));
+
+  const today = structured.date;
+  const relevantReminders = reminders.filter((item) => {
+    if (!item.dueAt) return false;
+    const due = new Date(item.dueAt);
+    if (!Number.isFinite(due.getTime())) return false;
+    return due <= new Date(`${today}T23:59:59.999Z`) || localDateKey(due, TIME_ZONE) === today;
+  }).slice(0, 5);
+
+  if (relevantReminders.length) {
+    lines.push("", "⏰ À ne pas oublier");
+    relevantReminders.forEach((item) => lines.push(`- ${item.title}${item.dueAt ? ` · ${item.dueAt}` : ""}`));
+  }
+
+  const usefulProjects = projects.filter((item) =>
+    item.nextAction || item.blockers?.length || item.title || item.project
+  ).slice(0, 3);
+
+  if (usefulProjects.length) {
+    lines.push("", "📌 Projets");
+    usefulProjects.forEach((item) => {
+      const name = item.project || item.title || item.id || "Projet";
+      const next = item.nextAction ? ` → ${item.nextAction}` : "";
+      const blocker = item.blockers?.length ? ` · Bloqué par : ${item.blockers.join(", ")}` : "";
+      lines.push(`- ${name}${next}${blocker}`);
+    });
+  }
+
+  if (emails.length) {
+    lines.push("", "✉️ À surveiller");
+    emails.slice(0, 3).forEach((item) => {
+      const sender = item.from ? `${item.from} · ` : "";
+      lines.push(`- ${sender}${item.subject || "Message"}${item.snippet ? ` — ${item.snippet}` : ""}`);
+    });
+  }
+
+  const structuredProposals = Array.isArray(structured.proposals)
+    ? structured.proposals
+    : buildDailyProposals({
+        priorities,
+        scheduledBlocks,
+        dailyPlan: structured.dailyPlan,
+      });
+
+  if (structuredProposals.length) {
+    lines.push("", "💡 Noon te propose");
+    structuredProposals.slice(0, 3).forEach((proposal) => {
+      if (proposal.confirmedSlot && proposal.start && proposal.end) {
+        lines.push(`- ${proposal.start} → ${proposal.end} · ${proposal.title}`);
+      } else {
+        lines.push(`- ${proposal.title}`);
+      }
+    });
+  }
+
+  if (tomorrow.length) {
+    lines.push("", "📆 Demain");
+    tomorrow.slice(0, 5).forEach((item) => {
+      const timing = item.start ? ` · ${item.start}` : "";
+      lines.push(`- ${item.title || item.summary || "Événement"}${timing}`);
+    });
+  }
+
+  if (creative.length) {
+    lines.push("", "🎨 Veille créative");
+    creative.slice(0, 3).forEach((item) => lines.push(`- ${item.title || item}`));
+  }
+
   return lines.join("\n");
 }
 
@@ -201,16 +367,22 @@ function createDailyBriefEngine({
           contextTokensSaved: personalContext.metadata?.tokensSaved || 0,
           contextFingerprint: personalContext.metadata?.contextFingerprint || null,
         });
-        const tomorrowBoundary = new Date(at.getTime() + 48 * 60 * 60 * 1000);
+        const tomorrowDate = nextLocalDateKey(at);
         const tomorrow = (collected.calendarEvents || []).filter((event) => {
-          const start = new Date(event.start?.dateTime || event.start || 0);
-          return start > new Date(at.getTime() + 18 * 60 * 60 * 1000) && start <= tomorrowBoundary;
+          const start = new Date(event.start?.dateTime || event.start?.date || event.start || 0);
+          return Number.isFinite(start.getTime()) && localDateKey(start, TIME_ZONE) === tomorrowDate;
         }).map((event) => ({
           id: event.id || null,
           title: String(event.summary || event.title || "Événement").slice(0, 240),
           start: event.start?.dateTime || event.start?.date || event.start || null,
           end: event.end?.dateTime || event.end?.date || event.end || null,
         }));
+        const proposals = buildDailyProposals({
+          priorities,
+          scheduledBlocks,
+          dailyPlan,
+        });
+
         const structured = {
           id: briefId, date, summary: priorities.length
             ? `${priorities.length} action(s) utile(s) ont été classées ; les trois premières structurent la journée.`
@@ -224,6 +396,7 @@ function createDailyBriefEngine({
             status: event.status || null,
           })),
           scheduledBlocks: scheduledBlocks || [],
+          proposals,
           dailyPlan,
           emails: (collected.emails || []).map((message) => ({
             id: message.id || null,
@@ -231,6 +404,8 @@ function createDailyBriefEngine({
             from: String(message.from || "").slice(0, 200),
             snippet: String(message.snippet || "").slice(0, 500),
           })),
+          reminders: (collected.reminders || []).map(normalizeReminder).filter((item) => !item.completed),
+          notes: (collected.notes || []).map(normalizeNote),
           projects: (projects || []).slice(0, 20),
           creative: Array.isArray(creative) ? creative : [], tomorrow,
           executionTracking: {
@@ -329,4 +504,13 @@ function createDailyBriefEngine({
   return { generate, getCurrent, getHistorical };
 }
 
-module.exports = { TIME_ZONE, createDailyBriefEngine, deduplicateDailyActions, deterministicBrief };
+module.exports = {
+  TIME_ZONE,
+  createDailyBriefEngine,
+  deduplicateDailyActions,
+  deterministicBrief,
+  nextLocalDateKey,
+  normalizeReminder,
+  normalizeNote,
+  buildDailyProposals,
+};

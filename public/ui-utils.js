@@ -145,6 +145,212 @@
     }
   }
 
+  function renderDailyBriefStructured(container, brief) {
+    const doc = container.ownerDocument;
+    container.replaceChildren();
+
+    if (!brief || typeof brief !== "object") return;
+
+    const array = (value) => Array.isArray(value) ? value : [];
+    const safeDate = (value) => {
+      if (!value) return null;
+      const date = value instanceof Date ? value : new Date(value);
+      return Number.isFinite(date.getTime()) ? date : null;
+    };
+    const time = (value) => {
+      const date = safeDate(value);
+      if (!date) return null;
+      return new Intl.DateTimeFormat("fr-FR", {
+        timeZone: "Europe/Paris",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(date);
+    };
+    const dateLabel = (value) => {
+      if (!value) return "";
+      const date = safeDate(`${value}T12:00:00Z`);
+      if (!date) return String(value);
+      const label = new Intl.DateTimeFormat("fr-FR", {
+        timeZone: "Europe/Paris",
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+      }).format(date);
+      return label.charAt(0).toUpperCase() + label.slice(1);
+    };
+
+    function card(title, items, renderItem, options = {}) {
+      if (!items.length && !options.emptyMessage) return;
+
+      const section = doc.createElement("section");
+      section.className = `brief-card${options.accent ? ` brief-card--${options.accent}` : ""}`;
+
+      const heading = doc.createElement("h2");
+      heading.textContent = title;
+      section.append(heading);
+
+      if (!items.length) {
+        const empty = doc.createElement("p");
+        empty.className = "brief-card-empty";
+        empty.textContent = options.emptyMessage;
+        section.append(empty);
+        container.append(section);
+        return;
+      }
+
+      const list = doc.createElement(options.ordered ? "ol" : "ul");
+      list.className = "brief-card-list";
+
+      items.forEach((item, index) => {
+        const row = doc.createElement("li");
+        row.className = "brief-card-item";
+        renderItem(row, item, index);
+        list.append(row);
+      });
+
+      section.append(list);
+      container.append(section);
+    }
+
+    function primaryText(parent, value) {
+      const text = doc.createElement("span");
+      text.className = "brief-card-primary";
+      text.textContent = String(value || "");
+      parent.append(text);
+      return text;
+    }
+
+    function metaText(parent, value) {
+      if (!value) return;
+      const meta = doc.createElement("span");
+      meta.className = "brief-card-meta";
+      meta.textContent = String(value);
+      parent.append(meta);
+    }
+
+    const hero = doc.createElement("header");
+    hero.className = "brief-day-hero";
+
+    const greeting = doc.createElement("h2");
+    greeting.textContent = "☀️ Bonjour Arnaud";
+
+    const day = doc.createElement("p");
+    day.textContent = dateLabel(brief.date);
+
+    hero.append(greeting, day);
+    container.append(hero);
+
+    const calendar = array(brief.calendar);
+    const calendarSource =
+      brief.sourceStatus?.["google-calendar"] ||
+      brief.sourceStatus?.calendar ||
+      null;
+
+    if (calendar.length) {
+      card("📅 Aujourd’hui", calendar.slice(0, 8), (row, item) => {
+        primaryText(row, item.title || "Événement");
+        const start = time(item.start);
+        const end = time(item.end);
+        metaText(row, start && end ? `${start}–${end}` : start || end);
+      });
+    } else if (calendarSource && !["ready", "ok"].includes(calendarSource)) {
+      card("📅 Aujourd’hui", [], () => {}, {
+        emptyMessage: "Je ne peux pas confirmer ton agenda aujourd’hui.",
+      });
+    }
+
+    card(
+      "🎯 Tes priorités",
+      array(brief.priorities).slice(0, 3),
+      (row, item) => {
+        primaryText(row, item.title || "Action prioritaire");
+        metaText(row, array(item.reasons)[0] || item.priorityLevel || null);
+      },
+      { ordered: true, accent: "priority" }
+    );
+
+    const proposals = array(brief.proposals);
+    const confirmedProposals = proposals.filter((item) => item.confirmedSlot === true);
+
+    if (confirmedProposals.length) {
+      card("🕳️ Créneaux disponibles", confirmedProposals.slice(0, 3), (row, item) => {
+        primaryText(row, item.title || "Action proposée");
+        const start = time(item.start);
+        const end = time(item.end);
+        metaText(row, start && end ? `${start}–${end}` : null);
+      }, { accent: "slots" });
+    } else if (
+      array(brief.scheduledBlocks).some((item) => item.status === "proposed") &&
+      brief.dailyPlan?.calendarAvailability !== "confirmed"
+    ) {
+      card("🕳️ Créneaux disponibles", [], () => {}, {
+        emptyMessage: "Je ne peux pas confirmer tes créneaux aujourd’hui.",
+      });
+    }
+
+    const dayEnd = brief.date ? new Date(`${brief.date}T23:59:59.999Z`) : null;
+    const reminders = array(brief.reminders)
+      .filter((item) => {
+        const due = safeDate(item.dueAt);
+        return due && dayEnd && due <= dayEnd;
+      })
+      .slice(0, 5);
+
+    card("⏰ À ne pas oublier", reminders, (row, item) => {
+      primaryText(row, item.title || "Rappel");
+      metaText(row, time(item.dueAt));
+    });
+
+    const projects = array(brief.projects)
+      .filter((item) => item.nextAction || array(item.blockers).length)
+      .slice(0, 3);
+
+    card("📌 Projets", projects, (row, item) => {
+      primaryText(row, item.project || item.title || item.id || "Projet");
+      if (item.nextAction) metaText(row, `Prochaine action : ${item.nextAction}`);
+      if (array(item.blockers).length) {
+        metaText(row, `Bloqué par : ${item.blockers.join(", ")}`);
+      }
+    });
+
+    const importantEmailIds = new Set(
+      array(brief.priorities)
+        .filter((item) => /gmail|email/i.test(String(item.sourceType || item.source || "")))
+        .map((item) => String(item.sourceId || item.sourceReference || ""))
+        .filter(Boolean)
+    );
+
+    const emails = array(brief.emails)
+      .filter((item) => !importantEmailIds.size || importantEmailIds.has(String(item.id || "")))
+      .slice(0, 3);
+
+    card("✉️ À surveiller", emails, (row, item) => {
+      primaryText(row, item.subject || "Message");
+      metaText(row, item.from || null);
+      if (item.snippet) metaText(row, item.snippet);
+    });
+
+    card("💡 Noon te propose", proposals.slice(0, 3), (row, item) => {
+      primaryText(row, item.title || "Action proposée");
+      if (item.confirmedSlot) {
+        const start = time(item.start);
+        const end = time(item.end);
+        metaText(row, start && end ? `${start}–${end}` : null);
+      } else {
+        metaText(row, item.reason || null);
+      }
+    }, { accent: "proposal" });
+
+    card("📆 Demain", array(brief.tomorrow).slice(0, 5), (row, item) => {
+      primaryText(row, item.title || item.summary || "Événement");
+      metaText(row, time(item.start));
+    });
+
+    card("🎨 Veille créative", array(brief.creative).slice(0, 3), (row, item) => {
+      primaryText(row, item.title || item);
+    });
+  }
+
   return {
     escapeHtml,
     parseFocusCommand,
@@ -156,6 +362,7 @@
     tokenizeChatMarkdown,
     renderChatMarkdown,
     renderBriefMarkdown,
+    renderDailyBriefStructured,
   };
 
 });

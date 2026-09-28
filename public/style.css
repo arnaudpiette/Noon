@@ -1928,3 +1928,170 @@ body.dev-preview-resizing *{
 .dev-terminal-completion-item[data-active="true"]{
   outline:1px solid rgba(184,249,0,.20)
 }
+
+/* Daily Brief V2 — lecture éditoriale et hiérarchie façon assistant personnel. */
+.brief-toolbar{display:flex;align-items:flex-start;justify-content:space-between;gap:24px}
+.brief-eyebrow{display:block;margin-bottom:5px;color:#8a8d8f;font-size:9px;font-weight:900;letter-spacing:.16em}
+.brief-history-control{display:grid;gap:5px;min-width:170px;color:#777;font-size:10px;font-weight:700}
+.brief-history-control select{min-height:36px;padding:7px 30px 7px 10px;border:1px solid #dedfdd;border-radius:9px;background:#fff;color:#111;font:inherit;font-size:11px}
+
+.brief-structured-content{display:grid;max-width:940px;margin-top:20px;gap:12px}
+.brief-day-hero{padding:24px 0 18px;border-bottom:1px solid rgba(0,0,0,.08)}
+.brief-day-hero h2{margin:0;font-size:28px!important;letter-spacing:-.035em}
+.brief-day-hero p{margin:7px 0 0;color:#7b7e80;font-size:13px;text-transform:capitalize}
+
+.brief-card{display:grid;padding:18px 20px;border:1px solid rgba(0,0,0,.075);border-radius:16px;background:#fff;gap:12px}
+.brief-card h2{margin:0!important;font-size:15px!important;letter-spacing:-.015em}
+.brief-card--priority{border-color:rgba(186,255,0,.48);background:linear-gradient(135deg,rgba(186,255,0,.10),#fff 58%)}
+.brief-card--slots{background:linear-gradient(135deg,rgba(47,125,246,.055),#fff 62%)}
+.brief-card--proposal{border-color:rgba(186,255,0,.38);background:linear-gradient(135deg,rgba(186,255,0,.14),#fff 62%)}
+
+.brief-card-list{display:grid;margin:0!important;padding:0!important;gap:0;list-style:none!important}
+.brief-card-list.brief-card-list{list-style:none}
+.brief-card-item{display:grid;padding:11px 0;border-top:1px solid rgba(0,0,0,.055);gap:4px}
+.brief-card-item:first-child{padding-top:0;border-top:0}
+.brief-card-item:last-child{padding-bottom:0}
+.brief-card-primary{color:#17191a;font-size:13px;font-weight:680;line-height:1.45}
+.brief-card-meta{color:#7b7e80;font-size:10.5px;line-height:1.45}
+.brief-card-empty{margin:0;color:#7b7e80;font-size:12px;line-height:1.55}
+
+.brief-summary-section{max-width:940px;margin-top:24px;padding-top:22px;border-top:1px solid rgba(0,0,0,.08)}
+.brief-summary-section>h2{margin:0!important;color:#777;font-size:11px!important;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+.brief-summary{padding-top:12px!important;color:#53575a;font-size:12px!important;line-height:1.7!important}
+.brief-summary:empty{display:none}
+
+.brief-diagnostics{max-width:940px;margin-top:18px;border-top:1px solid rgba(0,0,0,.08)}
+.brief-diagnostics>summary{padding:14px 0;color:#777;font-size:11px;font-weight:700;cursor:pointer;user-select:none}
+.brief-diagnostics-content{padding:0 0 14px}
+
+.brief-actions{max-width:940px;margin-top:18px;padding-top:18px;border-top:1px solid rgba(0,0,0,.08)}
+
+@media(max-width:720px){
+  .brief-view{padding-left:18px;padding-right:18px}
+  .brief-toolbar{flex-direction:column}
+  .brief-history-control{width:100%}
+  .brief-card{padding:16px}
+  .brief-day-hero h2{font-size:24px!important}
+  .brief-actions{display:grid;grid-template-columns:1fr}
+  .brief-actions button,.brief-actions .brief-action-button{width:100%}
+}
+
+/* Daily Brief V2.1 — états, focus et finition UX. */
+.brief-status-pill{
+  display:inline-flex;
+  align-items:center;
+  width:max-content;
+  min-height:28px;
+  margin-top:14px!important;
+  padding:5px 9px;
+  border:1px solid rgba(0,0,0,.08);
+  border-radius:999px;
+  background:#f3f3f0;
+  color:#696d70;
+  font-size:10px;
+  font-weight:750;
+}
+.brief-status-pill[data-state="READY"]{
+  border-color:rgba(130,190,0,.34);
+  background:rgba(186,255,0,.16);
+  color:#496500;
+}
+.brief-status-pill[data-state="PARTIAL"]{
+  border-color:rgba(224,153,31,.30);
+  background:rgba(255,176,32,.10);
+  color:#8a5900;
+}
+.brief-status-pill[data-state="GENERATING"],
+.brief-status-pill[data-state="LOADING"]{
+  background:rgba(47,125,246,.07);
+  color:#3467ae;
+}
+.brief-status-pill[data-state="FAILED"]{
+  border-color:rgba(198,50,64,.22);
+  background:rgba(198,50,64,.07);
+  color:#a72231;
+}
+.brief-status-pill[data-state="HISTORICAL"]{
+  background:#f1f1ee;
+  color:#73777a;
+}
+
+.brief-diagnostics>summary:hover{color:#111}
+.brief-diagnostics>summary:focus-visible,
+.brief-history-control select:focus-visible,
+.brief-actions button:focus-visible,
+.brief-actions .brief-action-button:focus-visible{
+  outline:2px solid var(--orange);
+  outline-offset:2px;
+}
+
+.brief-card{
+  transition:border-color .16s ease,box-shadow .16s ease,transform .16s ease;
+}
+.brief-card:hover{
+  border-color:rgba(0,0,0,.13);
+}
+.brief-card--priority:hover,
+.brief-card--proposal:hover{
+  border-color:rgba(157,211,0,.58);
+}
+
+.briefGeneratedAt,
+#briefGeneratedAt{
+  color:#85898c;
+  font-size:10px;
+  line-height:1.45;
+}
+
+@media(max-width:720px){
+  .brief-status-pill{width:auto;max-width:100%}
+  #briefGeneratedAt{max-width:48%;text-align:right}
+}
+
+/* Daily Brief — feedback visuel des actions vocales. */
+.brief-actions button:not(:disabled),
+.brief-actions .brief-action-button{
+  transition:
+    background-color .16s ease,
+    border-color .16s ease,
+    color .16s ease,
+    transform .16s ease,
+    box-shadow .16s ease;
+}
+
+.brief-actions button:not(:disabled):hover,
+.brief-actions .brief-action-button:hover{
+  border-color:var(--orange);
+  background:var(--orange);
+  color:#fff;
+  transform:translateY(-1px);
+}
+
+.brief-actions button:disabled{
+  opacity:.42;
+  cursor:not-allowed;
+}
+
+#readBriefButton[data-reading="true"]{
+  border-color:var(--green);
+  background:var(--green);
+  color:#000;
+  box-shadow:0 0 0 3px rgba(186,255,0,.16);
+}
+
+#readBriefButton[data-reading="true"]:hover{
+  border-color:var(--green);
+  background:var(--green);
+  color:#000;
+}
+
+#stopBriefReadingButton:not(:disabled){
+  border-color:rgba(198,50,64,.32);
+  color:#a72231;
+}
+
+#stopBriefReadingButton:not(:disabled):hover{
+  border-color:#c63240;
+  background:#c63240;
+  color:#fff;
+}

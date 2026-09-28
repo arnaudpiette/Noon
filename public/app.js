@@ -206,6 +206,7 @@ const briefState = document.getElementById("briefState");
 const briefContent = document.getElementById("briefContent");
 const personalBriefState = document.getElementById("personalBriefState");
 const personalBriefContent = document.getElementById("personalBriefContent");
+const briefStructuredContent = document.getElementById("briefStructuredContent");
 const briefSources = document.getElementById("briefSources");
 const briefGeneratedAt = document.getElementById("briefGeneratedAt");
 const generateBriefButton = document.getElementById("generateBriefButton");
@@ -8538,6 +8539,7 @@ async function loadCreativeBrief() {
   briefState.textContent = personalBriefState.textContent = "Chargement…";
   personalBriefState.dataset.state = "LOADING";
   personalBriefContent.replaceChildren();
+  briefStructuredContent.replaceChildren();
   briefGeneratedAt.textContent = "";
   try {
     const response = await fetch(historicalDate
@@ -8559,10 +8561,39 @@ async function loadCreativeBrief() {
             : `Le brief du jour (${data.date}) n’a pas été généré.`;
     briefState.textContent = personalBriefState.textContent = label;
     personalBriefState.dataset.state = status;
+    personalBriefState.setAttribute(
+      "aria-label",
+      status === "READY"
+        ? "Brief du jour prêt"
+        : status === "PARTIAL"
+          ? "Brief du jour partiel, certaines sources sont indisponibles"
+          : status === "GENERATING"
+            ? "Génération du brief en cours"
+            : status === "FAILED"
+              ? "Échec de génération du brief"
+              : status === "HISTORICAL"
+                ? "Brief historique"
+                : "Brief du jour indisponible"
+    );
     briefContent.textContent = "";
+    window.NoonUiUtils.renderDailyBriefStructured(briefStructuredContent, brief);
     window.NoonUiUtils.renderBriefMarkdown(personalBriefContent, brief?.content || "");
     briefGeneratedAt.textContent = brief?.generatedAt
-      ? `${historicalDate ? "Historique" : "Brief du jour"} · ${brief.date} · Généré ${new Date(brief.generatedAt).toLocaleString("fr-FR", { timeZone: "Europe/Paris" })}` : "";
+      ? `${historicalDate ? "Historique" : "Brief du jour"} · ${
+          new Intl.DateTimeFormat("fr-FR", {
+            timeZone: "Europe/Paris",
+            weekday: "long",
+            day: "numeric",
+            month: "long",
+          }).format(new Date(`${brief.date}T12:00:00Z`))
+        } · généré à ${
+          new Intl.DateTimeFormat("fr-FR", {
+            timeZone: "Europe/Paris",
+            hour: "2-digit",
+            minute: "2-digit",
+          }).format(new Date(brief.generatedAt))
+        }`
+      : "";
     if (!historicalDate) {
       briefHistorySelect.replaceChildren();
       const currentOption = document.createElement("option"); currentOption.value = ""; currentOption.textContent = "Brief du jour";
@@ -8607,6 +8638,7 @@ async function loadCreativeBrief() {
     if (version !== briefLoadVersion) return null;
     briefState.textContent = personalBriefState.textContent = navigator.onLine ? error.message : "Brief indisponible : absence de connexion.";
     personalBriefState.dataset.state = "FAILED";
+    personalBriefState.setAttribute("aria-label", "Échec de chargement du brief");
     return null;
   }
 }
@@ -8621,8 +8653,33 @@ async function generateCreativeBrief(force = false) {
 
 generateBriefButton.addEventListener("click", async () => { const existing = Boolean(personalBriefContent.textContent.trim()); if (existing && !window.confirm("Actualiser le brief entraînera un nouvel appel API. Continuer ?")) return; await generateCreativeBrief(existing); });
 testCreativeBriefButton.addEventListener("click", () => generateCreativeBrief(false));
-readBriefButton.addEventListener("click", () => { const combinedBrief = personalBriefContent.textContent; if (!combinedBrief) return; speakNoon(prepareTextForSpeech(combinedBrief.replace(/https?:\/\/\S+/g, " Sources disponibles à l’écran. "))); stopBriefReadingButton.disabled = false; });
-stopBriefReadingButton.addEventListener("click", () => { interruptNoonSpeech(); stopBriefReadingButton.disabled = true; });
+readBriefButton.addEventListener("click", async () => {
+  const combinedBrief = personalBriefContent.textContent;
+  if (!combinedBrief) return;
+
+  readBriefButton.dataset.reading = "true";
+  readBriefButton.setAttribute("aria-pressed", "true");
+  stopBriefReadingButton.disabled = false;
+
+  try {
+    await speakNoon(
+      prepareTextForSpeech(
+        combinedBrief.replace(/https?:\/\/\S+/g, " Sources disponibles à l’écran. ")
+      )
+    );
+  } finally {
+    readBriefButton.dataset.reading = "false";
+    readBriefButton.setAttribute("aria-pressed", "false");
+    stopBriefReadingButton.disabled = true;
+  }
+});
+
+stopBriefReadingButton.addEventListener("click", () => {
+  interruptNoonSpeech();
+  readBriefButton.dataset.reading = "false";
+  readBriefButton.setAttribute("aria-pressed", "false");
+  stopBriefReadingButton.disabled = true;
+});
 
 async function loadCreativeBriefPreferences() {
   if (!window.noon?.getPreferences) return;

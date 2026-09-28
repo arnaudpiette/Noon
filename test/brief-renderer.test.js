@@ -3,9 +3,21 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
-const { renderBriefMarkdown } = require("../public/ui-utils");
+const { renderBriefMarkdown, renderDailyBriefStructured } = require("../public/ui-utils");
 function element(tagName, ownerDocument) {
-  return { tagName, ownerDocument, children: [], append(...nodes) { this.children.push(...nodes); }, replaceChildren(...nodes) { this.children = nodes; }, set textContent(text) { this.children = [String(text)]; }, get textContent() { return this.children.map(n => typeof n === "string" ? n : n.textContent).join(""); } };
+  return {
+    tagName,
+    ownerDocument,
+    children: [],
+    attributes: {},
+    dataset: {},
+    append(...nodes) { this.children.push(...nodes); },
+    replaceChildren(...nodes) { this.children = nodes; },
+    setAttribute(name, value) { this.attributes[name] = String(value); },
+    getAttribute(name) { return this.attributes[name] ?? null; },
+    set textContent(text) { this.children = [String(text)]; },
+    get textContent() { return this.children.map(n => typeof n === "string" ? n : n.textContent).join(""); },
+  };
 }
 const doc = { createElement: tag => element(tag, doc), createTextNode: text => String(text) };
 test("brief Markdown renders headings, emphasis, both lists and harmless HTML", () => {
@@ -19,6 +31,41 @@ test("brief Markdown renders headings, emphasis, both lists and harmless HTML", 
   assert.match(root.textContent, /<script>alert\(1\)<\/script>/);
   assert.equal(root.children[6].children.every(n => typeof n === 'string'), true);
 });
+
+test("structured renderer creates assistant sections without parsing provider HTML", () => {
+  const root = element("div", doc);
+
+  renderDailyBriefStructured(root, {
+    date: "2026-09-28",
+    priorities: [{
+      id: "p1",
+      title: "<script>Priorité</script>",
+      reasons: ["échéance proche"],
+    }],
+    calendar: [],
+    proposals: [{
+      title: "Avancer Noon",
+      confirmedSlot: false,
+      reason: "projet prioritaire",
+    }],
+    reminders: [],
+    projects: [],
+    emails: [],
+    tomorrow: [],
+    creative: [],
+    sourceStatus: { "google-calendar": "unavailable" },
+    scheduledBlocks: [],
+  });
+
+  assert.match(root.textContent, /Bonjour Arnaud/);
+  assert.match(root.textContent, /<script>Priorité<\/script>/);
+  assert.match(root.textContent, /Noon te propose/);
+  assert.equal(
+    root.children.some((child) => String(child.tagName).toLowerCase() === "script"),
+    false
+  );
+});
+
 function loaderFixture(data) {
   const source = fs.readFileSync(require.resolve('../public/app.js'), 'utf8');
   const start = source.indexOf('async function loadCreativeBrief()');
@@ -26,24 +73,50 @@ function loaderFixture(data) {
   const timers = [];
   const requests = [];
   const sandbox = { briefLoadVersion: 0, briefRefreshTimer: null, currentView: "brief",
-    window: { NoonUiUtils: { renderBriefMarkdown }, clearTimeout() {}, setTimeout(fn) { timers.push(fn); } },
+    window: { NoonUiUtils: { renderBriefMarkdown, renderDailyBriefStructured }, clearTimeout() {}, setTimeout(fn) { timers.push(fn); } },
     document: doc, navigator: { onLine: true },
     fetch: async (url) => { requests.push(url); return { ok:true, json:async()=>data }; }, Date };
-  for (const name of ['briefHistorySelect','briefState','personalBriefState','briefContent','personalBriefContent','briefGeneratedAt','briefSourceStates','briefScheduledBlocks','briefDrafts','briefSources','generateBriefButton','readBriefButton','stopBriefReadingButton']) {
+  for (const name of ['briefHistorySelect','briefState','personalBriefState','briefContent','personalBriefContent','briefStructuredContent','briefGeneratedAt','briefSourceStates','briefScheduledBlocks','briefDrafts','briefSources','generateBriefButton','readBriefButton','stopBriefReadingButton']) {
     sandbox[name] = element('div',doc); sandbox[name].dataset = {}; sandbox[name].value = '';
   }
   vm.createContext(sandbox); vm.runInContext(source.slice(start,end),sandbox);
   return { sandbox, timers, requests };
 }
 test("actual loader requests current date, renders Markdown and Paris timestamp", async () => {
-  const data = { date: '2026-09-06', status: 'ready', current: { date: '2026-09-06', content: '## Vue\n**Source non connectée**', generatedAt: '2026-09-06T18:08:17.302Z' } };
+  const data = {
+    date: '2026-09-06',
+    status: 'ready',
+    current: {
+      date: '2026-09-06',
+      content: '## Vue\n**Source non connectée**',
+      generatedAt: '2026-09-06T18:08:17.302Z',
+      priorities: [{ id: 'p1', title: 'Avancer Noon', reasons: ['projet prioritaire'] }],
+      calendar: [{ title: 'Rendez-vous', start: '2026-09-06T08:00:00Z', end: '2026-09-06T09:00:00Z' }],
+      proposals: [{ title: 'Avancer Noon', confirmedSlot: true, start: '2026-09-06T10:00:00Z', end: '2026-09-06T11:00:00Z' }],
+      reminders: [],
+      projects: [],
+      emails: [],
+      tomorrow: [],
+      creative: [],
+      sourceStatus: { 'google-calendar': 'ready' },
+      dailyPlan: { calendarAvailability: 'confirmed' },
+    },
+  };
   const { sandbox, requests } = loaderFixture(data);
   await sandbox.loadCreativeBrief();
   assert.equal(requests[0], '/daily-brief/current');
   assert.equal(sandbox.personalBriefState.textContent, 'Brief prêt');
   assert.equal(sandbox.personalBriefContent.children[0].tagName, 'h2');
-  assert.match(sandbox.briefGeneratedAt.textContent, /2026-09-06/);
-  assert.match(sandbox.briefGeneratedAt.textContent, /20:08:17/);
+  assert.match(sandbox.briefStructuredContent.textContent, /Bonjour Arnaud/);
+  assert.match(sandbox.briefStructuredContent.textContent, /Tes priorités/);
+  assert.match(sandbox.briefStructuredContent.textContent, /Avancer Noon/);
+  assert.match(sandbox.briefStructuredContent.textContent, /Créneaux disponibles/);
+  assert.match(sandbox.briefGeneratedAt.textContent, /dimanche 6 septembre/i);
+  assert.match(sandbox.briefGeneratedAt.textContent, /20:08/);
+  assert.equal(
+    sandbox.personalBriefState.getAttribute("aria-label"),
+    "Brief du jour prêt"
+  );
 });
 test("generation polling disappears when READY even if stored status was generating", async () => {
   const data = { date: '2026-09-06', status: 'generating', generationActive: true, current: null };
@@ -85,6 +158,37 @@ test("next-day refresh invalidates visible content and late responses cannot ove
   release({ ok: true, json: async () => data }); await old;
   assert.equal(sandbox.personalBriefContent.textContent, 'Aujourd’hui');
 });
+test("PARTIAL expose un état accessible sans masquer le brief", async () => {
+  const data = {
+    date: "2026-09-06",
+    status: "partial",
+    current: {
+      date: "2026-09-06",
+      content: "Synthèse partielle",
+      priorities: [{ id: "p1", title: "Avancer Noon" }],
+      calendar: [],
+      proposals: [],
+      reminders: [],
+      projects: [],
+      emails: [],
+      tomorrow: [],
+      creative: [],
+      sources: [{ id: "gmail", status: "unavailable", label: "Source momentanément indisponible" }],
+    },
+  };
+
+  const { sandbox } = loaderFixture(data);
+  await sandbox.loadCreativeBrief();
+
+  assert.equal(sandbox.personalBriefState.dataset.state, "PARTIAL");
+  assert.equal(
+    sandbox.personalBriefState.getAttribute("aria-label"),
+    "Brief du jour partiel, certaines sources sont indisponibles"
+  );
+  assert.match(sandbox.personalBriefContent.textContent, /Synthèse partielle/);
+  assert.match(sandbox.briefStructuredContent.textContent, /Avancer Noon/);
+});
+
 test("fetch failure terminates both loading indicators", async () => {
   const { sandbox } = loaderFixture({});
   sandbox.fetch = async () => { throw new Error('Serveur indisponible'); };

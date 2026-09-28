@@ -850,10 +850,35 @@
       <section id="briefView" class="view brief-view">
         <header class="chat-header"><div><span class="label">Chaque matin à 7 h · Europe/Paris</span><h1>Brief matinal Noon</h1></div><time id="briefGeneratedAt"></time></header>
         <section class="daily-brief-section personal-brief-section">
-          <h2>Votre journée analysée</h2>
-          <label for="briefHistorySelect">Consulter</label><select id="briefHistorySelect"><option value="">Brief du jour</option></select>
-          <div id="personalBriefState" class="brief-state" role="status">Chargement…</div>
-          <article id="personalBriefContent" class="brief-content"></article>
+          <div class="brief-toolbar">
+            <div>
+              <span class="brief-eyebrow">TON POINT DU JOUR</span>
+              <h2>Votre journée analysée</h2>
+            </div>
+            <label class="brief-history-control" for="briefHistorySelect">
+              <span>Consulter</span>
+              <select id="briefHistorySelect"><option value="">Brief du jour</option></select>
+            </label>
+          </div>
+
+          <div
+            id="personalBriefState"
+            class="brief-state brief-status-pill"
+            role="status"
+            aria-live="polite"
+          >Chargement…</div>
+
+          <div
+            id="briefStructuredContent"
+            class="brief-structured-content"
+            aria-live="polite"
+            aria-label="Brief personnel du jour"
+          ></div>
+
+          <section class="brief-summary-section">
+            <h2>Synthèse Noon</h2>
+            <article id="personalBriefContent" class="brief-content brief-summary"></article>
+          </section>
         </section>
         <section class="daily-brief-section creative-watch-section" hidden>
           <h2>Veille créative</h2>
@@ -861,10 +886,21 @@
         <article id="briefContent" class="brief-content"></article>
         <div id="briefSources" class="message-sources"></div>
         </section>
-        <div id="briefSourceStates" class="brief-source-states"></div>
-        <div id="briefScheduledBlocks" class="brief-scheduled-blocks"></div>
-        <div id="briefDrafts" class="brief-scheduled-blocks"></div>
-        <div class="brief-actions"><button id="generateBriefButton" type="button">Actualiser</button><button id="readBriefButton" type="button" disabled>Lire le brief</button><button id="stopBriefReadingButton" type="button" disabled>Arrêter la lecture</button><a id="openCalendarButton" class="brief-action-button" href="https://calendar.google.com/calendar/u/0/r" target="_blank" rel="noopener noreferrer">Voir dans l’agenda</a></div>
+        <details class="brief-diagnostics">
+          <summary aria-label="Afficher les détails techniques et les sources du brief">Détails &amp; sources</summary>
+          <div class="brief-diagnostics-content">
+            <div id="briefSourceStates" class="brief-source-states"></div>
+            <div id="briefScheduledBlocks" class="brief-scheduled-blocks"></div>
+            <div id="briefDrafts" class="brief-scheduled-blocks"></div>
+          </div>
+        </details>
+
+        <div class="brief-actions">
+          <button id="generateBriefButton" type="button">Actualiser</button>
+          <button id="readBriefButton" type="button" disabled aria-label="Lire à voix haute la synthèse du brief">Lire le brief</button>
+          <button id="stopBriefReadingButton" type="button" disabled aria-label="Arrêter la lecture vocale du brief">Arrêter la lecture</button>
+          <a id="openCalendarButton" class="brief-action-button" href="https://calendar.google.com/calendar/u/0/r" target="_blank" rel="noopener noreferrer">Voir dans l’agenda</a>
+        </div>
       </section>
 
       <section id="personalView" class="view personal-intelligence-view" aria-labelledby="personalIntelligenceTitle">
