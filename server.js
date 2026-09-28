@@ -133,6 +133,8 @@ const { createDelegationEngine } = require("./services/delegation/delegation-eng
 const { createCodexSpecialistAgent } = require("./services/delegation/codex-specialist-agent");
 const { createDevDelegationRunner } = require("./services/delegation/dev-delegation-runner");
 const { createNativeDevCoordinator } = require("./services/dev/native-dev-coordinator");
+const { createNativeDevOrchestrator } = require("./services/dev/native-dev-orchestrator");
+const { createNativeDevOrchestratorFacade } = require("./services/dev/native-dev-orchestrator-facade");
 const { createDevWorkspaceTerminalService } = require("./services/dev/workspace-terminal-service");
 const { createDevWorkspaceAgentExecutionLoop } = require("./services/dev/workspace-agent-execution-loop");
 const { createDevTaskJournal } = require("./services/dev/dev-task-journal");
@@ -1275,6 +1277,38 @@ const nativeDevCoordinator = createNativeDevCoordinator({
   qualityEscalationMode: (input) => featureFlags.evaluate("dev.quality-escalation", { workspaceId: input.workspaceId, sessionId: input.sessionId }).mode,
   sameTierRepairAttempts: (input) => runtimeConfig.get("devBudget.sameTierRepairAttempts", { workspaceId: input.workspaceId, sessionId: input.sessionId }).value,
   observability: (event, metadata) => toolAuditLog.append(`dev.${event}`, metadata),
+});
+
+/*
+ * B3 multi-agents :
+ * - utilisé uniquement par les routes /api/dev/native/tasks
+ * - le benchmark conserve nativeDevCoordinator directement.
+ */
+const nativeDevB3Orchestrator = createNativeDevOrchestrator({
+  workspaceEngine,
+  transactionalExecutionEngine,
+  operationalSecurityPolicy,
+  skillRegistry,
+  reasoner: nativeDevReasoner,
+  journal: nativeDevJournal,
+  qualityEscalationMode: (input) => featureFlags.evaluate("dev.quality-escalation", {
+    workspaceId: input.workspaceId,
+    sessionId: input.sessionId,
+  }).mode,
+  sameTierRepairAttempts: (input) => runtimeConfig.get("devBudget.sameTierRepairAttempts", {
+    workspaceId: input.workspaceId,
+    sessionId: input.sessionId,
+  }).value,
+  observability: (event, metadata) => toolAuditLog.append(`dev.b3.${event}`, metadata),
+});
+
+const nativeDevB3Facade = createNativeDevOrchestratorFacade({
+  orchestrator: nativeDevB3Orchestrator,
+  journal: nativeDevJournal,
+  featureMode: (input) => featureFlags.evaluate("dev.native-core", {
+    workspaceId: input.workspaceId,
+    sessionId: input.sessionId,
+  }).mode,
 });
 
 // Les extensions enrichissent les registries existants ; elles ne reçoivent jamais les services internes bruts.
@@ -9041,7 +9075,7 @@ if (requestPath === "/api/dev/native/tasks" && req.method === "POST") {
   try {
     if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403, code: "TRUSTED_UI_REQUIRED" });
     const body = await readJsonBody(req, 128 * 1024);
-    const result = await nativeDevCoordinator.runTask({
+    const result = await nativeDevB3Facade.runTask({
       taskId: body.taskId, sessionId: body.sessionId, workspaceId: String(body.workspaceId || ""), repositoryRoot: String(body.repositoryRoot || ""),
       objective: String(body.objective || ""), allowedPaths: Array.isArray(body.allowedPaths) ? body.allowedPaths : undefined,
       forbiddenPaths: Array.isArray(body.forbiddenPaths) ? body.forbiddenPaths : undefined, constraints: Array.isArray(body.constraints) ? body.constraints : [],
@@ -9070,13 +9104,13 @@ if (requestPath === "/api/dev/budget" && req.method === "GET") {
 
 if (requestPath.startsWith("/api/dev/native/tasks/") && req.method === "GET") {
   if (req.headers["x-noon-request"] !== "1") { res.writeHead(403); return res.end(); }
-  const taskId = decodeURIComponent(requestPath.slice("/api/dev/native/tasks/".length)); const result = nativeDevCoordinator.getTaskStatus(taskId);
+  const taskId = decodeURIComponent(requestPath.slice("/api/dev/native/tasks/".length)); const result = nativeDevB3Facade.getTaskStatus(taskId);
   res.writeHead(result ? 200 : 404, { "Content-Type": "application/json", "Cache-Control": "no-store" }); return res.end(JSON.stringify(result || { status: "not_found" }));
 }
 
 if (requestPath.startsWith("/api/dev/native/tasks/") && requestPath.endsWith("/cancel") && req.method === "POST") {
   if (req.headers["x-noon-request"] !== "1") { res.writeHead(403); return res.end(); }
-  const taskId = decodeURIComponent(requestPath.slice("/api/dev/native/tasks/".length, -"/cancel".length)); const result = nativeDevCoordinator.cancelTask(taskId);
+  const taskId = decodeURIComponent(requestPath.slice("/api/dev/native/tasks/".length, -"/cancel".length)); const result = nativeDevB3Facade.cancelTask(taskId);
   res.writeHead(result.cancelled ? 200 : 409, { "Content-Type": "application/json", "Cache-Control": "no-store" }); return res.end(JSON.stringify(result));
 }
 
