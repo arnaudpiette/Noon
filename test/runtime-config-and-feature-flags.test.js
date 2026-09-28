@@ -74,6 +74,7 @@ test("OFF, SHADOW, LIMITED, ON et kill switch sont déterministes", () => {
   const { featureFlags } = fixture();
   assert.equal(featureFlags.evaluate("router.policy.v2").mode, "ON");
   assert.equal(featureFlags.evaluate("router.astra").mode, "SHADOW");
+  assert.equal(featureFlags.evaluate("router.adaptive-learning").mode, "SHADOW");
   assert.equal(featureFlags.evaluate("dev.native-core").mode, "OFF");
   assert.deepEqual(featureFlags.evaluate("dev.native-core").enabled, false);
   featureFlags.update("router.policy.v2", { mode: "SHADOW" });

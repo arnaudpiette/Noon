@@ -83,6 +83,7 @@ function createNoonObservability({
   const traces = new Map();
   let writeQueue = Promise.resolve();
   let persistenceErrors = 0;
+  let modelPerformanceEngine = null;
 
   // Le chargement et la purge ont lieu au démarrage, hors du chemin critique.
   if (filePath && fs.existsSync(filePath)) {
@@ -160,8 +161,39 @@ function createNoonObservability({
       clean.routingMetadata = routingMetadata;
       trace.modelCalls.push(clean);
       if (cost.status === "available") trace.costs.text += cost.total;
+
+      try {
+        modelPerformanceEngine?.recordOutcome({
+          taskDomain: routingMetadata.taskDomain,
+          requiredQuality: routingMetadata.requiredQuality,
+          provider: String(metrics.provider || "openai"),
+          model: String(clean.model || metrics.model || ""),
+          success: routingMetadata.success,
+          failureCategory: routingMetadata.failureCategory,
+          latencyMs: routingMetadata.latency,
+          inputTokens: clean.inputTokens,
+          outputTokens: clean.outputTokens,
+          actualCost: routingMetadata.actualCost?.total ?? null,
+          firstPassSuccess:
+            typeof metrics.firstPassSuccess === "boolean"
+              ? metrics.firstPassSuccess
+              : null,
+          fallbackUsed: metrics.fallbackUsed === true,
+          escalationUsed: metrics.escalationUsed === true,
+        });
+      } catch {
+        persistenceErrors += 1;
+      }
     });
   }
+  function attachModelPerformanceEngine(engine) {
+    if (!engine?.recordOutcome || !engine?.snapshot) {
+      throw new TypeError("ModelPerformanceEngine invalide.");
+    }
+    modelPerformanceEngine = engine;
+    return true;
+  }
+
   function recordTool(id, metrics) {
     mutate(id, (trace) => { trace.tools.push(sanitizeMetrics(metrics)); });
   }
@@ -285,6 +317,7 @@ function createNoonObservability({
   }
 
   return {
+    attachModelPerformanceEngine,
     completeExecution, failExecution, flush: () => writeQueue, getTrace,
     healthSummary: () => summary(), recordApproval, recordContext, recordCost, recordError,
     recordFallback, recordModelCall, recordRouting, recordTool, recordVoice,

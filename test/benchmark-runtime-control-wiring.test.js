@@ -70,8 +70,8 @@ test("le redémarrage après cleanup ne ressuscite rien et n'auto-exécute aucun
   f = setup(identity); assert.equal(f.runtime.runtimeAuthorization.current().state, "REVOKED"); assert.equal(f.runtime.repository.getSession(prepared.session.id).state, "CANCELLED"); assert.equal(f.runtime.armingRepository.getArm(arm.armId).state, "CANCELLED"); assert.deepEqual(f.calls, { native: 0, codex: 0, provider: 0, spend: 0 }); f.database.close();
 });
 
-test("B4 conserve SQLite v15, ses tables canoniques et son intégrité", () => {
-  const f = setup(); assert.equal(SCHEMA_VERSION, 15); assert.equal(f.database.database.prepare("PRAGMA integrity_check").get().integrity_check, "ok"); for (const name of ["benchmark_arms", "benchmark_sessions", "benchmark_runs"]) assert.ok(f.database.database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name)); f.database.close();
+test("B4 conserve SQLite v16, ses tables canoniques et son intégrité", () => {
+  const f = setup(); assert.equal(SCHEMA_VERSION, 16); assert.equal(f.database.database.prepare("PRAGMA integrity_check").get().integrity_check, "ok"); for (const name of ["benchmark_arms", "benchmark_sessions", "benchmark_runs"]) assert.ok(f.database.database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name)); f.database.close();
 });
 
 test("B19A prépare un unique probe Codex figé sans modifier le pilote", async () => {

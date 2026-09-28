@@ -107,3 +107,90 @@ test("les flags DEV V2.7 sont OFF et réversibles par défaut", () => {
     assert.equal(flag.rollbackSafe, true);
   }
 });
+
+test("le score adaptatif ne s'applique qu'en mode explicitement activé", () => {
+  const normal = route({
+    adaptiveCandidateScores: {
+      "gpt-5.6-terra": { score: 10 },
+      "gemini-3.8-flash": { score: 99 },
+    },
+  });
+
+  assert.equal(normal.model, "gemini-3.8-flash");
+
+  const adaptive = route({
+    adaptiveRouting: true,
+    adaptiveCandidateScores: {
+      "gpt-5.6-terra": {
+        score: 99,
+        sampleCount: 20,
+        confidence: "high",
+      },
+      "gemini-3.8-flash": {
+        score: 10,
+        sampleCount: 20,
+        confidence: "high",
+      },
+    },
+  });
+
+  assert.equal(adaptive.model, "gpt-5.6-terra");
+  assert.ok(
+    adaptive.routingReasonCodes.includes("ADAPTIVE_EVIDENCE_SHADOW")
+  );
+});
+
+test("un score adaptatif ne peut jamais rendre éligible un modèle sous la qualité requise", () => {
+  const selected = route({
+    adaptiveRouting: true,
+    requiredQuality: "HIGH",
+    adaptiveCandidateScores: {
+      "gpt-5.6-luna": {
+        score: 100,
+        sampleCount: 100,
+        confidence: "high",
+      },
+      "gpt-5.6-sol": {
+        score: 1,
+        sampleCount: 100,
+        confidence: "high",
+      },
+    },
+  });
+
+  assert.equal(selected.model, "gpt-5.6-sol");
+  assert.ok(
+    selected.excludedCandidates
+      .find((item) => item.model === "gpt-5.6-luna")
+      .excludedReasonCodes.includes("QUALITY_INSUFFICIENT")
+  );
+});
+
+test("un score adaptatif ne contourne jamais privacy ou provider rollout", () => {
+  const selected = route({
+    adaptiveRouting: true,
+    eligibleProviders: ["openai"],
+    adaptiveCandidateScores: {
+      "gemini-3.8-flash": {
+        score: 100,
+        sampleCount: 100,
+        confidence: "high",
+      },
+      "gpt-5.6-terra": {
+        score: 1,
+        sampleCount: 100,
+        confidence: "high",
+      },
+    },
+  });
+
+  assert.equal(selected.provider, "openai");
+
+  const gemini = selected.excludedCandidates.find(
+    (item) => item.model === "gemini-3.8-flash"
+  );
+
+  assert.ok(
+    gemini.excludedReasonCodes.includes("PRIVACY_RESTRICTED")
+  );
+});

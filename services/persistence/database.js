@@ -5,7 +5,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const SCHEMA_VERSION = 15;
+const SCHEMA_VERSION = 16;
 
 function loadSqlite() {
   try { return require("node:sqlite"); }
@@ -213,6 +213,25 @@ function createSchema(database) {
     );
     CREATE INDEX IF NOT EXISTS review_period_idx
       ON review_records(subject_scope, review_type, period_start, period_end);
+    CREATE TABLE IF NOT EXISTS model_performance_samples (
+      id TEXT PRIMARY KEY,
+      task_domain TEXT NOT NULL,
+      required_quality TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      success INTEGER,
+      failure_category TEXT,
+      latency_ms REAL,
+      input_tokens INTEGER,
+      output_tokens INTEGER,
+      actual_cost REAL,
+      first_pass_success INTEGER,
+      fallback_used INTEGER NOT NULL DEFAULT 0,
+      escalation_used INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS model_performance_lookup_idx
+      ON model_performance_samples(task_domain, required_quality, provider, model, created_at);
     CREATE TABLE IF NOT EXISTS artifacts (
       artifact_id TEXT NOT NULL,
       version INTEGER NOT NULL,
@@ -509,7 +528,7 @@ function createFallback(filePath) {
   const fallbackPath = `${filePath}.fallback.json`;
   function load() {
     try { return JSON.parse(fs.readFileSync(fallbackPath, "utf8")); }
-    catch { return { version: SCHEMA_VERSION, memory_items: [], projects: [], inbox_items: [], recommendations: [], followups: [], feedback_events: [], metrics_events: [], pending_approvals: [], execution_items: [], execution_events: [], duration_statistics: [], review_records: [], artifacts: [], artifact_writes: [], workspaces: [], workspace_projects: [], workspace_roots: [], workspace_conversations: [], workspace_artifacts: [], workspace_active_state: [], continuity_sessions: [], continuity_checkpoints: [], conversation_segments: [], transactional_executions: [], transactional_execution_steps: [], background_jobs: [], sync_devices: [], sync_pairing_requests: [], sync_entities: [], sync_changes: [], sync_outbox: [], sync_applied_envelopes: [], sync_conflicts: [], sync_cursors: [], sync_remote_requests: [], remote_device_sessions: [], remote_requests: [], remote_outputs: [], remote_handoffs: [], remote_media_transfers: [], remote_approval_responses: [] }; }
+    catch { return { version: SCHEMA_VERSION, memory_items: [], projects: [], inbox_items: [], recommendations: [], followups: [], feedback_events: [], metrics_events: [], pending_approvals: [], execution_items: [], execution_events: [], duration_statistics: [], review_records: [], model_performance_samples: [], artifacts: [], artifact_writes: [], workspaces: [], workspace_projects: [], workspace_roots: [], workspace_conversations: [], workspace_artifacts: [], workspace_active_state: [], continuity_sessions: [], continuity_checkpoints: [], conversation_segments: [], transactional_executions: [], transactional_execution_steps: [], background_jobs: [], sync_devices: [], sync_pairing_requests: [], sync_entities: [], sync_changes: [], sync_outbox: [], sync_applied_envelopes: [], sync_conflicts: [], sync_cursors: [], sync_remote_requests: [], remote_device_sessions: [], remote_requests: [], remote_outputs: [], remote_handoffs: [], remote_media_transfers: [], remote_approval_responses: [] }; }
   }
   function save(data) {
     fs.mkdirSync(path.dirname(fallbackPath), { recursive: true });

@@ -21,7 +21,7 @@ function fixture() {
   return { directory, allowed, database, repository, engine, events };
 }
 
-test("le schéma Workspace, Session, Jobs, Sync, Remote et Benchmark est versionné", () => assert.equal(SCHEMA_VERSION, 15));
+test("le schéma Workspace, Session, Jobs, Sync, Remote et Benchmark est versionné", () => assert.equal(SCHEMA_VERSION, 16));
 
 test("crée, renomme et recharge un workspace avec un identifiant stable", () => {
   const f = fixture(); const created = f.engine.create({ name: "Client A", type: "client" });

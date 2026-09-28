@@ -92,6 +92,7 @@ const { createApprovalRepository } = require("./services/persistence/repositorie
 const { createTransactionalExecutionRepository } = require("./services/persistence/repositories/transactional-execution-repository");
 const { createExecutionTrackingRepository } = require("./services/persistence/repositories/execution-tracking-repository");
 const { createReviewLearningRepository } = require("./services/persistence/repositories/review-learning-repository");
+const { createModelPerformanceRepository } = require("./services/persistence/repositories/model-performance-repository");
 const { createArtifactRepository } = require("./services/persistence/repositories/artifact-repository");
 const { createWorkspaceRepository } = require("./services/persistence/repositories/workspace-repository");
 const { createSessionContinuityRepository } = require("./services/persistence/repositories/session-continuity-repository");
@@ -173,6 +174,8 @@ const { createDailyPlanStore } = require("./services/planning/daily-plan-store")
 const { createDailyPlanningEngine } = require("./services/planning/daily-planning-engine");
 const { createExecutionTrackingEngine } = require("./services/tracking/execution-tracking-engine");
 const { createReviewLearningEngine } = require("./services/review/review-learning-engine");
+const { createModelPerformanceEngine } = require("./services/learning/model-performance-engine");
+const { createAdaptiveRoutingService } = require("./services/learning/adaptive-routing-service");
 const { applyCompactionOptions, isCompactionCompatibilityError } = require("./services/openai/compaction-service");
 const { createBackgroundAnalysisService } = require("./services/openai/background-analysis");
 const { createJobRegistry } = require("./services/jobs/job-registry");
@@ -290,6 +293,7 @@ function selectConfiguredModelRoute(input = {}) {
   const geminiLimited = featureFlags.evaluate("router.gemini-limited", input);
   const secondOpinion = featureFlags.evaluate("router.second-opinion", input);
   const crossProviderFallback = featureFlags.evaluate("router.cross-provider-fallback", input);
+  const adaptiveLearning = featureFlags.evaluate("router.adaptive-learning", input);
   let astraAvailability = "UNKNOWN";
   try {
     const health = reliabilityEngine?.snapshot?.("gpt-6-astra");
@@ -339,9 +343,43 @@ function selectConfiguredModelRoute(input = {}) {
     return { ...active, astra: shadow.astra, shadowModel: shadow.model };
   }
   const route = selectModelRoute(astraInput);
+
+  if (adaptiveLearning.shadow) {
+    const adaptiveShadow = adaptiveRoutingService.evaluate(
+      {
+        ...astraInput,
+        taskDomain: input.taskDomain || route.taskDomain || "GENERAL",
+        requiredQuality: input.requiredQuality || route.requiredQuality || "NORMAL",
+      },
+      route,
+      { flagId: adaptiveLearning.flagId }
+    );
+
+    if (adaptiveShadow.shadowRoute) {
+      toolAuditLog.append("routing.adaptive_shadow", {
+        activeModel: route.model,
+        shadowModel: adaptiveShadow.shadowRoute.model,
+        status: adaptiveShadow.status,
+        sampleCount: adaptiveShadow.sampleCount,
+        evidenceCount: adaptiveShadow.evidenceCount,
+      });
+    }
+
+    return {
+      ...route,
+      adaptiveShadow: {
+        status: adaptiveShadow.status,
+        model: adaptiveShadow.shadowRoute?.model || null,
+        sampleCount: adaptiveShadow.sampleCount,
+        evidenceCount: adaptiveShadow.evidenceCount || 0,
+      },
+    };
+  }
+
   if (route.model === "gpt-6-astra") toolAuditLog.append("routing.astra_selected", {
     selectedModel: route.model, score: route.score, reasonCodes: route.reasonCodes, effort: route.effort,
   });
+
   return route;
 }
 const noonObservability = createNoonObservability({
@@ -536,6 +574,17 @@ const planningPreferenceStore = createPlanningPreferenceStore(path.join(DATA_DIR
 const dailyPlanStore = createDailyPlanStore(path.join(DATA_DIRECTORY, "daily-plans.json"));
 const longTermMemoryStore = createLongTermMemoryStore(path.join(DATA_DIRECTORY, "long-term-memory.json"));
 const personalDatabase = createPersonalDatabase(path.join(DATA_DIRECTORY, "personal-intelligence.sqlite"));
+const modelPerformanceRepository = createModelPerformanceRepository(personalDatabase);
+const modelPerformanceEngine = createModelPerformanceEngine({
+  repository: modelPerformanceRepository,
+});
+noonObservability.attachModelPerformanceEngine(modelPerformanceEngine);
+const adaptiveRoutingService = createAdaptiveRoutingService({
+  performanceEngine: modelPerformanceEngine,
+  selectModelRoute,
+  shadowComparator,
+  audit: (event, metadata) => toolAuditLog.append(event, metadata),
+});
 const runtimeCapabilityRegistry = createCapabilityRegistry([
   { capabilityId: "DETERMINISTIC_INTENT", provider: "IntentCommandEngine", executionLocation: "LOCAL_DETERMINISTIC", availability: "AVAILABLE", qualityClass: "FULL", supportsLocalOnly: true },
   { capabilityId: "LOCAL_FILES", provider: "filesystem", executionLocation: "LOCAL_DETERMINISTIC", availability: "AVAILABLE", qualityClass: "FULL", supportsLocalOnly: true },

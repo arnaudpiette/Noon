@@ -303,6 +303,11 @@ function createNoonOrchestrator({
               retryBackoffMs: retryEvents.reduce((sum, item) => sum + item.backoffMs, 0),
               usage: response.usage || null,
               routingMetadata: response.routingMetadata,
+              firstPassSuccess: round === 0 && providerAttemptCount === 1 && model === state.route.model,
+              fallbackUsed: model !== state.route.model,
+              escalationUsed:
+                state.route.reasonCodes?.includes("QUALITY_ESCALATION") === true ||
+                state.route.routingReasonCodes?.includes("QUALITY_ESCALATION") === true,
             });
             if (model !== state.route.model) {
               observability?.recordFallback(state.executionId, {
@@ -417,6 +422,11 @@ function createNoonOrchestrator({
               errorParam: String(error?.param || "").slice(0, 120) || null,
               usage: null,
               routingMetadata: attemptRequest.routingMetadata,
+              firstPassSuccess: false,
+              fallbackUsed: model !== state.route.model,
+              escalationUsed:
+                state.route.reasonCodes?.includes("QUALITY_ESCALATION") === true ||
+                state.route.routingReasonCodes?.includes("QUALITY_ESCALATION") === true,
             });
             if (attemptRequest.contextManagement && isCompactionCompatibilityError(error.cause || error)) {
               attemptRequest = { ...attemptRequest, contextManagement: undefined };
