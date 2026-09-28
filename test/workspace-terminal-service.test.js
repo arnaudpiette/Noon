@@ -1280,3 +1280,294 @@ test(
     );
   }
 );
+
+
+
+// TERMINAL COMPLETION #5.4D
+
+test(
+  "Terminal #5.4D propose les vrais scripts package.json sans lancer de process",
+  (context) => {
+    const data =
+      fixture(context);
+
+    fs.writeFileSync(
+      path.join(
+        data.root,
+        "package.json"
+      ),
+      JSON.stringify({
+        scripts: {
+          dev: "vite",
+          build: "vite build",
+          lint: "eslint .",
+          test: "node --test",
+        },
+      })
+    );
+
+    const session =
+      data.service.createSession({
+        workspaceId:
+          "workspace-test",
+      });
+
+    const result =
+      data.service.getCompletions({
+        sessionId:
+          session.id,
+        query:
+          "npm run d",
+      });
+
+    assert.deepEqual(
+      result.completions,
+      [
+        "npm run dev",
+      ]
+    );
+
+    assert.equal(
+      data.spawnCalls.length,
+      0
+    );
+  }
+);
+
+test(
+  "Terminal #5.4D complète fichiers et dossiers uniquement dans le repositoryRoot",
+  (context) => {
+    const data =
+      fixture(context);
+
+    fs.mkdirSync(
+      path.join(
+        data.root,
+        "src",
+        "components"
+      ),
+      {
+        recursive: true,
+      }
+    );
+
+    fs.writeFileSync(
+      path.join(
+        data.root,
+        "src",
+        "index.js"
+      ),
+      "module.exports = {};\n"
+    );
+
+    const session =
+      data.service.createSession({
+        workspaceId:
+          "workspace-test",
+      });
+
+    const result =
+      data.service.getCompletions({
+        sessionId:
+          session.id,
+        query:
+          "src/",
+      });
+
+    assert.ok(
+      result.completions.includes(
+        "src/components/"
+      )
+    );
+
+    assert.ok(
+      result.completions.includes(
+        "src/index.js"
+      )
+    );
+
+    const cdResult =
+      data.service.getCompletions({
+        sessionId:
+          session.id,
+        query:
+          "cd s",
+      });
+
+    assert.ok(
+      cdResult.completions.includes(
+        "cd src/"
+      )
+    );
+
+    assert.equal(
+      data.spawnCalls.length,
+      0
+    );
+  }
+);
+
+test(
+  "Terminal #5.4D exclut métadonnées, dépendances et fichiers sensibles",
+  (context) => {
+    const data =
+      fixture(context);
+
+    fs.mkdirSync(
+      path.join(
+        data.root,
+        ".git"
+      )
+    );
+
+    fs.mkdirSync(
+      path.join(
+        data.root,
+        "node_modules"
+      )
+    );
+
+    fs.writeFileSync(
+      path.join(
+        data.root,
+        ".env"
+      ),
+      "SECRET=value\n"
+    );
+
+    fs.writeFileSync(
+      path.join(
+        data.root,
+        "token.pem"
+      ),
+      "secret\n"
+    );
+
+    fs.mkdirSync(
+      path.join(
+        data.root,
+        "src"
+      )
+    );
+
+    const session =
+      data.service.createSession({
+        workspaceId:
+          "workspace-test",
+      });
+
+    const result =
+      data.service.getCompletions({
+        sessionId:
+          session.id,
+        query:
+          "./",
+      });
+
+    const serialized =
+      JSON.stringify(
+        result.completions
+      );
+
+    assert.doesNotMatch(
+      serialized,
+      /\.git/
+    );
+
+    assert.doesNotMatch(
+      serialized,
+      /node_modules/
+    );
+
+    assert.doesNotMatch(
+      serialized,
+      /\.env/
+    );
+
+    assert.doesNotMatch(
+      serialized,
+      /token\.pem/
+    );
+
+    assert.match(
+      serialized,
+      /src\//
+    );
+  }
+);
+
+test(
+  "Terminal #5.4D refuse traversée parent et symlink sortant du repo",
+  (context) => {
+    const data =
+      fixture(context);
+
+    fs.mkdirSync(
+      path.join(
+        data.foreignRoot,
+        "private"
+      )
+    );
+
+    fs.symlinkSync(
+      data.foreignRoot,
+      path.join(
+        data.root,
+        "escape"
+      )
+    );
+
+    fs.mkdirSync(
+      path.join(
+        data.root,
+        "safe"
+      )
+    );
+
+    const session =
+      data.service.createSession({
+        workspaceId:
+          "workspace-test",
+      });
+
+    const traversal =
+      data.service.getCompletions({
+        sessionId:
+          session.id,
+        query:
+          "cd ../",
+      });
+
+    assert.deepEqual(
+      traversal.completions,
+      []
+    );
+
+    const rootResult =
+      data.service.getCompletions({
+        sessionId:
+          session.id,
+        query:
+          "./",
+      });
+
+    assert.ok(
+      rootResult.completions.includes(
+        "./safe/"
+      )
+    );
+
+    assert.equal(
+      rootResult.completions.some(
+        (item) =>
+          item.includes("escape")
+      ),
+      false
+    );
+
+    assert.equal(
+      data.spawnCalls.length,
+      0
+    );
+  }
+);

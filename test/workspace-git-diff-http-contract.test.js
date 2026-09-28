@@ -31,7 +31,7 @@ function gitDiffRoutes() {
 
   const end =
     source.indexOf(
-      "const devTerminalCreate =",
+      "const devTerminalCompletionsRead =",
       start
     );
 

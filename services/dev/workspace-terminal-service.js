@@ -2,6 +2,7 @@
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const path = require("node:path");
 const { spawn, execFileSync } = require("node:child_process");
 
 const { redactSecrets } = require("../security/redaction");
@@ -1375,6 +1376,424 @@ function createDevWorkspaceTerminalService({
     return result;
   }
 
+  function completionEntryAllowed(
+    name
+  ) {
+    const value =
+      String(name || "");
+
+    if (!value) {
+      return false;
+    }
+
+    if (
+      value === ".git" ||
+      value === "node_modules" ||
+      value === ".DS_Store"
+    ) {
+      return false;
+    }
+
+    if (
+      /^\.env(?:\.|$)/i.test(value) ||
+      /^(?:id_rsa|id_ed25519)$/i.test(value) ||
+      /\.(?:pem|key|p12|pfx)$/i.test(value)
+    ) {
+      return false;
+    }
+
+    if (
+      /(?:^|[._-])(?:secret|secrets|credential|credentials|token|tokens)(?:[._-]|$)/i.test(
+        value
+      )
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
+  function realPathInsideRepository(
+    repositoryRoot,
+    requestedPath
+  ) {
+    const rootReal =
+      fs.realpathSync(
+        repositoryRoot
+      );
+
+    const resolved =
+      path.resolve(
+        rootReal,
+        requestedPath || "."
+      );
+
+    if (
+      resolved !== rootReal &&
+      !resolved.startsWith(
+        rootReal + path.sep
+      )
+    ) {
+      return null;
+    }
+
+    let real;
+
+    try {
+      real =
+        fs.realpathSync(
+          resolved
+        );
+    } catch {
+      return null;
+    }
+
+    if (
+      real !== rootReal &&
+      !real.startsWith(
+        rootReal + path.sep
+      )
+    ) {
+      return null;
+    }
+
+    return real;
+  }
+
+  function readPackageScripts(
+    repositoryRoot
+  ) {
+    const packagePath =
+      realPathInsideRepository(
+        repositoryRoot,
+        "package.json"
+      );
+
+    if (!packagePath) {
+      return [];
+    }
+
+    try {
+      const stat =
+        fs.statSync(
+          packagePath
+        );
+
+      if (
+        !stat.isFile() ||
+        stat.size > 512 * 1024
+      ) {
+        return [];
+      }
+
+      const parsed =
+        JSON.parse(
+          fs.readFileSync(
+            packagePath,
+            "utf8"
+          )
+        );
+
+      if (
+        !parsed?.scripts ||
+        typeof parsed.scripts !==
+          "object"
+      ) {
+        return [];
+      }
+
+      return Object.keys(
+        parsed.scripts
+      )
+        .filter(
+          (name) =>
+            typeof name === "string" &&
+            name.trim()
+        )
+        .slice(0, 80);
+    } catch {
+      return [];
+    }
+  }
+
+  function listRepositoryCompletions({
+    repositoryRoot,
+    query,
+  }) {
+    const value =
+      String(query || "")
+        .slice(0, 1000);
+
+    const trimmed =
+      value.trim();
+
+    if (!trimmed) {
+      return [];
+    }
+
+    const suggestions = [];
+    const seen = new Set();
+
+    const add = (candidate) => {
+      const item =
+        String(candidate || "");
+
+      if (
+        !item ||
+        seen.has(item)
+      ) {
+        return;
+      }
+
+      seen.add(item);
+      suggestions.push(item);
+    };
+
+    // ------------------------------------------
+    // npm run <script>
+    // ------------------------------------------
+
+    const lower =
+      trimmed.toLowerCase();
+
+    for (
+      const script of
+      readPackageScripts(
+        repositoryRoot
+      )
+    ) {
+      const candidate =
+        `npm run ${script}`;
+
+      if (
+        candidate
+          .toLowerCase()
+          .startsWith(lower)
+      ) {
+        add(candidate);
+      }
+    }
+
+    // npm test est une forme spéciale courante.
+    if (
+      "npm test".startsWith(lower)
+    ) {
+      add("npm test");
+    }
+
+    // ------------------------------------------
+    // Fichiers / dossiers repo-only
+    // ------------------------------------------
+
+    const pathCommand =
+      /^(?:cd|ls|cat|less|head|tail|node|python|python3|open|code|vim|nano)\s+/i.test(
+        trimmed
+      );
+
+    const tokenMatch =
+      value.match(
+        /([^\s]+)$/
+      );
+
+    const token =
+      tokenMatch
+        ? tokenMatch[1]
+        : "";
+
+    const standalonePath =
+      token === trimmed &&
+      (
+        token.startsWith(".") ||
+        token.includes("/")
+      );
+
+    if (
+      token &&
+      (
+        pathCommand ||
+        standalonePath
+      )
+    ) {
+      const slashIndex =
+        token.lastIndexOf("/");
+
+      const directoryToken =
+        slashIndex >= 0
+          ? token.slice(
+              0,
+              slashIndex + 1
+            )
+          : "";
+
+      const basename =
+        slashIndex >= 0
+          ? token.slice(
+              slashIndex + 1
+            )
+          : token;
+
+      const directory =
+        realPathInsideRepository(
+          repositoryRoot,
+          directoryToken || "."
+        );
+
+      if (directory) {
+        try {
+          const entries =
+            fs.readdirSync(
+              directory,
+              {
+                withFileTypes: true,
+              }
+            )
+              .filter((entry) =>
+                completionEntryAllowed(
+                  entry.name
+                )
+              )
+              .sort(
+                (a, b) => {
+                  const ad =
+                    a.isDirectory()
+                      ? 0
+                      : 1;
+
+                  const bd =
+                    b.isDirectory()
+                      ? 0
+                      : 1;
+
+                  if (ad !== bd) {
+                    return ad - bd;
+                  }
+
+                  return a.name.localeCompare(
+                    b.name
+                  );
+                }
+              )
+              .slice(0, 120);
+
+          const commandPrefix =
+            value.slice(
+              0,
+              value.length -
+                token.length
+            );
+
+          for (
+            const entry of entries
+          ) {
+            if (
+              basename &&
+              !entry.name
+                .toLowerCase()
+                .startsWith(
+                  basename.toLowerCase()
+                )
+            ) {
+              continue;
+            }
+
+            const lexicalChild =
+              path.join(
+                directory,
+                entry.name
+              );
+
+            const realChild =
+              realPathInsideRepository(
+                repositoryRoot,
+                path.relative(
+                  repositoryRoot,
+                  lexicalChild
+                )
+              );
+
+            // Symlink hors repo = ignoré.
+            if (!realChild) {
+              continue;
+            }
+
+            let directoryEntry =
+              entry.isDirectory();
+
+            if (
+              entry.isSymbolicLink()
+            ) {
+              try {
+                directoryEntry =
+                  fs.statSync(
+                    realChild
+                  ).isDirectory();
+              } catch {
+                continue;
+              }
+            }
+
+            const completedToken =
+              `${directoryToken}${entry.name}${
+                directoryEntry
+                  ? "/"
+                  : ""
+              }`;
+
+            add(
+              commandPrefix +
+                completedToken
+            );
+
+            if (
+              suggestions.length >= 40
+            ) {
+              break;
+            }
+          }
+        } catch {
+          // Completion ergonomique seulement :
+          // une lecture impossible ne bloque pas le terminal.
+        }
+      }
+    }
+
+    return suggestions.slice(
+      0,
+      40
+    );
+  }
+
+  function getCompletions(
+    input = {}
+  ) {
+    const session =
+      requireSession(
+        input.sessionId
+      );
+
+    const completions =
+      listRepositoryCompletions({
+        repositoryRoot:
+          session.repositoryRoot,
+        query:
+          input.query,
+      });
+
+    emit(
+      "dev_terminal_completion_read",
+      {
+        workspaceId:
+          session.workspaceId,
+        count:
+          completions.length,
+      }
+    );
+
+    return {
+      completions,
+    };
+  }
+
   function closeSession(id) {
     const session =
       requireSession(id);
@@ -1418,6 +1837,7 @@ function createDevWorkspaceTerminalService({
       ),
     inspectGitDiff,
     readGitDiff,
+    getCompletions,
     createTerminal,
     runCommand,
     poll,

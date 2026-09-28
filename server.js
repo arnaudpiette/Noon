@@ -8664,6 +8664,64 @@ if (
   }
 }
 
+const devTerminalCompletionsRead =
+  requestPath.match(
+    /^\/api\/dev\/workspace-terminal\/sessions\/([^/]+)\/completions$/
+  );
+
+if (
+  devTerminalCompletionsRead &&
+  req.method === "GET"
+) {
+  try {
+    requireTrustedDevUi(req);
+
+    const sessionId =
+      decodeURIComponent(
+        devTerminalCompletionsRead[1]
+      );
+
+    const requestUrl =
+      new URL(
+        req.url,
+        "http://127.0.0.1"
+      );
+
+    const query =
+      requestUrl.searchParams
+        .get("q") || "";
+
+    const completion =
+      devWorkspaceTerminalService
+        .getCompletions({
+          sessionId,
+          query,
+        });
+
+    res.writeHead(
+      200,
+      {
+        "Content-Type":
+          "application/json",
+        "Cache-Control":
+          "no-store",
+      }
+    );
+
+    return res.end(
+      JSON.stringify({
+        status: "ok",
+        ...completion,
+      })
+    );
+  } catch (error) {
+    return sendDevTerminalError(
+      res,
+      error
+    );
+  }
+}
+
 const devTerminalCreate =
   requestPath.match(
     /^\/api\/dev\/workspace-terminal\/sessions\/([^/]+)\/terminals$/

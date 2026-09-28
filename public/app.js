@@ -38,6 +38,9 @@ const devTerminalProject = document.getElementById("devTerminalProject");
 const devTerminalMeta = document.getElementById("devTerminalMeta");
 const devTerminalTabs = document.getElementById("devTerminalTabs");
 const devTerminalOutput = document.getElementById("devTerminalOutput");
+const devTerminalJumpBottomButton = document.getElementById(
+  "devTerminalJumpBottom"
+);
 const devTerminalForm = document.getElementById("devTerminalForm");
 const devTerminalInput = document.getElementById("devTerminalInput");
 const devTerminalRun = document.getElementById("devTerminalRun");
@@ -1758,6 +1761,138 @@ function loadDevTerminalHistory() {
 }
 // DEV_TERMINAL_V2_END
 
+const DEV_TERMINAL_LAYOUT_STORAGE_PREFIX =
+  "noon-dev-terminal-layout:";
+
+const DEV_TERMINAL_RESTORE_MAX = 9;
+
+function devTerminalLayoutStorageKey(
+  contextKey
+) {
+  if (!contextKey) {
+    return null;
+  }
+
+  return (
+    DEV_TERMINAL_LAYOUT_STORAGE_PREFIX +
+    contextKey
+  );
+}
+
+function getUserDevTerminals() {
+  return [
+    ...devTerminalState.terminals.values(),
+  ].filter((terminal) =>
+    /^USER \d+$/.test(
+      String(terminal?.title || "")
+    )
+  );
+}
+
+function persistDevTerminalLayout() {
+  const contextKey =
+    devTerminalState.contextKey;
+
+  const key =
+    devTerminalLayoutStorageKey(
+      contextKey
+    );
+
+  if (!key) {
+    return;
+  }
+
+  const userTerminals =
+    getUserDevTerminals();
+
+  if (!userTerminals.length) {
+    localStorage.removeItem(key);
+    return;
+  }
+
+  const foundActiveIndex =
+    userTerminals.findIndex(
+      (terminal) =>
+        terminal.id ===
+        devTerminalState.activeTerminalId
+    );
+
+  const activeIndex =
+    foundActiveIndex >= 0
+      ? foundActiveIndex
+      : 0;
+
+  try {
+    localStorage.setItem(
+      key,
+      JSON.stringify({
+        userCount: Math.min(
+          userTerminals.length,
+          DEV_TERMINAL_RESTORE_MAX
+        ),
+        activeIndex: Math.min(
+          activeIndex,
+          DEV_TERMINAL_RESTORE_MAX - 1
+        ),
+      })
+    );
+  } catch {
+    // Persistance uniquement ergonomique.
+  }
+}
+
+function loadDevTerminalLayout(
+  contextKey
+) {
+  const key =
+    devTerminalLayoutStorageKey(
+      contextKey
+    );
+
+  if (!key) {
+    return {
+      userCount: 1,
+      activeIndex: 0,
+    };
+  }
+
+  try {
+    const parsed =
+      JSON.parse(
+        localStorage.getItem(key) ||
+        "{}"
+      );
+
+    const userCount =
+      Math.max(
+        1,
+        Math.min(
+          DEV_TERMINAL_RESTORE_MAX,
+          Number(parsed.userCount) || 1
+        )
+      );
+
+    const activeIndex =
+      Math.max(
+        0,
+        Math.min(
+          userCount - 1,
+          Number(parsed.activeIndex) || 0
+        )
+      );
+
+    return {
+      userCount,
+      activeIndex,
+    };
+  } catch {
+    return {
+      userCount: 1,
+      activeIndex: 0,
+    };
+  }
+}
+
 const devTerminalState = {
   session: null,
   problems: null,
@@ -1766,6 +1901,7 @@ const devTerminalState = {
   offsetByTerminal: new Map(),
   scrollByTerminal: new Map(),
   followOutputByTerminal: new Map(),
+  pendingOutputByTerminal: new Map(),
   activeTerminalId: null,
   contextKey: null,
   lastAuthorizedValidationCommand: null,
@@ -1780,6 +1916,9 @@ const devTerminalState = {
   history: loadDevTerminalHistory(),
   historyIndex: null,
   historyDraft: "",
+  completionItems: [],
+  completionIndex: -1,
+  completionQuery: "",
   resizing: false,
   resizeStartY: 0,
   resizeStartHeight: 0,
@@ -3376,6 +3515,391 @@ function toggleDevTerminalMaximized() {
   });
 }
 
+const DEV_TERMINAL_STATIC_COMPLETIONS = [
+  "npm test",
+  "npm run dev",
+  "npm run build",
+  "npm run lint",
+  "npm run start",
+  "npm run preview",
+  "npm install",
+  "npm ci",
+  "node --test",
+  "git status",
+  "git diff",
+  "git diff --staged",
+  "git log --oneline -10",
+  "git branch",
+  "git switch",
+  "git checkout",
+  "git restore",
+  "git show",
+  "git fetch",
+  "git pull",
+  "git add",
+  "git commit",
+  "git push",
+  "pwd",
+  "ls",
+  "ls -la",
+];
+
+const devTerminalCompletionPopup =
+  document.createElement("div");
+
+devTerminalCompletionPopup.className =
+  "dev-terminal-completion";
+
+devTerminalCompletionPopup.hidden =
+  true;
+
+devTerminalCompletionPopup.setAttribute(
+  "role",
+  "listbox"
+);
+
+devTerminalCompletionPopup.setAttribute(
+  "aria-label",
+  "Suggestions de commandes"
+);
+
+devTerminalForm.append(
+  devTerminalCompletionPopup
+);
+
+function closeDevTerminalCompletion() {
+  devTerminalState.completionItems = [];
+  devTerminalState.completionIndex = -1;
+  devTerminalState.completionQuery = "";
+
+  devTerminalCompletionPopup.hidden =
+    true;
+
+  devTerminalCompletionPopup.replaceChildren();
+}
+
+function devTerminalCompletionCandidates(
+  query
+) {
+  const normalized =
+    String(query || "").trim();
+
+  if (!normalized) {
+    return [];
+  }
+
+  const lower =
+    normalized.toLowerCase();
+
+  const values = [
+    ...[...devTerminalState.history].reverse(),
+    ...DEV_TERMINAL_STATIC_COMPLETIONS,
+  ];
+
+  const seen =
+    new Set();
+
+  const results = [];
+
+  for (const value of values) {
+    const candidate =
+      String(value || "").trim();
+
+    if (
+      !candidate ||
+      candidate === normalized ||
+      !candidate
+        .toLowerCase()
+        .startsWith(lower)
+    ) {
+      continue;
+    }
+
+    const key =
+      candidate.toLowerCase();
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    results.push(candidate);
+
+    if (results.length >= 8) {
+      break;
+    }
+  }
+
+  return results;
+}
+
+function renderDevTerminalCompletion() {
+  devTerminalCompletionPopup.replaceChildren();
+
+  const items =
+    devTerminalState.completionItems;
+
+  if (!items.length) {
+    devTerminalCompletionPopup.hidden =
+      true;
+    return;
+  }
+
+  items.forEach(
+    (value, index) => {
+      const option =
+        document.createElement("button");
+
+      option.type = "button";
+      option.className =
+        "dev-terminal-completion-item";
+
+      option.dataset.active =
+        String(
+          index ===
+            devTerminalState.completionIndex
+        );
+
+      option.setAttribute(
+        "role",
+        "option"
+      );
+
+      option.setAttribute(
+        "aria-selected",
+        String(
+          index ===
+            devTerminalState.completionIndex
+        )
+      );
+
+      option.textContent =
+        value;
+
+      option.addEventListener(
+        "pointerdown",
+        (event) => {
+          event.preventDefault();
+
+          devTerminalInput.value =
+            value;
+
+          closeDevTerminalCompletion();
+
+          devTerminalInput.focus();
+        }
+      );
+
+      devTerminalCompletionPopup.append(
+        option
+      );
+    }
+  );
+
+  devTerminalCompletionPopup.hidden =
+    false;
+
+  const active =
+    devTerminalCompletionPopup.querySelector(
+      '[data-active="true"]'
+    );
+
+  active?.scrollIntoView({
+    block: "nearest",
+  });
+}
+
+async function fetchDevTerminalProjectCompletions(
+  query
+) {
+  const sessionId =
+    devTerminalState.session?.id;
+
+  if (
+    !sessionId ||
+    !query
+  ) {
+    return [];
+  }
+
+  try {
+    const data =
+      await devTerminalRequest(
+        `/api/dev/workspace-terminal/sessions/${
+          encodeURIComponent(
+            sessionId
+          )
+        }/completions?q=${
+          encodeURIComponent(
+            query
+          )
+        }`
+      );
+
+    return Array.isArray(
+      data.completions
+    )
+      ? data.completions
+          .filter(
+            (item) =>
+              typeof item ===
+                "string" &&
+              item.trim()
+          )
+          .slice(0, 40)
+      : [];
+  } catch {
+    // L'autocomplétion ne doit jamais
+    // empêcher l'usage normal du terminal.
+    return [];
+  }
+}
+
+function applyDevTerminalCompletionValue() {
+  const selected =
+    devTerminalState.completionItems[
+      devTerminalState.completionIndex
+    ];
+
+  if (!selected) {
+    return;
+  }
+
+  devTerminalInput.value =
+    selected;
+
+  devTerminalInput.setSelectionRange(
+    selected.length,
+    selected.length
+  );
+
+  renderDevTerminalCompletion();
+}
+
+async function cycleDevTerminalCompletion(
+  direction = 1
+) {
+  const currentQuery =
+    devTerminalInput.value;
+
+  const currentPathToken =
+    String(currentQuery || "")
+      .trim()
+      .split(/\s+/)
+      .at(-1) || "";
+
+  const currentHasParentTraversal =
+    currentPathToken
+      .split("/")
+      .includes("..");
+
+  if (currentHasParentTraversal) {
+    closeDevTerminalCompletion();
+    return false;
+  }
+
+  // Popup déjà ouverte :
+  // on navigue dans les résultats existants.
+  if (
+    !devTerminalCompletionPopup.hidden &&
+    devTerminalState.completionItems.length
+  ) {
+    const length =
+      devTerminalState.completionItems.length;
+
+    devTerminalState.completionIndex =
+      (
+        devTerminalState.completionIndex +
+        direction +
+        length
+      ) % length;
+
+    applyDevTerminalCompletionValue();
+
+    return true;
+  }
+
+  const query =
+    devTerminalInput.value;
+
+  const pathToken =
+    String(query || "")
+      .trim()
+      .split(/\s+/)
+      .at(-1) || "";
+
+  const hasParentTraversal =
+    pathToken
+      .split("/")
+      .includes("..");
+
+  const localItems =
+    hasParentTraversal
+      ? []
+      : devTerminalCompletionCandidates(
+          query
+        );
+
+  const projectItems =
+    hasParentTraversal
+      ? []
+      : await fetchDevTerminalProjectCompletions(
+          query
+        );
+
+  const seen =
+    new Set();
+
+  const items = [];
+
+  for (
+    const item of [
+      ...projectItems,
+      ...localItems,
+    ]
+  ) {
+    const value =
+      String(item || "").trim();
+
+    const key =
+      value.toLowerCase();
+
+    if (
+      !value ||
+      seen.has(key)
+    ) {
+      continue;
+    }
+
+    seen.add(key);
+    items.push(value);
+
+    if (items.length >= 12) {
+      break;
+    }
+  }
+
+  if (!items.length) {
+    closeDevTerminalCompletion();
+    return false;
+  }
+
+  devTerminalState.completionItems =
+    items;
+
+  devTerminalState.completionQuery =
+    query;
+
+  devTerminalState.completionIndex =
+    direction < 0
+      ? items.length - 1
+      : 0;
+
+  applyDevTerminalCompletionValue();
+
+  return true;
+}
+
 function persistDevTerminalHistory() {
   localStorage.setItem(
     DEV_TERMINAL_HISTORY_STORAGE_KEY,
@@ -3566,6 +4090,105 @@ function rememberDevTerminalScrollState() {
   );
 }
 
+function devTerminalPendingOutputCount(
+  terminalId =
+    devTerminalState.activeTerminalId
+) {
+  if (!terminalId) {
+    return 0;
+  }
+
+  return (
+    devTerminalState.pendingOutputByTerminal.get(
+      terminalId
+    ) || 0
+  );
+}
+
+function renderDevTerminalJumpBottom() {
+  const terminalId =
+    devTerminalState.activeTerminalId;
+
+  if (
+    !terminalId ||
+    !devTerminalJumpBottomButton
+  ) {
+    return;
+  }
+
+  const following =
+    devTerminalState.followOutputByTerminal.get(
+      terminalId
+    ) !== false;
+
+  const count =
+    devTerminalPendingOutputCount(
+      terminalId
+    );
+
+  devTerminalJumpBottomButton.hidden =
+    following;
+
+  devTerminalJumpBottomButton.textContent =
+    count > 0
+      ? `↓ ${count} nouvelle${
+          count > 1
+            ? "s"
+            : ""
+        } sortie${
+          count > 1
+            ? "s"
+            : ""
+        }`
+      : "↓ Revenir en bas";
+}
+
+function resetDevTerminalPendingOutput(
+  terminalId =
+    devTerminalState.activeTerminalId
+) {
+  if (!terminalId) {
+    return;
+  }
+
+  devTerminalState.pendingOutputByTerminal.set(
+    terminalId,
+    0
+  );
+
+  renderDevTerminalJumpBottom();
+}
+
+function followDevTerminalOutput() {
+  const terminalId =
+    devTerminalState.activeTerminalId;
+
+  if (!terminalId) {
+    return;
+  }
+
+  devTerminalState.followOutputByTerminal.set(
+    terminalId,
+    true
+  );
+
+  devTerminalState.scrollByTerminal.set(
+    terminalId,
+    devTerminalOutput.scrollHeight
+  );
+
+  resetDevTerminalPendingOutput(
+    terminalId
+  );
+
+  renderDevTerminalOutput();
+
+  devTerminalOutput.scrollTop =
+    devTerminalOutput.scrollHeight;
+
+  rememberDevTerminalScrollState();
+}
+
 function getActiveDevTerminalOutputText() {
   const terminalId =
     devTerminalState.activeTerminalId;
@@ -3750,19 +4373,39 @@ function renderDevTerminalOutput() {
   if (shouldFollow) {
     devTerminalOutput.scrollTop =
       devTerminalOutput.scrollHeight;
+
+    devTerminalState.pendingOutputByTerminal.set(
+      terminalId,
+      0
+    );
   } else {
     devTerminalOutput.scrollTop =
       savedScrollTop;
   }
+
+  renderDevTerminalJumpBottom();
 }
 
 devTerminalOutput.addEventListener(
   "scroll",
   () => {
     rememberDevTerminalScrollState();
+
+    if (isDevTerminalNearBottom()) {
+      resetDevTerminalPendingOutput();
+    } else {
+      renderDevTerminalJumpBottom();
+    }
   },
   {
     passive: true,
+  }
+);
+
+devTerminalJumpBottomButton.addEventListener(
+  "click",
+  () => {
+    followDevTerminalOutput();
   }
 );
 
@@ -3825,6 +4468,108 @@ function updateDevTerminalHeader() {
     `${branch}${dirty}`;
 }
 
+function devTerminalIds() {
+  return [
+    ...devTerminalState.terminals.keys(),
+  ];
+}
+
+function activateDevTerminal(
+  terminalId,
+  {
+    focusTab = false,
+  } = {}
+) {
+  if (
+    !terminalId ||
+    !devTerminalState.terminals.has(
+      terminalId
+    )
+  ) {
+    return false;
+  }
+
+  if (
+    devTerminalState.activeTerminalId &&
+    devTerminalState.activeTerminalId !==
+      terminalId
+  ) {
+    rememberDevTerminalScrollState();
+  }
+
+  devTerminalState.activeTerminalId =
+    terminalId;
+
+  persistDevTerminalLayout();
+
+  renderDevTerminalTabs();
+  renderDevTerminalOutput();
+
+  void pollActiveDevTerminal();
+
+  if (focusTab) {
+    const activeTab =
+      devTerminalTabs.querySelector(
+        '.dev-terminal-tab[data-active="true"]'
+      );
+
+    activeTab?.focus();
+  }
+
+  return true;
+}
+
+function moveDevTerminalSelection(
+  direction,
+  {
+    focusTab = false,
+  } = {}
+) {
+  const ids =
+    devTerminalIds();
+
+  if (!ids.length) {
+    return false;
+  }
+
+  const currentIndex =
+    Math.max(
+      0,
+      ids.indexOf(
+        devTerminalState.activeTerminalId
+      )
+    );
+
+  let nextIndex;
+
+  if (direction === "first") {
+    nextIndex = 0;
+  } else if (direction === "last") {
+    nextIndex =
+      ids.length - 1;
+  } else {
+    const delta =
+      direction < 0
+        ? -1
+        : 1;
+
+    nextIndex =
+      (
+        currentIndex +
+        delta +
+        ids.length
+      ) %
+      ids.length;
+  }
+
+  return activateDevTerminal(
+    ids[nextIndex],
+    {
+      focusTab,
+    }
+  );
+}
+
 function renderDevTerminalTabs() {
   devTerminalTabs.replaceChildren();
 
@@ -3864,6 +4609,78 @@ function renderDevTerminalTabs() {
       )
     );
 
+    select.dataset.terminalId =
+      terminal.id;
+
+    select.tabIndex =
+      terminal.id ===
+      devTerminalState.activeTerminalId
+        ? 0
+        : -1;
+
+    select.addEventListener(
+      "keydown",
+      (event) => {
+        if (
+          event.key === "ArrowLeft"
+        ) {
+          event.preventDefault();
+
+          moveDevTerminalSelection(
+            -1,
+            {
+              focusTab: true,
+            }
+          );
+
+          return;
+        }
+
+        if (
+          event.key === "ArrowRight"
+        ) {
+          event.preventDefault();
+
+          moveDevTerminalSelection(
+            1,
+            {
+              focusTab: true,
+            }
+          );
+
+          return;
+        }
+
+        if (
+          event.key === "Home"
+        ) {
+          event.preventDefault();
+
+          moveDevTerminalSelection(
+            "first",
+            {
+              focusTab: true,
+            }
+          );
+
+          return;
+        }
+
+        if (
+          event.key === "End"
+        ) {
+          event.preventDefault();
+
+          moveDevTerminalSelection(
+            "last",
+            {
+              focusTab: true,
+            }
+          );
+        }
+      }
+    );
+
     const state =
       terminal.running
         ? "RUNNING"
@@ -3875,13 +4692,9 @@ function renderDevTerminalTabs() {
     select.addEventListener(
       "click",
       () => {
-        devTerminalState.activeTerminalId =
-          terminal.id;
-
-        renderDevTerminalTabs();
-        renderDevTerminalOutput();
-
-        void pollActiveDevTerminal();
+        activateDevTerminal(
+          terminal.id
+        );
       }
     );
 
@@ -4011,6 +4824,8 @@ async function createDevTerminal() {
   applyDevTerminal(terminal);
   renderDevTerminalOutput();
 
+  persistDevTerminalLayout();
+
   devTerminalInput.focus();
 
   return terminal;
@@ -4051,14 +4866,34 @@ async function pollActiveDevTerminal() {
       Array.isArray(data.output) &&
       data.output.length
     ) {
+      const publicOutput =
+        data.output.filter(
+          (event) =>
+            event?.type !== "input"
+        );
+
       devTerminalBuffer(
         terminalId
       ).push(
-        ...data.output.filter(
-          (event) =>
-            event?.type !== "input"
-        )
+        ...publicOutput
       );
+
+      const following =
+        devTerminalState.followOutputByTerminal.get(
+          terminalId
+        ) !== false;
+
+      if (
+        publicOutput.length &&
+        !following
+      ) {
+        devTerminalState.pendingOutputByTerminal.set(
+          terminalId,
+          devTerminalPendingOutputCount(
+            terminalId
+          ) + publicOutput.length
+        );
+      }
     }
 
     devTerminalState.offsetByTerminal.set(
@@ -4201,12 +5036,15 @@ async function closeDevTerminalSession({
   });
   clearDevWorkspaceAgent();
 
+  persistDevTerminalLayout();
+
   devTerminalState.session = null;
   devTerminalState.terminals.clear();
   devTerminalState.outputByTerminal.clear();
   devTerminalState.offsetByTerminal.clear();
   devTerminalState.scrollByTerminal.clear();
   devTerminalState.followOutputByTerminal.clear();
+  devTerminalState.pendingOutputByTerminal.clear();
   devTerminalState.activeTerminalId = null;
   devTerminalState.contextKey = null;
   clearLastAuthorizedDevValidation();
@@ -4289,7 +5127,45 @@ async function openDevTerminalSession(
     data.session.problems
   );
 
-  await createDevTerminal();
+  const restoredLayout =
+    loadDevTerminalLayout(
+      devTerminalState.contextKey
+    );
+
+  const restoredUserTerminals =
+    [];
+
+  for (
+    let index = 0;
+    index < restoredLayout.userCount;
+    index += 1
+  ) {
+    const terminal =
+      await createDevTerminal();
+
+    if (terminal) {
+      restoredUserTerminals.push(
+        terminal
+      );
+    }
+  }
+
+  const restoredActiveTerminal =
+    restoredUserTerminals[
+      restoredLayout.activeIndex
+    ] ||
+    restoredUserTerminals[0] ||
+    null;
+
+  if (restoredActiveTerminal) {
+    devTerminalState.activeTerminalId =
+      restoredActiveTerminal.id;
+
+    persistDevTerminalLayout();
+
+    renderDevTerminalTabs();
+    renderDevTerminalOutput();
+  }
 
   startDevTerminalPolling();
 
@@ -4472,6 +5348,8 @@ devTerminalForm.addEventListener(
 
     if (!command) return;
 
+    closeDevTerminalCompletion();
+
     if (
       !session ||
       !terminalId
@@ -4587,11 +5465,39 @@ devTerminalInput.addEventListener(
   "keydown",
   (event) => {
     if (
+      event.key === "Tab" &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey
+    ) {
+      event.preventDefault();
+
+      void cycleDevTerminalCompletion(
+        event.shiftKey
+          ? -1
+          : 1
+      );
+
+      return;
+    }
+
+    if (
+      event.key === "Escape" &&
+      !devTerminalCompletionPopup.hidden
+    ) {
+      event.preventDefault();
+      closeDevTerminalCompletion();
+      return;
+    }
+
+    if (
       event.key === "ArrowUp" &&
       !event.metaKey &&
       !event.ctrlKey &&
       !event.altKey
     ) {
+      closeDevTerminalCompletion();
+
       if (
         navigateDevTerminalHistory(-1)
       ) {
@@ -4607,11 +5513,24 @@ devTerminalInput.addEventListener(
       !event.ctrlKey &&
       !event.altKey
     ) {
+      closeDevTerminalCompletion();
+
       if (
         navigateDevTerminalHistory(1)
       ) {
         event.preventDefault();
       }
+    }
+  }
+);
+
+devTerminalInput.addEventListener(
+  "input",
+  () => {
+    if (
+      !devTerminalCompletionPopup.hidden
+    ) {
+      closeDevTerminalCompletion();
     }
   }
 );
@@ -4731,6 +5650,79 @@ window.addEventListener(
     setDevTerminalHeight(
       devTerminalState.height,
       false
+    );
+  }
+);
+
+// Navigation globale entre terminaux.
+// Ctrl+Tab : terminal suivant
+// Ctrl+Shift+Tab : terminal précédent
+document.addEventListener(
+  "keydown",
+  (event) => {
+    if (
+      !event.ctrlKey ||
+      event.metaKey ||
+      event.altKey ||
+      event.key !== "Tab" ||
+      currentMode !== "DEV" ||
+      devTerminalPanel.hidden
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+
+    moveDevTerminalSelection(
+      event.shiftKey
+        ? -1
+        : 1
+    );
+  }
+);
+
+// Accès direct aux terminaux.
+// Cmd+1 à Cmd+9 sélectionne le terminal correspondant.
+document.addEventListener(
+  "keydown",
+  (event) => {
+    if (
+      !event.metaKey ||
+      event.ctrlKey ||
+      event.altKey ||
+      event.shiftKey ||
+      currentMode !== "DEV" ||
+      devTerminalPanel.hidden
+    ) {
+      return;
+    }
+
+    const match =
+      event.code.match(
+        /^Digit([1-9])$/
+      );
+
+    if (!match) {
+      return;
+    }
+
+    const terminalIndex =
+      Number(match[1]) - 1;
+
+    const ids =
+      devTerminalIds();
+
+    const terminalId =
+      ids[terminalIndex];
+
+    if (!terminalId) {
+      return;
+    }
+
+    event.preventDefault();
+
+    activateDevTerminal(
+      terminalId
     );
   }
 );

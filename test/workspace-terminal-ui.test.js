@@ -1054,3 +1054,363 @@ test(
     );
   }
 );
+
+
+
+// TERMINAL UX #5.4 — navigation, longues sorties, persistance, completion
+
+test(
+  "Terminal #5.4A expose navigation clavier et accès direct aux terminaux",
+  () => {
+    const source =
+      terminalUiSource();
+
+    assert.match(
+      source,
+      /function moveDevTerminalSelection\(/
+    );
+
+    assert.match(
+      source,
+      /ArrowLeft/
+    );
+
+    assert.match(
+      source,
+      /ArrowRight/
+    );
+
+    assert.match(
+      source,
+      /event\.key === "Home"/
+    );
+
+    assert.match(
+      source,
+      /event\.key === "End"/
+    );
+
+    assert.match(
+      source,
+      /event\.ctrlKey[\s\S]*event\.key !== "Tab"/
+    );
+
+    assert.match(
+      source,
+      /event\.shiftKey[\s\S]*\?\s*-1[\s\S]*:\s*1/
+    );
+
+    assert.match(
+      source,
+      /event\.code\.match\([\s\S]*Digit\(\[1-9\]\)/
+    );
+
+    assert.match(
+      source,
+      /activateDevTerminal\(\s*terminalId/
+    );
+  }
+);
+
+test(
+  "Terminal #5.4A garde le scroll indépendant lors d'un changement d'onglet",
+  () => {
+    const source =
+      terminalUiSource();
+
+    assert.match(
+      source,
+      /function activateDevTerminal\(/
+    );
+
+    assert.match(
+      source,
+      /rememberDevTerminalScrollState\(\)/
+    );
+
+    assert.match(
+      source,
+      /scrollByTerminal:\s*new Map\(\)/
+    );
+
+    assert.match(
+      source,
+      /followOutputByTerminal:\s*new Map\(\)/
+    );
+  }
+);
+
+test(
+  "Terminal #5.4B expose retour en bas et compteur de nouvelles sorties",
+  () => {
+    const source =
+      terminalUiSource();
+
+    assert.match(
+      html,
+      /id="devTerminalJumpBottom"/
+    );
+
+    assert.match(
+      source,
+      /pendingOutputByTerminal:\s*new Map\(\)/
+    );
+
+    assert.match(
+      source,
+      /function devTerminalPendingOutputCount\(/
+    );
+
+    assert.match(
+      source,
+      /function renderDevTerminalJumpBottom\(/
+    );
+
+    assert.match(
+      source,
+      /function followDevTerminalOutput\(/
+    );
+
+    assert.match(
+      source,
+      /resetDevTerminalPendingOutput\(/
+    );
+  }
+);
+
+test(
+  "Terminal #5.4B incrémente les sorties en attente uniquement hors auto-follow",
+  () => {
+    const source =
+      terminalUiSource();
+
+    assert.match(
+      source,
+      /pendingOutputByTerminal\.set/
+    );
+
+    assert.match(
+      source,
+      /followOutputByTerminal/
+    );
+
+    assert.match(
+      source,
+      /publicOutput/
+    );
+
+    assert.match(
+      source,
+      /renderDevTerminalJumpBottom\(\)/
+    );
+  }
+);
+
+test(
+  "Terminal #5.4C persiste uniquement la disposition ergonomique des terminaux USER",
+  () => {
+    const source =
+      terminalUiSource();
+
+    assert.match(
+      source,
+      /DEV_TERMINAL_LAYOUT_STORAGE_PREFIX/
+    );
+
+    assert.match(
+      source,
+      /DEV_TERMINAL_RESTORE_MAX\s*=\s*9/
+    );
+
+    assert.match(
+      source,
+      /function persistDevTerminalLayout\(/
+    );
+
+    assert.match(
+      source,
+      /userCount/
+    );
+
+    assert.match(
+      source,
+      /activeIndex/
+    );
+
+    assert.match(
+      source,
+      /function loadDevTerminalLayout\(/
+    );
+
+    assert.match(
+      source,
+      /restoredUserTerminals/
+    );
+
+    assert.match(
+      source,
+      /await createDevTerminal\(\)/
+    );
+  }
+);
+
+test(
+  "Terminal #5.4C ne restaure ni sortie ni process ancien",
+  () => {
+    const source =
+      terminalUiSource();
+
+    const start =
+      source.indexOf(
+        "const restoredLayout"
+      );
+
+    const end =
+      source.indexOf(
+        "startDevTerminalPolling",
+        start
+      );
+
+    assert.ok(
+      start >= 0 &&
+      end > start
+    );
+
+    const restoreBlock =
+      source.slice(
+        start,
+        end
+      );
+
+    assert.doesNotMatch(
+      restoreBlock,
+      /outputByTerminal\.set\([^,]+,\s*[^[]/
+    );
+
+    assert.doesNotMatch(
+      restoreBlock,
+      /runCommand|\/run|child|spawn|exec/
+    );
+
+    assert.doesNotMatch(
+      restoreBlock,
+      /owner\s*:\s*["']NOON["']/
+    );
+  }
+);
+
+test(
+  "Terminal #5.4D expose popup et navigation Tab Shift+Tab Esc",
+  () => {
+    const source =
+      terminalUiSource();
+
+    assert.match(
+      source,
+      /devTerminalCompletionPopup/
+    );
+
+    assert.match(
+      source,
+      /role",\s*"listbox"/
+    );
+
+    assert.match(
+      source,
+      /function closeDevTerminalCompletion\(/
+    );
+
+    assert.match(
+      source,
+      /async function cycleDevTerminalCompletion\(/
+    );
+
+    assert.match(
+      source,
+      /event\.key === "Tab"/
+    );
+
+    assert.match(
+      source,
+      /event\.shiftKey/
+    );
+
+    assert.match(
+      source,
+      /event\.key === "Escape"/
+    );
+
+    assert.match(
+      source,
+      /event\.preventDefault\(\)/
+    );
+  }
+);
+
+test(
+  "Terminal #5.4D combine historique local et suggestions projet sans exécuter de shell",
+  () => {
+    const source =
+      terminalUiSource();
+
+    assert.match(
+      source,
+      /DEV_TERMINAL_STATIC_COMPLETIONS/
+    );
+
+    assert.match(
+      source,
+      /devTerminalState\.history/
+    );
+
+    assert.match(
+      source,
+      /fetchDevTerminalProjectCompletions/
+    );
+
+    assert.match(
+      source,
+      /\/completions\?q=/
+    );
+
+    assert.match(
+      source,
+      /currentHasParentTraversal/
+    );
+
+    assert.match(
+      source,
+      /\.includes\(".."\)/
+    );
+
+    assert.doesNotMatch(
+      source,
+      /\bexec(?:File|Sync)?\s*\(/
+    );
+
+    assert.doesNotMatch(
+      source,
+      /\bspawn\s*\(/
+    );
+  }
+);
+
+test(
+  "Terminal #5.4D possède le style de popup de completion",
+  () => {
+    assert.match(
+      css,
+      /\.dev-terminal-completion\{/
+    );
+
+    assert.match(
+      css,
+      /\.dev-terminal-completion-item\{/
+    );
+
+    assert.match(
+      css,
+      /\.dev-terminal-completion\[hidden\]/
+    );
+  }
+);
