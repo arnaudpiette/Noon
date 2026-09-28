@@ -39,3 +39,458 @@ test("un échec réel de binding rollback session et huit runs", () => { const f
 test("un second prepare retourne la même session sans doublon", () => { const f = setup(); const arm = f.armingService.armPilot(); const first = f.service.prepare({ armId: arm.armId }); const second = f.service.prepare({ armId: arm.armId }); assert.equal(second.idempotent, true); assert.equal(second.session.id, first.session.id); assert.deepEqual(f.counts(), { sessions: 1, runs: 8 }); f.database.close(); });
 test("un arm bound corrompu échoue fermé sans remplacement", async (t) => { for (const corruption of ["missing-session", "wrong-count", "wrong-order", "suite-mismatch"]) await t.test(corruption, () => { const f = setup(); const arm = f.armingService.armPilot(); const first = f.service.prepare({ armId: arm.armId }); if (corruption === "missing-session") f.database.database.exec("PRAGMA foreign_keys=OFF"); if (corruption === "missing-session") f.database.database.prepare("DELETE FROM benchmark_sessions WHERE id=?").run(first.session.id); if (corruption === "wrong-count") f.database.database.prepare("DELETE FROM benchmark_runs WHERE id=?").run(first.runs[0].id); if (corruption === "wrong-order") f.database.database.prepare("UPDATE benchmark_runs SET task_id='other' WHERE id=?").run(first.runs[0].id); if (corruption === "suite-mismatch") f.database.database.prepare("UPDATE benchmark_sessions SET suite_version='other' WHERE id=?").run(first.session.id); const before = f.counts(); assert.throws(() => f.service.prepare({ armId: arm.armId }), (error) => error.code === "BENCHMARK_ARM_BOUND_INTEGRITY_ERROR"); assert.deepEqual(f.counts(), before); f.database.close(); }); });
 test("prepare ne déclenche aucune exécution ni écriture runtime", () => { const f = setup(); const calls = { native: 0, codex: 0, provider: 0, runtimeWrites: 0 }; const arm = f.armingService.armPilot(); f.service.prepare({ armId: arm.armId }); assert.deepEqual(calls, { native: 0, codex: 0, provider: 0, runtimeWrites: 0 }); f.database.close(); });
+
+
+test(
+  "deux prepare concurrents démarrés après initialisation convergent vers une seule session",
+  async () => {
+    const { Worker } =
+      require("node:worker_threads");
+
+    const dir =
+      fs.mkdtempSync(
+        path.join(
+          os.tmpdir(),
+          "noon-armed-concurrent-"
+        )
+      );
+
+    const file =
+      path.join(
+        dir,
+        "noon.sqlite"
+      );
+
+    const initialDatabase =
+      createPersonalDatabase(file);
+
+    const initialArmingRepository =
+      createBenchmarkArmingRepository(
+        initialDatabase
+      );
+
+    const initialArmingService =
+      createBenchmarkArmingService({
+        repository:
+          initialArmingRepository,
+        runtimeStateReader: {
+          read: () => "OFF",
+        },
+        now: () => START,
+        createArmId:
+          () => "arm-concurrent",
+      });
+
+    const arm =
+      initialArmingService.armPilot();
+
+    initialDatabase.close();
+
+    const gate =
+      new SharedArrayBuffer(
+        Int32Array.BYTES_PER_ELEMENT * 2
+      );
+
+    const workerSource = `
+      "use strict";
+
+      const {
+        parentPort,
+        workerData,
+      } = require("node:worker_threads");
+
+      const {
+        createPersonalDatabase,
+      } = require(workerData.databaseModule);
+
+      const {
+        createBenchmarkRepository,
+      } = require(workerData.benchmarkRepositoryModule);
+
+      const {
+        createBenchmarkArmingRepository,
+      } = require(workerData.armingRepositoryModule);
+
+      const {
+        createDevBenchmarkService,
+      } = require(workerData.serviceModule);
+
+      const signal =
+        new Int32Array(workerData.gate);
+
+      const database =
+        createPersonalDatabase(
+          workerData.file
+        );
+
+      const repository =
+        createBenchmarkRepository(
+          database
+        );
+
+      const armingRepository =
+        createBenchmarkArmingRepository(
+          database
+        );
+
+      const service =
+        createDevBenchmarkService({
+          repository,
+          armingRepository,
+          validator: async () => ({
+            finalValid: true,
+          }),
+          featureMode: () =>
+            "LIMITED",
+          now: () =>
+            workerData.now,
+          createSessionId: () => {
+            if (workerData.first) {
+              Atomics.store(
+                signal,
+                0,
+                1
+              );
+
+              Atomics.notify(
+                signal,
+                0
+              );
+
+              Atomics.wait(
+                signal,
+                1,
+                0,
+                1000
+              );
+            }
+
+            return workerData.sessionId;
+          },
+        });
+
+      parentPort.postMessage({
+        type: "ready",
+      });
+
+      parentPort.once(
+        "message",
+        () => {
+          try {
+            if (!workerData.first) {
+              while (
+                Atomics.load(
+                  signal,
+                  0
+                ) !== 1
+              ) {
+                Atomics.wait(
+                  signal,
+                  0,
+                  0,
+                  20
+                );
+              }
+
+              Atomics.store(
+                signal,
+                1,
+                1
+              );
+
+              Atomics.notify(
+                signal,
+                1
+              );
+            }
+
+            const result =
+              service.prepare({
+                armId:
+                  workerData.armId,
+              });
+
+            parentPort.postMessage({
+              type: "result",
+              ok: true,
+              sessionId:
+                result.session.id,
+              idempotent:
+                result.idempotent,
+            });
+          } catch (error) {
+            parentPort.postMessage({
+              type: "result",
+              ok: false,
+              code:
+                error?.code ||
+                null,
+              message:
+                error?.message ||
+                String(error),
+            });
+          } finally {
+            database.close();
+          }
+        }
+      );
+    `;
+
+    const modules = {
+      databaseModule:
+        require.resolve(
+          "../services/persistence/database"
+        ),
+
+      benchmarkRepositoryModule:
+        require.resolve(
+          "../services/persistence/repositories/benchmark-repository"
+        ),
+
+      armingRepositoryModule:
+        require.resolve(
+          "../services/persistence/repositories/benchmark-arming-repository"
+        ),
+
+      serviceModule:
+        require.resolve(
+          "../services/dev/dev-benchmark-service"
+        ),
+    };
+
+    function startWorker(
+      first,
+      sessionId
+    ) {
+      const worker =
+        new Worker(
+          workerSource,
+          {
+            eval: true,
+            workerData: {
+              ...modules,
+              file,
+              gate,
+              first,
+              sessionId,
+              armId:
+                arm.armId,
+              now: START,
+            },
+          }
+        );
+
+      const ready =
+        new Promise(
+          (resolve, reject) => {
+            const onMessage =
+              (message) => {
+                if (
+                  message?.type ===
+                  "ready"
+                ) {
+                  worker.off(
+                    "error",
+                    reject
+                  );
+
+                  resolve();
+                }
+              };
+
+            worker.on(
+              "message",
+              onMessage
+            );
+
+            worker.once(
+              "error",
+              reject
+            );
+          }
+        );
+
+      const result =
+        new Promise(
+          (resolve, reject) => {
+            const onMessage =
+              (message) => {
+                if (
+                  message?.type ===
+                  "result"
+                ) {
+                  resolve(message);
+                }
+              };
+
+            worker.on(
+              "message",
+              onMessage
+            );
+
+            worker.once(
+              "error",
+              reject
+            );
+          }
+        );
+
+      return {
+        worker,
+        ready,
+        result,
+      };
+    }
+
+    const firstWorker =
+      startWorker(
+        true,
+        "session-concurrent-a"
+      );
+
+    const secondWorker =
+      startWorker(
+        false,
+        "session-concurrent-b"
+      );
+
+    await Promise.all([
+      firstWorker.ready,
+      secondWorker.ready,
+    ]);
+
+    firstWorker.worker.postMessage(
+      "go"
+    );
+
+    secondWorker.worker.postMessage(
+      "go"
+    );
+
+    let timeoutId;
+
+    const timeout =
+      new Promise(
+        (_, reject) => {
+          timeoutId =
+            setTimeout(
+              () =>
+                reject(
+                  Object.assign(
+                    new Error(
+                      "prepare concurrent timeout"
+                    ),
+                    {
+                      code:
+                        "BENCHMARK_PREPARE_CONCURRENCY_TIMEOUT",
+                    }
+                  )
+                ),
+              4000
+            );
+        }
+      );
+
+    let first;
+    let second;
+
+    try {
+      [first, second] =
+        await Promise.race([
+          Promise.all([
+            firstWorker.result,
+            secondWorker.result,
+          ]),
+          timeout,
+        ]);
+    } finally {
+      clearTimeout(timeoutId);
+      Atomics.store(
+        new Int32Array(gate),
+        1,
+        1
+      );
+
+      Atomics.notify(
+        new Int32Array(gate),
+        1
+      );
+
+      await Promise.allSettled([
+        firstWorker.worker.terminate(),
+        secondWorker.worker.terminate(),
+      ]);
+    }
+
+    const finalDatabase =
+      createPersonalDatabase(file);
+
+    const sessions =
+      finalDatabase.database
+        .prepare(
+          "SELECT id,idempotency_key FROM benchmark_sessions ORDER BY id"
+        )
+        .all();
+
+    const runs =
+      finalDatabase.database
+        .prepare(
+          "SELECT session_id,run_index FROM benchmark_runs ORDER BY session_id,run_index"
+        )
+        .all();
+
+    const persistedArm =
+      createBenchmarkArmingRepository(
+        finalDatabase
+      ).getArm(
+        arm.armId
+      );
+
+    finalDatabase.close();
+
+    assert.equal(
+      first.ok,
+      true,
+      JSON.stringify(first)
+    );
+
+    assert.equal(
+      second.ok,
+      true,
+      JSON.stringify(second)
+    );
+
+    assert.equal(
+      first.sessionId,
+      second.sessionId
+    );
+
+    assert.equal(
+      sessions.length,
+      1
+    );
+
+    assert.equal(
+      runs.length,
+      8
+    );
+
+    assert.equal(
+      persistedArm.state,
+      "BOUND_TO_SESSION"
+    );
+
+    assert.equal(
+      persistedArm.benchmarkSessionId,
+      first.sessionId
+    );
+
+    fs.rmSync(
+      dir,
+      {
+        recursive: true,
+        force: true,
+      }
+    );
+  }
+);

@@ -7,6 +7,12 @@ function run(row) { return row && { ...row, runIndex: Number(row.run_index), fir
 function createBenchmarkRepository(wrapper) {
   if (!wrapper || wrapper.kind !== "sqlite") throw new TypeError("BenchmarkRepository requiert SQLite.");
   const db = wrapper.database;
+
+  // V2.8 — deux prepare() issus de connexions SQLite distinctes
+  // peuvent se présenter simultanément. BEGIN IMMEDIATE doit attendre
+  // brièvement le writer actif au lieu d'échouer immédiatement.
+  db.exec("PRAGMA busy_timeout = 1500");
+
   const now = () => new Date().toISOString();
   const transaction = (work) => { db.exec("BEGIN IMMEDIATE"); try { const value = work(); db.exec("COMMIT"); return value; } catch (error) { try { db.exec("ROLLBACK"); } catch {} throw error; } };
   const getSession = (id) => session(db.prepare("SELECT * FROM benchmark_sessions WHERE id=?").get(id));
