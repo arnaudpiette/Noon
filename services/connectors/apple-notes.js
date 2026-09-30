@@ -267,6 +267,7 @@ async function searchNotes(
   {
     limit = 3,
     includeBody = false,
+    searchScope = "all",
     maxExcerptLength = NOTE_SEARCH_EXCERPT_LIMIT,
   } = {},
   runner = execFile
@@ -307,7 +308,7 @@ async function searchNotes(
 
   let bodyCandidates = [];
 
-  if (titleCandidates.length < resultLimit) {
+  if (searchScope !== "title" && titleCandidates.length < resultLimit) {
     const bodyRaw = await runAppleScript(
       SEARCH_BODY_METADATA_SCRIPT,
       [value, candidateLimit],

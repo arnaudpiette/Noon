@@ -2,14 +2,15 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { SEARCH_BODY_SCRIPT, SEARCH_METADATA_SCRIPT, searchNotes } = require("../services/connectors/apple-notes");
+const { SEARCH_BODY_METADATA_SCRIPT, SEARCH_BODY_SCRIPT, SEARCH_METADATA_SCRIPT, searchNotes } = require("../services/connectors/apple-notes");
 
-function runnerFor({ metadata = "", bodies = {}, error = null } = {}) {
+function runnerFor({ metadata = "", bodyMetadata = "", bodies = {}, error = null } = {}) {
   const calls = [];
   const runner = (_command, args, _options, callback) => {
     calls.push(args);
     if (error) return callback(error, "");
     if (args[1] === SEARCH_METADATA_SCRIPT) return callback(null, metadata);
+    if (args[1] === SEARCH_BODY_METADATA_SCRIPT) return callback(null, bodyMetadata);
     const id = args.at(-1); return callback(null, `${id}\t${bodies[id] || ""}`);
   };
   return { calls, runner };
@@ -37,6 +38,42 @@ test("searchNotes retourne vide sans corps quand aucun titre ne correspond", asy
   const fixture = runnerFor({ metadata: "" });
   assert.deepEqual(await searchNotes("inconnue", { limit: 3, includeBody: true }, fixture.runner), []);
   assert.equal(fixture.calls.length, 2);
+});
+
+test("searchNotes en portée titre uniquement ne recherche ni ne lit plaintext", async () => {
+  const fixture = runnerFor({
+    metadata: "1\tNoon roadmap\t2026-01-01\n",
+    bodyMetadata: "2\tArchive\t2026-02-01\n",
+    bodies: { 1: "corps interdit" },
+  });
+  const notes = await searchNotes("Noon", { limit: 3, includeBody: false, searchScope: "title" }, fixture.runner);
+  assert.deepEqual(notes.map((note) => note.id), ["1"]);
+  assert.equal(notes[0].excerpt, null);
+  assert.deepEqual(fixture.calls.map((args) => args[1]), [SEARCH_METADATA_SCRIPT]);
+  assert.doesNotMatch(fixture.calls[0][1], /plaintext/);
+});
+
+test("searchNotes en portée titre uniquement respecte la limite A3 de trois résultats", async () => {
+  const fixture = runnerFor({ metadata: ["1", "2", "3", "4"].map((id) => `${id}\tNoon ${id}\t2026-01-${id}`).join("\n") });
+  const notes = await searchNotes("Noon", { limit: 3, includeBody: false, searchScope: "title" }, fixture.runner);
+  assert.equal(notes.length, 3);
+  assert.equal(fixture.calls.length, 1);
+});
+
+test("searchNotes conserve le repli contenu hors portée titre uniquement", async () => {
+  const fixture = runnerFor({ metadata: "", bodyMetadata: "2\tArchive Noon\t2026-02-01\n" });
+  const notes = await searchNotes("Noon", { limit: 3, includeBody: false }, fixture.runner);
+  assert.deepEqual(notes.map((note) => note.id), ["2"]);
+  assert.deepEqual(fixture.calls.map((args) => args[1]), [SEARCH_METADATA_SCRIPT, SEARCH_BODY_METADATA_SCRIPT]);
+  assert.match(fixture.calls[1][1], /plaintext contains queryText/);
+});
+
+test("le contrat A3 transmet la portée titre uniquement à Apple Notes", () => {
+  const source = require("fs").readFileSync(require("path").join(__dirname, "..", "server.js"), "utf8");
+  const adapter = source.slice(source.indexOf("notes: {"), source.indexOf("reminders: {"));
+  assert.match(adapter, /searchScope:\s*"title"/);
+  assert.match(adapter, /includeBody:\s*false/);
+  assert.match(adapter, /limit:\s*request\.limit/);
 });
 
 test("searchNotes borne candidats, résultats et requêtes hostiles comme données", async () => {

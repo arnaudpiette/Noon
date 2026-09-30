@@ -175,5 +175,5 @@ statut, compteur, troncature et durée; aucun contenu, chemin, requête ou nom.
 `osascript`, jamais comme code AppleScript. Notes filtre d'abord ses métadonnées
 sur le titre; Node ne reçoit ensuite que les candidats (maximum 10), classe au plus 3 résultats et
 ne lit `plaintext` que si un appel explicite demande `includeBody: true`. Le
-chemin A3 utilise `includeBody: false`; `listRecentNotes()` reste inchangé pour
+chemin A3 utilise `searchScope: "title"` et `includeBody: false`; `listRecentNotes()` reste inchangé pour
 les consommateurs historiques, notamment Daily Brief.

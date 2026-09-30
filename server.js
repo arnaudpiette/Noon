@@ -824,7 +824,11 @@ const authorizedContextSources = createAuthorizedContextSources({
     notes: {
       status: () => connectorContextStatus(notesConnector, { local: true }),
       read: async (request) => {
-        const notes = await notesConnector.searchNotes(request.query, { limit: request.limit, includeBody: false });
+        const notes = await notesConnector.searchNotes(request.query, {
+          limit: request.limit,
+          includeBody: false,
+          searchScope: "title",
+        });
         return notes.map((item) => ({ sourceId: item.id, timestamp: item.modifiedAt, relevance: item.relevance,
           privacyClass: "PRIVATE", localOnly: true, payload: { title: item.title, excerpt: item.excerpt } }));
       },
