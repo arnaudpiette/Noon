@@ -1,5 +1,7 @@
 "use strict";
 
+const { negationChanged, tokenSimilarity } = require("./document-memory-importer");
+
 const crypto = require("crypto");
 const { createHardRulesRegistry } = require("../rules/hard-rules-registry");
 
@@ -24,6 +26,15 @@ const DEFAULT_HARD_RULES = createHardRulesRegistry().legacyPrivateRules();
 function now() { return new Date().toISOString(); }
 function clean(value, max = 2000) { return String(value || "").replace(/[\0\r]/g, " ").trim().slice(0, max); }
 function parseJson(value, fallback) { try { return JSON.parse(value); } catch { return fallback; } }
+function requiredSensitivity(subjectId, category, requested) {
+  const sensitivity = SENSITIVITIES.has(requested) ? requested : "medium";
+
+  if (sensitivity === "restricted") return "restricted";
+  if (CHILDREN.has(subjectId) || PROTECTED_CATEGORIES.has(category)) return "high";
+
+  return sensitivity;
+}
+
 function requiredPolicy(subjectId, category, sensitivity, requested) {
   if (requested === "local_only") return requested;
   if (CHILDREN.has(subjectId) || PROTECTED_CATEGORIES.has(category) || ["high", "restricted"].includes(sensitivity)) return "confirm_each_use";
@@ -61,7 +72,7 @@ function createPrivateMemoryService({ databaseWrapper, cipher, audit = () => {} 
     const subjectId = clean(input.subjectId, 60);
     if (!SUBJECTS.has(subjectId) && !subjectId.startsWith("project:")) throw new Error("Profil mémoire invalide.");
     const category = clean(input.category || "general", 80).toLowerCase();
-    const sensitivity = SENSITIVITIES.has(input.sensitivity) ? input.sensitivity : "medium";
+    const sensitivity = requiredSensitivity(subjectId, category, input.sensitivity);
     let status = STATUSES.has(input.status) ? input.status : "pending_review";
     const consentRequired = Boolean(input.consentRequired || CHILDREN.has(subjectId) || PROTECTED_CATEGORIES.has(category) || ["high", "restricted"].includes(sensitivity));
     if (consentRequired && status === "confirmed" && input.consentStatus !== "granted") status = "pending_review";
@@ -72,7 +83,16 @@ function createPrivateMemoryService({ databaseWrapper, cipher, audit = () => {} 
     const statement = clean(input.statement, 12000); if (!statement) throw new Error("Le souvenir est vide.");
     const duplicate = listMemories({ subjectId: checked.subjectId, includeDeleted: false }).find((item) => item.category === checked.category && item.statement.toLocaleLowerCase("fr") === statement.toLocaleLowerCase("fr"));
     if (duplicate) return { ...duplicate, duplicate: true };
-    const conflict = listMemories({ subjectId: checked.subjectId, status: "confirmed", includeDeleted: false }).find((item) => item.category === checked.category && item.statement !== statement);
+    const conflict = listMemories({
+      subjectId: checked.subjectId,
+      status: "confirmed",
+      includeDeleted: false,
+    }).find((item) => (
+      item.category === checked.category
+      && item.statement !== statement
+      && tokenSimilarity(item.statement, statement) > 0.65
+      && negationChanged(item.statement, statement)
+    ));
     if (conflict && checked.status === "confirmed") checked.status = "pending_review";
     db.prepare(`INSERT INTO private_memories(id,subject_id,category,sensitivity,status,confidence,source_type,observed_at,valid_from,valid_until,expires_at,api_policy,consent_required,consent_status,tags_json,supersedes_id,payload_encrypted,source_encrypted,created_at,updated_at,deleted_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)`)
       .run(id, checked.subjectId, checked.category, checked.sensitivity, checked.status, Math.max(0, Math.min(1, Number(input.confidence) || 0.5)), clean(input.sourceType || "explicit-user", 80), input.observedAt || stamp, input.validFrom || null, input.validUntil || null, input.expiresAt || null, checked.apiPolicy, checked.consentRequired ? 1 : 0, checked.consentStatus, JSON.stringify((input.tags || []).map((tag) => clean(tag, 60)).slice(0, 20)), input.supersedesId || null, cipher.encrypt({ statement, payload: { ...(input.payload || {}), conflictWithId: conflict?.id || null } }), input.sourceReference ? cipher.encrypt(clean(input.sourceReference, 1000)) : null, stamp, stamp);
@@ -156,4 +176,4 @@ function createPrivateMemoryService({ databaseWrapper, cipher, audit = () => {} 
   return { available: true, createMemory, getMemory, listMemories, updateMemory, forgetMemory, purgeSubject, exportSubject, listProfiles, setProfileEnabled, isProfileEnabled, hardRules, settings, setSettings, recordAudit, beginMigration, migrationRecord, recordMigration, completeMigration, migrationStatus, rollbackMigration };
 }
 
-module.exports = { API_POLICIES, CHILDREN, PROTECTED_CATEGORIES, SENSITIVITIES, STATUSES, SUBJECTS, createPrivateMemoryService, requiredPolicy };
+module.exports = { API_POLICIES, CHILDREN, PROTECTED_CATEGORIES, SENSITIVITIES, STATUSES, SUBJECTS, createPrivateMemoryService, requiredPolicy, requiredSensitivity };

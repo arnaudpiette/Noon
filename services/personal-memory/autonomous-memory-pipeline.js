@@ -4,18 +4,89 @@ const { extractAutonomousMemoryCandidates } = require("./candidate-extractor");
 const { normalizeForComparison, tokenSimilarity } = require("./document-memory-importer");
 
 function emptyCounts() { return { created: 0, updated: 0, skipped: 0 }; }
+
+const GENERAL_MEMORY_TYPE_BY_CATEGORY = Object.freeze({
+  preference: "work_preference",
+  identity_role: "identity_role",
+  objective: "objective",
+  habit: "observed_habit",
+  decision: "decision",
+  tooling: "tooling",
+});
 function createReceipt({ automatic = true } = {}) { return { success: true, operation: "none", automatic, persisted: true, general: emptyCounts(), private: emptyCounts(), project: emptyCounts(), memoryIds: [], errors: 0 }; }
 function candidateText(item) { return typeof item.value === "string" ? item.value : JSON.stringify(item.value || ""); }
 function sameText(left, right) { return normalizeForComparison(left) === normalizeForComparison(right); }
 
 function findGeneralMatch(repository, candidate) {
-  const items = repository.listMemories({ limit: 500 }).filter((item) => item.status !== "rejected" && item.status !== "expired");
-  return items.find((item) => item.metadata?.memoryKey === candidate.memoryKey) || items.find((item) => sameText(candidateText(item), candidate.statement)) || items.find((item) => item.type === candidate.category && tokenSimilarity(candidateText(item), candidate.statement) >= 0.72);
+  const profileId = candidate.subjectId || "arnaud";
+  const expectedType = GENERAL_MEMORY_TYPE_BY_CATEGORY[candidate.category];
+
+  const items = repository
+    .listMemories({ limit: 500 })
+    .filter(
+      (item) =>
+        item.status !== "rejected"
+        && item.status !== "expired"
+        && (item.metadata?.profileId || "arnaud") === profileId
+    );
+
+  return items.find(
+    (item) => item.metadata?.memoryKey === candidate.memoryKey
+  ) || items.find(
+    (item) => sameText(candidateText(item), candidate.statement)
+  ) || items.find(
+    (item) =>
+      item.type === expectedType
+      && tokenSimilarity(candidateText(item), candidate.statement) >= 0.72
+  );
 }
 
 function findPrivateMatch(service, candidate) {
-  const items = service.listMemories({ subjectId: candidate.subjectId, includeDeleted: false });
-  return items.find((item) => item.payload?.memoryKey === candidate.memoryKey) || items.find((item) => item.category === candidate.category && sameText(item.statement, candidate.statement)) || items.find((item) => item.category === candidate.category && tokenSimilarity(item.statement, candidate.statement) >= 0.72);
+  const items = service.listMemories({
+    subjectId: candidate.subjectId,
+    includeDeleted: false,
+  });
+
+  const exact = items.find(
+    (item) =>
+      item.category === candidate.category
+      && sameText(item.statement, candidate.statement)
+  );
+
+  if (exact) return exact;
+
+  // Les mémoires projet utilisent volontairement une clé de slot
+  // (ex. voix par défaut) afin qu'une nouvelle décision remplace l'ancienne.
+  if (candidate.scope === "project") {
+    const keyed = items.find(
+      (item) => item.payload?.memoryKey === candidate.memoryKey
+    );
+
+    if (keyed) return keyed;
+  }
+
+  // Une donnée réellement évolutive peut remplacer sa version précédente,
+  // mais uniquement si le contenu reste suffisamment proche.
+  if (candidate.stability === "evolving") {
+    let best = null;
+    let bestScore = 0;
+
+    for (const item of items) {
+      if (item.category !== candidate.category) continue;
+
+      const score = tokenSimilarity(item.statement, candidate.statement);
+
+      if (score > 0.65 && score > bestScore) {
+        best = item;
+        bestScore = score;
+      }
+    }
+
+    return best;
+  }
+
+  // Deux faits privés stables d'une même catégorie doivent pouvoir coexister.
+  return null;
 }
 
 function persistGeneral(repository, candidate, receipt) {
@@ -23,9 +94,15 @@ function persistGeneral(repository, candidate, receipt) {
   const existing = findGeneralMatch(repository, candidate);
   if (existing && sameText(candidateText(existing), candidate.statement)) { receipt.general.skipped += 1; receipt.memoryIds.push(existing.id); return; }
   const now = new Date().toISOString();
-  const allowedTypes = new Set(["identity_role", "objective", "decision", "work_preference"]);
-  const requestedType = candidate.category === "preference" ? "work_preference" : candidate.category;
-  const item = repository.upsertMemory({ ...(existing || {}), type: allowedTypes.has(requestedType) ? requestedType : "work_preference", subject: candidate.category === "preference" ? "Préférence personnelle" : "Information personnelle durable", value: candidate.statement, status: "confirmed", confidence: candidate.scores.confidence, explicitConfirmation: true, sensitivity: "normal", useAllowed: true, sourceType: candidate.sourceType, sourceReference: candidate.sourceReference, metadata: { ...(existing?.metadata || {}), memoryKey: candidate.memoryKey, stability: candidate.stability, automatic: true, profileId: "arnaud", observedAt: now, versions: existing ? [...(existing.metadata?.versions || []), { previousValue: existing.value, supersededAt: now }].slice(-10) : [] } });
+  const requestedType = GENERAL_MEMORY_TYPE_BY_CATEGORY[candidate.category];
+  if (!requestedType) {
+    throw Object.assign(
+      new Error("Type de mémoire générale non supporté."),
+      { code: "UNSUPPORTED_GENERAL_MEMORY_TYPE" }
+    );
+  }
+
+  const item = repository.upsertMemory({ ...(existing || {}), type: requestedType, subject: candidate.category === "preference" ? "Préférence personnelle" : "Information personnelle durable", value: candidate.statement, status: "confirmed", confidence: candidate.scores.confidence, explicitConfirmation: true, sensitivity: "normal", useAllowed: true, sourceType: candidate.sourceType, sourceReference: candidate.sourceReference, metadata: { ...(existing?.metadata || {}), memoryKey: candidate.memoryKey, stability: candidate.stability, automatic: true, profileId: candidate.subjectId || "arnaud", observedAt: now, versions: existing ? [...(existing.metadata?.versions || []), { previousValue: existing.value, supersededAt: now }].slice(-10) : [] } });
   const verified = repository.getMemory(item.id);
   if (!verified || !sameText(candidateText(verified), candidate.statement)) throw new Error("MEMORY_READ_BACK_FAILED");
   receipt.general[existing ? "updated" : "created"] += 1; receipt.memoryIds.push(item.id);

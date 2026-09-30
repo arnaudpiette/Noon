@@ -38,7 +38,8 @@ function requestedMemoryScope(text) {
 function stripMemoryScope(text) {
   return cleanDirectStatement(String(text || "")
     .replace(/^(?:dans\s+)?(?:ta|ma|la)\s+m[eé]moire\s+(?:locale\s+)?(?:priv[eé]e|sensible|g[eé]n[eé]rale|persistante)\s+(?:que\s+)?/i, "")
-    .replace(/^(?:dans\s+)?(?:la\s+)?m[eé]moire\s+(?:de\s+ce\s+projet|du\s+projet)\s+(?:que\s+)?/i, "")
+    .replace(/^(?:dans\s+)?(?:la\s+)?m[eé]moire\s+(?:de\s+ce\s+projet|du\s+projet)(?:\s+.+?)?\s+que\s+/i, "")
+    .replace(/^(?:dans\s+)?(?:la\s+)?m[eé]moire\s+(?:de\s+ce\s+projet|du\s+projet)\s+/i, "")
     .replace(/\s+(?:de|dans)\s+(?:ta|ma|la)\s+m[eé]moire\s+(?:locale\s+)?(?:priv[eé]e|sensible|g[eé]n[eé]rale|persistante)\s*$/i, "")
     .replace(/\s+(?:de|dans)\s+(?:la\s+)?m[eé]moire\s+(?:de\s+ce\s+projet|du\s+projet)\s*$/i, ""));
 }
@@ -53,7 +54,10 @@ function parseMemoryReadIntent(source) {
   const normalized = normalizeFrenchCommand(source);
   const hasMemoryNoun = /\b(?:memoire|memorise(?:e|es|s)?|retenu|garde(?:e|es|s|r)?|enregistre(?:e|es|s)?)\b/.test(normalized);
   const questionShape = /^(?:noon )?(?:qu as tu|qu est ce que tu as|que sais tu|qu est ce que tu sais|quelles? informations? as tu|montre moi|affiche)/.test(normalized);
-  if (!questionShape || (!hasMemoryNoun && !/\b(?:sais tu|tu sais) sur moi\b/.test(normalized))) return null;
+  const auditShape = /^(?:noon )?(?:analyse|analyser|verifie|verifier|audite|auditer)\b.*\b(?:retenu|memorise|memoire|enregistre|garde)\b/.test(normalized);
+
+  if (!questionShape && !auditShape) return null;
+  if (!auditShape && !hasMemoryNoun && !/\b(?:sais tu|tu sais) sur moi\b/.test(normalized)) return null;
 
   let requestedScope = requestedMemoryScope(source);
   if (/\b(?:memoire privee|memoire sensible|garde localement)\b/.test(normalized)) requestedScope = "private";
@@ -66,13 +70,21 @@ function parseMemoryReadIntent(source) {
   const temporal = /\baujourd hui\b/.test(normalized) ? "aujourd'hui" : "";
   if (temporal) query = temporal;
 
+  const subjectIds = subjectsFor(source);
+
+  // Dans un audit multi-profils, les noms sont des cibles de lecture,
+  // pas une chaîne à rechercher littéralement dans les souvenirs.
+  if (auditShape && subjectIds.length > 1) query = "";
+
   return {
     action: "memory_read",
-    intent: query ? "MEMORY_READ" : "MEMORY_INVENTORY",
-    subjectId: subjectFor(source),
+    intent: auditShape ? "MEMORY_AUDIT" : query ? "MEMORY_READ" : "MEMORY_INVENTORY",
+    subjectId: subjectIds[0] || subjectFor(source),
+    subjectIds,
     query,
     requestedScope,
     revealPrivate: requestedScope === "private",
+    readOnly: true,
   };
 }
 
@@ -83,6 +95,27 @@ function subjectFor(text) {
   if (/\bkaan\b/.test(normalized)) return "kaan";
   if (/\b(?:foyer|famille)\b/.test(normalized)) return "household";
   return "arnaud";
+}
+
+function subjectsFor(text) {
+  const normalized = String(text || "").toLocaleLowerCase("fr");
+
+  const patterns = [
+    ["arnaud", /\barnaud\b/],
+    ["alexandra", /\balexandra\b/],
+    ["sinan", /\bsinan\b/],
+    ["kaan", /\bkaan\b/],
+    ["household", /\b(?:foyer|famille)\b/],
+    ["noon", /\bnoon\b/],
+    ["projects", /\bprojets?\b/],
+  ];
+
+  return patterns
+    .map(([id, pattern]) => ({ id, index: normalized.search(pattern) }))
+    .filter((entry) => entry.index >= 0)
+    .sort((a, b) => a.index - b.index)
+    .map((entry) => entry.id)
+    .filter((id, index, values) => values.indexOf(id) === index);
 }
 
 function localDateKey(value) {
@@ -110,6 +143,36 @@ function parseConversationMemoryCommand(text) {
   if (!source) return null;
   let requestedScope = requestedMemoryScope(source);
   if (/\bsur ce projet\b/i.test(source)) requestedScope = "project";
+
+
+  // Une commande explicite "Retiens que..." décrit d'abord des faits à mémoriser.
+  // Les mots "document" ou "fichier" présents plus loin dans le contenu ne doivent
+  // pas détourner toute la commande vers l'import documentaire.
+  const explicitSaveMatch = source.match(
+    /^(?:noon,?\s*)?(?:retiens|souviens-toi|m[eé]morise|enregistre)\s+(?:que\s+|qu['’]\s*)(.+)$/i
+  );
+
+  if (explicitSaveMatch) {
+    const rawStatement = explicitSaveMatch[1];
+
+    // Une vraie demande d'import reste prioritaire même sous la forme "... que ...".
+    if (/\b(?:tout\s+ce\s+qui\s+est\s+important\s+dans\s+ce|les\s+informations\s+de\s+ce|ce\s+qui\s+est\s+utile\s+dans\s+(?:ce|les)|dans\s+ce\s+dossier|dans\s+ce\s+document)\b/i.test(rawStatement)) {
+      return {
+        action: "import_document",
+        subjectId: subjectFor(source),
+        rawQuery: source,
+      };
+    }
+
+    const statement = stripMemoryScope(rawStatement);
+
+    return {
+      action: "save",
+      subjectId: subjectFor(source),
+      statement,
+      requestedScope,
+    };
+  }
 
   // 1. Vérifier d'abord s'il s'agit d'un import documentaire
   if (DOCUMENT_IMPORT_PATTERN.test(source)) {
@@ -218,6 +281,89 @@ function executeMemoryRead({ personalRepository, privateMemoryService }, command
   const project = projectSubject ? privateItems.filter((item) => item.subjectId === projectSubject) : [];
   privateItems = privateItems.filter((item) => !item.subjectId.startsWith("project:"));
 
+  const requestedSubjectIds = Array.isArray(command.subjectIds)
+    ? command.subjectIds.filter((id) => SUBJECTS.has(id))
+    : [];
+
+  if (command.intent === "MEMORY_AUDIT" && requestedSubjectIds.length > 1) {
+    const labels = {
+      arnaud: "Arnaud",
+      alexandra: "Alexandra",
+      sinan: "Sinan",
+      kaan: "Kaan",
+      household: "Foyer",
+      noon: "Noon",
+      projects: "Projets",
+    };
+
+    const subjectCounts = {};
+    const memoryIds = [];
+    const lines = ["Audit mémoire local :"];
+    let generalCount = 0;
+    let privateCount = 0;
+
+    for (const subjectId of requestedSubjectIds) {
+      const subjectGeneral = general.filter((item) => {
+        const profileId = item.metadata?.profileId || "arnaud";
+        return profileId === subjectId;
+      });
+
+      const subjectPrivate = privateItems.filter(
+        (item) => item.subjectId === subjectId
+      );
+
+      subjectCounts[subjectId] = subjectGeneral.length + subjectPrivate.length;
+      generalCount += subjectGeneral.length;
+      privateCount += subjectPrivate.length;
+
+      memoryIds.push(
+        ...subjectGeneral.map((item) => item.id),
+        ...subjectPrivate.map((item) => item.id)
+      );
+
+      lines.push(
+        "",
+        `${labels[subjectId] || subjectId} : ${subjectCounts[subjectId]} information(s)`
+      );
+
+      if (subjectGeneral.length) {
+        lines.push(
+          `- mémoire générale : ${subjectGeneral.length}`,
+          ...subjectGeneral.slice(0, 8).map((item) => `  - ${memoryText(item)}`)
+        );
+      }
+
+      if (subjectPrivate.length) {
+        const categories = [...new Set(subjectPrivate.map((item) => item.category))];
+
+        lines.push(
+          `- mémoire privée locale : ${subjectPrivate.length} (${categories.join(", ")})`
+        );
+
+        if (command.revealPrivate) {
+          lines.push(
+            ...subjectPrivate.slice(0, 8).map((item) => `  - ${item.statement}`)
+          );
+        }
+      }
+
+      if (!subjectGeneral.length && !subjectPrivate.length) {
+        lines.push("- aucune mémoire persistante active");
+      }
+    }
+
+    return {
+      status: "inspected",
+      intent: command.intent,
+      answer: lines.join("\n"),
+      generalCount,
+      privateCount,
+      projectCount: 0,
+      subjectCounts,
+      memoryIds,
+    };
+  }
+
   let query = command.query || "";
   if (query && options.projectName && normalizeFrenchCommand(query) === normalizeFrenchCommand(options.projectName)) command.requestedScope = "project";
   if (query && options.projectId && normalizeFrenchCommand(query) === normalizeFrenchCommand(options.projectId)) command.requestedScope = "project";
@@ -298,9 +444,30 @@ function executeConversationMemoryCommand(serviceOrContext, command, options = {
     }
 
     const importResult = {
-      success: false, sources: [], extractedCount: 0, savedCount: 0, updatedCount: 0,
-      duplicateCount: 0, ignoredCount: 0, generalCount: 0, privateCount: 0,
-      evolvingCount: 0, conflicts: [], memoryIds: [], errorCount: 0,
+      success: false,
+      sources: [],
+      extractedCount: 0,
+      savedCount: 0,
+      updatedCount: 0,
+      duplicateCount: 0,
+      ignoredCount: 0,
+      ignoredReasons: {
+        opinion: 0,
+        instruction: 0,
+        unsupported: 0,
+      },
+      refusedCount: 0,
+      refusedReasons: {
+        secret: 0,
+        unavailable_store: 0,
+      },
+      generalCount: 0,
+      privateCount: 0,
+      projectCount: 0,
+      evolvingCount: 0,
+      conflicts: [],
+      memoryIds: [],
+      errorCount: 0,
     };
     try {
       for (const resolvedDoc of resolvedDocuments) {
@@ -308,7 +475,17 @@ function executeConversationMemoryCommand(serviceOrContext, command, options = {
         else if (!resolvedDoc.extractedText && attachmentResolver) resolvedDoc.extractedText = attachmentResolver.extractTextFromAttachment(resolvedDoc);
         const itemResult = documentImporter.importDocumentToMemory(resolvedDoc, { subjectId: command.subjectId });
         importResult.sources.push(itemResult.source);
-        for (const key of ["extractedCount", "savedCount", "updatedCount", "duplicateCount", "ignoredCount", "generalCount", "privateCount", "evolvingCount", "errorCount"]) importResult[key] += Number(itemResult[key]) || 0;
+        for (const key of ["extractedCount", "savedCount", "updatedCount", "duplicateCount", "ignoredCount", "refusedCount", "generalCount", "privateCount", "projectCount", "evolvingCount", "errorCount"]) {
+          importResult[key] += Number(itemResult[key]) || 0;
+        }
+
+        for (const reason of ["opinion", "instruction", "unsupported"]) {
+          importResult.ignoredReasons[reason] += Number(itemResult.ignoredReasons?.[reason]) || 0;
+        }
+
+        for (const reason of ["secret", "unavailable_store"]) {
+          importResult.refusedReasons[reason] += Number(itemResult.refusedReasons?.[reason]) || 0;
+        }
         importResult.conflicts.push(...(itemResult.conflicts || []));
         importResult.memoryIds.push(...(itemResult.memoryIds || []));
       }
@@ -328,9 +505,7 @@ function executeConversationMemoryCommand(serviceOrContext, command, options = {
       };
       return {
         status: verifiedCount > 0 ? "partial" : "error",
-        answer: verifiedCount > 0
-          ? `Import incomplet : ${verifiedCount} information(s) vérifiée(s), mais au moins une écriture a échoué.`
-          : "Je n’ai pas pu enregistrer ces informations dans la mémoire persistante.",
+        answer: formattedAnswer,
         memoryIds: importResult.memoryIds || [],
         importResult,
       };
@@ -424,9 +599,104 @@ function executeConversationMemoryCommand(serviceOrContext, command, options = {
     if (!command.statement) return { status: "needs_clarification", answer: "Que dois-je retenir exactement ?" };
 
     const statement = command.statement;
+    const atomicStatements = documentImporter?.splitIntoAtomicStatements
+      ? documentImporter.splitIntoAtomicStatements(statement)
+      : [];
     const isPrivate = command.requestedScope === "private" || isPrivateScope(statement);
 
     try {
+      if (atomicStatements.length > 1 && documentImporter?.importDocumentToMemory) {
+        const importResult = documentImporter.importDocumentToMemory(
+          {
+            name: "conversation-memory.txt",
+            content: statement,
+          },
+          {
+            subjectId: command.subjectId,
+            requestedScope: command.requestedScope || null,
+            projectId: options.projectId || null,
+            projectName: options.projectName || null,
+            sourceType: "explicit-voice-or-chat",
+            sourceReference: null,
+          }
+        );
+
+        const changedCount = importResult.savedCount + importResult.updatedCount;
+        const persisted = importResult.success === true;
+        const resolvedScope = importResult.projectCount > 0
+          ? "project"
+          : importResult.generalCount > 0 && importResult.privateCount > 0
+            ? "mixed"
+            : importResult.privateCount > 0
+              ? "private"
+              : "general";
+
+        const curatedLines = [];
+
+        if (persisted) {
+          curatedLines.push(`${changedCount} information(s) retenue(s) après segmentation.`);
+        } else if (importResult.conflicts?.length) {
+          curatedLines.push(`${importResult.conflicts.length} contradiction(s) nécessite(nt) une vérification.`);
+        } else if (importResult.ignoredCount > 0 || importResult.refusedCount > 0) {
+          curatedLines.push("Aucune nouvelle mémoire enregistrée.");
+        } else {
+          curatedLines.push("Je n’ai pas pu enregistrer ces informations dans la mémoire persistante.");
+        }
+
+        if (importResult.ignoredCount > 0) {
+          curatedLines.push(`${importResult.ignoredCount} élément(s) ignoré(s).`);
+
+          if (importResult.ignoredReasons?.opinion > 0) {
+            curatedLines.push(`- ${importResult.ignoredReasons.opinion} opinion(s) ou formulation(s) subjective(s)`);
+          }
+
+          if (importResult.ignoredReasons?.instruction > 0) {
+            curatedLines.push(`- ${importResult.ignoredReasons.instruction} instruction(s) ou demande(s) d’action`);
+          }
+
+          if (importResult.ignoredReasons?.unsupported > 0) {
+            curatedLines.push(`- ${importResult.ignoredReasons.unsupported} élément(s) sans catégorie de mémoire durable`);
+          }
+        }
+
+        if (importResult.refusedCount > 0) {
+          curatedLines.push(`${importResult.refusedCount} élément(s) refusé(s).`);
+
+          if (importResult.refusedReasons?.secret > 0) {
+            curatedLines.push(`- ${importResult.refusedReasons.secret} secret(s) ou identifiant(s) sensible(s) détecté(s)`);
+          }
+
+          if (importResult.refusedReasons?.unavailable_store > 0) {
+            curatedLines.push(`- ${importResult.refusedReasons.unavailable_store} élément(s) dont le stockage requis était indisponible`);
+          }
+        }
+
+        const curatedAnswer = curatedLines.join("\n");
+
+        return {
+          status: persisted
+            ? (changedCount > 0 ? "saved" : "unchanged")
+            : importResult.conflicts?.length
+              ? "needs_clarification"
+              : "error",
+          scope: resolvedScope,
+          answer: curatedAnswer,
+          memoryIds: importResult.memoryIds || [],
+          importResult,
+          receipt: {
+            success: persisted,
+            operation: "curated_save",
+            scope: resolvedScope,
+            automatic: false,
+            persisted,
+            created: importResult.savedCount,
+            updated: importResult.updatedCount,
+            deleted: 0,
+            skipped: importResult.duplicateCount,
+            memoryIds: importResult.memoryIds || [],
+          },
+        };
+      }
       if ((isPrivate || command.requestedScope === "project") && privateService && privateService.available) {
         const subjectId = command.requestedScope === "project" && options.projectId ? `project:${options.projectId}` : command.subjectId;
         const item = privateService.createMemory({

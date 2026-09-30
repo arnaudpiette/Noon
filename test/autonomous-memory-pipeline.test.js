@@ -43,7 +43,6 @@ test("les commandes privées extraient le scope, lisent la DB et vérifient l'ou
     assert.equal(fx.privateService.getMemory(save.memoryIds[0]).status, "deleted");
   } finally { close(fx); }
 });
-
 test("une préférence durable est persistée, notifiée, dédupliquée puis corrigée", () => {
   const fx = fixture();
   try {
@@ -148,4 +147,243 @@ test("les salutations, questions et exemples explicitement fictifs sont ignorés
     }
     assert.equal(fx.repository.listMemories().length, 0);
   } finally { close(fx); }
+});
+
+test("une consigne d'audit ou d'inspection mémoire n'est jamais mémorisée automatiquement", () => {
+  const fx = fixture();
+  try {
+    const result = fx.pipeline.process({
+      text: "Analyse maintenant ce que tu as retenu. Donne-moi séparément les informations concernant Arnaud, Alexandra, Kaan et Sinan. Ne crée ni ne modifie aucune nouvelle mémoire pendant cette vérification."
+    });
+
+    assert.equal(result.candidates.length, 0);
+    assert.equal(result.receipt.general.created, 0);
+    assert.equal(result.receipt.private.created, 0);
+    assert.equal(fx.repository.listMemories().length, 0);
+    assert.equal(fx.privateService.listMemories({ includeDeleted: false }).length, 0);
+  } finally {
+    close(fx);
+  }
+});
+
+test("un texte multi-profils attribue les faits privés à leur véritable sujet", () => {
+  const fx = fixture();
+  try {
+    const result = fx.pipeline.process({
+      text: [
+        "Alexandra suit un traitement médical TEST-ALEX.",
+        "Kaan suit un traitement médical TEST-KAAN.",
+        "Sinan a un rendez-vous médical TEST-SINAN."
+      ].join("\n")
+    });
+
+    const alexandra = fx.privateService.listMemories({ subjectId: "alexandra", includeDeleted: false });
+    const kaan = fx.privateService.listMemories({ subjectId: "kaan", includeDeleted: false });
+    const sinan = fx.privateService.listMemories({ subjectId: "sinan", includeDeleted: false });
+    const arnaud = fx.privateService.listMemories({ subjectId: "arnaud", includeDeleted: false });
+
+    assert.equal(alexandra.length, 1);
+    assert.equal(kaan.length, 1);
+    assert.equal(sinan.length, 1);
+    assert.equal(arnaud.length, 0);
+
+    assert.match(alexandra[0].statement, /Alexandra/);
+    assert.match(kaan[0].statement, /Kaan/);
+    assert.match(sinan[0].statement, /Sinan/);
+
+    assert.equal(result.receipt.private.created, 3);
+  } finally {
+    close(fx);
+  }
+});
+
+
+test("une habitude autonome est persistée comme observed_habit et jamais comme work_preference", () => {
+  const fx = fixture();
+
+  try {
+    const result = fx.pipeline.process({
+      text: "Chaque jour, je commence par vérifier mes tests."
+    });
+
+    assert.equal(result.receipt.general.created, 1);
+
+    const memories = fx.repository.listMemories();
+
+    assert.equal(memories.length, 1);
+    assert.equal(memories[0].type, "observed_habit");
+    assert.notEqual(memories[0].type, "work_preference");
+    assert.match(String(memories[0].value), /Chaque jour/);
+  } finally {
+    close(fx);
+  }
+});
+
+test("un outil durable est persisté comme tooling et jamais déguisé en work_preference", () => {
+  const fx = fixture();
+
+  try {
+    const result = fx.pipeline.process({
+      text: "J'utilise Astro comme framework pour mes interfaces."
+    });
+
+    assert.equal(result.receipt.general.created, 1);
+
+    const memories = fx.repository.listMemories();
+
+    assert.equal(memories.length, 1);
+    assert.equal(memories[0].type, "tooling");
+    assert.notEqual(memories[0].type, "work_preference");
+    assert.match(String(memories[0].value), /Astro/);
+  } finally {
+    close(fx);
+  }
+});
+
+
+test("le pipeline autonome conserve le sujet explicite pour une phrase pronominale suivante", () => {
+  const fx = fixture();
+
+  try {
+    const result = fx.pipeline.process({
+      text: [
+        "Alexandra souffre d'une maladie chronique TEST-ALEX-ONE.",
+        "Elle prend un traitement médical TEST-ALEX-TWO."
+      ].join(" ")
+    });
+
+    const alexandra = fx.privateService.listMemories({
+      subjectId: "alexandra",
+      includeDeleted: false
+    });
+
+    const arnaud = fx.privateService.listMemories({
+      subjectId: "arnaud",
+      includeDeleted: false
+    });
+
+    assert.equal(result.receipt.private.created, 2);
+    assert.equal(alexandra.length, 2);
+    assert.equal(arnaud.length, 0);
+
+    assert.ok(
+      alexandra.some((m) => m.statement.includes("TEST-ALEX-ONE"))
+    );
+
+    assert.ok(
+      alexandra.some((m) => m.statement.includes("TEST-ALEX-TWO"))
+    );
+  } finally {
+    close(fx);
+  }
+});
+
+
+test("une contradiction privée autonome n'écrase pas l'ancien souvenir", () => {
+  const fx = fixture();
+
+  try {
+    fx.pipeline.process({
+      text: "Alexandra est ma partenaire TEST-AUTO-CONFLICT."
+    });
+
+    const second = fx.pipeline.process({
+      text: "Alexandra n'est plus ma partenaire TEST-AUTO-CONFLICT."
+    });
+
+    const memories = fx.privateService.listMemories({
+      subjectId: "alexandra",
+      includeDeleted: false,
+    });
+
+    assert.equal(memories.length, 2);
+
+    const original = memories.find(
+      (item) => !/n'est plus/i.test(item.statement)
+    );
+
+    const contradictory = memories.find(
+      (item) => /n'est plus/i.test(item.statement)
+    );
+
+    assert.ok(original);
+    assert.ok(contradictory);
+
+    assert.equal(original.status, "confirmed");
+    assert.equal(contradictory.status, "pending_review");
+    assert.equal(contradictory.payload?.conflictWithId, original.id);
+
+    assert.equal(second.receipt.private.created, 1);
+    assert.equal(second.receipt.private.updated, 0);
+  } finally {
+    close(fx);
+  }
+});
+
+
+test("une information générale pronominale conserve le profil Alexandra", () => {
+  const fx = fixture();
+
+  try {
+    const result = fx.pipeline.process({
+      text: [
+        "Alexandra suit un traitement médical TEST-SUBJECT-ANCHOR.",
+        "Elle utilise React comme framework TEST-ALEX-GENERAL."
+      ].join(" ")
+    });
+
+    const general = fx.repository.listMemories();
+
+    const alexGeneral = general.find(
+      (item) => /TEST-ALEX-GENERAL/.test(String(item.value))
+    );
+
+    assert.ok(alexGeneral);
+    assert.equal(alexGeneral.metadata?.profileId, "alexandra");
+
+    assert.equal(
+      result.candidates.find(
+        (item) => /TEST-ALEX-GENERAL/.test(item.statement)
+      )?.subjectId,
+      "alexandra"
+    );
+  } finally {
+    close(fx);
+  }
+});
+
+test("les mémoires générales de deux profils ne s'écrasent pas entre elles", () => {
+  const fx = fixture();
+
+  try {
+    fx.pipeline.process({
+      text: "J'utilise Astro comme framework TEST-ARNAUD-TOOLING."
+    });
+
+    fx.pipeline.process({
+      text: [
+        "Alexandra suit un traitement médical TEST-ALEX-ANCHOR.",
+        "Elle utilise React comme framework TEST-ALEX-TOOLING."
+      ].join(" ")
+    });
+
+    const general = fx.repository.listMemories();
+
+    const arnaud = general.find(
+      (item) => /TEST-ARNAUD-TOOLING/.test(String(item.value))
+    );
+
+    const alexandra = general.find(
+      (item) => /TEST-ALEX-TOOLING/.test(String(item.value))
+    );
+
+    assert.ok(arnaud);
+    assert.ok(alexandra);
+
+    assert.notEqual(arnaud.id, alexandra.id);
+    assert.equal(arnaud.metadata?.profileId, "arnaud");
+    assert.equal(alexandra.metadata?.profileId, "alexandra");
+  } finally {
+    close(fx);
+  }
 });

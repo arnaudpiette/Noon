@@ -3,7 +3,7 @@
 const crypto = require("crypto");
 
 const MEMORY_STATUSES = new Set(["confirmed", "inferred", "temporary", "rejected", "expired", "blocked"]);
-const MEMORY_TYPES = new Set(["identity_role", "work_preference", "permanent_constraint", "objective", "active_project", "commitment", "deadline", "decision", "professional_relationship", "observed_habit", "temporary_information", "outcome", "feedback"]);
+const MEMORY_TYPES = new Set(["identity_role", "work_preference", "permanent_constraint", "objective", "active_project", "commitment", "deadline", "decision", "professional_relationship", "observed_habit", "tooling", "temporary_information", "outcome", "feedback"]);
 const PROJECT_STATUSES = new Set(["todo", "in_progress", "blocked", "waiting", "completed", "archived"]);
 const INBOX_STATUSES = new Set(["detected", "clarification_needed", "ready", "proposed", "accepted", "snoozed", "dismissed", "completed", "expired"]);
 const SECRET_PATTERN = /(?:sk-[A-Za-z0-9_-]{12,}|api[_ -]?key|password|mot de passe|BEGIN (?:RSA |EC )?PRIVATE KEY|bearer\s+[A-Za-z0-9._-]+)/i;

@@ -1,8 +1,7 @@
 "use strict";
 
-const { isEvolvingData, isPrivateScope, isSecret, privateCategory, splitIntoAtomicStatements } = require("./document-memory-importer");
+const { resolveSubject, isEvolvingData, isPrivateScope, isSecret, privateCategory, splitIntoAtomicStatements } = require("./document-memory-importer");
 
-const EXPLICIT_PATTERNS = [/\bje pr[eé]f[eè]re\s+(.{3,300})/i, /\bma pr[eé]f[eé]rence (?:est|:)\s*(.{3,300})/i, /\bretiens que\s+(.{3,300})/i, /\bsouviens-toi que\s+(.{3,300})/i];
 const GREETING_PATTERN = /^(?:bonjour|bonsoir|salut|hello|merci|au revoir)[\s!.?]*$/i;
 const QUESTION_PATTERN = /^(?:qui|que|quoi|quel(?:le)?s?|comment|pourquoi|o[uù]|quand|combien|est-ce que|peux-tu|pourrais-tu)\b/i;
 const FICTION_PATTERN = /\b(?:ficti(?:f|ve|fs|ves)|imaginaire|par exemple|supposons?|cas d['’]école|pour l['’]exercice)\b/i;
@@ -54,37 +53,57 @@ function scoreCandidate(statement, category, options = {}) {
 function shouldIgnore(source, statement) {
   if (!statement || statement.length < 8 || GREETING_PATTERN.test(statement) || QUESTION_PATTERN.test(statement)) return true;
   if (FICTION_PATTERN.test(statement) || TRANSLATION_PATTERN.test(source) || TEMPORARY_PATTERN.test(statement)) return true;
-  if (/^(?:analyse|explique|résume|compare|écris|crée|corrige)\b/i.test(statement)) return true;
+  if (/^(?:analyse|explique|résume|compare|écris|crée|corrige|donne-moi|donne moi|dis-moi|dis moi|montre-moi|montre moi|affiche)\b/i.test(statement)) return true;
   return isSecret(statement);
 }
 
 function extractAutonomousMemoryCandidates(text, options = {}) {
   const source = String(text || "").trim();
   if (!source || TRANSLATION_PATTERN.test(source)) return [];
+
   const candidates = [];
+  let activeSubject = null;
+
   for (const raw of splitIntoAtomicStatements(source.length < 8 ? "" : source)) {
     const statement = cleanStatement(raw);
+
+    const subjectResolution = resolveSubject(statement, activeSubject);
+    activeSubject = subjectResolution.nextSubject;
+
     if (shouldIgnore(source, statement)) continue;
+
     const category = classifyCategory(statement);
     if (!category) continue;
+
     const evaluation = scoreCandidate(statement, category, options);
     if (evaluation.scores.total < 0.72 || evaluation.scores.confidence < 0.7) continue;
-    const scope = evaluation.privateScope ? "private" : evaluation.project ? "project" : "general";
-    candidates.push({ statement, category, scope, subjectId: scope === "project" ? `project:${evaluation.project.id}` : "arnaud", projectName: evaluation.project?.name || null, sensitivity: evaluation.privateScope ? "high" : "low", apiPolicy: evaluation.privateScope ? "local_only" : "contextual", stability: evaluation.evolving ? "evolving" : "stable", memoryKey: memoryKey(statement, category, evaluation.project?.id || null), scores: evaluation.scores, sourceType: options.sourceType || "automatic-conversation", sourceReference: options.sourceReference || null });
+
+    const scope = evaluation.privateScope
+      ? "private"
+      : evaluation.project
+        ? "project"
+        : "general";
+
+    candidates.push({
+      statement,
+      category,
+      scope,
+      subjectId: scope === "project"
+        ? `project:${evaluation.project.id}`
+        : subjectResolution.subjectId,
+      projectName: evaluation.project?.name || null,
+      sensitivity: evaluation.privateScope ? "high" : "low",
+      apiPolicy: evaluation.privateScope ? "local_only" : "contextual",
+      stability: evaluation.evolving ? "evolving" : "stable",
+      memoryKey: memoryKey(statement, category, evaluation.project?.id || null),
+      scores: evaluation.scores,
+      sourceType: options.sourceType || "automatic-conversation",
+      sourceReference: options.sourceReference || null,
+    });
   }
+
   return candidates;
 }
 
-function extractExplicitMemoryCandidates(text) {
-  const source = String(text || "").replace(/[\r\n]+/g, " ").trim();
-  for (const pattern of EXPLICIT_PATTERNS) {
-    const match = source.match(pattern);
-    if (!match) continue;
-    const rawStatement = cleanStatement(match[1], 300);
-    if (/\b(?:tout\s+ce\s+qui\s+est\s+(?:important|utile|pertinent)|ce\s+(?:dossier|document|fichier)|la\s+pi[eè]ce\s+jointe|les\s+fichiers?|ce\s+que\s+je\s+viens\s+de)\b/i.test(rawStatement)) continue;
-    return [{ subjectId: "arnaud", category: /pr[eé]f/i.test(match[0]) ? "preference" : "general", statement: rawStatement, sensitivity: "low", status: "candidate", confidence: 1, apiPolicy: "contextual", sourceType: "explicit-user-message" }];
-  }
-  return [];
-}
 
-module.exports = { classifyCategory, extractAutonomousMemoryCandidates, extractExplicitMemoryCandidates, memoryKey, scoreCandidate };
+module.exports = { classifyCategory, extractAutonomousMemoryCandidates, memoryKey, scoreCandidate };

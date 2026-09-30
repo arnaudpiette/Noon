@@ -32,7 +32,6 @@ test("la reproduction sans apostrophe et avec garder devient MEMORY_INVENTORY", 
   assert.equal(command.action, "memory_read");
   assert.equal(command.intent, "MEMORY_INVENTORY");
 });
-
 test("les variantes naturelles convergent vers la même lecture locale", () => {
   for (const text of ["qu'as-tu gardé en mémoire ?", "qu'est-ce que tu as retenu ?", "que sais-tu sur moi ?", "quelles informations as-tu mémorisées ?", "montre-moi ce que tu as en mémoire", "qu'as-tu enregistré sur moi ?", "qu'as-tu gardé localement ?"]) {
     assert.equal(parseConversationMemoryCommand(text)?.action, "memory_read", text);
@@ -96,4 +95,101 @@ test("une base vide produit un fallback local déterministe", () => {
     assert.equal(result.status, "not_found");
     assert.equal(result.answer, "Je n’ai actuellement aucune mémoire persistante active.");
   } finally { close(fx); }
+});
+
+test("une demande naturelle d'audit mémoire devient une lecture locale read-only", () => {
+  const command = parseConversationMemoryCommand(
+    "Analyse maintenant ce que tu as retenu à partir de ce bloc. Donne-moi séparément les informations concernant Arnaud, Alexandra, Kaan et Sinan. Ne crée ni ne modifie aucune nouvelle mémoire pendant cette vérification."
+  );
+
+  assert.ok(command);
+  assert.equal(command.action, "memory_read");
+  assert.equal(command.intent, "MEMORY_AUDIT");
+  assert.equal(command.readOnly, true);
+});
+
+
+test("un audit mémoire multi-profils identifie tous les profils demandés", () => {
+  const command = parseConversationMemoryCommand(
+    "Analyse ce que tu as retenu concernant Arnaud, Alexandra, Kaan et Sinan. Ne crée ni ne modifie aucune nouvelle mémoire."
+  );
+
+  assert.ok(command);
+  assert.equal(command.action, "memory_read");
+  assert.equal(command.intent, "MEMORY_AUDIT");
+  assert.equal(command.readOnly, true);
+
+  assert.deepEqual(
+    command.subjectIds,
+    ["arnaud", "alexandra", "kaan", "sinan"]
+  );
+});
+
+test("un audit multi-profils lit séparément les espaces mémoire demandés", () => {
+  const fx = fixture();
+
+  try {
+    fx.privateService.createMemory({
+      subjectId: "arnaud",
+      category: "preference",
+      statement: "ARNAUD-AUDIT-TEST",
+      sensitivity: "low",
+      status: "confirmed",
+      consentStatus: "granted",
+      apiPolicy: "contextual",
+    });
+
+    fx.privateService.createMemory({
+      subjectId: "alexandra",
+      category: "family_relationship",
+      statement: "ALEXANDRA-AUDIT-TEST",
+      sensitivity: "medium",
+      status: "confirmed",
+      consentStatus: "granted",
+      apiPolicy: "local_only",
+    });
+
+    fx.privateService.createMemory({
+      subjectId: "kaan",
+      category: "general",
+      statement: "KAAN-AUDIT-TEST",
+      sensitivity: "high",
+      status: "confirmed",
+      consentStatus: "granted",
+      apiPolicy: "local_only",
+    });
+
+    fx.privateService.createMemory({
+      subjectId: "sinan",
+      category: "general",
+      statement: "SINAN-AUDIT-TEST",
+      sensitivity: "high",
+      status: "confirmed",
+      consentStatus: "granted",
+      apiPolicy: "local_only",
+    });
+
+    const result = execute(
+      fx,
+      "Analyse ce que tu as retenu concernant Arnaud, Alexandra, Kaan et Sinan. Ne crée ni ne modifie aucune nouvelle mémoire."
+    );
+
+    assert.equal(result.status, "inspected");
+    assert.deepEqual(
+      result.subjectCounts,
+      {
+        arnaud: 1,
+        alexandra: 1,
+        kaan: 1,
+        sinan: 1,
+      }
+    );
+
+    assert.match(result.answer, /Arnaud/);
+    assert.match(result.answer, /Alexandra/);
+    assert.match(result.answer, /Kaan/);
+    assert.match(result.answer, /Sinan/);
+  } finally {
+    close(fx);
+  }
 });
