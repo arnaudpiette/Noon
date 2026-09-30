@@ -849,7 +849,7 @@ const authorizedContextSources = createAuthorizedContextSources({
       read: async (request) => {
         const start = request.timeRange?.from ? new Date(request.timeRange.from) : new Date();
         const end = request.timeRange?.to ? new Date(request.timeRange.to) : new Date(start.getTime() + 26 * 60 * 60 * 1000);
-        const data = await calendarConnector.listCalendarEvents({ timeMin: start.toISOString(), timeMax: end.toISOString() });
+        const data = await calendarConnector.listCalendarEvents({ timeMin: start.toISOString(), timeMax: end.toISOString(), maxResults: request.limit });
         return (data.items || []).slice(0, request.limit).map((item) => ({ sourceId: item.id,
           timestamp: item.start?.dateTime || item.start?.date || null, relevance: 0.9, privacyClass: "PRIVATE", localOnly: true,
           payload: { start: item.start?.dateTime || item.start?.date || null, end: item.end?.dateTime || item.end?.date || null,

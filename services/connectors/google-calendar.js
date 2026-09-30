@@ -12,8 +12,10 @@ function createCalendarConnector(deps) {
     base.assertRemoteAvailable();
     return deps.getGoogleAccessToken ? deps.getGoogleAccessToken() : deps.tokenStore.get("google")?.access_token;
   };
-  async function listCalendarEvents({ timeMin = new Date().toISOString(), timeMax, calendarId = "primary" } = {}) {
-    const params = new URLSearchParams({ timeMin, singleEvents: "true", orderBy: "startTime", maxResults: "50" });
+  async function listCalendarEvents({ timeMin = new Date().toISOString(), timeMax, calendarId = "primary", maxResults = 50 } = {}) {
+    const limit = maxResults;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new TypeError("Limite Calendar invalide.");
+    const params = new URLSearchParams({ timeMin, singleEvents: "true", orderBy: "startTime", maxResults: String(limit) });
     if (timeMax) params.set("timeMax", timeMax);
     return base.run(async () => providerFetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?${params}`, { token: await token() }), { idempotent: true });
   }

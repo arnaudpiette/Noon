@@ -69,6 +69,15 @@ test('published Google scopes match the read-only rollout', () => {
  assert.deepEqual(createGmailConnector({tokenStore}).scopes,['https://www.googleapis.com/auth/gmail.readonly']);
  assert.deepEqual(createCalendarConnector({tokenStore}).scopes,['https://www.googleapis.com/auth/calendar.readonly']);
 });
+test('Calendar transmet un quota borné au fournisseur sans pagination supplémentaire', async () => {
+ const original=global.fetch;const urls=[];global.fetch=async(url)=>{urls.push(String(url));return {ok:true,status:200,text:async()=>JSON.stringify({items:[{id:'one'},{id:'two'}]})};};
+ try {const tokenStore=tokens();tokenStore.set({access_token:'fixture'});const calendar=createCalendarConnector({tokenStore});
+  const limited=await calendar.listCalendarEvents({timeMin:'2026-01-01T00:00:00.000Z',timeMax:'2026-01-02T00:00:00.000Z',maxResults:5});
+  assert.equal(limited.items.length,2);assert.equal(urls.length,1);const params=new URL(urls[0]).searchParams;assert.equal(params.get('maxResults'),'5');assert.equal(params.get('orderBy'),'startTime');
+  await calendar.listCalendarEvents({timeMin:'2026-01-01T00:00:00.000Z'});assert.equal(new URL(urls[1]).searchParams.get('maxResults'),'50');
+  await assert.rejects(calendar.listCalendarEvents({maxResults:0}),TypeError);await assert.rejects(calendar.listCalendarEvents({maxResults:51}),TypeError);await assert.rejects(calendar.listCalendarEvents({maxResults:'5'}),TypeError);
+ } finally {global.fetch=original;}
+});
 test('safeStorage ciphertext survives reopening; public connector status contains no credentials', t => {
  const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
  const {createTokenStore}=require('../services/security/token-store');
