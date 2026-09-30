@@ -82,7 +82,7 @@ function createExecutionTrackingEngine({
   if (!repository?.insert || !repository?.update) throw new TypeError("Dépôt de suivi requis.");
   const grace = { default: 15, meeting: 5, deep_work: 20, ...gracePeriods };
 
-  function ingestPlan(plan, { subjectScope = "arnaud" } = {}) {
+  function ingestPlan(plan, { subjectScope = "arnaud", projectId = null } = {}) {
     const blocks = [...(plan.plannedBlocks || []), ...(plan.proposedBlocks || [])];
     const created = [];
     for (const block of blocks) {
@@ -93,7 +93,8 @@ function createExecutionTrackingEngine({
       created.push(repository.insert({
         executionItemId: `execution_${crypto.randomUUID()}`,
         actionId: block.actionId, planId: plan.planId, planBlockId: block.blockId,
-        subjectScope, source: block.source || "daily_plan", sourceRef: block.blockId,
+        subjectScope, projectId: block.projectId || plan.projectId || projectId || null,
+        source: block.source || "daily_plan", sourceRef: block.blockId,
         plannedStart: block.start, plannedEnd: block.end,
         status: block.status === "completed" ? "completed" : block.status === "in_progress" ? "in_progress" : "planned",
         progress: block.status === "completed" ? 100 : null,

@@ -5,7 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { createPersonalDatabase } = require("../services/persistence/database");
+const { createPersonalDatabase, createSchema, loadSqlite } = require("../services/persistence/database");
 const { createExecutionTrackingRepository } = require("../services/persistence/repositories/execution-tracking-repository");
 const { createExecutionTrackingEngine, TrackingError } = require("../services/tracking/execution-tracking-engine");
 
@@ -121,6 +121,59 @@ test("une commande ambiguë ne termine aucune action", () => {
 
 test("les profils restent strictement isolés", () => {
   const f=fixture();try{f.engine.ingestPlan(plan([block("A")]),{subjectScope:"arnaud"});f.engine.ingestPlan(plan([block("A")]),{subjectScope:"alexandra"});assert.equal(f.engine.list({subjectScope:"arnaud"}).length,1);assert.equal(f.engine.list({subjectScope:"alexandra"}).length,1);}finally{f.close();}
+});
+
+test("les exécutions sont isolées par profil et projet avant la limite", () => {
+  const f = fixture();
+  try {
+    f.engine.ingestPlan(plan([
+      block("other-1", "2026-08-28T06:00:00Z", "2026-08-28T07:00:00Z", { projectId: "other" }),
+      block("other-2", "2026-08-28T07:00:00Z", "2026-08-28T08:00:00Z", { projectId: "other" }),
+      block("target", "2026-08-28T09:00:00Z", "2026-08-28T10:00:00Z", { projectId: "target" }),
+      block("legacy", "2026-08-28T10:00:00Z", "2026-08-28T11:00:00Z"),
+    ]), { subjectScope: "arnaud" });
+    f.engine.ingestPlan(plan([block("target", "2026-08-28T09:00:00Z", "2026-08-28T10:00:00Z", { projectId: "target" })], { planId: "alexandra-plan" }), { subjectScope: "alexandra" });
+
+    const target = f.engine.list({ subjectScope: "arnaud", projectId: "target", limit: 1 });
+    assert.equal(target.length, 1);
+    assert.equal(target[0].actionId, "target");
+    assert.equal(target[0].projectId, "target");
+    assert.equal(f.engine.list({ subjectScope: "arnaud", projectId: "other" }).length, 2);
+    assert.equal(f.engine.list({ subjectScope: "alexandra", projectId: "target" }).length, 1);
+    assert.equal(f.engine.list({ subjectScope: "arnaud", projectId: "missing" }).length, 0);
+
+    const updated = f.repository.update(target[0].executionItemId, target[0].version, { status: "in_progress", projectId: "other" });
+    assert.equal(updated.projectId, "target");
+    assert.equal(f.engine.list({ subjectScope: "arnaud", projectId: "target" })[0].status, "in_progress");
+  } finally { f.close(); }
+});
+
+test("la migration ajoute project_id sans modifier les exécutions historiques", { skip: !loadSqlite()?.DatabaseSync }, () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "noon-tracking-migration-"));
+  const filePath = path.join(directory, "legacy.sqlite");
+  const database = new (loadSqlite().DatabaseSync)(filePath);
+  try {
+    database.exec(`CREATE TABLE execution_items (
+      id TEXT PRIMARY KEY, action_id TEXT NOT NULL, plan_id TEXT, plan_block_id TEXT,
+      subject_scope TEXT NOT NULL DEFAULT 'arnaud', source TEXT NOT NULL, source_ref TEXT,
+      planned_start TEXT, planned_end TEXT, actual_start TEXT, actual_end TEXT, status TEXT NOT NULL,
+      progress REAL, confidence REAL NOT NULL, completion_source TEXT, blocker_json TEXT,
+      notes_encrypted TEXT, remaining_duration_minutes INTEGER, priority_score REAL NOT NULL DEFAULT 0,
+      due_at TEXT, dependencies_json TEXT NOT NULL DEFAULT '[]', manual_move INTEGER NOT NULL DEFAULT 0,
+      deferred_until TEXT, last_event_at TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(action_id, plan_block_id, subject_scope)
+    )`);
+    database.prepare("INSERT INTO execution_items(id,action_id,subject_scope,source,status,confidence,last_event_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)")
+      .run("legacy", "legacy-action", "arnaud", "local", "planned", 0.5, "2026-08-28T08:00:00Z", "2026-08-28T08:00:00Z", "2026-08-28T08:00:00Z");
+
+    createSchema(database);
+    const migrated = database.prepare("SELECT action_id, project_id FROM execution_items WHERE id=?").get("legacy");
+    assert.equal(migrated.action_id, "legacy-action");
+    assert.equal(migrated.project_id, null);
+  } finally {
+    database.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("les statistiques de durée utilisent uniquement des preuves fiables", () => {

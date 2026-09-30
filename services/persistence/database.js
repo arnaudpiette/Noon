@@ -5,7 +5,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const SCHEMA_VERSION = 16;
+const SCHEMA_VERSION = 17;
 
 function loadSqlite() {
   try { return require("node:sqlite"); }
@@ -150,6 +150,7 @@ function createSchema(database) {
       plan_id TEXT,
       plan_block_id TEXT,
       subject_scope TEXT NOT NULL DEFAULT 'arnaud',
+      project_id TEXT,
       source TEXT NOT NULL,
       source_ref TEXT,
       planned_start TEXT,
@@ -516,6 +517,10 @@ function createSchema(database) {
   `);
   // Migration additive pour les bases v12 créées pendant le rollout SHADOW.
   try { database.exec("ALTER TABLE sync_changes ADD COLUMN base_field_versions_json TEXT NOT NULL DEFAULT '{}'"); } catch {}
+  // Les anciennes exécutions restent volontairement sans projet : aucune
+  // inférence ne doit les faire apparaître dans un contexte A3 projet.
+  try { database.exec("ALTER TABLE execution_items ADD COLUMN project_id TEXT"); } catch {}
+  database.exec("CREATE INDEX IF NOT EXISTS execution_scope_project_idx ON execution_items(subject_scope, project_id, planned_start, updated_at)");
   try {
     database.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS memory_items_fts USING fts5(id UNINDEXED, subject, value_text);`);
     database.ftsAvailable = true;

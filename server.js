@@ -884,7 +884,11 @@ const authorizedContextSources = createAuthorizedContextSources({
     execution: {
       status: () => SOURCE_STATUSES.AVAILABLE,
       read: async (request) => {
-        const items = executionTrackingEngine.list({ subjectScope: "arnaud" }).filter((item) => !request.projectId || !item.projectId || item.projectId === request.projectId);
+        const items = executionTrackingEngine.list({
+          subjectScope: "arnaud",
+          projectId: request.projectId || undefined,
+          limit: request.limit,
+        });
         const counts = items.reduce((result, item) => ({ ...result, [item.status]: (result[item.status] || 0) + 1 }), {});
         return [{ sourceId: "execution-summary", projectId: request.projectId || null, relevance: 0.9, privacyClass: "PRIVATE",
           allowedForRemoteModel: true, payload: { pendingActions: (counts.planned || 0) + (counts.delayed || 0), runningActions: counts.in_progress || 0,
