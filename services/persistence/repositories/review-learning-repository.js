@@ -1,5 +1,7 @@
 "use strict";
 
+const crypto = require("crypto");
+
 function parse(value, fallback) { try { return JSON.parse(value); } catch { return fallback; } }
 function rowReview(row) {
   if (!row) return null;
@@ -13,6 +15,24 @@ function rowReview(row) {
 
 function createSqliteRepository(wrapper) {
   const db = wrapper.database;
+  function transaction(operation) {
+    const ownsTransaction = db.isTransaction !== true;
+    const savepoint = ownsTransaction ? null : `review_learning_${crypto.randomUUID().replaceAll("-", "")}`;
+    if (ownsTransaction) db.exec("BEGIN IMMEDIATE"); else db.exec(`SAVEPOINT ${savepoint}`);
+    try {
+      const result = operation();
+      if (ownsTransaction) db.exec("COMMIT"); else db.exec(`RELEASE SAVEPOINT ${savepoint}`);
+      return result;
+    } catch (error) {
+      if (ownsTransaction) {
+        try { db.exec("ROLLBACK"); } catch {}
+      } else {
+        try { db.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`); } catch {}
+        try { db.exec(`RELEASE SAVEPOINT ${savepoint}`); } catch {}
+      }
+      throw error;
+    }
+  }
   function getByFingerprint(fingerprint) {
     return rowReview(db.prepare("SELECT * FROM review_records WHERE fingerprint=?").get(fingerprint));
   }
@@ -22,16 +42,18 @@ function createSqliteRepository(wrapper) {
       ORDER BY review_version DESC LIMIT 1`).get(reviewType, subjectScope, periodStart, periodEnd));
   }
   function save(review) {
-    const duplicate = getByFingerprint(review.fingerprint);
-    if (duplicate) return { review: duplicate, idempotent: true };
-    const current = getLatest(review);
-    const version = (current?.reviewVersion || 0) + 1;
-    const timestamp = new Date().toISOString();
-    db.prepare(`INSERT INTO review_records(id,review_type,subject_scope,period_start,period_end,review_version,fingerprint,payload_json,created_at,updated_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?)`).run(review.reviewId, review.reviewType,
-      review.subjectScope, review.periodStart, review.periodEnd, version,
-      review.fingerprint, JSON.stringify({ ...review, reviewVersion: version }), timestamp, timestamp);
-    return { review: getByFingerprint(review.fingerprint), idempotent: false };
+    return transaction(() => {
+      const duplicate = getByFingerprint(review.fingerprint);
+      if (duplicate) return { review: duplicate, idempotent: true };
+      const current = getLatest(review);
+      const version = (current?.reviewVersion || 0) + 1;
+      const timestamp = new Date().toISOString();
+      db.prepare(`INSERT INTO review_records(id,review_type,subject_scope,period_start,period_end,review_version,fingerprint,payload_json,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?)`).run(review.reviewId, review.reviewType,
+        review.subjectScope, review.periodStart, review.periodEnd, version,
+        review.fingerprint, JSON.stringify({ ...review, reviewVersion: version }), timestamp, timestamp);
+      return { review: getByFingerprint(review.fingerprint), idempotent: false };
+    });
   }
   function list(filters = {}) {
     const clauses = [], values = [];
@@ -42,7 +64,7 @@ function createSqliteRepository(wrapper) {
       ORDER BY period_start DESC, review_version DESC LIMIT ?`)
       .all(...values, Math.min(100, Number(filters.limit) || 30)).map(rowReview);
   }
-  return { kind: "sqlite", getByFingerprint, getLatest, list, save };
+  return { kind: "sqlite", getByFingerprint, getLatest, list, save, transaction };
 }
 
 function createFallbackRepository(wrapper) {
