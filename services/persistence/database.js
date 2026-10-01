@@ -6,6 +6,9 @@ const fs = require("fs");
 const path = require("path");
 
 const SCHEMA_VERSION = 17;
+// Une attente courte absorbe les écritures SQLite qui se chevauchent entre
+// deux processus Noon, sans transformer les erreurs persistantes en retry.
+const PERSONAL_DATABASE_BUSY_TIMEOUT_MS = 1500;
 
 function loadSqlite() {
   try { return require("node:sqlite"); }
@@ -549,8 +552,15 @@ function createPersonalDatabase(filePath) {
   if (!sqlite?.DatabaseSync) return createFallback(filePath);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const database = new sqlite.DatabaseSync(filePath);
+  database.exec(`PRAGMA busy_timeout = ${PERSONAL_DATABASE_BUSY_TIMEOUT_MS}`);
   createSchema(database);
   return { kind: "sqlite", filePath, database, get ftsAvailable() { return database.ftsAvailable === true; }, close: () => database.close() };
 }
 
-module.exports = { SCHEMA_VERSION, createPersonalDatabase, createSchema, loadSqlite };
+module.exports = {
+  PERSONAL_DATABASE_BUSY_TIMEOUT_MS,
+  SCHEMA_VERSION,
+  createPersonalDatabase,
+  createSchema,
+  loadSqlite,
+};
