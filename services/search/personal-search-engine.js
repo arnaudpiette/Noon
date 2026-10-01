@@ -184,6 +184,8 @@ function createPersonalSearchEngine({ adapters = {}, metrics = null, audit = nul
       privacyContext: input.privacyContext || {}, conversationId: input.conversationId || null,
       globalSearch: input.globalSearch === true,
       allowExpansion: input.allowExpansion !== false,
+      fileSearchMode: input.fileSearchMode === "metadata" ? "metadata" : null,
+      contentReadBudget: input.contentReadBudget == null ? null : clamp(Number(input.contentReadBudget) || 0, 1, 50),
     };
     if (!request.query) throw new TypeError("Requête de recherche vide.");
     const selection = selectSources(request.query, request.intent, request.sourceScopes);

@@ -145,7 +145,7 @@ tout accès.
 | Rappels | `apple-reminders` | actifs/échéance proche, 5 | local, volatile |
 | Calendar | `google-calendar` | fenêtre demandée ou 26 h, 5 | distant, non mis en cache |
 | Gmail | `gmail` via `PersonalSearchEngine` | recherche ciblée, metadata/extrait minimal, 3 | distant, cache existant de recherche (30 s) |
-| Fichiers | `FileSearchAdapter` via `PersonalSearchEngine` | racines autorisées, projet résolu si disponible, 3 | local, cache existant de recherche (30 s) |
+| Fichiers | `FileSearchAdapter` via `PersonalSearchEngine` | métadonnées nom/chemin dans les racines autorisées, puis au plus 12 lectures, 3 résultats | local, cache existant de recherche (30 s) |
 | Git | `inspectGitStatus()` | un résumé sans diff | local, non mis en cache |
 | Exécution | `ExecutionTrackingEngine.list()` | un résumé et comptes bornés | local, volatile |
 
@@ -170,6 +170,11 @@ Une entité A2 ambiguë ne déclenche ni Git, ni fichiers, ni suivi de projet.
 Un échec de connecteur est enregistré dans `diagnostics.sourceDiagnostics` sans
 interrompre la construction. Ces diagnostics ne contiennent que sélection,
 statut, compteur, troncature et durée; aucun contenu, chemin, requête ou nom.
+
+Pour les fichiers A3, la sélection se fait avant lecture du contenu, à partir du
+nom et du chemin ; il peut donc ne pas retrouver un fichier dont seul le contenu
+correspond à la requête. La recherche personnelle générale conserve la recherche
+par contenu lorsqu’elle n’active pas ce mode A3.
 
 `searchNotes()` borne la requête à 500 caractères et la transmet comme argument
 `osascript`, jamais comme code AppleScript. Notes filtre d'abord ses métadonnées

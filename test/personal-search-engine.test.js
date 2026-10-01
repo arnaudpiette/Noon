@@ -150,6 +150,26 @@ test("l’adaptateur fichier recherche le contenu autorisé et bloque un symlink
   assert.deepEqual(adapter.search({ query: "VoiceIdentity", projectId: "inconnu", resultsPerSource: 10 }), []);
 });
 
+test("A3 sélectionne les métadonnées avant les lectures de contenu et borne ce budget", () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "noon-a3-files-"));
+  for (const name of ["voice-a.js", "voice-b.js", "voice-c.js", "voice-d.js", "unrelated.js"]) fs.writeFileSync(path.join(temporary, name), `const token = '${name}';`);
+  const adapter = createFileSearchAdapter({ rootsProvider: () => [temporary], maxResults: 10 }); const original = fs.readFileSync; const reads = [];
+  fs.readFileSync = (file, ...args) => { reads.push(path.basename(String(file))); return original(file, ...args); };
+  try {
+    const selected = adapter.search({ query: "voice", fileSearchMode: "metadata", contentReadBudget: 2, resultsPerSource: 3, profileScope: "arnaud" });
+    assert.equal(selected.length, 2); assert.deepEqual(reads.sort(), ["voice-a.js", "voice-b.js"]);
+    reads.length = 0; assert.deepEqual(adapter.search({ query: "absent", fileSearchMode: "metadata", contentReadBudget: 2, profileScope: "arnaud" }), []); assert.deepEqual(reads, []);
+  } finally { fs.readFileSync = original; fs.rmSync(temporary, { recursive: true, force: true }); }
+});
+
+test("A3 transmet le mode métadonnées au connecteur fichier sans retirer la recherche de contenu générale", async () => {
+  let request; const engine = createPersonalSearchEngine({ adapters: { file: { version: () => "1", search: (input) => { request = input; return [{ id: "f", title: "voice.js", snippet: "match", locator: { path: "/f" } }]; } } } });
+  const a3 = await engine.search({ query: "voice", sourceScopes: ["file"], fileSearchMode: "metadata", contentReadBudget: 12, maxResults: 3, resultsPerSource: 3 });
+  assert.equal(request.fileSearchMode, "metadata"); assert.equal(request.contentReadBudget, 12); assert.equal(a3.results.length, 1);
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "noon-general-files-")); fs.writeFileSync(path.join(temporary, "plain.js"), "needle-content");
+  try { assert.equal(createFileSearchAdapter({ rootsProvider: () => [temporary] }).search({ query: "needle-content", profileScope: "arnaud" }).length, 1); } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
+});
+
 test("le corpus qualité retrouve voix, priorité, accord et historique dans la bonne source", async () => {
   const engine = createPersonalSearchEngine({ adapters: {
     file: adapter([{ id: "voice", title: "voice-identity.js", snippet: "Identité vocale principale VoiceIdentity", locator: { path: "/voice" } }]),

@@ -66,6 +66,10 @@ function createFileSearchAdapter({ rootsProvider, isExcluded = () => false, maxV
       ...(request.exactTerms || []).flatMap(searchTerms),
     ].filter(Boolean))];
     const results = []; let visited = 0;
+    const metadataOnlySelection = request.fileSearchMode === "metadata";
+    const contentReadBudget = Math.max(1, Math.min(50, Number(request.contentReadBudget) || 12));
+    const candidates = [];
+    const metadataScore = (name, real) => exactTerms.reduce((score, term) => score + (name.toLowerCase().includes(term) ? 2 : 0) + (real.toLowerCase().includes(term) ? 1 : 0), 0);
     function scan(directory) {
       if (visited >= maxVisited || results.length >= maxResults) return;
       let realDirectory;
@@ -82,6 +86,12 @@ function createFileSearchAdapter({ rootsProvider, isExcluded = () => false, maxV
         const extension = path.extname(entry.name).toLowerCase();
         if (!DISCOVERABLE_EXTENSIONS.has(extension)) continue;
         const nameMatch = exactTerms.some((term) => entry.name.toLowerCase().includes(term));
+        if (metadataOnlySelection) {
+          if (!nameMatch && !exactTerms.some((term) => real.toLowerCase().includes(term))) continue;
+          let stat; try { stat = fs.statSync(real); } catch { continue; }
+          candidates.push({ real, name: entry.name, extension, stat, nameMatch, score: metadataScore(entry.name, real) });
+          continue;
+        }
         let snippet = ""; let line = null;
         if (TEXT_EXTENSIONS.has(extension)) {
           let stats; try { stats = fs.statSync(real); } catch { continue; }
@@ -113,7 +123,23 @@ function createFileSearchAdapter({ rootsProvider, isExcluded = () => false, maxV
     if (request.projectId && !scopedProjectPath) return [];
     if (scopedProjectPath) scan(scopedProjectPath);
     else for (const root of allowedRoots) scan(root);
-    return results;
+    if (metadataOnlySelection) {
+      for (const candidate of candidates.sort((left, right) => right.score - left.score || left.real.localeCompare(right.real)).slice(0, contentReadBudget)) {
+        let real; try { real = fs.realpathSync(candidate.real); } catch { continue; }
+        if (!isInside(real, allowedRoots) || isExcluded(path.basename(real))) continue;
+        let stat; try { stat = fs.statSync(real); } catch { continue; }
+        const extension = path.extname(real).toLowerCase(); let snippet = ""; let line = null;
+        if (TEXT_EXTENSIONS.has(extension) && stat.size <= maxFileBytes) {
+          let content; try { content = fs.readFileSync(real, "utf8"); } catch { continue; }
+          const lines = content.split(/\r?\n/); const index = lines.findIndex((value) => exactTerms.some((term) => value.toLowerCase().includes(term)));
+          if (index >= 0) { line = index + 1; snippet = lines.slice(Math.max(0, index - 1), index + 2).join(" ").slice(0, 800); }
+        }
+        results.push({ sourceId: real, title: path.basename(real), snippet: snippet || `Fichier correspondant : ${path.basename(real)}`,
+          timestamp: stat.mtime.toISOString(), projectId: request.projectId || null, profileScope: request.profileScope === "projects" ? "projects" : request.profileScope,
+          locator: { path: real, ...(line ? { line } : {}) }, sourceAuthority: 0.9, contentFingerprint: `${stat.mtimeMs}:${stat.size}` });
+      }
+    }
+    return results.slice(0, maxResults);
   }
   return { isAuthorized: () => roots().length > 0, search, version };
 }

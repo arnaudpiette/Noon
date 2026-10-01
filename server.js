@@ -869,7 +869,8 @@ const authorizedContextSources = createAuthorizedContextSources({
       status: () => getAllowedDirectories().length ? SOURCE_STATUSES.AVAILABLE : SOURCE_STATUSES.UNAUTHORIZED,
       read: async (request) => {
         const result = await personalSearchEngine.search({ query: request.query, sourceScopes: ["file"], projectId: request.projectId || null,
-          projectPath: projectPathForContext(request.projectId), maxResults: request.limit, resultsPerSource: request.limit, allowExpansion: false });
+          projectPath: projectPathForContext(request.projectId), maxResults: request.limit, resultsPerSource: request.limit, allowExpansion: false,
+          fileSearchMode: "metadata", contentReadBudget: 12 });
         return result.results.map((item) => ({ sourceId: item.sourceId, projectId: item.projectId, timestamp: item.timestamp, relevance: item.score,
           privacyClass: "PRIVATE", localOnly: true, payload: { name: item.title, excerpt: item.snippet } }));
       },
