@@ -182,12 +182,17 @@ function createProactiveEngine({
       ? new Date((options.at instanceof Date ? options.at : now()).getTime() + Math.max(5, Number(options.minutes) || 60) * 60_000).toISOString()
       : null;
     const status = value === "dont_remind" ? "dismissed" : value === "later" ? "snoozed" : "ready";
-    repository.updateRecommendation(recommendationHash, { userResponse: value, status, cooldownUntil: snoozeUntil });
-    repository.recordFeedback({ recommendationHash, value, category: existing.payload?.signalType || null,
-      metadata: { snoozeMinutes: value === "later" ? Math.max(5, Number(options.minutes) || 60) : null } });
-    metrics?.record(value === "useful" ? "proactive_feedback_useful" : "proactive_feedback_negative", 1,
-      { category: existing.payload?.signalType || null });
-    return { status, snoozeUntil };
+    const operation = () => {
+      repository.updateRecommendation(recommendationHash, { userResponse: value, status, cooldownUntil: snoozeUntil });
+      repository.recordFeedback({ recommendationHash, value, category: existing.payload?.signalType || null,
+        metadata: { snoozeMinutes: value === "later" ? Math.max(5, Number(options.minutes) || 60) : null } });
+      metrics?.record(value === "useful" ? "proactive_feedback_useful" : "proactive_feedback_negative", 1,
+        { category: existing.payload?.signalType || null });
+      return { status, snoozeUntil };
+    };
+    return typeof repository.transaction === "function"
+      ? repository.transaction(operation)
+      : operation();
   }
 
   async function suggestTimeSlots(recommendationHash, options = {}) {

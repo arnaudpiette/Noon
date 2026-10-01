@@ -42,7 +42,24 @@ function rowRecommendation(row) {
 
 function createSqliteRepository(wrapper) {
   const db = wrapper.database;
-  function transaction(operation) { db.exec("BEGIN IMMEDIATE"); try { const result = operation(); db.exec("COMMIT"); return result; } catch (error) { db.exec("ROLLBACK"); throw error; } }
+  function transaction(operation) {
+    const ownsTransaction = db.isTransaction !== true;
+    const savepoint = ownsTransaction ? null : `personal_intelligence_${crypto.randomUUID().replaceAll("-", "")}`;
+    if (ownsTransaction) db.exec("BEGIN IMMEDIATE"); else db.exec(`SAVEPOINT ${savepoint}`);
+    try {
+      const result = operation();
+      if (ownsTransaction) db.exec("COMMIT"); else db.exec(`RELEASE SAVEPOINT ${savepoint}`);
+      return result;
+    } catch (error) {
+      if (ownsTransaction) {
+        try { db.exec("ROLLBACK"); } catch {}
+      } else {
+        try { db.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`); } catch {}
+        try { db.exec(`RELEASE SAVEPOINT ${savepoint}`); } catch {}
+      }
+      throw error;
+    }
+  }
   function hasMigration(id) { return Boolean(db.prepare("SELECT 1 FROM schema_migrations WHERE name=?").get(id)); }
   function markMigration(id, details) { db.prepare("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(?,?,?)").run(1000 + Math.abs([...id].reduce((a,c)=>a+c.charCodeAt(0),0)), id, nowIso()); return details; }
   function upsertMemory(item) {
