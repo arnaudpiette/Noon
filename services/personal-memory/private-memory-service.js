@@ -64,7 +64,7 @@ function createPrivateMemoryService({ databaseWrapper, cipher, audit = () => {} 
   }
   function transaction(operation) {
     const ownsTransaction = db.isTransaction !== true;
-    const savepoint = ownsTransaction ? null : `private_memory_update_${crypto.randomUUID().replaceAll("-", "")}`;
+    const savepoint = ownsTransaction ? null : `private_memory_operation_${crypto.randomUUID().replaceAll("-", "")}`;
     if (ownsTransaction) db.exec("BEGIN IMMEDIATE"); else db.exec(`SAVEPOINT ${savepoint}`);
     try {
       const result = operation();
@@ -164,8 +164,33 @@ function createPrivateMemoryService({ databaseWrapper, cipher, audit = () => {} 
     if (outcome.committed) notifyAudit(entry);
     return getMemory(id);
   }
-  function forgetMemory(id) { const current = getMemory(id); if (!current) throw new Error("Souvenir introuvable."); db.prepare("UPDATE private_memories SET status='deleted',payload_encrypted=?,source_encrypted=NULL,deleted_at=?,updated_at=? WHERE id=?").run(cipher.encrypt({ statement: "", payload: null }), now(), now(), id); recordAudit("memory.deleted", id, current.subjectId); return true; }
-  function purgeSubject(subjectId) { const ids = db.prepare("SELECT id FROM private_memories WHERE subject_id=?").all(subjectId); db.prepare("DELETE FROM private_memory_versions WHERE memory_id IN (SELECT id FROM private_memories WHERE subject_id=?)").run(subjectId); db.prepare("DELETE FROM private_memories WHERE subject_id=?").run(subjectId); recordAudit("profile.purged", null, subjectId); return ids.length; }
+  function forgetMemory(id) {
+    const current = getMemory(id); if (!current) throw new Error("Souvenir introuvable.");
+    const entry = auditEntry("memory.deleted", id, current.subjectId);
+    const deletion = { payloadEncrypted: cipher.encrypt({ statement: "", payload: null }), deletedAt: now(), updatedAt: now() };
+    const outcome = transaction(() => {
+      db.prepare("UPDATE private_memories SET status='deleted',payload_encrypted=?,source_encrypted=NULL,deleted_at=?,updated_at=? WHERE id=?")
+        .run(deletion.payloadEncrypted, deletion.deletedAt, deletion.updatedAt, id);
+      insertAudit(entry);
+    });
+    if (outcome.committed) notifyAudit(entry);
+    return true;
+  }
+  function purgeSubject(subjectId) {
+    const entry = auditEntry("profile.purged", null, subjectId);
+    const outcome = transaction(() => {
+      const ids = db.prepare("SELECT id FROM private_memories WHERE subject_id=?").all(subjectId).map((row) => row.id);
+      if (ids.length) {
+        const placeholders = ids.map(() => "?").join(",");
+        db.prepare(`DELETE FROM private_memory_versions WHERE memory_id IN (${placeholders})`).run(...ids);
+        db.prepare(`DELETE FROM private_memories WHERE id IN (${placeholders})`).run(...ids);
+      }
+      insertAudit(entry);
+      return ids.length;
+    });
+    if (outcome.committed) notifyAudit(entry);
+    return outcome.result;
+  }
   function exportSubject(subjectId) { return { version: 1, exportedAt: now(), profile: profile(db.prepare("SELECT * FROM private_profiles WHERE id=?").get(subjectId)), memories: listMemories({ subjectId, includeDeleted: true }) }; }
   function setSettings({ enabled, sensitiveApiAllowed }) { db.prepare("INSERT OR REPLACE INTO private_consents(id,subject_id,purpose,status,granted_at,revoked_at,updated_at) VALUES('global-memory','noon','memory-enabled',?,?,?,?)").run(enabled ? "granted" : "revoked", enabled ? now() : null, enabled ? null : now(), now()); db.prepare("INSERT OR REPLACE INTO private_consents(id,subject_id,purpose,status,granted_at,revoked_at,updated_at) VALUES('sensitive-api','noon','sensitive-api',?,?,?,?)").run(sensitiveApiAllowed ? "granted" : "revoked", sensitiveApiAllowed ? now() : null, sensitiveApiAllowed ? null : now(), now()); return settings(); }
   function consentStatus(id, fallback = false) { const row = db.prepare("SELECT status FROM private_consents WHERE id=?").get(id); return row ? row.status === "granted" : fallback; }
@@ -202,8 +227,8 @@ function createPrivateMemoryService({ databaseWrapper, cipher, audit = () => {} 
       report: parseJson(row.report_json, {}), startedAt: row.started_at, completedAt: row.completed_at };
   }
   function rollbackMigration(id) {
-    db.exec("BEGIN IMMEDIATE");
-    try {
+    const entry = auditEntry("migration.rolled_back", id, "noon");
+    const outcome = transaction(() => {
       const targets = db.prepare("SELECT target_id FROM private_memory_migration_records WHERE migration_id=? AND disposition='migrated' AND target_id IS NOT NULL").all(id);
       for (const { target_id: targetId } of targets) {
         db.prepare("DELETE FROM private_memory_versions WHERE memory_id=?").run(targetId);
@@ -211,10 +236,11 @@ function createPrivateMemoryService({ databaseWrapper, cipher, audit = () => {} 
       }
       db.prepare("UPDATE private_memory_migration_records SET disposition='rolled_back' WHERE migration_id=? AND disposition='migrated'").run(id);
       db.prepare("UPDATE private_memory_migrations SET status='rolled_back',completed_at=? WHERE id=?").run(now(), id);
-      db.exec("COMMIT");
-      recordAudit("migration.rolled_back", id, "noon");
-      return { migrationId: id, removed: targets.length };
-    } catch (error) { db.exec("ROLLBACK"); throw error; }
+      insertAudit(entry);
+      return targets.length;
+    });
+    if (outcome.committed) notifyAudit(entry);
+    return { migrationId: id, removed: outcome.result };
   }
   ensureDefaults();
   return { available: true, createMemory, getMemory, listMemories, updateMemory, forgetMemory, purgeSubject, exportSubject, listProfiles, setProfileEnabled, isProfileEnabled, hardRules, settings, setSettings, recordAudit, beginMigration, migrationRecord, recordMigration, completeMigration, migrationStatus, rollbackMigration };
