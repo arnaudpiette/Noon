@@ -79,6 +79,14 @@ test("une source lente expire sans empêcher les autres sources sélectionnées"
   assert.equal(result.items.length, 1);
 });
 
+test("l'adapter Rappels A3 reçoit son quota sans réutiliser la lecture historique", async () => {
+  let request;
+  const reminders = { status: () => SOURCE_STATUSES.AVAILABLE, read: async (input) => { request = input; return []; } };
+  const sources = createAuthorizedContextSources({ adapters: { reminders } });
+  await sources.collect({ query: "une tâche" });
+  assert.equal(request.limit, 5);
+});
+
 test("Notes A3 reçoit cinq secondes, annule à l'expiration et ignore le résultat tardif", async () => {
   const timers = [];
   let resolveNotes;

@@ -838,10 +838,8 @@ const authorizedContextSources = createAuthorizedContextSources({
     reminders: {
       status: () => connectorContextStatus(remindersConnector, { local: true }),
       read: async (request) => {
-        const reminders = await remindersConnector.listIncompleteReminders(request.limit);
+        const reminders = await remindersConnector.listIncompleteRemindersForContext({ limit: request.limit, now: request.now, signal: request.signal, timeoutMs: request.timeoutMs });
         return reminders
-          .sort((a, b) => String(a.dueAt || "").localeCompare(String(b.dueAt || "")))
-          .slice(0, request.limit)
           .map((item) => ({ sourceId: item.id, timestamp: item.dueAt, relevance: item.dueAt ? 0.9 : 0.6,
             privacyClass: "PRIVATE", localOnly: true, payload: { summary: item.title, dueAt: item.dueAt, status: "active" } }));
       },

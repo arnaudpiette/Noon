@@ -142,7 +142,7 @@ tout accès.
 | Source | Propriétaire canonique | Lecture A3 | Portée et cache |
 | --- | --- | --- | --- |
 | Notes | `apple-notes` via `searchNotes()` | prédicat titre dans Notes, 3 résultats | local, sans corps ni cache A3 |
-| Rappels | `apple-reminders` | actifs/échéance proche, 5 | local, volatile |
+| Rappels | `apple-reminders` | métadonnées incomplets : retard, échéance ≤ 14 j, puis sans date ; détails des 5 sélectionnés | local, volatile |
 | Calendar | `google-calendar` | fenêtre demandée ou 26 h, 5 | distant, non mis en cache |
 | Gmail | `gmail` via `PersonalSearchEngine` | recherche ciblée, metadata/extrait minimal, 3 | distant, cache existant de recherche (30 s) |
 | Fichiers | `FileSearchAdapter` via `PersonalSearchEngine` | métadonnées nom/chemin dans les racines autorisées, puis au plus 12 lectures, 3 résultats | local, cache existant de recherche (30 s) |
@@ -184,3 +184,24 @@ sur le titre; Node ne reçoit ensuite que les candidats (maximum 10), classe au 
 ne lit `plaintext` que si un appel explicite demande `includeBody: true`. Le
 chemin A3 utilise `searchScope: "title"` et `includeBody: false`; `listRecentNotes()` reste inchangé pour
 les consommateurs historiques, notamment Daily Brief.
+
+### Statut de stabilisation A3
+
+Les correctifs d'isolation Exécution, de portée titre Notes, de quota Calendar,
+de sélection Fichiers avant lecture et d'échéance Notes ont une couverture
+statique et déterministe ciblée. Cette couverture ne constitue pas une
+validation runtime : aucune Automation macOS, autorisation OAuth ni donnée
+personnelle réelle n'a été utilisée.
+
+Le statut statique/déterministe A3 reste `PARTIAL` : les Rappels sélectionnent
+au niveau macOS les métadonnées des incomplets en retard, à échéance dans les
+14 jours, puis sans date, avant de classer par échéance et identifiant stable
+et de lire les détails des cinq candidats. Cette sélection ne prétend pas
+éviter l'examen des métadonnées par macOS. De plus, `AuthorizedContextSources` conserve le code
+`CONTEXT_SOURCE_TIMEOUT`, mais `ContextBuilder` ne restitue actuellement que
+le statut, les compteurs, la troncature et la durée dans ses diagnostics de
+source. Cet écart doit être traité avant une clôture A3 statique.
+Enfin, pour les connecteurs locaux Notes et Rappels, le gardien A3 ne peut
+constater qu'une plateforme macOS disponible avant l'appel : un refus TCC est
+classé après la tentative de lecture. Il ne satisfait donc pas encore la
+formulation stricte d'une autorisation vérifiée avant tout accès.

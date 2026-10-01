@@ -11,6 +11,45 @@ const { createConnector } = require("./base-connector");
 
 const SHORTCUT_NAME = "Noon – Rappel";
 const NATIVE_HELPER_NAME = "noon-reminders-helper";
+const A3_REMINDER_WINDOW_DAYS = 14;
+
+const A3_REMINDER_METADATA_SCRIPT = `on run argv
+set windowDays to (item 1 of argv) as integer
+set cutoffDate to (current date) + (windowDays * days)
+
+tell application "Reminders"
+set output to ""
+repeat with reminderList in lists
+repeat with itemRef in (reminders of reminderList whose completed is false)
+set dueText to ""
+set includeItem to true
+try
+set dueValue to due date of itemRef
+if dueValue is not missing value then
+if dueValue > cutoffDate then set includeItem to false
+if includeItem then set dueText to dueValue as string
+end if
+end try
+if includeItem then set output to output & (id of itemRef) & tab & dueText & linefeed
+end repeat
+end repeat
+return output
+end tell
+end run`;
+
+const A3_REMINDER_DETAIL_SCRIPT = `on run argv
+set reminderId to item 1 of argv
+
+tell application "Reminders"
+set itemRef to reminder id reminderId
+set dueText to ""
+try
+set dueValue to due date of itemRef
+if dueValue is not missing value then set dueText to dueValue as string
+end try
+return (id of itemRef) & tab & (name of itemRef) & tab & dueText
+end tell
+end run`;
 
 function runShortcut(args, input, runner = execFile) {
   return new Promise((resolve, reject) => {
@@ -51,6 +90,81 @@ async function checkNoonReminderShortcut(runner) {
 
 function normalizeLimit(value) {
   return Math.max(1, Math.min(100, Number(value) || 100));
+}
+
+function parseReminderMetadata(value) {
+  return String(value || "").split("\n").filter(Boolean).map((line) => {
+    const [id, dueAt] = line.split("\t");
+    return { id: String(id || ""), dueAt: dueAt && dueAt !== "missing value" ? dueAt : null };
+  }).filter((item) => item.id);
+}
+
+function rankContextReminders(items, now = new Date()) {
+  const timestamp = now instanceof Date ? now.getTime() : Date.parse(now);
+  return [...items].sort((left, right) => {
+    const leftDue = left.dueAt ? Date.parse(left.dueAt) : NaN;
+    const rightDue = right.dueAt ? Date.parse(right.dueAt) : NaN;
+    const leftBucket = Number.isFinite(leftDue) ? (leftDue < timestamp ? 0 : 1) : 2;
+    const rightBucket = Number.isFinite(rightDue) ? (rightDue < timestamp ? 0 : 1) : 2;
+    return leftBucket - rightBucket || (Number.isFinite(leftDue) ? leftDue : Infinity) - (Number.isFinite(rightDue) ? rightDue : Infinity) || left.id.localeCompare(right.id);
+  });
+}
+
+function contextTimeoutError() {
+  return Object.assign(new Error("Authorized context source timeout"), { code: "CONTEXT_SOURCE_TIMEOUT" });
+}
+
+function runReminderScript(script, args, runner = execFile, { signal, timeoutMs = 5_000 } = {}) {
+  if (signal?.aborted) return Promise.reject(signal.reason || contextTimeoutError());
+  const boundedTimeoutMs = Math.max(1, Math.min(5_000, Number(timeoutMs) || 5_000));
+  return new Promise((resolve, reject) => {
+    let child = null;
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", abort);
+      callback(value);
+    };
+    const abort = () => {
+      try { child?.kill?.(); } catch {}
+      finish(reject, signal.reason || contextTimeoutError());
+    };
+    child = runner(
+      "osascript", ["-e", script, "--", ...args.map(String)],
+      { timeout: boundedTimeoutMs, maxBuffer: 256 * 1024 },
+      (error, stdout) => error
+        ? finish(reject, error.code === "ETIMEDOUT" || error.killed === true ? contextTimeoutError() : Object.assign(new Error("Apple Rappels momentanément indisponible."), {
+          status: /-1743|not authorized|not permitted/i.test(String(error.code) + error.message) ? 403 : 503,
+          code: error.code || "APPLE_REMINDERS_UNAVAILABLE",
+        }))
+        : finish(resolve, String(stdout))
+    );
+    if (!settled) signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+
+async function listIncompleteRemindersForContext({ limit = 5, windowDays = A3_REMINDER_WINDOW_DAYS, now = new Date(), signal, timeoutMs = 5_000, clock = Date.now } = {}, runner = execFile) {
+  const boundedLimit = Math.max(1, Math.min(5, Number(limit) || 5));
+  const boundedWindowDays = Math.max(1, Math.min(31, Number(windowDays) || A3_REMINDER_WINDOW_DAYS));
+  const deadline = clock() + Math.max(1, Math.min(5_000, Number(timeoutMs) || 5_000));
+  const remaining = () => {
+    if (signal?.aborted) throw signal.reason || contextTimeoutError();
+    const value = deadline - clock();
+    if (value <= 0) throw contextTimeoutError();
+    return value;
+  };
+  const metadata = parseReminderMetadata(await runReminderScript(A3_REMINDER_METADATA_SCRIPT, [boundedWindowDays], runner, { signal, timeoutMs: remaining() }));
+  remaining();
+  const cutoff = (now instanceof Date ? now.getTime() : Date.parse(now)) + boundedWindowDays * 24 * 60 * 60 * 1000;
+  const selected = rankContextReminders(metadata.filter((item) => !item.dueAt || !Number.isFinite(Date.parse(item.dueAt)) || Date.parse(item.dueAt) <= cutoff), now).slice(0, boundedLimit);
+  const details = [];
+  for (const { id } of selected) {
+    const [returnedId, title, dueAt] = (await runReminderScript(A3_REMINDER_DETAIL_SCRIPT, [id], runner, { signal, timeoutMs: remaining() })).split("\t");
+    remaining();
+    details.push({ id: returnedId || id, title: String(title || ""), dueAt: dueAt && dueAt !== "missing value" ? dueAt : null, completed: false });
+  }
+  return details;
 }
 
 function isPackagedRuntime() {
@@ -309,18 +423,29 @@ function createAppleConnector(deps) {
           maxRetries: 0,
         }
       ),
+    listIncompleteRemindersForContext: (options, runner) =>
+      base.run(
+        () => listIncompleteRemindersForContext(options, runner),
+        { idempotent: true, maxRetries: 0 }
+      ),
   });
 }
 
 module.exports = {
+  A3_REMINDER_DETAIL_SCRIPT,
+  A3_REMINDER_METADATA_SCRIPT,
+  A3_REMINDER_WINDOW_DAYS,
   SHORTCUT_NAME,
   NATIVE_HELPER_NAME,
   checkNoonReminderShortcut,
   createAppleConnector,
   listAppleShortcuts,
   listIncompleteReminders,
+  listIncompleteRemindersForContext,
   listIncompleteRemindersAppleScript,
   listIncompleteRemindersEventKit,
   resolveRemindersHelperPath,
+  rankContextReminders,
+  runReminderScript,
   runNoonReminderShortcut,
 };
