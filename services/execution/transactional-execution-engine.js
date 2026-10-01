@@ -306,12 +306,60 @@ function createTransactionalExecutionEngine({
   }
   function recoverInterrupted() {
     const recovered = [];
-    for (const record of repository.listRecoverable()) {
-      const steps = repository.getSteps(record.execution_id);
-      for (const step of steps) if ([STEP_STATES.RUNNING, STEP_STATES.APPLIED, STEP_STATES.VERIFYING].includes(step.state)) repository.saveStep({ ...step, state: step.state === STEP_STATES.RUNNING ? STEP_STATES.UNKNOWN_OUTCOME : STEP_STATES.UNKNOWN_OUTCOME, reason_code: "PROCESS_RESTARTED", updated_at: time(now) });
-      record.state = EXECUTION_STATES.INTERRUPTED; record.reason_code = "PROCESS_RESTARTED"; record.completed_at = time(now); record.updated_at = record.completed_at; repository.saveExecution(record);
-      recovered.push(record.execution_id); emit("execution_recovered", { executionId: record.execution_id, state: "INTERRUPTED" }); emit("execution_resume_suppressed", { executionId: record.execution_id });
+
+    for (const candidate of repository.listRecoverable()) {
+      const record = repository.transaction(() => {
+        const current = repository.getExecution(candidate.execution_id);
+
+        if (!current || ![
+          EXECUTION_STATES.RUNNING,
+          EXECUTION_STATES.VERIFYING,
+          EXECUTION_STATES.COMPENSATING,
+        ].includes(current.state)) {
+          return null;
+        }
+
+        const steps = repository.getSteps(current.execution_id);
+
+        for (const step of steps) {
+          if ([
+            STEP_STATES.RUNNING,
+            STEP_STATES.APPLIED,
+            STEP_STATES.VERIFYING,
+          ].includes(step.state)) {
+            repository.saveStep({
+              ...step,
+              state: STEP_STATES.UNKNOWN_OUTCOME,
+              reason_code: "PROCESS_RESTARTED",
+              updated_at: time(now),
+            });
+          }
+        }
+
+        current.state = EXECUTION_STATES.INTERRUPTED;
+        current.reason_code = "PROCESS_RESTARTED";
+        current.completed_at = time(now);
+        current.updated_at = current.completed_at;
+
+        repository.saveExecution(current);
+
+        return current;
+      });
+
+      if (!record) continue;
+
+      recovered.push(record.execution_id);
+
+      emit("execution_recovered", {
+        executionId: record.execution_id,
+        state: "INTERRUPTED",
+      });
+
+      emit("execution_resume_suppressed", {
+        executionId: record.execution_id,
+      });
     }
+
     return recovered;
   }
 

@@ -1,5 +1,7 @@
 "use strict";
 
+const crypto = require("node:crypto");
+
 // Journal minimal : aucune donnée métier ni argument brut n'est persisté.
 function createTransactionalExecutionRepository(wrapper) {
   if (!wrapper) throw new TypeError("Stockage d'exécution requis.");
@@ -56,11 +58,33 @@ function createTransactionalExecutionRepository(wrapper) {
       listRecoverable() {
         return db.prepare("SELECT * FROM transactional_executions WHERE state IN ('RUNNING','VERIFYING','COMPENSATING') ORDER BY updated_at").all();
       },
-      transaction(callback) {
-        db.exec("BEGIN IMMEDIATE");
-        try { const result = callback(); db.exec("COMMIT"); return result; }
-        catch (error) { try { db.exec("ROLLBACK"); } catch {} throw error; }
-      },
+        transaction(callback) {
+          const ownsTransaction = db.isTransaction !== true;
+          const savepoint = ownsTransaction
+            ? null
+            : `transactional_execution_${crypto.randomUUID().replaceAll("-", "")}`;
+
+          if (ownsTransaction) db.exec("BEGIN IMMEDIATE");
+          else db.exec(`SAVEPOINT ${savepoint}`);
+
+          try {
+            const result = callback();
+
+            if (ownsTransaction) db.exec("COMMIT");
+            else db.exec(`RELEASE SAVEPOINT ${savepoint}`);
+
+            return result;
+          } catch (error) {
+            if (ownsTransaction) {
+              try { db.exec("ROLLBACK"); } catch {}
+            } else {
+              try { db.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`); } catch {}
+              try { db.exec(`RELEASE SAVEPOINT ${savepoint}`); } catch {}
+            }
+
+            throw error;
+          }
+        },
     };
   }
 
