@@ -811,7 +811,9 @@ const canonicalEntityResolver = createCanonicalEntityResolver({
 });
 function connectorContextStatus(connector, { local = false } = {}) {
   const status = connector?.status;
-  if (local) return process.platform === "darwin" ? SOURCE_STATUSES.AVAILABLE : SOURCE_STATUSES.UNAVAILABLE;
+  if (local) return process.platform === "darwin"
+    ? { status: SOURCE_STATUSES.AVAILABLE, systemPermission: "TCC_UNVERIFIED" }
+    : SOURCE_STATUSES.UNAVAILABLE;
   if (status?.authState === "NOT_CONFIGURED") return SOURCE_STATUSES.NOT_CONFIGURED;
   if (status?.authState === "AUTH_REQUIRED" || status?.authState === "PERMISSION_DENIED") return SOURCE_STATUSES.UNAUTHORIZED;
   return connector?.connected ? SOURCE_STATUSES.AVAILABLE : SOURCE_STATUSES.UNAVAILABLE;

@@ -180,8 +180,8 @@ test("A3 projette un timeout sûr avec sa source sans exposer les diagnostics br
     authorizedContextSources: { async collect() { return {
       items: [{ sourceType: "reminders", sourceId: "r1", localOnly: true, payload: { summary: "Rappel fictif" } }],
       diagnostics: {
-        notes: { selected: true, status: "ERROR", reasonCode: "CONTEXT_SOURCE_TIMEOUT", count: 0, truncated: false, durationMs: 5, message: "secret fournisseur", stack: "trace privée" },
-        reminders: { selected: true, status: "AVAILABLE", reasonCode: null, count: 1, truncated: false, durationMs: 1, providerPayload: "secret" },
+        notes: { selected: true, status: "ERROR", reasonCode: "CONTEXT_SOURCE_TIMEOUT", systemPermission: "TCC_UNVERIFIED", count: 0, truncated: false, durationMs: 5, message: "secret fournisseur", stack: "trace privée" },
+        reminders: { selected: true, status: "AVAILABLE", reasonCode: null, systemPermission: "GRANTED", count: 1, truncated: false, durationMs: 1, providerPayload: "secret" },
       },
     }; } },
   });
@@ -189,9 +189,11 @@ test("A3 projette un timeout sûr avec sa source sans exposer les diagnostics br
   assert.equal(context.diagnostics.sourceDiagnostics.notes.reasonCode, "CONTEXT_SOURCE_TIMEOUT");
   assert.equal(context.diagnostics.sourceDiagnostics.notes.status, "ERROR");
   assert.equal(context.diagnostics.sourceDiagnostics.notes.durationMs, 5);
+  assert.equal(context.diagnostics.sourceDiagnostics.notes.systemPermission, "TCC_UNVERIFIED");
+  assert.equal(context.diagnostics.sourceDiagnostics.reminders.systemPermission, null);
   assert.equal(context.diagnostics.sourceDiagnostics.reminders.status, "AVAILABLE");
   assert.equal(context.localContext.authorizedSources.length, 1);
-  assert.deepEqual(Object.keys(context.diagnostics.sourceDiagnostics.notes).sort(), ["count", "durationMs", "reasonCode", "selected", "status", "truncated"]);
+  assert.deepEqual(Object.keys(context.diagnostics.sourceDiagnostics.notes).sort(), ["count", "durationMs", "reasonCode", "selected", "status", "systemPermission", "truncated"]);
   assert.doesNotMatch(JSON.stringify(context.diagnostics), /secret fournisseur|trace privée|providerPayload/);
 });
 

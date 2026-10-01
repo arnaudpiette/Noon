@@ -2,7 +2,7 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { createAuthorizedContextSources, SOURCE_STATUSES, sourceSelection } = require("../services/context/authorized-context-sources");
+const { createAuthorizedContextSources, SOURCE_STATUSES, SYSTEM_PERMISSION_STATUSES, sourceSelection } = require("../services/context/authorized-context-sources");
 
 function adapter(items = [], { status = SOURCE_STATUSES.AVAILABLE, error = null } = {}) {
   let calls = 0;
@@ -37,6 +37,41 @@ test("une source non autorisée ne lit jamais son adapter", async () => {
   const result = await sources.collect({ query: "cherche mon email" });
   assert.equal(gmail.calls, 0);
   assert.equal(result.diagnostics.gmail.status, SOURCE_STATUSES.UNAUTHORIZED);
+});
+
+test("Notes A3 distingue TCC non pré-vérifié et politique Noon avant lecture", async () => {
+  let noteReads = 0;
+  const notes = {
+    status: () => ({ status: SOURCE_STATUSES.AVAILABLE, systemPermission: SYSTEM_PERMISSION_STATUSES.TCC_UNVERIFIED }),
+    read: async () => { noteReads += 1; return [{ id: "note-1", localOnly: true, payload: { title: "Fictive" } }]; },
+  };
+  const sources = createAuthorizedContextSources({ adapters: { notes } });
+  const available = await sources.collect({ query: "mes notes" });
+  assert.equal(noteReads, 1);
+  assert.equal(available.diagnostics.notes.status, SOURCE_STATUSES.AVAILABLE);
+  assert.equal(available.diagnostics.notes.systemPermission, "TCC_UNVERIFIED");
+
+  let blockedReads = 0;
+  const blocked = { status: () => SOURCE_STATUSES.UNAUTHORIZED, read: async () => { blockedReads += 1; return []; } };
+  const denied = await createAuthorizedContextSources({ adapters: { notes: blocked } }).collect({ query: "mes notes" });
+  assert.equal(blockedReads, 0);
+  assert.equal(denied.diagnostics.notes.status, SOURCE_STATUSES.UNAUTHORIZED);
+  assert.equal(denied.diagnostics.notes.systemPermission, null);
+});
+
+test("un refus macOS Notes est isolé après tentative sans transformer TCC inconnu en accord", async () => {
+  let reminderReads = 0;
+  const notes = {
+    status: () => ({ status: SOURCE_STATUSES.AVAILABLE, systemPermission: SYSTEM_PERMISSION_STATUSES.TCC_UNVERIFIED }),
+    read: async () => { throw Object.assign(new Error("refus macOS privé"), { status: 403, code: "APPLE_NOTES_PERMISSION_DENIED", stack: "stack privée" }); },
+  };
+  const reminders = { status: () => SOURCE_STATUSES.AVAILABLE, read: async () => { reminderReads += 1; return [{ id: "r1", localOnly: true, payload: { summary: "Fictif" } }]; } };
+  const result = await createAuthorizedContextSources({ adapters: { notes, reminders } }).collect({ query: "mes notes et un rappel" });
+  assert.equal(result.diagnostics.notes.status, SOURCE_STATUSES.UNAUTHORIZED);
+  assert.equal(result.diagnostics.notes.reasonCode, "APPLE_NOTES_PERMISSION_DENIED");
+  assert.equal(result.diagnostics.notes.systemPermission, "TCC_UNVERIFIED");
+  assert.equal(reminderReads, 1);
+  assert.equal(result.items.length, 1);
 });
 
 test("une panne connector est isolée et les autres lectures survivent", async () => {

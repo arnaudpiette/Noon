@@ -36,6 +36,10 @@ function safeDiagnosticReasonCode(value) {
   return /^[A-Z][A-Z0-9_]{0,79}$/.test(code) ? code : null;
 }
 
+function safeDiagnosticSystemPermission(value) {
+  return value === "TCC_UNVERIFIED" ? value : null;
+}
+
 function inferPeopleIds(query, requested = []) {
   const ids = new Set((requested || []).map(String));
   const text = normalize(query);
@@ -688,6 +692,7 @@ function createContextBuilder({
       selected: detail.selected === true, status: detail.status, count: Number(detail.count) || 0,
       truncated: detail.truncated === true, durationMs: Number(detail.durationMs) || 0,
       reasonCode: safeDiagnosticReasonCode(detail.reasonCode),
+      systemPermission: safeDiagnosticSystemPermission(detail.systemPermission),
     }]));
     const metadata = {
       ...context.metadata,

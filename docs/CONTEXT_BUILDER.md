@@ -151,7 +151,8 @@ tout accès.
 
 Une source non pertinente est `SKIPPED_NOT_RELEVANT`; les états distingués sont
 `AVAILABLE`, `UNAVAILABLE`, `UNAUTHORIZED`, `NOT_CONFIGURED` et `ERROR`.
-L'autorisation est vérifiée avant `read()`. Les titres/contenus Notes, Gmail,
+L'autorisation interne Noon est vérifiée avant `read()` : `UNAUTHORIZED` bloque
+l'adapter. Les titres/contenus Notes, Gmail,
 Rappels, Calendar et Fichiers restent `localOnly`; seuls les résumés Git et
 exécution explicitement éligibles peuvent atteindre le contexte distant après
 `ProviderPrivacyPolicy`.
@@ -171,7 +172,8 @@ simple similitude de texte.
 Une entité A2 ambiguë ne déclenche ni Git, ni fichiers, ni suivi de projet.
 Un échec de connecteur est enregistré dans `diagnostics.sourceDiagnostics` sans
 interrompre la construction. Ces diagnostics ne contiennent que sélection,
-statut, code de raison normalisé, compteur, troncature et durée; aucun contenu,
+statut, code de raison normalisé, état de permission système borné, compteur,
+troncature et durée; aucun contenu,
 chemin, requête ou nom.
 
 Pour les fichiers A3, la sélection se fait avant lecture du contenu, à partir du
@@ -205,3 +207,9 @@ Enfin, pour les connecteurs locaux Notes et Rappels, le gardien A3 ne peut
 constater qu'une plateforme macOS disponible avant l'appel : un refus TCC est
 classé après la tentative de lecture. Il ne satisfait donc pas encore la
 formulation stricte d'une autorisation vérifiée avant tout accès.
+Lorsque cette plateforme est disponible, leur diagnostic porte explicitement
+`systemPermission: TCC_UNVERIFIED` : ce statut n'est ni une permission macOS
+accordée ni un blocage des lectures déjà autorisées par Noon. Les connecteurs
+utilisent `osascript`; l'identité TCC effective et l'arrêt effectif du processus
+après expiration ne sont pas vérifiés au runtime. Un refus macOS est isolé après
+la tentative avec son code normalisé, sans message brut, stack ni donnée source.

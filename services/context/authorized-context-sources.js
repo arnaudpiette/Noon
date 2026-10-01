@@ -8,6 +8,9 @@ const SOURCE_STATUSES = Object.freeze({
   AVAILABLE: "AVAILABLE", UNAVAILABLE: "UNAVAILABLE", UNAUTHORIZED: "UNAUTHORIZED",
   NOT_CONFIGURED: "NOT_CONFIGURED", ERROR: "ERROR", SKIPPED_NOT_RELEVANT: "SKIPPED_NOT_RELEVANT",
 });
+const SYSTEM_PERMISSION_STATUSES = Object.freeze({
+  TCC_UNVERIFIED: "TCC_UNVERIFIED",
+});
 const SOURCE_LIMITS = Object.freeze({ notes: 3, reminders: 5, calendar: 5, gmail: 3, files: 3, git: 1, execution: 4 });
 const DEFAULT_SOURCE_TIMEOUT_MS = 5_000;
 
@@ -42,7 +45,17 @@ function sourceSelection({ query = "", intent = "", projectId = null, entityStat
 }
 
 function safeStatus(adapter, input) {
-  try { return adapter?.status?.(input) || SOURCE_STATUSES.AVAILABLE; } catch { return SOURCE_STATUSES.ERROR; }
+  try {
+    const value = adapter?.status?.(input) || SOURCE_STATUSES.AVAILABLE;
+    if (value && typeof value === "object") {
+      return {
+        status: Object.values(SOURCE_STATUSES).includes(value.status) ? value.status : SOURCE_STATUSES.ERROR,
+        systemPermission: value.systemPermission === SYSTEM_PERMISSION_STATUSES.TCC_UNVERIFIED
+          ? value.systemPermission : null,
+      };
+    }
+    return { status: Object.values(SOURCE_STATUSES).includes(value) ? value : SOURCE_STATUSES.ERROR, systemPermission: null };
+  } catch { return { status: SOURCE_STATUSES.ERROR, systemPermission: null }; }
 }
 function normalizeItem(sourceType, item, fallback = {}) {
   const payload = item?.payload && typeof item.payload === "object" ? item.payload : item || {};
@@ -78,13 +91,14 @@ function createAuthorizedContextSources({ adapters = {}, now = () => new Date(),
   async function collect(input = {}) {
     const selected = sourceSelection(input);
     const diagnostics = Object.fromEntries(Object.keys(SOURCE_LIMITS).map((source) => [source, {
-      selected: selected.includes(source), status: selected.includes(source) ? null : SOURCE_STATUSES.SKIPPED_NOT_RELEVANT, reasonCode: null, count: 0, truncated: false, durationMs: 0,
+      selected: selected.includes(source), status: selected.includes(source) ? null : SOURCE_STATUSES.SKIPPED_NOT_RELEVANT, reasonCode: null, systemPermission: null, count: 0, truncated: false, durationMs: 0,
     }]));
     const reads = selected.map(async (source) => {
       const adapter = adapters[source]; const diagnostic = diagnostics[source];
       if (!adapter) { diagnostic.status = SOURCE_STATUSES.UNAVAILABLE; return []; }
       const status = safeStatus(adapter, input);
-      if (status !== SOURCE_STATUSES.AVAILABLE) { diagnostic.status = status; return []; }
+      diagnostic.systemPermission = status.systemPermission;
+      if (status.status !== SOURCE_STATUSES.AVAILABLE) { diagnostic.status = status.status; return []; }
       const startedAt = performance.now();
       const effectiveTimeoutMs = sourceTimeoutMs;
       try {
@@ -123,4 +137,4 @@ function createAuthorizedContextSources({ adapters = {}, now = () => new Date(),
   return { collect, select: sourceSelection, limits: SOURCE_LIMITS, statuses: SOURCE_STATUSES };
 }
 
-module.exports = { DEFAULT_SOURCE_TIMEOUT_MS, SOURCE_LIMITS, SOURCE_STATUSES, createAuthorizedContextSources, deduplicateItems, normalizeItem, sourceSelection };
+module.exports = { DEFAULT_SOURCE_TIMEOUT_MS, SOURCE_LIMITS, SOURCE_STATUSES, SYSTEM_PERMISSION_STATUSES, createAuthorizedContextSources, deduplicateItems, normalizeItem, sourceSelection };
