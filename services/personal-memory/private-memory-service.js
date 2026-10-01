@@ -47,10 +47,38 @@ function createPrivateMemoryService({ databaseWrapper, cipher, audit = () => {} 
   if (databaseWrapper.kind !== "sqlite") return { available: false, reason: "SQLite local est requis pour la mémoire privée." };
   const db = databaseWrapper.database;
 
-  function recordAudit(eventType, recordId, subjectId, status = "ok") {
+  function auditEntry(eventType, recordId, subjectId, status = "ok") {
+    return { id: crypto.randomUUID(), eventType, recordId: recordId || null, subjectId: subjectId || null, status, createdAt: now() };
+  }
+  function insertAudit(entry) {
     db.prepare("INSERT INTO private_memory_audit(id,event_type,record_id,subject_id,status,created_at) VALUES(?,?,?,?,?,?)")
-      .run(crypto.randomUUID(), eventType, recordId || null, subjectId || null, status, now());
-    audit("private-memory", { eventType, recordId, subjectId, status });
+      .run(entry.id, entry.eventType, entry.recordId, entry.subjectId, entry.status, entry.createdAt);
+  }
+  function notifyAudit(entry) {
+    audit("private-memory", { eventType: entry.eventType, recordId: entry.recordId, subjectId: entry.subjectId, status: entry.status });
+  }
+  function recordAudit(eventType, recordId, subjectId, status = "ok") {
+    const entry = auditEntry(eventType, recordId, subjectId, status);
+    insertAudit(entry);
+    notifyAudit(entry);
+  }
+  function transaction(operation) {
+    const ownsTransaction = db.isTransaction !== true;
+    const savepoint = ownsTransaction ? null : `private_memory_update_${crypto.randomUUID().replaceAll("-", "")}`;
+    if (ownsTransaction) db.exec("BEGIN IMMEDIATE"); else db.exec(`SAVEPOINT ${savepoint}`);
+    try {
+      const result = operation();
+      if (ownsTransaction) db.exec("COMMIT"); else db.exec(`RELEASE SAVEPOINT ${savepoint}`);
+      return { result, committed: ownsTransaction };
+    } catch (error) {
+      if (ownsTransaction) {
+        try { db.exec("ROLLBACK"); } catch {}
+      } else {
+        try { db.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`); } catch {}
+        try { db.exec(`RELEASE SAVEPOINT ${savepoint}`); } catch {}
+      }
+      throw error;
+    }
   }
   function ensureDefaults() {
     const stamp = now();
@@ -113,12 +141,28 @@ function createPrivateMemoryService({ databaseWrapper, cipher, audit = () => {} 
   }
   function updateMemory(id, changes, reason = "correction") {
     const current = getMemory(id); if (!current) throw new Error("Souvenir introuvable.");
-    db.prepare("INSERT INTO private_memory_versions(id,memory_id,payload_encrypted,changed_at,reason) VALUES(?,?,?,?,?)").run(crypto.randomUUID(), id, cipher.encrypt(current), now(), clean(reason, 120));
     const next = { ...current, ...changes, id };
     const checked = validate(next);
-    db.prepare("UPDATE private_memories SET category=?,sensitivity=?,status=?,confidence=?,expires_at=?,api_policy=?,consent_required=?,consent_status=?,tags_json=?,payload_encrypted=?,updated_at=? WHERE id=?")
-      .run(checked.category, checked.sensitivity, checked.status, Math.max(0, Math.min(1, Number(next.confidence) || 0)), next.expiresAt || null, checked.apiPolicy, checked.consentRequired ? 1 : 0, checked.consentStatus, JSON.stringify(next.tags || []), cipher.encrypt({ statement: clean(next.statement, 12000), payload: next.payload || null }), now(), id);
-    recordAudit("memory.updated", id, checked.subjectId); return getMemory(id);
+    const version = { id: crypto.randomUUID(), memoryId: id, payloadEncrypted: cipher.encrypt(current), changedAt: now(), reason: clean(reason, 120) };
+    const update = { category: checked.category, sensitivity: checked.sensitivity, status: checked.status,
+      confidence: Math.max(0, Math.min(1, Number(next.confidence) || 0)), expiresAt: next.expiresAt || null,
+      apiPolicy: checked.apiPolicy, consentRequired: checked.consentRequired ? 1 : 0,
+      consentStatus: checked.consentStatus, tags: JSON.stringify(next.tags || []),
+      payloadEncrypted: cipher.encrypt({ statement: clean(next.statement, 12000), payload: next.payload || null }), updatedAt: now() };
+    const entry = auditEntry("memory.updated", id, checked.subjectId);
+    const outcome = transaction(() => {
+      db.prepare("INSERT INTO private_memory_versions(id,memory_id,payload_encrypted,changed_at,reason) VALUES(?,?,?,?,?)")
+        .run(version.id, version.memoryId, version.payloadEncrypted, version.changedAt, version.reason);
+      db.prepare("UPDATE private_memories SET category=?,sensitivity=?,status=?,confidence=?,expires_at=?,api_policy=?,consent_required=?,consent_status=?,tags_json=?,payload_encrypted=?,updated_at=? WHERE id=?")
+        .run(update.category, update.sensitivity, update.status, update.confidence, update.expiresAt,
+          update.apiPolicy, update.consentRequired, update.consentStatus, update.tags, update.payloadEncrypted, update.updatedAt, id);
+      insertAudit(entry);
+    });
+    // Un appelant qui possède la transaction décide seul du commit. La ligne
+    // d'audit reste transactionnelle ; aucune notification externe n'anticipe
+    // un commit que ce service ne peut pas observer.
+    if (outcome.committed) notifyAudit(entry);
+    return getMemory(id);
   }
   function forgetMemory(id) { const current = getMemory(id); if (!current) throw new Error("Souvenir introuvable."); db.prepare("UPDATE private_memories SET status='deleted',payload_encrypted=?,source_encrypted=NULL,deleted_at=?,updated_at=? WHERE id=?").run(cipher.encrypt({ statement: "", payload: null }), now(), now(), id); recordAudit("memory.deleted", id, current.subjectId); return true; }
   function purgeSubject(subjectId) { const ids = db.prepare("SELECT id FROM private_memories WHERE subject_id=?").all(subjectId); db.prepare("DELETE FROM private_memory_versions WHERE memory_id IN (SELECT id FROM private_memories WHERE subject_id=?)").run(subjectId); db.prepare("DELETE FROM private_memories WHERE subject_id=?").run(subjectId); recordAudit("profile.purged", null, subjectId); return ids.length; }
