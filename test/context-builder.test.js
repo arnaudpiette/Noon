@@ -173,6 +173,28 @@ test("A3 respecte le budget A1 et conserve un contexte utilisable quand une sour
   assert.equal(context.diagnostics.sourceDiagnostics.gmail.status, "ERROR");
 });
 
+test("A3 projette un timeout sûr avec sa source sans exposer les diagnostics bruts", async () => {
+  const builder = createContextBuilder({
+    personalityProvider: () => "Noon", hardRulesRegistry: createHardRulesRegistry(),
+    memoryEngine: { getRelevantContext: () => memoryResult() },
+    authorizedContextSources: { async collect() { return {
+      items: [{ sourceType: "reminders", sourceId: "r1", localOnly: true, payload: { summary: "Rappel fictif" } }],
+      diagnostics: {
+        notes: { selected: true, status: "ERROR", reasonCode: "CONTEXT_SOURCE_TIMEOUT", count: 0, truncated: false, durationMs: 5, message: "secret fournisseur", stack: "trace privée" },
+        reminders: { selected: true, status: "AVAILABLE", reasonCode: null, count: 1, truncated: false, durationMs: 1, providerPayload: "secret" },
+      },
+    }; } },
+  });
+  const context = await builder.buildContextAsync({ query: "notes et tâche" });
+  assert.equal(context.diagnostics.sourceDiagnostics.notes.reasonCode, "CONTEXT_SOURCE_TIMEOUT");
+  assert.equal(context.diagnostics.sourceDiagnostics.notes.status, "ERROR");
+  assert.equal(context.diagnostics.sourceDiagnostics.notes.durationMs, 5);
+  assert.equal(context.diagnostics.sourceDiagnostics.reminders.status, "AVAILABLE");
+  assert.equal(context.localContext.authorizedSources.length, 1);
+  assert.deepEqual(Object.keys(context.diagnostics.sourceDiagnostics.notes).sort(), ["count", "durationMs", "reasonCode", "selected", "status", "truncated"]);
+  assert.doesNotMatch(JSON.stringify(context.diagnostics), /secret fournisseur|trace privée|providerPayload/);
+});
+
 test("le cache est réutilisé puis invalidé par mémoire, projet et permission", () => {
   let permissions = [{ capability: "READ" }];
   let memoryCalls = 0;

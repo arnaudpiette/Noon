@@ -171,7 +171,8 @@ simple similitude de texte.
 Une entité A2 ambiguë ne déclenche ni Git, ni fichiers, ni suivi de projet.
 Un échec de connecteur est enregistré dans `diagnostics.sourceDiagnostics` sans
 interrompre la construction. Ces diagnostics ne contiennent que sélection,
-statut, compteur, troncature et durée; aucun contenu, chemin, requête ou nom.
+statut, code de raison normalisé, compteur, troncature et durée; aucun contenu,
+chemin, requête ou nom.
 
 Pour les fichiers A3, la sélection se fait avant lecture du contenu, à partir du
 nom et du chemin ; il peut donc ne pas retrouver un fichier dont seul le contenu
@@ -197,10 +198,9 @@ Le statut statique/déterministe A3 reste `PARTIAL` : les Rappels sélectionnent
 au niveau macOS les métadonnées des incomplets en retard, à échéance dans les
 14 jours, puis sans date, avant de classer par échéance et identifiant stable
 et de lire les détails des cinq candidats. Cette sélection ne prétend pas
-éviter l'examen des métadonnées par macOS. De plus, `AuthorizedContextSources` conserve le code
-`CONTEXT_SOURCE_TIMEOUT`, mais `ContextBuilder` ne restitue actuellement que
-le statut, les compteurs, la troncature et la durée dans ses diagnostics de
-source. Cet écart doit être traité avant une clôture A3 statique.
+éviter l'examen des métadonnées par macOS. Le code normalisé
+`CONTEXT_SOURCE_TIMEOUT` est projeté dans les diagnostics de source sans
+message, stack ni contenu fournisseur.
 Enfin, pour les connecteurs locaux Notes et Rappels, le gardien A3 ne peut
 constater qu'une plateforme macOS disponible avant l'appel : un refus TCC est
 classé après la tentative de lecture. Il ne satisfait donc pas encore la

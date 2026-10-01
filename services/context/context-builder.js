@@ -31,6 +31,11 @@ function normalize(value) {
     .trim();
 }
 
+function safeDiagnosticReasonCode(value) {
+  const code = String(value || "");
+  return /^[A-Z][A-Z0-9_]{0,79}$/.test(code) ? code : null;
+}
+
 function inferPeopleIds(query, requested = []) {
   const ids = new Set((requested || []).map(String));
   const text = normalize(query);
@@ -682,6 +687,7 @@ function createContextBuilder({
     const sourceDiagnostics = Object.fromEntries(Object.entries(sourceResult.diagnostics || {}).map(([source, detail]) => [source, {
       selected: detail.selected === true, status: detail.status, count: Number(detail.count) || 0,
       truncated: detail.truncated === true, durationMs: Number(detail.durationMs) || 0,
+      reasonCode: safeDiagnosticReasonCode(detail.reasonCode),
     }]));
     const metadata = {
       ...context.metadata,
