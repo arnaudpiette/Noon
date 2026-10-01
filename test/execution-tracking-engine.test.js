@@ -111,6 +111,17 @@ test("la même preuve reçue deux fois est idempotente", () => {
   const f=fixture();try{const [item]=f.engine.ingestPlan(plan([block("A")]));const evidence={executionItemId:item.executionItemId,status:"completed",source:"explicit_user_confirmation",occurredAt:BASE,eventKey:"same"};assert.equal(f.engine.synchronizeEvidence(evidence).idempotent,false);assert.equal(f.engine.synchronizeEvidence(evidence).idempotent,true);}finally{f.close();}
 });
 
+test("le rejeu d'une completion fiable n'ajoute pas deux échantillons de durée", () => {
+  const f=fixture();try{
+    const [item]=f.engine.ingestPlan(plan([block("A","2026-08-28T08:00:00Z","2026-08-28T09:00:00Z")]));
+    f.engine.transition(item.executionItemId,{status:"in_progress",source:"explicit_user_confirmation",occurredAt:"2026-08-28T08:00:00Z",eventKey:"start"});
+    const evidence={executionItemId:item.executionItemId,status:"completed",source:"explicit_user_confirmation",occurredAt:"2026-08-28T09:10:00Z",eventKey:"complete"};
+    assert.equal(f.engine.synchronizeEvidence(evidence).idempotent,false);
+    assert.equal(f.engine.synchronizeEvidence(evidence).idempotent,true);
+    assert.equal(f.engine.durationStats("project:general").sampleCount,1);
+  }finally{f.close();}
+});
+
 test("completed ne redevient pas in_progress sans réouverture explicite", () => {
   const f=fixture();try{const [item]=f.engine.ingestPlan(plan([block("A")]));f.engine.transition(item.executionItemId,{status:"completed",source:"explicit_user_confirmation"});assert.throws(()=>f.engine.transition(item.executionItemId,{status:"in_progress",source:"explicit_user_confirmation",occurredAt:new Date(BASE.getTime()+1000)}),(error)=>error instanceof TrackingError&&error.code==="TRACKING_TERMINAL_STATE");}finally{f.close();}
 });

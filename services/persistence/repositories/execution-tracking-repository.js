@@ -26,6 +26,22 @@ function rowItem(row) {
 
 function createSqliteRepository(wrapper) {
   const db = wrapper.database;
+  function transaction(operation) {
+    // recordDuration peut être appelé depuis une transaction de plus haut niveau.
+    // Dans ce cas, elle doit en faire partie plutôt que tenter un BEGIN imbriqué.
+    const ownsTransaction = db.isTransaction !== true;
+    if (ownsTransaction) db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = operation();
+      if (ownsTransaction) db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      if (ownsTransaction) {
+        try { db.exec("ROLLBACK"); } catch {}
+      }
+      throw error;
+    }
+  }
   function get(id) { return rowItem(db.prepare("SELECT * FROM execution_items WHERE id=?").get(id)); }
   function findByAction(actionId, scope = "arnaud") {
     return db.prepare("SELECT * FROM execution_items WHERE action_id=? AND subject_scope=? ORDER BY updated_at DESC").all(actionId, scope).map(rowItem);
@@ -81,12 +97,14 @@ function createSqliteRepository(wrapper) {
   }
   function getEvent(eventKey) { return db.prepare("SELECT * FROM execution_events WHERE event_key=?").get(eventKey) || null; }
   function recordDuration(scopeKey, estimated, actual) {
-    const current = db.prepare("SELECT * FROM duration_statistics WHERE scope_key=?").get(scopeKey);
-    const samples = [...parse(current?.samples_json, []), actual].slice(-50);
-    db.prepare(`INSERT INTO duration_statistics(scope_key,sample_count,total_estimated_minutes,total_actual_minutes,samples_json,updated_at) VALUES(?,?,?,?,?,?)
-      ON CONFLICT(scope_key) DO UPDATE SET sample_count=excluded.sample_count,total_estimated_minutes=excluded.total_estimated_minutes,total_actual_minutes=excluded.total_actual_minutes,samples_json=excluded.samples_json,updated_at=excluded.updated_at`)
-      .run(scopeKey, (current?.sample_count || 0) + 1, (current?.total_estimated_minutes || 0) + estimated,
-        (current?.total_actual_minutes || 0) + actual, json(samples, []), new Date().toISOString());
+    return transaction(() => {
+      const current = db.prepare("SELECT * FROM duration_statistics WHERE scope_key=?").get(scopeKey);
+      const samples = [...parse(current?.samples_json, []), actual].slice(-50);
+      db.prepare(`INSERT INTO duration_statistics(scope_key,sample_count,total_estimated_minutes,total_actual_minutes,samples_json,updated_at) VALUES(?,?,?,?,?,?)
+        ON CONFLICT(scope_key) DO UPDATE SET sample_count=excluded.sample_count,total_estimated_minutes=excluded.total_estimated_minutes,total_actual_minutes=excluded.total_actual_minutes,samples_json=excluded.samples_json,updated_at=excluded.updated_at`)
+        .run(scopeKey, (current?.sample_count || 0) + 1, (current?.total_estimated_minutes || 0) + estimated,
+          (current?.total_actual_minutes || 0) + actual, json(samples, []), new Date().toISOString());
+    });
   }
   function getDurationStats(scopeKey) {
     const row = db.prepare("SELECT * FROM duration_statistics WHERE scope_key=?").get(scopeKey);
