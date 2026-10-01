@@ -16,8 +16,18 @@ const {
   normalizeSample,
 } = require("../services/persistence/repositories/model-performance-repository");
 
-test("le schema learning passe en version 16", () => {
-  assert.equal(SCHEMA_VERSION, 16);
+test("le schéma courant est enregistré à l'initialisation SQLite", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "noon-model-performance-schema-"));
+  const wrapper = createPersonalDatabase(path.join(dir, "test.sqlite"));
+
+  try {
+    const migration = wrapper.database.prepare("SELECT version, name FROM schema_migrations WHERE name=?").get("personal-intelligence-base");
+    assert.equal(migration.version, SCHEMA_VERSION);
+    assert.equal(migration.name, "personal-intelligence-base");
+  } finally {
+    wrapper.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("normalise un sample sans contenu utilisateur", () => {
