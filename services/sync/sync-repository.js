@@ -10,7 +10,24 @@ function changeRow(row) { return row ? { sequence: Number(row.sequence), changeI
 function createSyncRepository(wrapper, { now = () => Date.now() } = {}) {
   if (wrapper?.kind !== "sqlite") throw new TypeError("Sync requiert SQLite.");
   const db = wrapper.database; const timestamp = () => new Date(now()).toISOString();
-  function transaction(callback) { db.exec("BEGIN IMMEDIATE"); try { const value = callback(); db.exec("COMMIT"); return value; } catch (error) { try { db.exec("ROLLBACK"); } catch {} throw error; } }
+  function transaction(callback) {
+    const ownsTransaction = db.isTransaction !== true;
+    const savepoint = ownsTransaction ? null : `sync_${crypto.randomUUID().replaceAll("-", "")}`;
+    if (ownsTransaction) db.exec("BEGIN IMMEDIATE"); else db.exec(`SAVEPOINT ${savepoint}`);
+    try {
+      const value = callback();
+      if (ownsTransaction) db.exec("COMMIT"); else db.exec(`RELEASE SAVEPOINT ${savepoint}`);
+      return value;
+    } catch (error) {
+      if (ownsTransaction) {
+        try { db.exec("ROLLBACK"); } catch {}
+      } else {
+        try { db.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`); } catch {}
+        try { db.exec(`RELEASE SAVEPOINT ${savepoint}`); } catch {}
+      }
+      throw error;
+    }
+  }
   function revision() { return Number(db.prepare("SELECT value FROM sync_meta WHERE key='revision'").get()?.value) || 0; }
   function nextRevision() { const next = revision() + 1; db.prepare("INSERT INTO sync_meta(key,value,updated_at) VALUES('revision',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at").run(String(next), timestamp()); return next; }
   function saveDevice(device) {
@@ -27,7 +44,20 @@ function createSyncRepository(wrapper, { now = () => Date.now() } = {}) {
   function getEntity(entityType, entityId, profileScope = "arnaud") { return entityRow(db.prepare("SELECT * FROM sync_entities WHERE entity_type=? AND entity_id=? AND profile_scope=?").get(entityType, entityId, profileScope)); }
   function saveEntity(entity) { db.prepare(`INSERT INTO sync_entities(entity_type,entity_id,profile_scope,revision,payload_json,field_versions_json,origin_device_id,deleted_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(entity_type,entity_id,profile_scope) DO UPDATE SET revision=excluded.revision,payload_json=excluded.payload_json,field_versions_json=excluded.field_versions_json,origin_device_id=excluded.origin_device_id,deleted_at=excluded.deleted_at,updated_at=excluded.updated_at`).run(entity.entityType, entity.entityId, entity.profileScope || "arnaud", entity.revision, JSON.stringify(entity.payload || {}), JSON.stringify(entity.fieldVersions || {}), entity.originDeviceId, entity.deletedAt || null, entity.updatedAt || timestamp()); return getEntity(entity.entityType, entity.entityId, entity.profileScope); }
   function listEntities({ entityType = null, profileScope = "arnaud", limit = 500 } = {}) { const args = [profileScope]; let clause = "profile_scope=?"; if (entityType) { clause += " AND entity_type=?"; args.push(entityType); } args.push(Math.max(1, Math.min(1000, Number(limit) || 500))); return db.prepare(`SELECT * FROM sync_entities WHERE ${clause} ORDER BY revision LIMIT ?`).all(...args).map(entityRow); }
-  function appendChange(change) { const sequence = nextRevision(); const changeId = change.changeId || `change_${crypto.randomUUID()}`; db.prepare("INSERT INTO sync_changes(sequence,change_id,entity_type,entity_id,operation,version,changed_at,origin_device_id,profile_scope,sync_classification,changed_fields_json,base_field_versions_json,tombstone_until) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)").run(sequence, changeId, change.entityType, change.entityId, change.operation, change.version, change.changedAt || timestamp(), change.originDeviceId, change.profileScope || "arnaud", change.syncClassification, JSON.stringify(change.changedFields || []), JSON.stringify(change.baseFieldVersions || {}), change.tombstoneUntil || null); return getChange(changeId); }
+  function appendChange(change) {
+    return transaction(() => {
+      const sequence = nextRevision();
+      const changeId = change.changeId || `change_${crypto.randomUUID()}`;
+      db.prepare("INSERT INTO sync_changes(sequence,change_id,entity_type,entity_id,operation,version,changed_at,origin_device_id,profile_scope,sync_classification,changed_fields_json,base_field_versions_json,tombstone_until) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run(sequence, changeId, change.entityType, change.entityId, change.operation,
+          change.version, change.changedAt || timestamp(), change.originDeviceId,
+          change.profileScope || "arnaud", change.syncClassification,
+          JSON.stringify(change.changedFields || []),
+          JSON.stringify(change.baseFieldVersions || {}),
+          change.tombstoneUntil || null);
+      return getChange(changeId);
+    });
+  }
   function getChange(id) { return changeRow(db.prepare("SELECT * FROM sync_changes WHERE change_id=?").get(id)); }
   function changesAfter(cursor = 0, { profileScope = "arnaud", limit = 100 } = {}) { return db.prepare("SELECT * FROM sync_changes WHERE sequence>? AND profile_scope=? ORDER BY sequence LIMIT ?").all(Number(cursor) || 0, profileScope, Math.max(1, Math.min(500, Number(limit) || 100))).map(changeRow); }
   function enqueue(changeId, targetDeviceId) { const at = timestamp(); const id = `outbox_${crypto.randomUUID()}`; db.prepare("INSERT OR IGNORE INTO sync_outbox(outbox_id,change_id,target_device_id,state,created_at,updated_at) VALUES(?,?,?,'PENDING',?,?)").run(id, changeId, targetDeviceId, at, at); return db.prepare("SELECT * FROM sync_outbox WHERE change_id=? AND target_device_id=?").get(changeId, targetDeviceId); }
