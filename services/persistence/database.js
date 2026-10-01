@@ -15,6 +15,40 @@ function loadSqlite() {
   catch { return null; }
 }
 
+function hasColumn(database, tableName, columnName) {
+  return database.prepare(`PRAGMA table_info(${tableName})`).all()
+    .some((column) => column.name === columnName);
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isDuplicateColumnError(error, columnName) {
+  return error?.code === "ERR_SQLITE_ERROR" && error?.errcode === 1 &&
+    new RegExp(`^duplicate column name:\\s*${escapeRegExp(columnName)}\\s*$`, "i")
+      .test(String(error?.message || ""));
+}
+
+function ensureColumn(database, tableName, columnName, definition) {
+  if (hasColumn(database, tableName, columnName)) return;
+  try {
+    database.exec(`ALTER TABLE ${tableName} ADD COLUMN ${definition}`);
+  } catch (error) {
+    // Une autre initialisation peut avoir ajouté la colonne entre la lecture et
+    // l'ALTER. BUSY/LOCKED et toute autre erreur doivent toujours remonter.
+    if (!isDuplicateColumnError(error, columnName)) throw error;
+    try {
+      if (!hasColumn(database, tableName, columnName)) throw error;
+    } catch {
+      throw error;
+    }
+  }
+  if (!hasColumn(database, tableName, columnName)) {
+    throw new Error(`Migration SQLite incomplète : ${tableName}.${columnName}`);
+  }
+}
+
 function createSchema(database) {
   database.exec(`
     PRAGMA journal_mode = WAL;
@@ -519,10 +553,10 @@ function createSchema(database) {
     CREATE INDEX IF NOT EXISTS benchmark_arms_session_idx ON benchmark_arms(benchmark_session_id);
   `);
   // Migration additive pour les bases v12 créées pendant le rollout SHADOW.
-  try { database.exec("ALTER TABLE sync_changes ADD COLUMN base_field_versions_json TEXT NOT NULL DEFAULT '{}'"); } catch {}
+  ensureColumn(database, "sync_changes", "base_field_versions_json", "base_field_versions_json TEXT NOT NULL DEFAULT '{}'");
   // Les anciennes exécutions restent volontairement sans projet : aucune
   // inférence ne doit les faire apparaître dans un contexte A3 projet.
-  try { database.exec("ALTER TABLE execution_items ADD COLUMN project_id TEXT"); } catch {}
+  ensureColumn(database, "execution_items", "project_id", "project_id TEXT");
   database.exec("CREATE INDEX IF NOT EXISTS execution_scope_project_idx ON execution_items(subject_scope, project_id, planned_start, updated_at)");
   try {
     database.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS memory_items_fts USING fts5(id UNINDEXED, subject, value_text);`);
@@ -552,8 +586,13 @@ function createPersonalDatabase(filePath) {
   if (!sqlite?.DatabaseSync) return createFallback(filePath);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const database = new sqlite.DatabaseSync(filePath);
-  database.exec(`PRAGMA busy_timeout = ${PERSONAL_DATABASE_BUSY_TIMEOUT_MS}`);
-  createSchema(database);
+  try {
+    database.exec(`PRAGMA busy_timeout = ${PERSONAL_DATABASE_BUSY_TIMEOUT_MS}`);
+    createSchema(database);
+  } catch (error) {
+    try { database.close(); } catch {}
+    throw error;
+  }
   return { kind: "sqlite", filePath, database, get ftsAvailable() { return database.ftsAvailable === true; }, close: () => database.close() };
 }
 
