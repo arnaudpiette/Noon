@@ -160,8 +160,10 @@ La sélection est déterministe : une question générale ne déclenche aucune
 lecture A3; les indices agenda sélectionnent Calendar/Rappels, un e-mail Gmail,
 un dépôt Git/exécution et les mots-clés explicites Notes ou fichiers leur source
 respective. Chaque source a un quota propre (Notes 3, Rappels/Calendar 5,
-Gmail/Fichiers 3, Git 1 et Exécution 4) et une échéance de 5 secondes. Une
-échéance, une erreur ou une absence d'autorisation est isolée dans le
+Gmail/Fichiers 3, Git 1 et Exécution 4) et une échéance de 5 secondes. Pour
+Notes A3, cette échéance est aussi transmise au processus `osascript` et son
+signal d'expiration demande son arrêt ; l'arrêt effectif reste dépendant de
+macOS. Une échéance, une erreur ou une absence d'autorisation est isolée dans le
 diagnostic : les autres sources sélectionnées continuent. Les doublons ne sont
 fusionnés qu'en présence d'une identité canonique explicite, jamais sur une
 simple similitude de texte.

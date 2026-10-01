@@ -828,6 +828,8 @@ const authorizedContextSources = createAuthorizedContextSources({
           limit: request.limit,
           includeBody: false,
           searchScope: "title",
+          signal: request.signal,
+          timeoutMs: request.timeoutMs,
         });
         return notes.map((item) => ({ sourceId: item.id, timestamp: item.modifiedAt, relevance: item.relevance,
           privacyClass: "PRIVATE", localOnly: true, payload: { title: item.title, excerpt: item.excerpt } }));

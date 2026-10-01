@@ -10,9 +10,6 @@ const SOURCE_STATUSES = Object.freeze({
 });
 const SOURCE_LIMITS = Object.freeze({ notes: 3, reminders: 5, calendar: 5, gmail: 3, files: 3, git: 1, execution: 4 });
 const DEFAULT_SOURCE_TIMEOUT_MS = 5_000;
-const SOURCE_TIMEOUTS_MS = Object.freeze({
-  notes: 12_000,
-});
 
 function normalize(value) {
   return String(value || "").toLocaleLowerCase("fr").normalize("NFD")
@@ -77,11 +74,11 @@ function deduplicateItems(items) {
   return [...kept.values()];
 }
 
-function createAuthorizedContextSources({ adapters = {}, now = () => new Date(), observability = null, sourceTimeoutMs = DEFAULT_SOURCE_TIMEOUT_MS } = {}) {
+function createAuthorizedContextSources({ adapters = {}, now = () => new Date(), observability = null, sourceTimeoutMs = DEFAULT_SOURCE_TIMEOUT_MS, setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout } = {}) {
   async function collect(input = {}) {
     const selected = sourceSelection(input);
     const diagnostics = Object.fromEntries(Object.keys(SOURCE_LIMITS).map((source) => [source, {
-      selected: selected.includes(source), status: selected.includes(source) ? null : SOURCE_STATUSES.SKIPPED_NOT_RELEVANT, count: 0, truncated: false, durationMs: 0,
+      selected: selected.includes(source), status: selected.includes(source) ? null : SOURCE_STATUSES.SKIPPED_NOT_RELEVANT, reasonCode: null, count: 0, truncated: false, durationMs: 0,
     }]));
     const reads = selected.map(async (source) => {
       const adapter = adapters[source]; const diagnostic = diagnostics[source];
@@ -89,15 +86,20 @@ function createAuthorizedContextSources({ adapters = {}, now = () => new Date(),
       const status = safeStatus(adapter, input);
       if (status !== SOURCE_STATUSES.AVAILABLE) { diagnostic.status = status; return []; }
       const startedAt = performance.now();
-      const effectiveTimeoutMs = SOURCE_TIMEOUTS_MS[source] || sourceTimeoutMs;
+      const effectiveTimeoutMs = sourceTimeoutMs;
       try {
+        const controller = new AbortController();
         let timeoutId = null;
         const raw = await Promise.race([
-          Promise.resolve(adapter.read({ ...input, source, limit: SOURCE_LIMITS[source], now: now() })),
+          Promise.resolve(adapter.read({ ...input, source, limit: SOURCE_LIMITS[source], now: now(), signal: controller.signal, timeoutMs: effectiveTimeoutMs })),
           new Promise((_, reject) => {
-            timeoutId = setTimeout(() => reject(Object.assign(new Error("Authorized context source timeout"), { code: "CONTEXT_SOURCE_TIMEOUT" })), effectiveTimeoutMs);
+            timeoutId = setTimeoutFn(() => {
+              const error = Object.assign(new Error("Authorized context source timeout"), { code: "CONTEXT_SOURCE_TIMEOUT" });
+              controller.abort(error);
+              reject(error);
+            }, effectiveTimeoutMs);
           }),
-        ]).finally(() => clearTimeout(timeoutId));
+        ]).finally(() => clearTimeoutFn(timeoutId));
         const values = Array.isArray(raw?.items) ? raw.items : Array.isArray(raw) ? raw : [];
         diagnostic.status = SOURCE_STATUSES.AVAILABLE;
         diagnostic.truncated = raw?.truncated === true || values.length > SOURCE_LIMITS[source];
@@ -107,6 +109,7 @@ function createAuthorizedContextSources({ adapters = {}, now = () => new Date(),
           .filter((item) => !input.projectId || !item.projectId || item.projectId === input.projectId);
       } catch (error) {
         diagnostic.status = error?.status === 401 || error?.status === 403 ? SOURCE_STATUSES.UNAUTHORIZED : SOURCE_STATUSES.ERROR;
+        diagnostic.reasonCode = error?.code || "CONTEXT_SOURCE_ERROR";
         diagnostic.durationMs = Math.round(performance.now() - startedAt);
         return [];
       } finally {

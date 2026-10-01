@@ -120,15 +120,31 @@ function normalize(value) {
     .trim();
 }
 
-function runAppleScript(script, args, runner = execFile) {
-  return new Promise((resolve, reject) =>
-    runner(
+function runAppleScript(script, args, runner = execFile, { signal, timeoutMs = 10_000 } = {}) {
+  if (signal?.aborted) {
+    return Promise.reject(signal.reason || Object.assign(new Error("Apple Notes annulé."), { code: "ABORT_ERR" }));
+  }
+  const boundedTimeoutMs = Math.max(1, Math.min(10_000, Number(timeoutMs) || 10_000));
+  return new Promise((resolve, reject) => {
+    let child = null;
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", abort);
+      callback(value);
+    };
+    const abort = () => {
+      try { child?.kill?.(); } catch {}
+      finish(reject, signal.reason || Object.assign(new Error("Apple Notes annulé."), { code: "ABORT_ERR" }));
+    };
+    child = runner(
       "osascript",
       ["-e", script, "--", ...args.map(String)],
-      { timeout: 10_000, maxBuffer: 512 * 1024 },
+      { timeout: boundedTimeoutMs, maxBuffer: 512 * 1024 },
       (error, stdout) => {
         if (error) {
-          return reject(
+          return finish(reject,
             Object.assign(
               new Error("Apple Notes momentanément indisponible."),
               {
@@ -144,10 +160,11 @@ function runAppleScript(script, args, runner = execFile) {
           );
         }
 
-        resolve(String(stdout));
+        finish(resolve, String(stdout));
       }
-    )
-  );
+    );
+    if (!settled) signal?.addEventListener("abort", abort, { once: true });
+  });
 }
 
 function noteScore(query, note) {
@@ -269,6 +286,8 @@ async function searchNotes(
     includeBody = false,
     searchScope = "all",
     maxExcerptLength = NOTE_SEARCH_EXCERPT_LIMIT,
+    signal,
+    timeoutMs,
   } = {},
   runner = execFile
 ) {
@@ -297,7 +316,8 @@ async function searchNotes(
   const titleRaw = await runAppleScript(
     SEARCH_METADATA_SCRIPT,
     [value, candidateLimit],
-    runner
+    runner,
+    { signal, timeoutMs }
   );
 
   const titleCandidates = parseMetadata(
@@ -312,7 +332,8 @@ async function searchNotes(
     const bodyRaw = await runAppleScript(
       SEARCH_BODY_METADATA_SCRIPT,
       [value, candidateLimit],
-      runner
+      runner,
+      { signal, timeoutMs }
     );
 
     bodyCandidates = parseMetadata(
@@ -367,7 +388,8 @@ async function searchNotes(
     const body = await runAppleScript(
       SEARCH_BODY_SCRIPT,
       [note.id],
-      runner
+      runner,
+      { signal, timeoutMs }
     );
 
     const [, ...content] = String(body).split("\t");

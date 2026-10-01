@@ -79,6 +79,52 @@ test("une source lente expire sans empêcher les autres sources sélectionnées"
   assert.equal(result.items.length, 1);
 });
 
+test("Notes A3 reçoit cinq secondes, annule à l'expiration et ignore le résultat tardif", async () => {
+  const timers = [];
+  let resolveNotes;
+  let notesSignal;
+  let reminderCalls = 0;
+  const notes = {
+    status: () => SOURCE_STATUSES.AVAILABLE,
+    read: ({ signal, timeoutMs }) => {
+      notesSignal = signal;
+      assert.equal(timeoutMs, 5_000);
+      return new Promise((resolve) => { resolveNotes = resolve; });
+    },
+  };
+  const reminders = {
+    status: () => SOURCE_STATUSES.AVAILABLE,
+    read: async () => {
+      reminderCalls += 1;
+      return [{ id: "r1", payload: { summary: "Rappel" }, localOnly: true }];
+    },
+  };
+  const sources = createAuthorizedContextSources({
+    adapters: { notes, reminders },
+    setTimeoutFn: (callback, ms) => {
+      const timer = { callback, ms, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeoutFn: (timer) => { timer.cleared = true; },
+  });
+  const pending = sources.collect({ query: "mes notes et une tâche" });
+  await Promise.resolve();
+  const notesTimer = timers.find((timer) => timer.ms === 5_000 && !timer.cleared);
+  assert.ok(notesTimer);
+  notesTimer.callback();
+  const result = await pending;
+  assert.equal(notesSignal.aborted, true);
+  assert.equal(result.diagnostics.notes.status, SOURCE_STATUSES.ERROR);
+  assert.equal(result.diagnostics.notes.reasonCode, "CONTEXT_SOURCE_TIMEOUT");
+  assert.equal(reminderCalls, 1);
+  assert.equal(result.items.length, 1);
+  resolveNotes([{ id: "late-note", payload: { title: "Tardive" }, localOnly: true }]);
+  await Promise.resolve();
+  assert.equal(result.items.length, 1);
+  assert.ok(timers.every((timer) => timer.cleared));
+});
+
 test("déduplique uniquement les éléments portant une identité canonique explicite", async () => {
   const calendar = adapter([{ id: "calendar-1", canonicalKey: "event:42", relevance: 0.8, payload: { title: "Réunion", eventId: "event:42" }, localOnly: true }]);
   const reminders = adapter([{ id: "reminder-1", canonicalKey: "event:42", relevance: 0.9, payload: { summary: "Réunion", eventId: "event:42" }, localOnly: true }]);

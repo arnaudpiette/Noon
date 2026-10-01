@@ -76,6 +76,32 @@ test("le contrat A3 transmet la portée titre uniquement à Apple Notes", () => 
   assert.match(adapter, /limit:\s*request\.limit/);
 });
 
+test("searchNotes borne l'appel AppleScript A3 et arrête le processus à l'expiration", async () => {
+  let callback;
+  let killed = 0;
+  let timeout;
+  const controller = new AbortController();
+  const pending = searchNotes("Noon", { limit: 3, includeBody: false, searchScope: "title", signal: controller.signal, timeoutMs: 5_000 }, (_command, _args, options, done) => {
+    timeout = options.timeout;
+    callback = done;
+    return { kill: () => { killed += 1; } };
+  });
+  controller.abort(Object.assign(new Error("Authorized context source timeout"), { code: "CONTEXT_SOURCE_TIMEOUT" }));
+  await assert.rejects(pending, (error) => error.code === "CONTEXT_SOURCE_TIMEOUT");
+  assert.equal(timeout, 5_000);
+  assert.equal(killed, 1);
+  callback(null, "1\tNoon\t2026-01-01");
+});
+
+test("searchNotes conserve son timeout historique hors A3", async () => {
+  let receivedOptions;
+  await searchNotes("Noon", { searchScope: "title" }, (_command, _args, options, callback) => {
+    receivedOptions = options;
+    callback(null, "1\tNoon\t2026-01-01");
+  });
+  assert.equal(receivedOptions.timeout, 10_000);
+});
+
 test("searchNotes borne candidats, résultats et requêtes hostiles comme données", async () => {
   const metadata = Array.from({ length: 20 }, (_, index) => `${index}\tProjet Noon ${index}\t2026-01-${String(index + 1).padStart(2, "0")}`).join("\n");
   const fixture = runnerFor({ metadata });
