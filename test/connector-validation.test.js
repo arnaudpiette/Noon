@@ -2,7 +2,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createGmailConnector } = require('../services/connectors/gmail');
-const { createCalendarConnector } = require('../services/connectors/google-calendar');
+const { createCalendarConnector, localDateRange, localDayRange } = require('../services/connectors/google-calendar');
+const { createReliabilityEngine } = require('../services/reliability/reliability-engine');
 const { createAppleNotesConnector } = require('../services/connectors/apple-notes');
 const { createAppleConnector } = require('../services/connectors/apple-reminders');
 function tokens() { let value = null; return { get: () => value, set: v => { value = v; }, remove: () => { value = null; } }; }
@@ -78,6 +79,27 @@ test('Calendar transmet un quota borné au fournisseur sans pagination suppléme
   await assert.rejects(calendar.listCalendarEvents({maxResults:0}),TypeError);await assert.rejects(calendar.listCalendarEvents({maxResults:51}),TypeError);await assert.rejects(calendar.listCalendarEvents({maxResults:'5'}),TypeError);
  } finally {global.fetch=original;}
 });
+test('Calendar récupère les pages complètes ou signale explicitement une lecture incomplète', async () => {
+ const original=global.fetch;const urls=[];let responses=[];global.fetch=async(url)=>{urls.push(String(url));const next=responses.shift();if(next instanceof Error)throw next;return {ok:true,status:200,text:async()=>JSON.stringify(next)};};
+ try {const tokenStore=tokens();tokenStore.set({access_token:'fixture'});const calendar=createCalendarConnector({tokenStore});const range={timeMin:'2026-03-29T00:00:00.000Z',timeMax:'2026-03-30T00:00:00.000Z'};
+  responses=[{items:Array.from({length:5},(_,i)=>({id:`a${i}`})),nextPageToken:'second'},{items:Array.from({length:5},(_,i)=>({id:`b${i}`}))}];const full=await calendar.listCompleteCalendarEvents(range);assert.equal(full.complete,true);assert.equal(full.items.length,10);assert.equal(full.pages,2);assert.equal(urls.length,2);for(const url of urls){const p=new URL(url).searchParams;assert.equal(p.get('timeMin'),range.timeMin);assert.equal(p.get('timeMax'),range.timeMax);assert.equal(p.get('singleEvents'),'true');assert.equal(p.get('orderBy'),'startTime');assert.equal(p.get('maxResults'),'250');}assert.equal(new URL(urls[1]).searchParams.get('pageToken'),'second');
+  urls.length=0;responses=[{items:[]}];const empty=await calendar.listCompleteCalendarEvents(range);assert.deepEqual(empty,{items:[],complete:true,pages:1,reasonCode:null});
+  responses=[{items:[{id:'one'}],nextPageToken:'next'},new Error('offline')];const failed=await calendar.listCompleteCalendarEvents(range);assert.equal(failed.complete,false);assert.equal(failed.reasonCode,'READ_ERROR');assert.equal(failed.items.length,1);
+  responses=[{items:[{id:'one'}],nextPageToken:'next'}];const capped=await calendar.listCompleteCalendarEvents({...range,maxPages:1});assert.equal(capped.complete,false);assert.equal(capped.reasonCode,'PAGE_LIMIT');
+  responses=[{items:[{id:'one'}],nextPageToken:'next'}];const volume=await calendar.listCompleteCalendarEvents({...range,maxItems:1});assert.equal(volume.complete,false);assert.equal(volume.reasonCode,'VOLUME_LIMIT');
+  responses=[{items:[{id:'one'}],nextPageToken:'same'},{items:[{id:'two'}],nextPageToken:'same'}];const repeated=await calendar.listCompleteCalendarEvents(range);assert.equal(repeated.complete,false);assert.equal(repeated.reasonCode,'REPEATED_PAGE_TOKEN');
+  assert.deepEqual(localDayRange(new Date('2026-03-29T12:00:00.000Z')),{timeMin:'2026-03-28T23:00:00.000Z',timeMax:'2026-03-29T22:00:00.000Z'});assert.deepEqual(localDayRange(new Date('2026-10-25T12:00:00.000Z')),{timeMin:'2026-10-24T22:00:00.000Z',timeMax:'2026-10-25T23:00:00.000Z'});
+  assert.deepEqual(localDateRange(new Date('2026-03-29T12:00:00.000Z'),7),{timeMin:'2026-03-28T23:00:00.000Z',timeMax:'2026-04-04T22:00:00.000Z'});
+ } finally {global.fetch=original;}
+});
+test('Calendar complet partage une échéance entre pages, annule une requête bloquée et ne relance pas', async () => {
+ const originalFetch=global.fetch;const originalNow=Date.now;
+ try {const tokenStore=tokens();tokenStore.set({access_token:'fixture'});let calls=0,aborts=0;global.fetch=async(_url,{signal})=>{calls++;return new Promise((_,reject)=>signal.addEventListener('abort',()=>{aborts++;reject(Object.assign(new Error('aborted'),{name:'AbortError'}));},{once:true}));};
+  const blocked=await createCalendarConnector({tokenStore}).listCompleteCalendarEvents({timeoutMs:5});assert.equal(blocked.complete,false);assert.equal(blocked.reasonCode,'TIME_LIMIT');assert.equal(calls,1);assert.equal(aborts,1);
+  let clock=0;Date.now=()=>clock;calls=0;global.fetch=async()=>{calls++;clock=6;return {ok:true,status:200,text:async()=>JSON.stringify({items:[{id:'first'}],nextPageToken:'next'})};};const shared=await createCalendarConnector({tokenStore}).listCompleteCalendarEvents({timeoutMs:5});assert.equal(shared.reasonCode,'TIME_LIMIT');assert.equal(shared.items.length,1);assert.equal(calls,1);
+  Date.now=originalNow;calls=0;let waits=0;const reliability=createReliabilityEngine({sleep:async()=>{waits++;}});reliability.register({componentId:'google-calendar',maxRetries:2});global.fetch=async()=>{calls++;return {ok:false,status:503,text:async()=>JSON.stringify({})};};const retried=await createCalendarConnector({tokenStore,reliability}).listCompleteCalendarEvents({timeoutMs:50});assert.equal(retried.complete,false);assert.equal(retried.reasonCode,'READ_ERROR');assert.equal(calls,1);assert.equal(waits,0);
+ } finally {Date.now=originalNow;global.fetch=originalFetch;}
+});
 test('safeStorage ciphertext survives reopening; public connector status contains no credentials', t => {
  const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
  const {createTokenStore}=require('../services/security/token-store');
@@ -105,7 +127,7 @@ test('offline source collection preserves failures and isolates Apple success', 
  const reliability=createReliabilityEngine();
  for(const componentId of ["gmail","google-calendar","apple-notes","apple-reminders"]) reliability.register({componentId});
  const service=createMorningBriefService({reliability,
-  calendar:{connected:true,listCalendarEvents:async()=>{throw Object.assign(new Error('offline'),{code:'ENOTFOUND'});}},
+  calendar:{connected:true,listCompleteCalendarEvents:async()=>{throw Object.assign(new Error('offline'),{code:'ENOTFOUND'});}},
   gmail:{connected:true,searchGmailMessages:async()=>{throw Object.assign(new Error('expired'),{status:401});}},
   notes:{listRecentNotes:async()=>[{id:'note',title:'fixture'}]},reminders:{listIncompleteReminders:async()=>[{id:'reminder',title:'fixture'}]},
   normalizeGmailMessage:v=>v,localContext:()=>({projects:[]})});

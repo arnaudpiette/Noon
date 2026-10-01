@@ -51,6 +51,12 @@ test("aucun bloc ne traverse la pause protégée", async () => {
   assert.ok(new Date(block.start) >= new Date("2026-08-28T11:30:00Z"));
 });
 
+test("un agenda incomplet ne produit aucune proposition de disponibilité", async () => {
+  const { engine } = fixture();
+  const plan = await engine.buildPlan({ at: AT, calendarComplete: false, actions: [action("A", 60, 80)] });
+  assert.equal(plan.proposedBlocks.length, 0); assert.equal(plan.unscheduledActions[0].reasonCode, "CALENDAR_INCOMPLETE");
+});
+
 test("overload : conserve le surplus en non planifié", async () => {
   const { engine } = fixture({ settings: { workdayStart: "09:00", workdayEnd: "14:00" } });
   const plan = await engine.buildPlan({ at: AT, actions: [action("A", 180, 90, { splittable: true }), action("B", 180, 80, { splittable: true }), action("C", 60, 50)] });

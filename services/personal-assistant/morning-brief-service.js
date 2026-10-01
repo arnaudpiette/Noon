@@ -1,11 +1,12 @@
 "use strict";
 
 const { buildManagedEvent, dateKey, deduplicateActions, findFreeSlots, normalizeAction, occurrenceKey, prioritizeActions, sourceState } = require("../../lib/morning-brief");
+const { localDateRange } = require("../connectors/google-calendar");
 
 function importantText(value) { return /\b(urgent|important|échéance|deadline|avant le|répondre|réponse attendue|relance|soutenance|livrable|rendez-vous|rdv)\b/i.test(String(value || "")); }
 function containsPromptInjection(value) { return /ignore (?:all |les )?(?:instructions? |règles? )?(?:previous|précédentes|et envoie)|system prompt|instruction système|révèle (?:les )?secrets|exfiltr/i.test(String(value || "")); }
 function extractEmail(value) { return String(value || "").match(/<([^>\s]+@[^>\s]+)>|([\w.+-]+@[\w.-]+\.[A-Za-z]{2,})/)?.slice(1).find(Boolean) || null; }
-function dateRange(now = new Date(), days = 7) { return { timeMin: now.toISOString(), timeMax: new Date(now.getTime() + days * 86_400_000).toISOString() }; }
+function dateRange(now = new Date(), days = 7) { return localDateRange(now, days, "Europe/Paris"); }
 
 function createMorningBriefService(deps) {
   async function capture(id, connected, operation) {
@@ -19,11 +20,14 @@ function createMorningBriefService(deps) {
 
   async function collectSources(now = new Date(), settings = {}) {
     const range = dateRange(now);
+    let calendarComplete = false;
     const [calendar, gmail, reminders, notes] = await Promise.all([
       capture("google-calendar", deps.calendar.connected, async () => {
         const calendarIds = Array.isArray(settings.busyCalendarIds) && settings.busyCalendarIds.length ? settings.busyCalendarIds : ["primary"];
-        const lists = await Promise.all(calendarIds.map((calendarId) => deps.calendar.listCalendarEvents({ ...range, calendarId }).then((data) => data.items || [])));
-        return lists.flat();
+        const lists = await Promise.all(calendarIds.map((calendarId) => deps.calendar.listCompleteCalendarEvents({ ...range, calendarId })));
+        calendarComplete = lists.every((data) => data.complete === true);
+        if (!calendarComplete) throw Object.assign(new Error("Agenda incomplet."), { code: "CALENDAR_INCOMPLETE" });
+        return lists.flatMap((data) => data.items || []);
       }),
       capture("gmail", deps.gmail.connected, async () => {
         const search = await deps.gmail.searchGmailMessages("is:unread -category:promotions -category:social", { maxResults: 15 });
@@ -36,7 +40,7 @@ function createMorningBriefService(deps) {
     const local = deps.localContext();
     const safeNotes = (notes.data || []).slice(0, 20).map((note) => ({ ...note, content: String(note.content || "").slice(0, 1500) }));
     const sources = [calendar.state, gmail.state, reminders.state, notes.state, sourceState("noon-memory", "ready"), sourceState("projects", "ready"), sourceState("github", "disconnected")];
-    return { date: dateKey(now), occurrenceKey: occurrenceKey(now), sources, sourceCoverage: { expected: sources.map((item) => item.id), succeeded: sources.filter((item) => item.status === "ready").map((item) => item.id), failed: sources.filter((item) => !["ready", "disconnected"].includes(item.status)).map((item) => ({ componentId: item.id, reasonCode: item.reasonCode || item.status })), unavailable: sources.filter((item) => item.status === "disconnected").map((item) => ({ componentId: item.id, reasonCode: item.reasonCode || "AUTH_REQUIRED" })) }, calendarEvents: calendar.data, emails: gmail.data, reminders: reminders.data, notes: safeNotes, ...local };
+    return { date: dateKey(now), occurrenceKey: occurrenceKey(now), sources, sourceCoverage: { expected: sources.map((item) => item.id), succeeded: sources.filter((item) => item.status === "ready").map((item) => item.id), failed: sources.filter((item) => !["ready", "disconnected"].includes(item.status)).map((item) => ({ componentId: item.id, reasonCode: item.reasonCode || item.status })), unavailable: sources.filter((item) => item.status === "disconnected").map((item) => ({ componentId: item.id, reasonCode: item.reasonCode || "AUTH_REQUIRED" })) }, calendarEvents: calendar.data, calendarComplete: calendarComplete && calendar.state.status === "ready", emails: gmail.data, reminders: reminders.data, notes: safeNotes, ...local };
   }
 
   function buildActionCandidates(context) {
@@ -79,6 +83,7 @@ function createMorningBriefService(deps) {
 
   async function schedulePriorities(actions, context, settings, now = new Date()) {
     if (!settings.enabled || !deps.calendar.connected) return [];
+    if (context.calendarComplete === false) return actions.slice(0, 3).map((action) => ({ actionId: action.id, title: action.title, status: "not-scheduled", reason: "Agenda incomplet : disponibilité non confirmée." }));
     const scheduled = [];
     const busy = [...(context.calendarEvents || [])];
     // Le brief prépare des propositions, mais n'écrit jamais dans Calendar :

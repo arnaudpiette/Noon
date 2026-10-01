@@ -125,7 +125,7 @@ function createDailyPlanningEngine({
   if (!timeSlotService?.suggest) throw new TypeError("TimeSlotService requis.");
   if (!store?.get || !store?.save) throw new TypeError("Stockage Daily Plan requis.");
 
-  async function buildPlan({ actions = [], events = [], at = now(), previousPlan = null, trigger = "manual", preservePast = true, calendarStatus = "unknown" } = {}) {
+  async function buildPlan({ actions = [], events = [], at = now(), previousPlan = null, trigger = "manual", preservePast = true, calendarStatus = "unknown", calendarComplete = true } = {}) {
     const startedAt = Date.now();
     const day = dateKey(at);
     const settings = settingsProvider() || {};
@@ -232,8 +232,9 @@ function createDailyPlanningEngine({
         let failed = null;
         for (const chunk of chunks) {
           const lookupStarted = Date.now();
+          if (!calendarComplete) { failed = "CALENDAR_INCOMPLETE"; break; }
           const slots = await timeSlotService.suggest({
-            durationMinutes: chunk.minutes, events: [...busy, ...staged.map((block) => ({ start: block.start, end: block.end }))],
+            durationMinutes: chunk.minutes, events: [...busy, ...staged.map((block) => ({ start: block.start, end: block.end }))], calendarComplete,
             settings: planningSettings, now: at, days: 1, maximumResults: 20,
             dueAt: action.dueAt, preferredTimeOfDay: action.preferredTimeOfDay,
           });

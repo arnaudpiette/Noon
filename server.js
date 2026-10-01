@@ -76,7 +76,7 @@ const {
 } = require("./lib/conversation-index");
 const { createTokenStore } = require("./services/security/token-store");
 const { createGmailConnector } = require("./services/connectors/gmail");
-const { createCalendarConnector } = require("./services/connectors/google-calendar");
+const { createCalendarConnector, localDayRange } = require("./services/connectors/google-calendar");
 const { createAppleConnector } = require("./services/connectors/apple-reminders");
 const { createAppleNotesConnector } = require("./services/connectors/apple-notes");
 const { createMorningBriefService } = require("./services/personal-assistant/morning-brief-service");
@@ -1640,12 +1640,11 @@ const dailyPlanningEngine = createDailyPlanningEngine({
   approvalEngine: approvalManager,
   calendarReader: async (date, calendarId) => {
     if (!calendarConnector.connected) return null;
-    const start = new Date(`${date}T00:00:00Z`);
-    const result = await calendarConnector.listCalendarEvents({
+    const result = await calendarConnector.listCompleteCalendarEvents({
       calendarId,
-      timeMin: start.toISOString(),
-      timeMax: new Date(start.getTime() + 26 * 60 * 60 * 1000).toISOString(),
+      ...localDayRange(new Date(`${date}T12:00:00Z`)),
     });
+    if (!result.complete) throw Object.assign(new Error("Agenda incomplet : validation du planning impossible."), { code: "CALENDAR_INCOMPLETE" });
     return result.items || [];
   },
   metrics: metricsService,
@@ -1774,6 +1773,7 @@ const dailyBriefEngine = createDailyBriefEngine({
       actions,
       events: context.calendarEvents || [],
       calendarStatus: context.sources?.find((source) => source.id === "google-calendar")?.status || "unknown",
+      calendarComplete: context.calendarComplete,
       at,
       trigger: "daily_brief",
     });
@@ -3632,17 +3632,10 @@ async function askAI(
           }
         }
 
-        const from = new Date(target);
-        from.setHours(0, 0, 0, 0);
-
-        const to = new Date(from);
-        to.setDate(to.getDate() + 1);
-
-        const result =
-          await calendarConnector.listCalendarEvents({
-            timeMin: from.toISOString(),
-            timeMax: to.toISOString(),
-          });
+        const range = localDayRange(target);
+        const from = new Date(range.timeMin);
+        const result = await calendarConnector.listCompleteCalendarEvents(range);
+        if (!result.complete) throw Object.assign(new Error("Agenda incomplet : impossible de présenter la journée complète."), { code: "CALENDAR_INCOMPLETE" });
 
         const events = (result.items || [])
           .slice()
