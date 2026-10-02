@@ -21,26 +21,41 @@ function createJobStore(wrapper, { now = () => Date.now() } = {}) {
   const getStatement = db.prepare("SELECT * FROM background_jobs WHERE id=?");
 
   function transaction(callback) {
-    db.exec("BEGIN IMMEDIATE");
-    try { const value = callback(); db.exec("COMMIT"); return value; }
-    catch (error) { try { db.exec("ROLLBACK"); } catch {} throw error; }
+    const ownsTransaction = db.isTransaction !== true;
+    const savepoint = ownsTransaction ? null : `job_store_${crypto.randomUUID().replaceAll("-", "")}`;
+    if (ownsTransaction) db.exec("BEGIN IMMEDIATE"); else db.exec(`SAVEPOINT ${savepoint}`);
+    try {
+      const value = callback();
+      if (ownsTransaction) db.exec("COMMIT"); else db.exec(`RELEASE SAVEPOINT ${savepoint}`);
+      return value;
+    } catch (error) {
+      if (ownsTransaction) {
+        try { db.exec("ROLLBACK"); } catch {}
+      } else {
+        try { db.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`); } catch {}
+        try { db.exec(`RELEASE SAVEPOINT ${savepoint}`); } catch {}
+      }
+      throw error;
+    }
   }
   function get(id) { return toPublic(getStatement.get(id)); }
   function create(record) {
     const timestamp = new Date(now()).toISOString();
     const id = record.id || `job_${crypto.randomUUID()}`;
-    db.prepare(`INSERT INTO background_jobs(
-      id,type,handler_version,state,priority,resource_class,profile_scope,workspace_id,project_id,session_id,conversation_id,
-      input_mode,input_ref_json,output_ref_json,progress_json,retry_policy_json,budget_json,metadata_json,dependencies_json,checkpoint_json,
-      idempotency_key,dedupe_key,attempt_count,max_attempts,scheduled_at,created_at,updated_at
-    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-      id, record.type, record.handlerVersion, "CREATED", record.priority, record.resourceClass,
-      record.profileScope || "arnaud", record.workspaceId || null, record.projectId || null, record.sessionId || null, record.conversationId || null,
-      record.inputMode, serialize(record.inputRef, {}), "{}", serialize(record.progress, { percent: 0 }), serialize(record.retryPolicy, {}), serialize(record.budget, {}), serialize(record.metadata, {}), serialize(record.dependencies, []), "{}",
-      record.idempotencyKey || null, record.dedupeKey || null, 0, record.maxAttempts, record.scheduledAt || timestamp, timestamp, timestamp
-    );
-    transition(id, "QUEUED", { reasonCode: "ENQUEUED" });
-    return get(id);
+    return transaction(() => {
+      db.prepare(`INSERT INTO background_jobs(
+        id,type,handler_version,state,priority,resource_class,profile_scope,workspace_id,project_id,session_id,conversation_id,
+        input_mode,input_ref_json,output_ref_json,progress_json,retry_policy_json,budget_json,metadata_json,dependencies_json,checkpoint_json,
+        idempotency_key,dedupe_key,attempt_count,max_attempts,scheduled_at,created_at,updated_at
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        id, record.type, record.handlerVersion, "CREATED", record.priority, record.resourceClass,
+        record.profileScope || "arnaud", record.workspaceId || null, record.projectId || null, record.sessionId || null, record.conversationId || null,
+        record.inputMode, serialize(record.inputRef, {}), "{}", serialize(record.progress, { percent: 0 }), serialize(record.retryPolicy, {}), serialize(record.budget, {}), serialize(record.metadata, {}), serialize(record.dependencies, []), "{}",
+        record.idempotencyKey || null, record.dedupeKey || null, 0, record.maxAttempts, record.scheduledAt || timestamp, timestamp, timestamp
+      );
+      transition(id, "QUEUED", { reasonCode: "ENQUEUED" });
+      return get(id);
+    });
   }
   function transition(id, state, patch = {}) {
     const existing = get(id); if (!existing) return null;

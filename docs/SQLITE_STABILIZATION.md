@@ -20,7 +20,7 @@ garantie globale pour tous les accès SQLite de Noon.
 | Transactional Execution — recovery | Les étapes récupérées et l'état d'exécution restent cohérents lors d'une récupération interrompue. | Chaque récupération passe par la transaction réentrante du repository ; les étapes et l'exécution sont persistées avant commit, avec rollback sur erreur et savepoint appelant. | Régressions historiques de recovery : commit groupé, panne, transaction externe et échec interne. | Le périmètre est la récupération Transactional Execution, pas toutes les transitions de tous les moteurs. | Corrigé — preuve déterministe historique. |
 | Learning — déduplication de `save()` par fingerprint | Un même fingerprint rejoué produit une ligne et le record déjà persisté. | `save()` prend une transaction courte réentrante avant sa recherche de fingerprint ; la contrainte unique reste la défense SQL complémentaire. | `test/review-learning-repository-concurrency.test.js` : deux connexions avec worker, verrou effectif et résultat idempotent. | La preuve est déterministe sur SQLite temporaire, non sur une base personnelle réelle. | Corrigé — preuve déterministe. |
 | Learning — allocation de `review_version` | Les versions sont strictement croissantes dans le périmètre `(review_type, subject_scope, period_start, period_end)`. | La même transaction sérialise recherche de fingerprint, lecture de la dernière version et insert ; un savepoint isole l'opération dans une transaction appelante. | `test/review-learning-repository-concurrency.test.js` : deux connexions, fingerprints distincts, versions `1` puis `2`, et nouveau profil à `1`. | Le générateur actuel utilise un `reviewId` déterministe par type/profil/période ; des révisions applicatives distinctes exigeraient un identifiant distinct, sujet hors périmètre. | Corrigé — preuve déterministe. |
-| Job Store | La revendication concurrente d'un job ne doit pas attribuer deux fois le même job. | `claimNext()` utilise une transaction courte et une mise à jour conditionnelle ; aucune modification n'a été faite dans cette phase. | Inspection de `services/jobs/job-store.js` et de ses tests existants. | `create()` insère puis appelle `transition()` hors transaction : une panne entre les deux peut laisser un job dans son état initial. Risque statique non reproduit, laissé hors périmètre afin de ne pas élargir cette stabilisation. | Inchangé — risque statique documenté. |
+| Job Store — `create()` | Un job créé est immédiatement `QUEUED`, ou aucune ligne ne subsiste si sa transition initiale échoue. | `create()` réutilise la transaction courte du store : `BEGIN IMMEDIATE` possédé ou savepoint appelant. Insert et transition `CREATED` → `QUEUED` sont groupés ; l'erreur initiale est propagée. | `test/job-store-create-atomicity.test.js` : succès, panne injectée dans la transition, réutilisation, commit/rollback externes et échec sous transaction appelante. | La protection porte sur la création ; `claimNext()`, recovery et dépendances restent inchangés. | Corrigé — preuve déterministe. |
 
 ## Défauts démontrés corrigés
 
@@ -44,23 +44,20 @@ garantie globale pour tous les accès SQLite de Noon.
   d'exécution.
 - Opérations destructives de mémoire privée partielles : `ce47b2a` groupe
   suppressions/statuts et audit.
+- Création Job Store partielle : `create()` groupe maintenant l'insert et la
+  transition initiale dans la transaction réentrante du store.
 
 ## Écarts ouverts
 
-1. `services/jobs/job-store.js#create` reste une séquence insert puis
-   transition hors transaction. Une panne entre les deux peut laisser un job
-   dans son état initial. Ce risque statique a été documenté mais volontairement
-   laissé hors du périmètre des correctifs SQLite déjà réalisés.
-2. Le correctif des statistiques ExecutionTracking ne rend pas atomiques
+1. Le correctif des statistiques ExecutionTracking ne rend pas atomiques
    ensemble l'item, l'événement et l'agrégat ; c'est une limite de frontière
    transactionnelle connue, pas une régression attribuée à ce correctif.
 
 ## Zones laissées inchangées
 
 - Job Store : `claimNext()` disposait déjà d'une transaction courte et d'une
-  transition conditionnelle. Le risque séparé de `create()` nécessite une
-  décision dédiée ; le modifier ici aurait étendu le chantier hors des défauts
-  reproduits.
+  transition conditionnelle. Cette intervention corrige seulement le défaut
+  reproduit de `create()` ; recovery et dépendances restent hors périmètre.
 - Les transactions existantes ne sont pas remplacées mécaniquement par des
   `BEGIN IMMEDIATE`. Les corrections ciblent seulement les invariants où une
   écriture partielle ou une mise à jour perdue avait été démontrée.
@@ -70,9 +67,9 @@ garantie globale pour tous les accès SQLite de Noon.
 Les défauts démontrés dans les zones corrigées ci-dessus disposent de preuves
 statiques et de validations déterministes historiques sur bases temporaires.
 La stabilisation SQLite reste **PARTIAL** : les deux courses de
-`ReviewLearningRepository.save()` sont corrigées, mais les limites Job Store et
-ExecutionTracking ci-dessus restent hors du périmètre traité.
+`ReviewLearningRepository.save()` et `JobStore.create()` sont corrigées, mais
+la limite ExecutionTracking ci-dessus reste hors du périmètre traité.
 
-La prochaine action de roadmap reste l'examen de l'existant Learning / Adaptive
-Routing avant toute nouvelle architecture. Il ne doit pas être confondu avec
-une extension de cette correction transactionnelle.
+Adaptive Routing reste en `SHADOW` par décision produit : cette synthèse ne
+déclenche ni son activation ni un nouveau mécanisme de routage. Toute évolution
+ultérieure doit rester distincte de la stabilisation transactionnelle SQLite.
