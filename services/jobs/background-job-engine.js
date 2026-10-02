@@ -111,7 +111,33 @@ function createBackgroundJobEngine({
         },
       });
       const current = store.get(job.id);
-      if (current.state === "CANCEL_REQUESTED" || controller.signal.aborted) { const cancelled = store.transition(job.id, "CANCELLED", { reasonCode: "USER_CANCELLED", completedAt: new Date(now()).toISOString() }); await notifyOnce(cancelled, "CANCELLED"); return cancelled; }
+      if (current.state === "CANCEL_REQUESTED" || controller.signal.aborted) {
+        const cancelled =
+          store.transition(
+            job.id,
+            "CANCELLED",
+            {
+              reasonCode:
+                "USER_CANCELLED",
+              completedAt:
+                new Date(now()).toISOString(),
+            }
+          );
+
+        record("job_cancelled", {
+          jobId: cancelled.id,
+          type: cancelled.type,
+          reasonCode:
+            "USER_CANCELLED",
+        });
+
+        await notifyOnce(
+          cancelled,
+          "CANCELLED"
+        );
+
+        return cancelled;
+      }
       if (result?.waiting) {
         const reasonCode =
           String(
@@ -143,7 +169,33 @@ function createBackgroundJobEngine({
       record("job_succeeded", { jobId: job.id, type: job.type, durationMs: now() - started, attempt: job.attempt_count }); await notifyOnce(succeeded, "SUCCEEDED"); return succeeded;
     } catch (error) {
       const current = store.get(job.id); const code = safeErrorCode(error);
-      if (current.state === "CANCEL_REQUESTED" || code === "ABORTERROR") { const cancelled = store.transition(job.id, "CANCELLED", { reasonCode: "USER_CANCELLED", completedAt: new Date(now()).toISOString() }); await notifyOnce(cancelled, "CANCELLED"); return cancelled; }
+      if (current.state === "CANCEL_REQUESTED" || code === "ABORTERROR") {
+        const cancelled =
+          store.transition(
+            job.id,
+            "CANCELLED",
+            {
+              reasonCode:
+                "USER_CANCELLED",
+              completedAt:
+                new Date(now()).toISOString(),
+            }
+          );
+
+        record("job_cancelled", {
+          jobId: cancelled.id,
+          type: cancelled.type,
+          reasonCode:
+            "USER_CANCELLED",
+        });
+
+        await notifyOnce(
+          cancelled,
+          "CANCELLED"
+        );
+
+        return cancelled;
+      }
       const unknownOutcome = error?.unknownOutcome === true || code === "UNKNOWN_OUTCOME";
       const retryable = definition.retryable && !unknownOutcome && (error?.transient === true || TRANSIENT_CODES.has(code)) && current.attempt_count < current.max_attempts;
       if (retryable) { const scheduledAt = new Date(now() + retryDelay(current.attempt_count)).toISOString(); record("job_retry_scheduled", { jobId: job.id, type: job.type, code, attempt: current.attempt_count }); return store.transition(job.id, "RETRY_SCHEDULED", { reasonCode: code, scheduledAt }); }
@@ -172,7 +224,36 @@ function createBackgroundJobEngine({
   function cancel(id, { profileScope = null } = {}) {
     const job = store.get(id); if (!job || (profileScope && job.profile_scope !== profileScope)) return null;
     if (TERMINAL_JOB_STATES.includes(job.state)) return job;
-    if (["CREATED", "QUEUED", "RETRY_SCHEDULED", "WAITING", "INTERRUPTED"].includes(job.state)) return store.transition(id, "CANCELLED", { reasonCode: "USER_CANCELLED", completedAt: new Date(now()).toISOString() });
+    if (
+      [
+        "CREATED",
+        "QUEUED",
+        "RETRY_SCHEDULED",
+        "WAITING",
+        "INTERRUPTED",
+      ].includes(job.state)
+    ) {
+      const cancelled =
+        store.transition(
+          id,
+          "CANCELLED",
+          {
+            reasonCode:
+              "USER_CANCELLED",
+            completedAt:
+              new Date(now()).toISOString(),
+          }
+        );
+
+      record("job_cancelled", {
+        jobId: cancelled.id,
+        type: cancelled.type,
+        reasonCode:
+          "USER_CANCELLED",
+      });
+
+      return cancelled;
+    }
     const updated = store.transition(id, "CANCEL_REQUESTED", { reasonCode: "USER_CANCELLED" }); running.get(id)?.controller.abort(); return updated;
   }
   function start({ intervalMs = 1000 } = {}) { if (timer || !["LIMITED", "ON"].includes(currentMode)) return; recover(); timer = setInterval(() => { void runOnce(); }, Math.max(100, intervalMs)); timer.unref?.(); }

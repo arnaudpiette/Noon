@@ -258,3 +258,173 @@ test(
     database.close();
   },
 );
+
+test(
+  "une annulation terminale émet job_cancelled exactement une fois",
+  async () => {
+    const events = [];
+
+    const {
+      database,
+      engine,
+      registry,
+      store,
+    } = fixture({
+      observability(
+        event,
+        metadata
+      ) {
+        events.push({
+          event,
+          metadata,
+        });
+      },
+    });
+
+    try {
+      const queued =
+        engine.enqueue({
+          type:
+            "MAINTENANCE",
+          inputRef: {
+            taskRef:
+              "cancel-progress-before",
+          },
+        }).job;
+
+      assert.equal(
+        engine.cancel(
+          queued.id
+        ).state,
+        "CANCELLED"
+      );
+
+      const queuedCancelled =
+        events.filter(
+          (entry) =>
+            entry.event ===
+              "job_cancelled" &&
+            entry.metadata.jobId ===
+              queued.id
+        );
+
+      assert.equal(
+        queuedCancelled.length,
+        1
+      );
+
+      let entered;
+
+      const enteredPromise =
+        new Promise(
+          (resolve) => {
+            entered = resolve;
+          }
+        );
+
+      registry.registerHandler(
+        "WORKSPACE_ANALYSIS",
+        async ({ signal }) => {
+          entered();
+
+          await new Promise(
+            (
+              resolve,
+              reject
+            ) => {
+              signal.addEventListener(
+                "abort",
+                () =>
+                  reject(
+                    Object.assign(
+                      new Error(
+                        "stopped"
+                      ),
+                      {
+                        name:
+                          "AbortError",
+                      }
+                    )
+                  ),
+                {
+                  once: true,
+                }
+              );
+            }
+          );
+        }
+      );
+
+      const running =
+        engine.enqueue({
+          type:
+            "WORKSPACE_ANALYSIS",
+          inputRef: {
+            workspaceRef:
+              "cancel-progress-running",
+          },
+          workspaceId:
+            "workspace-progress",
+        }).job;
+
+      const execution =
+        engine.runOnce();
+
+      await enteredPromise;
+
+      assert.equal(
+        engine.cancel(
+          running.id
+        ).state,
+        "CANCEL_REQUESTED"
+      );
+
+      /*
+       * CANCEL_REQUESTED n'est pas terminal :
+       * aucun faux job_cancelled à ce stade.
+       */
+      assert.equal(
+        events.filter(
+          (entry) =>
+            entry.event ===
+              "job_cancelled" &&
+            entry.metadata.jobId ===
+              running.id
+        ).length,
+        0
+      );
+
+      await execution;
+
+      assert.equal(
+        store.get(
+          running.id
+        ).state,
+        "CANCELLED"
+      );
+
+      const runningCancelled =
+        events.filter(
+          (entry) =>
+            entry.event ===
+              "job_cancelled" &&
+            entry.metadata.jobId ===
+              running.id
+        );
+
+      assert.equal(
+        runningCancelled.length,
+        1
+      );
+
+      assert.equal(
+        runningCancelled[0]
+          .metadata
+          .reasonCode,
+        "USER_CANCELLED"
+      );
+    } finally {
+      database.close();
+    }
+  }
+);
