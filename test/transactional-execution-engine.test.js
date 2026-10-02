@@ -75,3 +75,38 @@ test("une écriture non idempotente n'est pas retentée aveuglément", async () 
 test("les traces ne contiennent ni arguments, ni email, ni contenu", async () => { const f = fixture(); await f.engine.executeSingleStep(request("privacy", { step: { stepId: "send", skillId: "send_email", args: { to: "private@example.test", body: "SECRET_BODY" }, actionClass: "EXECUTE" } })); const serialized = JSON.stringify(f.events); assert.doesNotMatch(serialized, /private@example|SECRET_BODY/); assert.ok(f.events.some((item) => item.event === "execution_completed")); });
 test("le journal SQLite conserve états et idempotency key après réouverture", async () => { const directory = fs.mkdtempSync(path.join(os.tmpdir(), "noon-transaction-")); const file = path.join(directory, "noon.sqlite"); let database = createPersonalDatabase(file); let repository = createTransactionalExecutionRepository(database); let engine = createTransactionalExecutionEngine({ repository, skillRegistry: registry() }); await engine.executeSingleStep(request("persist", { step: { stepId: "commit", skillId: "git_commit", args: { message: "test" }, actionClass: "WRITE", idempotencyKey: "commit-stable" } })); database.close(); database = createPersonalDatabase(file); repository = createTransactionalExecutionRepository(database); engine = createTransactionalExecutionEngine({ repository, skillRegistry: registry() }); assert.equal(engine.get("persist").execution.state, "SUCCEEDED"); assert.equal(engine.get("persist").steps[0].idempotency_key, "commit-stable"); database.close(); });
 test("un plan trop long est refusé", () => { const f = fixture({ maxSteps: 1 }); assert.throws(() => f.engine.createPlan({ executionId: "long", steps: [{ stepId: "a", skillId: "read_file", args: { path: "/tmp/a" } }, { stepId: "b", skillId: "read_file", args: { path: "/tmp/b" } }] }), (error) => error instanceof ExecutionError && error.code === "TOO_MANY_STEPS"); });
+
+
+test(
+  "l'attente d'approbation émet un événement user-progress exploitable",
+  async () => {
+    const f = fixture();
+
+    const result =
+      await f.engine.executeSingleStep(
+        request(
+          "approval-progress",
+          {
+            approvalRequired: true,
+          },
+        ),
+      );
+
+    assert.equal(
+      result.status,
+      "AWAITING_APPROVAL",
+    );
+
+    assert.ok(
+      f.events.some(
+        ({ event, metadata }) =>
+          event ===
+            "execution_awaiting_approval" &&
+          metadata.executionId ===
+            "approval-progress" &&
+          metadata.reasonCode ===
+            "APPROVAL_REQUIRED",
+      ),
+    );
+  },
+);

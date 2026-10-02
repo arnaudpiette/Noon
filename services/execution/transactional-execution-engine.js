@@ -211,7 +211,19 @@ function createTransactionalExecutionEngine({
     transition(record, EXECUTION_STATES.VALIDATING);
     const result = { status: null, executionId: plan.executionId, succeededSteps: [], failedSteps: [], compensatedSteps: [], skippedSteps: [], pendingRecovery: [], warnings: [], result: null, metrics: { validationMs: 0, policyRecheckMs: 0, toolExecutionMs: 0, verificationMs: 0, compensationMs: 0, totalExecutionMs: 0 } };
     const validationStarted = now();
-    if (request.approvalRequired && !request.approvalRef?.valid) { transition(record, EXECUTION_STATES.AWAITING_APPROVAL, "APPROVAL_REQUIRED"); result.status = record.state; return result; }
+    if (request.approvalRequired && !request.approvalRef?.valid) {
+      transition(
+        record,
+        EXECUTION_STATES.AWAITING_APPROVAL,
+        "APPROVAL_REQUIRED"
+      );
+      result.status = record.state;
+      emit("execution_awaiting_approval", {
+        executionId: plan.executionId,
+        reasonCode: "APPROVAL_REQUIRED",
+      });
+      return result;
+    }
     result.metrics.validationMs = now() - validationStarted;
     transition(record, EXECUTION_STATES.READY); transition(record, EXECUTION_STATES.RUNNING);
     emit("execution_started", { executionId: plan.executionId, stepCount: plan.steps.length });

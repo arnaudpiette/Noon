@@ -174,3 +174,87 @@ test("planifie en Europe/Paris sans double exécution pendant les changements DS
   assert.equal(store.list().length, 1);
   database.close();
 });
+
+
+test(
+  "émet progression et attente sans exposer le contenu du handler",
+  async () => {
+    const events = [];
+
+    const {
+      database,
+      engine,
+      registry,
+    } = fixture({
+      observability(
+        event,
+        metadata,
+      ) {
+        events.push({
+          event,
+          metadata,
+        });
+      },
+    });
+
+    registry.registerHandler(
+      "MAINTENANCE",
+      async ({
+        reportProgress,
+      }) => {
+        reportProgress({
+          percent: 42,
+          message:
+            "SECRET_PROGRESS_MESSAGE",
+        });
+
+        return {
+          waiting: true,
+          reasonCode:
+            "APPROVAL_REQUIRED",
+        };
+      },
+    );
+
+    const queued =
+      engine.enqueue({
+        type: "MAINTENANCE",
+        inputRef: {
+          taskRef:
+            "progress-contract",
+        },
+      });
+
+    await engine.runOnce();
+
+    assert.ok(
+      events.some(
+        ({ event, metadata }) =>
+          event ===
+            "job_progress" &&
+          metadata.jobId ===
+            queued.job.id &&
+          metadata.percent === 42,
+      ),
+    );
+
+    assert.ok(
+      events.some(
+        ({ event, metadata }) =>
+          event ===
+            "job_waiting" &&
+          metadata.jobId ===
+            queued.job.id &&
+          metadata.reasonCode ===
+            "APPROVAL_REQUIRED",
+      ),
+    );
+
+    assert.doesNotMatch(
+      JSON.stringify(events),
+      /SECRET_PROGRESS_MESSAGE/,
+    );
+
+    database.close();
+  },
+);

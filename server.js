@@ -146,6 +146,8 @@ const { createBenchmarkRuntime } = require("./services/dev/benchmark/benchmark-r
 const { createBenchmarkControlPlane } = require("./services/dev/benchmark/benchmark-control-plane");
 const { createTransactionalExecutionEngine } = require("./services/execution/transactional-execution-engine");
 const { createNoonObservability } = require("./services/observability/noon-observability");
+const { createUserProgressEngine } = require("./services/observability/user-progress-engine");
+const { createUserProgressAdapter } = require("./services/observability/user-progress-adapter");
 const { createConfigRegistry } = require("./services/config/config-registry");
 const { createRuntimeConfigService } = require("./services/config/runtime-config-service");
 const { createFeatureFlagRegistry } = require("./services/config/feature-flag-registry");
@@ -580,6 +582,15 @@ const modelPerformanceEngine = createModelPerformanceEngine({
   repository: modelPerformanceRepository,
 });
 noonObservability.attachModelPerformanceEngine(modelPerformanceEngine);
+
+const userProgressEngine =
+  createUserProgressEngine();
+
+const userProgressAdapter =
+  createUserProgressAdapter({
+    progressEngine:
+      userProgressEngine,
+  });
 const adaptiveRoutingService = createAdaptiveRoutingService({
   performanceEngine: modelPerformanceEngine,
   selectModelRoute,
@@ -630,7 +641,17 @@ const backgroundJobEngine = jobStore ? createBackgroundJobEngine({
   maxQueuedJobs: runtimeConfig.get("jobs.maxQueued").value,
   maxRunningJobs: runtimeConfig.get("jobs.maxRunning").value,
   leaseMs: runtimeConfig.get("jobs.leaseMs").value,
-  observability: (event, metadata) => toolAuditLog.append(`jobs.${event}`, metadata),
+  observability: (event, metadata) => {
+    toolAuditLog.append(
+      `jobs.${event}`,
+      metadata,
+    );
+
+    userProgressAdapter.backgroundJob(
+      event,
+      metadata,
+    );
+  },
   notify: async ({ jobId, type, state, sessionId }) => {
     toolAuditLog.append("jobs.notification", { jobId, type, state });
     await notificationAttentionEngine.submit({
@@ -1282,8 +1303,17 @@ const devWorkspaceAgentExecutionLoop = createDevWorkspaceAgentExecutionLoop({
   terminalService: devWorkspaceTerminalService,
   operationalSecurityPolicy,
   approvalEngine: approvalManager,
-  observability: (event, metadata) =>
-    toolAuditLog.append(`dev.workspace-agent.${event}`, metadata),
+  observability: (event, metadata) => {
+    toolAuditLog.append(
+      `dev.workspace-agent.${event}`,
+      metadata,
+    );
+
+    userProgressAdapter.devAgent(
+      event,
+      metadata,
+    );
+  },
 });
 const openAIMediaAnalyzer = createOpenAIMediaAnalyzer({
   client: getOpenAIClient,
@@ -1320,7 +1350,17 @@ const transactionalExecutionEngine = createTransactionalExecutionEngine({
   repository: transactionalExecutionRepository,
   skillRegistry,
   reliabilityEngine,
-  observability: (event, metadata) => toolAuditLog.append(event, metadata),
+  observability: (event, metadata) => {
+    toolAuditLog.append(
+      event,
+      metadata,
+    );
+
+    userProgressAdapter.transactional(
+      event,
+      metadata,
+    );
+  },
 });
 const nativeDevReasoner = createNativeDevReasoner({
   featureFlags,

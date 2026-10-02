@@ -72,10 +72,73 @@ function createBackgroundJobEngine({
       wallTimer = setTimeout(() => controller.abort(Object.assign(new Error("Budget temps dépassé."), { code: "JOB_WALL_BUDGET_EXCEEDED" })), maxWallMs);
       leaseTimer = setInterval(() => store.renewLease(job.id, workerId, leaseMs), Math.max(1000, Math.floor(leaseMs / 3)));
       leaseTimer.unref?.();
-      const result = await handler({ job, signal: controller.signal, checkpoint: job.checkpoint, reportProgress(progress) { store.transition(job.id, "RUNNING", { progress }); }, saveCheckpoint(checkpoint) { store.transition(job.id, "RUNNING", { checkpoint }); } });
+      const result = await handler({
+        job,
+        signal: controller.signal,
+        checkpoint: job.checkpoint,
+
+        reportProgress(progress) {
+          store.transition(
+            job.id,
+            "RUNNING",
+            { progress }
+          );
+
+          const percent =
+            Number(progress?.percent);
+
+          if (Number.isFinite(percent)) {
+            record("job_progress", {
+              jobId: job.id,
+              type: job.type,
+              percent: Math.max(
+                0,
+                Math.min(
+                  100,
+                  Math.round(percent)
+                )
+              ),
+            });
+          }
+        },
+
+        saveCheckpoint(checkpoint) {
+          store.transition(
+            job.id,
+            "RUNNING",
+            { checkpoint }
+          );
+        },
+      });
       const current = store.get(job.id);
       if (current.state === "CANCEL_REQUESTED" || controller.signal.aborted) { const cancelled = store.transition(job.id, "CANCELLED", { reasonCode: "USER_CANCELLED", completedAt: new Date(now()).toISOString() }); await notifyOnce(cancelled, "CANCELLED"); return cancelled; }
-      if (result?.waiting) return store.transition(job.id, "WAITING", { reasonCode: result.reasonCode || "APPROVAL_REQUIRED", checkpoint: result.checkpoint || job.checkpoint });
+      if (result?.waiting) {
+        const reasonCode =
+          String(
+            result.reasonCode ||
+            "APPROVAL_REQUIRED"
+          ).slice(0, 80);
+
+        const waiting =
+          store.transition(
+            job.id,
+            "WAITING",
+            {
+              reasonCode,
+              checkpoint:
+                result.checkpoint ||
+                job.checkpoint,
+            }
+          );
+
+        record("job_waiting", {
+          jobId: job.id,
+          type: job.type,
+          reasonCode,
+        });
+
+        return waiting;
+      }
       const succeeded = store.transition(job.id, "SUCCEEDED", { reasonCode: "COMPLETED", outputRef: result?.outputRef || {}, progress: { percent: 100 }, completedAt: new Date(now()).toISOString() });
       record("job_succeeded", { jobId: job.id, type: job.type, durationMs: now() - started, attempt: job.attempt_count }); await notifyOnce(succeeded, "SUCCEEDED"); return succeeded;
     } catch (error) {
