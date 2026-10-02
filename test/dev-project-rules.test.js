@@ -8,7 +8,7 @@ const test = require("node:test");
 const { createPersonalDatabase } = require("../services/persistence/database");
 const { ACTOR, DevProjectRuleError, createDevProjectRuleRepository } = require("../services/persistence/repositories/dev-project-rule-repository");
 const { createDevProjectRuleResolver } = require("../services/dev/dev-project-rule-resolver");
-const { executeTrustedDevProjectRuleMutation } = require("../services/dev/dev-project-rule-command");
+const { executeTrustedDevProjectRuleMutation, listTrustedDevProjectRules } = require("../services/dev/dev-project-rule-command");
 const { createNativeDevReasoner } = require("../services/dev/native-dev-reasoner");
 
 function fixture() { const directory = fs.mkdtempSync(path.join(os.tmpdir(), "noon-dev-rules-")); const database = createPersonalDatabase(path.join(directory, "rules.sqlite")); return { directory, database, repository: createDevProjectRuleRepository(database) }; }
@@ -100,8 +100,24 @@ test("la commande main-to-service résout le scope fiable et refuse une règle �
   const f = fixture(); try {
     const rule = f.repository.create({ projectId: "other-project", ownerProfileScope: "owner", text: "Privée.", actor: ACTOR });
     const workspaceEngine = { context: () => ({ workspace: { profileScope: "owner" }, projects: [{ id: "current-project" }] }) };
-    assert.throws(() => executeTrustedDevProjectRuleMutation({ workspaceEngine, repository: f.repository, payload: { action: "delete", workspaceId: "w", ruleId: rule.ruleId, expectedVersion: rule.version } }), (error) => error.code === "RULE_MUTATION_REFUSED");
+    assert.throws(() => executeTrustedDevProjectRuleMutation({ workspaceEngine, repository: f.repository, payload: { action: "delete", workspaceId: "w", expectedProjectId: "current-project", ruleId: rule.ruleId, expectedVersion: rule.version } }), (error) => error.code === "RULE_MUTATION_REFUSED");
     assert.equal(f.repository.get(rule.ruleId).status, "ACTIVE");
+  } finally { close(f); }
+});
+
+test("la mutation refuse un projet résolu différent de celui relu par l'UI", () => {
+  let writes = 0;
+  const repository = { create() { writes += 1; } };
+  assert.throws(() => executeTrustedDevProjectRuleMutation({ workspaceEngine: { context: () => ({ workspace: { profileScope: "owner" }, projects: [{ id: "new-project" }] }) }, repository, payload: { action: "create", workspaceId: "w", expectedProjectId: "shown-project", text: "x" } }), (error) => error.code === "DEV_PROJECT_CHANGED");
+  assert.equal(writes, 0);
+});
+
+test("la lecture IPC résout le projet et le propriétaire côté service", () => {
+  const f = fixture(); try {
+    f.repository.create({ projectId: "current-project", ownerProfileScope: "owner", text: "Visible.", actor: ACTOR });
+    f.repository.create({ projectId: "other-project", ownerProfileScope: "owner", text: "Invisible.", actor: ACTOR });
+    const result = listTrustedDevProjectRules({ workspaceEngine: { context: () => ({ workspace: { profileScope: "owner" }, displayName: "Projet", projects: [{ id: "current-project", name: "Projet" }] }) }, repository: f.repository, workspaceId: "workspace" });
+    assert.equal(result.project.id, "current-project"); assert.equal(result.rules.length, 1); assert.equal(result.rules[0].text, "Visible."); assert.equal(result.storage, "READ_WRITE");
   } finally { close(f); }
 });
 

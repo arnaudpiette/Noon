@@ -97,7 +97,7 @@ const { createArtifactRepository } = require("./services/persistence/repositorie
 const { createWorkspaceRepository } = require("./services/persistence/repositories/workspace-repository");
 const { createDevProjectRuleRepository } = require("./services/persistence/repositories/dev-project-rule-repository");
 const { createDevProjectRuleResolver } = require("./services/dev/dev-project-rule-resolver");
-const { executeTrustedDevProjectRuleMutation: executeDevProjectRuleCommand } = require("./services/dev/dev-project-rule-command");
+const { executeTrustedDevProjectRuleMutation: executeDevProjectRuleCommand, listTrustedDevProjectRules } = require("./services/dev/dev-project-rule-command");
 const { createSessionContinuityRepository } = require("./services/persistence/repositories/session-continuity-repository");
 const { createWorkspaceEngine } = require("./services/workspaces/workspace-engine");
 const { createIntentCommandEngine } = require("./services/intents/intent-command-engine");
@@ -9476,6 +9476,10 @@ function mutateDevProjectRuleFromTrustedMain(payload) {
   return executeDevProjectRuleCommand({ workspaceEngine, repository: devProjectRuleRepository, payload });
 }
 
+function listDevProjectRulesFromTrustedMain(workspaceId) {
+  return listTrustedDevProjectRules({ workspaceEngine, repository: devProjectRuleRepository, workspaceId });
+}
+
 if (require.main === module) {
   startNoonServer().catch((error) => {
     console.error("Impossible de démarrer Noon :", error.message);
@@ -9486,6 +9490,7 @@ if (require.main === module) {
 module.exports = {
   server,
   sanitizeResponseOutputForInput,
+  listDevProjectRulesFromTrustedMain,
   mutateDevProjectRuleFromTrustedMain,
   startNoonServer,
   stopNoonServer,

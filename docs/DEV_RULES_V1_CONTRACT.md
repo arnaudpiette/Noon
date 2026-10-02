@@ -1,7 +1,7 @@
 # Contrat V1 — règles DEV de confiance
 
 Date : 2026-10-02
-Statut : première tranche Terra implémentée le 2026-10-02 ; aucune UI de gestion n'est incluse.
+Statut : première tranche Terra et parcours UI projet implémentés le 2026-10-02.
 
 ## Décision
 
@@ -173,9 +173,28 @@ Les noms exacts des nouveaux fichiers sont proposés pour isoler la responsabili
   les règles serveur du projet résolu dans le contrat puis le raisonneur Terra.
   Le contrôle privacy du structured executor reste appliqué au payload final.
 
-Limites : pas de parcours visuel de création/édition, pas de liste IPC, pas de
-détection sémantique générale des contradictions, pas de couverture du terminal
-Workspace/Codex/autres profils/règles globales. Une règle texte ne peut pas
+Le panneau **Règles** du DEV Workspace ouvre une liste associée au workspace de
+la session courante. Le main résout alors le projet et le profil propriétaire ;
+le renderer ne fournit aucune autorité de projet ou propriétaire. Il renvoie
+seulement l'identifiant du projet relu comme contrainte, que le main compare à
+sa résolution courante avant toute écriture. La lecture bornée utilise
+`noon:dev-project-rules`; le preload n'expose que cette lecture et la mutation
+existante. Les règles actives et désactivées sont rendues avec `textContent`,
+leur portée « ce projet » et la limite de permissions. Création et modification
+affichent un aperçu texte/projet et demandent une confirmation explicite ;
+désactivation et suppression sont distinctes, et la suppression affiche une
+confirmation précise. Annuler n'écrit rien. Si le contexte change pendant une
+mutation, l'UI demande une relecture au lieu de rafraîchir l'ancien projet. Une
+version obsolète est présentée comme conflit et ne déclenche pas de retry.
+
+Le fallback JSON reste lisible mais l'UI est explicitement en lecture seule ;
+hors IPC Noon, une lecture indisponible est signalée sans liste vide inventée.
+La confirmation matérialise une intention UI,
+mais ne remplace pas les contrôles d'origine/sender/frame du registrar IPC ni
+les contrôles serveur. Aucun événement UI ne journalise le texte des règles.
+
+Limites : pas de détection sémantique générale des contradictions, pas de
+couverture du terminal Workspace/Codex/autres profils/règles globales. Une règle texte ne peut pas
 élargir les capacités ; les contrôles déterministes restent les seules autorités.
 
 ## Plan minimal d'implémentation

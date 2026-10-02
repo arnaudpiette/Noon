@@ -627,6 +627,10 @@
                   Git
                 </button>
 
+                <button id="devProjectRulesToggle" type="button" aria-expanded="false" aria-controls="devProjectRulesPanel" title="Règles DEV">
+                  Règles
+                </button>
+
                 <button
                   id="devTerminalCollapse"
                   type="button"
@@ -751,6 +755,23 @@
                 Liste tronquée
               </span>
             </footer>
+          </section>
+
+          <section id="devProjectRulesPanel" class="dev-project-rules-panel" aria-label="Règles DEV du projet" hidden>
+            <header class="dev-project-rules-header">
+              <div><span class="label">RÈGLES DEV</span><strong id="devProjectRulesProject">Projet DEV</strong></div>
+              <button id="devProjectRulesAdd" type="button">Nouvelle règle</button>
+            </header>
+            <p class="dev-project-rules-scope">Portée : ce projet uniquement. Ces règles ne donnent aucune permission d’exécution.</p>
+            <p id="devProjectRulesReadOnly" class="dev-project-rules-readonly" role="status" hidden></p>
+            <div id="devProjectRulesList" class="dev-project-rules-list" aria-live="polite"></div>
+            <form id="devProjectRulesForm" class="dev-project-rules-form">
+              <label for="devProjectRulesInput">Règle de comportement</label>
+              <textarea id="devProjectRulesInput" maxlength="1000" rows="3" placeholder="Ex. Préférer le test ciblé avant la suite complète."></textarea>
+              <p id="devProjectRulesPreview" class="dev-project-rules-preview"></p>
+              <div><button id="devProjectRulesSave" type="submit">Créer la règle</button><button id="devProjectRulesCancel" type="button">Annuler</button></div>
+            </form>
+            <footer id="devProjectRulesStatus" role="status" aria-live="polite">Sélectionne un projet DEV.</footer>
           </section>
 
           <section
@@ -1109,6 +1130,7 @@
   <script src="noon-particles.js"></script>
   <script src="ui-utils.js"></script>
   <script src="control-center.js"></script>
+  <script src="dev-project-rules-ui.js"></script>
   <script src="app.js"></script>
   <script src="live-voice-core.js"></script>
   <script src="live-voice.js"></script>

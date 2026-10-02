@@ -110,3 +110,29 @@ executor avant réservation ou appel provider. Le registrar IPC générique prou
 que le sender non autorisé n'atteint pas le handler ; aucun Electron réel ni UI
 n'a été exécuté. Le test historique `workspace-engine` à schéma 16/18 reste
 séparé.
+
+## Parcours UI V1 effectivement disponible
+
+Dans le panneau **DEV Workspace**, le bouton **Règles** ouvre la gestion du
+projet résolu par la session terminal courante. L'UI lit les règles via une IPC
+bornée distincte : le renderer fournit le `workspaceId` et l'identifiant du
+projet relu comme contrainte anti-changement ; main/service déterminent le
+projet unique et `profileScope`, puis refusent toute discordance. La liste inclut
+les règles actives et désactivées, avec la mention « ce projet » et le rappel
+qu'elles n'accordent aucune permission d'exécution.
+
+La création et la modification restent des brouillons jusqu'au bouton explicite
+et à sa confirmation, qui récapitule le projet et le texte. La désactivation ne
+supprime pas ; la suppression a sa confirmation explicite. Annuler réinitialise
+le brouillon sans IPC de mutation. Une mutation transporte toujours la version
+attendue ; un refus de version demande une relecture, sans retry ni écrasement.
+Un changement de Focus/session pendant une opération invalide le résultat UI,
+et une résolution main différente de la cible confirmée refuse l'écriture. Le
+fallback JSON reste lisible en lecture seule ; une lecture IPC indisponible est
+signalée sans inventer une liste vide.
+
+Preuves ciblées : `test/dev-project-rules-ui.test.js` simule le renderer et le
+pont IPC pour lecture, aperçu, actions confirmées, annulation, version obsolète,
+changement de projet, fallback et rendu du texte hostile sans HTML. La preuve
+reste une fixture DOM/IPC : Electron réel et application packagée ne sont pas
+exécutés dans cette tranche.

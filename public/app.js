@@ -137,6 +137,18 @@ const devSourceControlTruncated =
   document.getElementById(
     "devSourceControlTruncated"
   );
+const devProjectRulesToggle = document.getElementById("devProjectRulesToggle");
+const devProjectRulesPanel = document.getElementById("devProjectRulesPanel");
+const devProjectRulesProject = document.getElementById("devProjectRulesProject");
+const devProjectRulesAdd = document.getElementById("devProjectRulesAdd");
+const devProjectRulesReadOnly = document.getElementById("devProjectRulesReadOnly");
+const devProjectRulesList = document.getElementById("devProjectRulesList");
+const devProjectRulesForm = document.getElementById("devProjectRulesForm");
+const devProjectRulesInput = document.getElementById("devProjectRulesInput");
+const devProjectRulesPreview = document.getElementById("devProjectRulesPreview");
+const devProjectRulesSave = document.getElementById("devProjectRulesSave");
+const devProjectRulesCancel = document.getElementById("devProjectRulesCancel");
+const devProjectRulesStatus = document.getElementById("devProjectRulesStatus");
 const clearChatButton = document.getElementById("clearChat");
 const newConversationButton = document.getElementById(
   "newConversationButton"
@@ -1925,6 +1937,12 @@ const devTerminalState = {
   resizeStartY: 0,
   resizeStartHeight: 0,
 };
+
+const devProjectRulesUi = window.NoonDevProjectRulesUi?.createDevProjectRulesController({
+  elements: { toggle: devProjectRulesToggle, panel: devProjectRulesPanel, project: devProjectRulesProject, add: devProjectRulesAdd, readOnly: devProjectRulesReadOnly, list: devProjectRulesList, form: devProjectRulesForm, input: devProjectRulesInput, preview: devProjectRulesPreview, save: devProjectRulesSave, cancel: devProjectRulesCancel, status: devProjectRulesStatus },
+  bridge: window.noon,
+  getContext: () => ({ workspaceId: devTerminalState.session?.workspaceId || null, contextKey: devTerminalState.contextKey, projectName: devTerminalState.session?.projectName || currentFocus || "Projet DEV" }),
+});
 
 // DEV_PROBLEMS_UI_START
 
@@ -5036,6 +5054,7 @@ async function closeDevTerminalSession({
   clearDevSourceControl({
     close: true,
   });
+  devProjectRulesUi?.reset();
   clearDevWorkspaceAgent();
 
   persistDevTerminalLayout();
@@ -5122,6 +5141,8 @@ async function openDevTerminalSession(
 
   devTerminalState.contextKey =
     `${currentFocusId}:${currentFocusPath}`;
+
+  if (!devProjectRulesPanel.hidden) void devProjectRulesUi?.refresh();
 
   updateDevTerminalHeader();
 
