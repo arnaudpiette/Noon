@@ -7,6 +7,7 @@ const {
   parseFocusCommand,
   shouldConvertPastedText,
   createPastedTextFileName,
+  createChatRequestPayload,
   maskPrivateMemoryValue,
   privateMemoryCategoryLabel,
   normalizeSafeChatUrl,
@@ -6553,6 +6554,7 @@ webSearchSuggestionIgnore.addEventListener("click", async () => {
   hideWebSearchSuggestion();
   await sendQuestion(promptInput.value.trim(), {
     skipWebSuggestion: true,
+    webSearchForbidden: true,
   });
 });
 
@@ -9442,6 +9444,7 @@ async function sendQuestion(question, options = {}) {
   const {
     displayUserMessage = true,
     skipWebSuggestion = false,
+    webSearchForbidden = false,
   } = options;
   const filesToSend = [...selectedFiles];
   const attachmentMetadata =
@@ -9531,7 +9534,7 @@ async function sendQuestion(question, options = {}) {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
+      body: JSON.stringify(createChatRequestPayload({
         question: finalQuestion,
         focus: currentFocus,
         focusPath: currentFocusPath,
@@ -9541,9 +9544,10 @@ async function sendQuestion(question, options = {}) {
         attachments,
         visualDetail,
         webSearchEnabled,
+        webSearchForbidden,
         intelligenceProfile,
         runtimeNetworkState: navigator.onLine ? "ONLINE" : "OFFLINE",
-      }),
+      })),
       signal: activeRequestController.signal,
     });
     const data =

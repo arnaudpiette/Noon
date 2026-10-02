@@ -210,6 +210,25 @@ function decideInternetUse({
     resolution?.scope ||
     "PERSONAL";
 
+  if (
+    resolution?.reasonCodes?.includes(
+      "user_disabled_web"
+    )
+  ) {
+    return decisionResult({
+      decision:
+        INTERNET_DECISIONS
+          .LOCAL_ONLY,
+
+      reasonCode:
+        "WEB_DISABLED",
+
+      scope,
+      mode,
+      freshness,
+    });
+  }
+
   const explicitWeb =
     EXPLICIT_WEB_PATTERN.test(
       text

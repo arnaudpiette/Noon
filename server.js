@@ -203,6 +203,8 @@ const { createOpenAIWebSearchAdapter } = require("./services/research/web-search
 const { createPublicResearchEngine } = require("./services/research/public-research-engine");
 const { sanitizePublicQuery } = require("./services/research/privacy-query-sanitizer");
 const { inferFreshness, inferResearchMode, resolveExecutableResearchScope, resolveResearchScope } = require("./services/research/research-resolver");
+const { createInternetDecisionRouter } = require("./services/research/internet-decision-router");
+const { executeChatResearchPlan, resolveChatResearchPlan } = require("./services/research/chat-research-gate");
 const { createMultimodalEngine, createNativePdfAnalyzer } = require("./services/multimodal/multimodal-engine");
 const { createOpenAIMediaAnalyzer } = require("./services/multimodal/openai-media-analyzer");
 const {
@@ -462,6 +464,7 @@ const publicResearchEngine = createPublicResearchEngine({
     metricsService?.record?.(event, 1, metadata);
   },
 });
+const internetDecisionRouter = createInternetDecisionRouter();
 const voiceIdentity = createVoiceIdentity({
   selectionPath: path.join(DATA_DIRECTORY, "voice-identity.json"),
   debug: (event, metadata) => {
@@ -3138,9 +3141,17 @@ async function askAI(
   signal = null,
   onTextDelta = null,
   runtimeNetworkState = "ONLINE",
-  compoundDepth = 0
+  compoundDepth = 0,
+  internetDecision = null,
+  internetResearchPlan = null
 ) {
   const createdArtifacts = [];
+
+  if (internetResearchPlan?.message) {
+    setSessionActivity(sessionId, "done", "Recherche Internet indisponible.");
+    return { status: "unavailable", answer: internetResearchPlan.message, sources: [], artifacts: [], webSearchCalls: 0, executionId: null,
+      research: { decision: internetDecision?.decision || null, reasonCode: internetResearchPlan.reasonCode, state: "NOT_EXECUTED" } };
+  }
 
   const explicitCompoundQuestions =
     compoundDepth === 0
@@ -3161,7 +3172,7 @@ async function askAI(
       (item) => item.endsWith("?")
     );
 
-  if (realCompoundQuestions.length >= 2) {
+  if (realCompoundQuestions.length >= 2 && !internetDecision) {
     setSessionActivity(
       sessionId,
       "thinking",
@@ -3197,7 +3208,9 @@ async function askAI(
           null,
 
           runtimeNetworkState,
-          compoundDepth + 1
+          compoundDepth + 1,
+          null,
+          null
         );
 
         compoundResults.push({
@@ -4013,6 +4026,11 @@ async function askAI(
   const runtimeCapabilitiesSnapshot = localIntelligenceRuntime.snapshot({
     internetAvailable: runtimeNetworkState !== "OFFLINE",
   });
+  if (internetDecision?.webRequired && ["LOCAL_ONLY", "OFFLINE"].includes(runtimeCapabilitiesSnapshot.state)) {
+    setSessionActivity(sessionId, "done", "Recherche Internet indisponible.");
+    return { status: "unavailable", answer: "Je ne peux pas vérifier cette information actuelle tant que la recherche Internet est indisponible.", sources: [], artifacts: [], webSearchCalls: 0, executionId: null,
+      research: { decision: internetDecision.decision, reasonCode: runtimeCapabilitiesSnapshot.state === "OFFLINE" ? "NETWORK_OFFLINE" : "REMOTE_FORBIDDEN", state: "NOT_EXECUTED" } };
+  }
   if (["LOCAL_ONLY", "OFFLINE"].includes(runtimeCapabilitiesSnapshot.state)) {
     const asksLocalSearch = /\b(retrouve|recherche|cherche|fichier|conversation|mémoire|souvenir|document|projet|workspace)\b/i.test(question);
     if (asksLocalSearch && personalSearchEngine) {
@@ -4085,15 +4103,15 @@ async function askAI(
       return { status: "unavailable", answer: messages[code] || "La génération d’image a échoué. Aucun fichier n’a été créé.", artifacts: [], sources: [], webSearchCalls: 0, executionId: null, imageGeneration: { provider: error?.provider || "openai", model: error?.model || "gpt-image-2", success: false, error: { code, retryable: error?.retryable === true } } };
     }
   }
-  const researchResolution = resolveResearchScope({
-    query: question,
-    webRequested: webSearchEnabled,
-    personalRequested: Boolean(focus || focusPath),
-  });
+  const researchResolution = internetDecision
+    ? { scope: internetDecision.research.scope }
+    : resolveResearchScope({ query: question, webRequested: webSearchEnabled, personalRequested: Boolean(focus || focusPath) });
   const publicResearchFlag = featureFlags.evaluate("research.public.v1", {
     workspaceId, sessionId, channel: "chat",
   });
-  const usePublicResearchEngine = webSearchEnabled && publicResearchFlag.enabled;
+  const usePublicResearchEngine = internetResearchPlan
+    ? internetResearchPlan.execute === true
+    : webSearchEnabled && publicResearchFlag.enabled;
   const effectiveResearchScope = resolveExecutableResearchScope({
     requestedScope: researchResolution.scope,
   }).scope;
@@ -4131,21 +4149,25 @@ async function askAI(
   let multimodalEvidencePack = null;
 
   if (usePublicResearchEngine) {
-    const researchMode = inferResearchMode(question);
-    setSessionActivity(sessionId, "searching", researchMode === "DEEP" ? "Recherche approfondie…" : "Recherche Web…");
-    publicEvidencePack = await publicResearchEngine.research({
+    const researchMode = internetDecision?.research.mode || inferResearchMode(question);
+    publicEvidencePack = await executeChatResearchPlan({
+      plan: internetResearchPlan || { execute: true },
+      onResearchStart: () => setSessionActivity(sessionId, "searching", researchMode === "DEEP" ? "Recherche approfondie…" : "Recherche Web…"),
+      research: (input) => publicResearchEngine.research(input),
+      input: {
       query: question,
       scope: effectiveResearchScope,
       mode: researchMode,
-      freshnessRequirement: inferFreshness(question, researchMode),
+      freshnessRequirement: internetDecision?.research.freshness || inferFreshness(question, researchMode),
       maxSources: Math.max(3, Math.min(12, maxWebToolCalls * 4 || 8)),
-      maxQueries: Math.max(1, maxWebToolCalls || 1),
+      maxQueries: Math.max(1, internetResearchPlan?.maxWebToolCalls || maxWebToolCalls || 1),
       workspaceId,
       privateTerms: [focus, focusPath].filter(Boolean),
       personalEvidence: [],
       budgetMode: budget.mode,
       modelProfile: intelligenceProfile,
       signal,
+      },
     });
     rememberContinuitySearch(question, publicEvidencePack);
     if (publicEvidencePack.completeness === "INSUFFICIENT") {
@@ -5759,7 +5781,9 @@ if (req.method === "POST" && req.url.startsWith("/ai")) {
     );
     const visualDetail =
       body.visualDetail === "high" ? "high" : "low";
-    let webSearchEnabled = body.webSearchEnabled === true;
+    const webSearchPreference = body.webSearchEnabled === true;
+    const webSearchForbidden = body.webSearchForbidden === true;
+    let webSearchEnabled = false;
     const intelligenceProfile = normalizeIntelligenceProfile(body.intelligenceProfile);
     let maxWebToolCalls = 0;
 
@@ -5869,18 +5893,22 @@ if (req.method === "POST" && req.url.startsWith("/ai")) {
       allowSemanticFallback: body.allowIntentFallback === true,
       forceSemanticFallback: body.allowIntentFallback === true,
     });
-    webSearchEnabled = webSearchEnabled || normalizedIntent.requiresPublicResearch === true;
-    if (webSearchEnabled) {
-      const currentWebUsage = refreshDailyWebSearchUsage();
-      const remainingWebCalls = WEB_SEARCH_DAILY_LIMIT - currentWebUsage.calls;
-      if (remainingWebCalls <= 0) {
-        const limitError = new Error("La limite quotidienne de 10 recherches Internet est atteinte.");
-        limitError.statusCode = 429;
-        limitError.code = "WEB_SEARCH_DAILY_LIMIT";
-        throw limitError;
-      }
-      maxWebToolCalls = Math.min(WEB_SEARCH_MAX_PER_REQUEST, remainingWebCalls);
-    }
+    const internetDecision = internetDecisionRouter.decide({
+      query: question || "Analyse les fichiers joints.",
+      webAllowed: !webSearchForbidden,
+      privacy: attachments.some((item) => item?.sensitivity === "LOCAL_ONLY") ? "LOCAL_ONLY" : "STANDARD",
+    });
+    const publicResearchFlag = featureFlags.evaluate("research.public.v1", {
+      workspaceId, sessionId, channel: "chat",
+    });
+    const internetResearchPlan = resolveChatResearchPlan({
+      internetDecision,
+      webSearchPreference,
+      publicResearchEnabled: publicResearchFlag.enabled,
+      remainingWebCalls: WEB_SEARCH_DAILY_LIMIT - refreshDailyWebSearchUsage().calls,
+    });
+    webSearchEnabled = internetResearchPlan.execute === true;
+    maxWebToolCalls = internetResearchPlan.maxWebToolCalls || 0;
     sessionContinuityEngine.applyIntent(continuitySession.id, normalizedIntent);
     const memoryCommand = executeExplicitConversationMemoryCommand(question, {
       conversationId: sessionId,
@@ -5934,7 +5962,11 @@ if (req.method === "POST" && req.url.startsWith("/ai")) {
             }
             res.write(`event: delta\ndata: ${JSON.stringify({ delta })}\n\n`);
           }
-        : null
+        : null,
+      body.runtimeNetworkState === "OFFLINE" ? "OFFLINE" : "ONLINE",
+      0,
+      internetDecision,
+      internetResearchPlan
     );
 
     const result =

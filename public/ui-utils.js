@@ -40,6 +40,14 @@
     return `texte-colle-${timestamp}.txt`;
   }
 
+  function createChatRequestPayload(input = {}) {
+    return {
+      ...input,
+      webSearchEnabled: input.webSearchEnabled === true,
+      webSearchForbidden: input.webSearchForbidden === true,
+    };
+  }
+
   function maskPrivateMemoryValue(value) {
     return String(value || "").trim() ? "••••••••••••" : "••••••";
   }
@@ -356,6 +364,7 @@
     parseFocusCommand,
     shouldConvertPastedText,
     createPastedTextFileName,
+    createChatRequestPayload,
     maskPrivateMemoryValue,
     privateMemoryCategoryLabel,
     normalizeSafeChatUrl,

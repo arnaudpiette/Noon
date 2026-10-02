@@ -9,6 +9,7 @@ const {
   parseFocusCommand,
   shouldConvertPastedText,
   createPastedTextFileName,
+  createChatRequestPayload,
   maskPrivateMemoryValue,
   privateMemoryCategoryLabel,
 } = require("../public/ui-utils");
@@ -48,6 +49,12 @@ test("génère un nom de fichier texte stable et sûr", () => {
     createPastedTextFileName(new Date("2026-09-13T08:09:10.123Z")),
     "texte-colle-2026-09-13T08-09-10-123Z.txt"
   );
+});
+
+test("le payload chat distingue une interdiction Web de l'absence de préférence", () => {
+  assert.equal(createChatRequestPayload({ webSearchEnabled: false }).webSearchForbidden, false);
+  assert.equal(createChatRequestPayload({ webSearchEnabled: true, webSearchForbidden: true }).webSearchForbidden, true);
+  assert.equal(createChatRequestPayload({ webSearchForbidden: "true" }).webSearchForbidden, false);
 });
 
 test("masque une mémoire privée sans révéler son contenu ni sa longueur", () => {
