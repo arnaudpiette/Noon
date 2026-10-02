@@ -2095,3 +2095,70 @@ body.dev-preview-resizing *{
   background:#c63240;
   color:#fff;
 }
+
+/* User Progress — état public borné du traitement Noon. */
+.message-progress{
+  display:inline-flex;
+  width:max-content;
+  max-width:100%;
+  margin-top:7px;
+  align-items:center;
+  gap:7px;
+  color:#7f8386;
+  font-size:11px;
+  font-weight:650;
+  line-height:16px
+}
+
+.message-progress[hidden]{
+  display:none!important
+}
+
+.message-progress::before{
+  width:6px;
+  height:6px;
+  flex:0 0 6px;
+  border-radius:50%;
+  background:#5d8fd0;
+  box-shadow:0 0 0 3px rgba(93,143,208,.09);
+  content:"";
+  animation:statusPulse .8s infinite alternate
+}
+
+.message-progress[data-state="WAITING"]{
+  color:#8a6500
+}
+
+.message-progress[data-state="WAITING"]::before{
+  background:#e5aa25;
+  animation:none
+}
+
+.message-progress[data-state="BLOCKED"]{
+  color:#985e00
+}
+
+.message-progress[data-state="BLOCKED"]::before{
+  background:#ffb020;
+  animation:none
+}
+
+.message-progress[data-state="SUCCEEDED"]{
+  color:#537200
+}
+
+.message-progress[data-state="SUCCEEDED"]::before{
+  background:var(--green);
+  animation:none
+}
+
+.message-progress[data-state="FAILED"],
+.message-progress[data-state="CANCELLED"]{
+  color:#a72231
+}
+
+.message-progress[data-state="FAILED"]::before,
+.message-progress[data-state="CANCELLED"]::before{
+  background:#e0505e;
+  animation:none
+}

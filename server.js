@@ -145,7 +145,9 @@ const { createDevCostBudgetService } = require("./services/dev/dev-cost-budget-s
 const { createBenchmarkRuntime } = require("./services/dev/benchmark/benchmark-runtime");
 const { createBenchmarkControlPlane } = require("./services/dev/benchmark/benchmark-control-plane");
 const { createTransactionalExecutionEngine } = require("./services/execution/transactional-execution-engine");
+const { AsyncLocalStorage } = require("node:async_hooks");
 const { createNoonObservability } = require("./services/observability/noon-observability");
+const { toChatProgressEvent } = require("./services/observability/chat-progress-event");
 const { createUserProgressEngine } = require("./services/observability/user-progress-engine");
 const { createUserProgressAdapter } = require("./services/observability/user-progress-adapter");
 const { createOrchestratorProgressObservability } = require("./services/observability/orchestrator-progress-observability");
@@ -584,8 +586,34 @@ const modelPerformanceEngine = createModelPerformanceEngine({
 });
 noonObservability.attachModelPerformanceEngine(modelPerformanceEngine);
 
+const chatProgressRequestContext =
+  new AsyncLocalStorage();
+
 const userProgressEngine =
-  createUserProgressEngine();
+  createUserProgressEngine({
+    onEvent(event) {
+      const scope =
+        chatProgressRequestContext
+          .getStore();
+
+      if (
+        !scope ||
+        typeof scope.writeProgress !==
+          "function"
+      ) {
+        return;
+      }
+
+      try {
+        scope.writeProgress(event);
+      } catch {
+        /*
+         * L'affichage Progress ne doit jamais
+         * casser l'exécution métier.
+         */
+      }
+    },
+  });
 
 const userProgressAdapter =
   createUserProgressAdapter({
@@ -5878,7 +5906,8 @@ if (req.method === "POST" && req.url.startsWith("/ai")) {
       version: sessionContinuityEngine.getSession(continuitySession.id).version,
     };
 
-    const result = await askAI(
+    const executeAskAI = () =>
+      askAI(
       question,
       focus,
       focusPath,
@@ -5907,6 +5936,54 @@ if (req.method === "POST" && req.url.startsWith("/ai")) {
           }
         : null
     );
+
+    const result =
+      streamRequested
+        ? await chatProgressRequestContext.run(
+            {
+              writeProgress(event) {
+                if (
+                  res.writableEnded ||
+                  res.destroyed
+                ) {
+                  return;
+                }
+
+                const progress =
+                  toChatProgressEvent(
+                    event
+                  );
+
+                if (!progress) {
+                  return;
+                }
+
+                if (!res.headersSent) {
+                  res.writeHead(
+                    200,
+                    {
+                      "Content-Type":
+                        "text/event-stream; charset=utf-8",
+                      "Cache-Control":
+                        "no-cache, no-transform",
+                      Connection:
+                        "keep-alive",
+                    }
+                  );
+                }
+
+                res.write(
+                  "event: progress\ndata: "
+                  + JSON.stringify({
+                    progress,
+                  })
+                  + "\n\n"
+                );
+              },
+            },
+            executeAskAI
+          )
+        : await executeAskAI();
 
     if (result.status !== "approval_required" && privateMemoryService.available && privateMemoryService.settings().enabled) {
       const automaticMemory = autonomousMemoryPipeline.process({

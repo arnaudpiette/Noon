@@ -7840,11 +7840,133 @@ function addApprovalCard(approval) {
   return card;
 }
 
-async function readNoonEventStream(response, onDelta) {
+function chatProgressPresentation(
+  progress
+) {
+  const state =
+    String(
+      progress?.state || ""
+    ).toUpperCase();
+
+  const phase =
+    String(
+      progress?.phase || ""
+    ).toUpperCase();
+
+  const source =
+    String(
+      progress?.source || ""
+    ).toLowerCase();
+
+  const reasonCode =
+    String(
+      progress?.reasonCode || ""
+    ).toUpperCase();
+
+  const rootExecution =
+    source === "orchestrator";
+
+  if (
+    state === "WAITING" &&
+    (
+      phase === "APPROVAL" ||
+      reasonCode ===
+        "APPROVAL_REQUIRED"
+    )
+  ) {
+    return {
+      label: "Validation requise",
+      state,
+    };
+  }
+
+  if (state === "BLOCKED") {
+    return {
+      label:
+        phase === "RECOVERY"
+          ? "Récupération en attente…"
+          : "En attente…",
+      state,
+    };
+  }
+
+  if (state === "CANCELLED") {
+    return {
+      label: "Interrompu",
+      state,
+    };
+  }
+
+  if (state === "FAILED") {
+    return {
+      label:
+        rootExecution
+          ? "Échec"
+          : "Traitement de l’étape…",
+      state,
+    };
+  }
+
+  if (state === "SUCCEEDED") {
+    return {
+      label:
+        rootExecution
+          ? "Terminé"
+          : "Étape terminée…",
+      state,
+    };
+  }
+
+  const labels = {
+    PLAN: "Planification…",
+    ACTION: "Exécution en cours…",
+    TOOL: "Exécution en cours…",
+    VALIDATION: "Vérification…",
+    APPROVAL: "Validation requise",
+    RECOVERY: "Récupération…",
+    FINALIZE: "Finalisation…",
+  };
+
+  return {
+    label:
+      labels[phase] ||
+      "Traitement en cours…",
+
+    state:
+      state || "RUNNING",
+  };
+}
+
+function updateChatProgress(
+  element,
+  progress
+) {
+  if (
+    !element ||
+    !progress
+  ) {
+    return;
+  }
+
+  const presentation =
+    chatProgressPresentation(
+      progress
+    );
+
+  element.textContent =
+    presentation.label;
+
+  element.dataset.state =
+    presentation.state;
+
+  element.hidden = false;
+}
+
+async function readNoonEventStream(response, onDelta, onProgress = null) {
   if (!response.ok) { const data = await response.json().catch(() => ({})); const error = new Error(data.message || "Erreur Noon"); error.status = response.status; throw error; }
   const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ""; let finalData = null;
   while (true) { const { done, value } = await reader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); const blocks = buffer.split("\n\n"); buffer = blocks.pop() || "";
-    for (const block of blocks) { let eventName = "message"; let dataText = ""; for (const line of block.split("\n")) { if (line.startsWith("event:")) eventName = line.slice(6).trim(); if (line.startsWith("data:")) dataText += line.slice(5).trim(); } if (!dataText) continue; const data = JSON.parse(dataText); if (eventName === "delta") onDelta(data.delta || ""); else if (eventName === "final") finalData = data; else if (eventName === "error") { const error = new Error(data.message || "Erreur Noon"); error.code = data.errorCode; error.retryable = data.retryable; error.retryAfter = data.retryAfter; throw error; } }
+    for (const block of blocks) { let eventName = "message"; let dataText = ""; for (const line of block.split("\n")) { if (line.startsWith("event:")) eventName = line.slice(6).trim(); if (line.startsWith("data:")) dataText += line.slice(5).trim(); } if (!dataText) continue; const data = JSON.parse(dataText); if (eventName === "delta") onDelta(data.delta || ""); else if (eventName === "progress") onProgress?.(data.progress || null); else if (eventName === "final") finalData = data; else if (eventName === "error") { const error = new Error(data.message || "Erreur Noon"); error.code = data.errorCode; error.retryable = data.retryable; error.retryAfter = data.retryAfter; throw error; } }
   }
   if (!finalData) throw new Error("Le flux Noon s’est terminé sans réponse finale."); return finalData;
 }
@@ -9381,8 +9503,28 @@ async function sendQuestion(question, options = {}) {
   try {
     activeRequestController = new AbortController();
 
-    const streamedMessage = addMessage("Noon", "", "noon streaming-message", false);
-    const streamedParagraph = streamedMessage.querySelector("p");
+    const streamedMessage = addMessage(
+      "Noon",
+      "",
+      "noon streaming-message",
+      false
+    );
+
+    const streamedParagraph =
+      streamedMessage.querySelector("p");
+
+    const progressElement =
+      document.createElement("div");
+
+    progressElement.className =
+      "message-progress";
+
+    progressElement.hidden = true;
+
+    streamedMessage.append(
+      progressElement
+    );
+
     let streamedText = "";
     const response = await fetch("/ai/stream", {
       method: "POST",
@@ -9404,7 +9546,29 @@ async function sendQuestion(question, options = {}) {
       }),
       signal: activeRequestController.signal,
     });
-    const data = await readNoonEventStream(response, (delta) => { streamedText += delta; streamedParagraph.textContent = streamedText; conversation.scrollTop = conversation.scrollHeight; });
+    const data =
+      await readNoonEventStream(
+        response,
+
+        (delta) => {
+          streamedText += delta;
+
+          streamedParagraph.textContent = streamedText;
+
+          conversation.scrollTop =
+            conversation.scrollHeight;
+        },
+
+        (progress) => {
+          updateChatProgress(
+            progressElement,
+            progress
+          );
+
+          conversation.scrollTop =
+            conversation.scrollHeight;
+        }
+      );
     streamedMessage.remove();
 
     stopActivityPolling();
