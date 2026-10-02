@@ -148,6 +148,7 @@ const { createTransactionalExecutionEngine } = require("./services/execution/tra
 const { createNoonObservability } = require("./services/observability/noon-observability");
 const { createUserProgressEngine } = require("./services/observability/user-progress-engine");
 const { createUserProgressAdapter } = require("./services/observability/user-progress-adapter");
+const { createOrchestratorProgressObservability } = require("./services/observability/orchestrator-progress-observability");
 const { createConfigRegistry } = require("./services/config/config-registry");
 const { createRuntimeConfigService } = require("./services/config/runtime-config-service");
 const { createFeatureFlagRegistry } = require("./services/config/feature-flag-registry");
@@ -590,6 +591,14 @@ const userProgressAdapter =
   createUserProgressAdapter({
     progressEngine:
       userProgressEngine,
+  });
+
+const orchestratorObservability =
+  createOrchestratorProgressObservability({
+    observability:
+      noonObservability,
+    progressAdapter:
+      userProgressAdapter,
   });
 const adaptiveRoutingService = createAdaptiveRoutingService({
   performanceEngine: modelPerformanceEngine,
@@ -1660,7 +1669,7 @@ const noonOrchestrator = createNoonOrchestrator({
     setSessionActivity(request.sessionId, "responding", "Rédaction de la réponse…");
   },
   audit: (event, metadata) => toolAuditLog.append(event, metadata),
-  observability: noonObservability,
+  observability: orchestratorObservability,
 });
 const privateSeedImporter = privateMemoryService.available
   ? createPrivateSeedImporter(privateMemoryService)

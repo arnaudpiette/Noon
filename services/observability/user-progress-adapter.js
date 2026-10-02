@@ -629,10 +629,228 @@ function createUserProgressAdapter({
     };
   }
 
+
+  function orchestrator(
+    event,
+    metadata = {},
+  ) {
+    const name =
+      String(event || "")
+        .trim()
+        .toLowerCase();
+
+    const executionId =
+      metadata.executionId ||
+      metadata.execution_id;
+
+    const base = {
+      executionId,
+      stepId: null,
+      source: "orchestrator",
+      progress: null,
+      currentStep: null,
+      totalSteps: null,
+    };
+
+    if (
+      name === "started" ||
+      name === "context"
+    ) {
+      return publish({
+        ...base,
+        state: "PLANNED",
+        phase: "PLAN",
+        progress: 0,
+      });
+    }
+
+    if (
+      name === "routing"
+    ) {
+      return publish({
+        ...base,
+        state: "RUNNING",
+        phase: "PLAN",
+      });
+    }
+
+    if (
+      name === "tool"
+    ) {
+      const toolStatus =
+        safeCode(
+          metadata.toolStatus,
+        );
+
+      if (
+        toolStatus ===
+          "APPROVAL_REQUIRED" ||
+        metadata.approvalRequired ===
+          true
+      ) {
+        return publish({
+          ...base,
+          state: "WAITING",
+          phase: "APPROVAL",
+          reasonCode:
+            "APPROVAL_REQUIRED",
+        });
+      }
+
+      return publish({
+        ...base,
+        state: "RUNNING",
+        phase: "TOOL",
+
+        reasonCode:
+          toolStatus === "FAILED"
+            ? (
+                safeCode(
+                  metadata.errorCode,
+                ) ||
+                "TOOL_FAILED"
+              )
+            : null,
+      });
+    }
+
+    if (
+      name === "approval"
+    ) {
+      const status =
+        safeCode(
+          metadata.status,
+        );
+
+      const hasProposal =
+        Boolean(
+          metadata.proposalId,
+        );
+
+      if (
+        status === "REQUIRED"
+      ) {
+        return publish({
+          ...base,
+          state: "WAITING",
+          phase: "APPROVAL",
+          reasonCode:
+            "APPROVAL_REQUIRED",
+        });
+      }
+
+      if (
+        status === "STALE" ||
+        status === "EXPIRED"
+      ) {
+        return publish({
+          ...base,
+          state: "BLOCKED",
+          phase: "APPROVAL",
+          reasonCode:
+            `APPROVAL_${status}`,
+        });
+      }
+
+      if (
+        status === "FAILED"
+      ) {
+        return publish({
+          ...base,
+          state: "FAILED",
+          phase: "FINALIZE",
+          reasonCode:
+            "APPROVAL_FAILED",
+        });
+      }
+
+      /*
+       * Un workflow de proposition spécialiste
+       * se termine directement après rejet
+       * ou consommation de son approval.
+       *
+       * Pour une approval outil normale,
+       * ces mêmes statuts ne terminent pas
+       * nécessairement toute l'exécution.
+       */
+      if (
+        hasProposal &&
+        (
+          status === "CONSUMED" ||
+          status === "REJECTED"
+        )
+      ) {
+        return publish({
+          ...base,
+          state: "SUCCEEDED",
+          phase: "FINALIZE",
+          progress: 100,
+        });
+      }
+
+      if (
+        [
+          "ACCEPTED",
+          "APPROVED",
+          "CONSUMED",
+          "REJECTED",
+        ].includes(status)
+      ) {
+        return publish({
+          ...base,
+          state: "RUNNING",
+          phase: "ACTION",
+        });
+      }
+
+      return {
+        emitted: false,
+        ignored: true,
+        reason:
+          "UNMAPPED_APPROVAL_STATUS",
+      };
+    }
+
+    if (
+      name === "completed"
+    ) {
+      return publish({
+        ...base,
+        state: "SUCCEEDED",
+        phase: "FINALIZE",
+        progress: 100,
+      });
+    }
+
+    if (
+      name === "failed"
+    ) {
+      return publish({
+        ...base,
+        state: "FAILED",
+        phase: "FINALIZE",
+
+        reasonCode:
+          safeCode(
+            metadata.errorCode,
+          ) ||
+          "ORCHESTRATOR_FAILED",
+      });
+    }
+
+    return {
+      emitted: false,
+      ignored: true,
+      reason:
+        "UNMAPPED_EVENT",
+    };
+  }
+
   return {
     transactional,
     backgroundJob,
     devAgent,
+    orchestrator,
   };
 }
 
