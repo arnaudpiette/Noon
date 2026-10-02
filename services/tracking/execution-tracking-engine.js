@@ -286,7 +286,7 @@ function createExecutionTrackingEngine({
         apiPolicy: "local_only",
       }], { now: at, local: true })[0];
     }).filter(Boolean);
-    const result = await proactiveEngine.evaluate(signals, { at, channel: "tracking", remoteModel: false });
+    const result = await proactiveEngine.evaluate(signals, { at, channel: "tracking", subjectScope, remoteModel: false });
     metrics?.record("tracking_replan_requested", result.recommendations.length);
     return result;
   }

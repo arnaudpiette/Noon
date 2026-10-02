@@ -5,7 +5,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const SCHEMA_VERSION = 17;
+const SCHEMA_VERSION = 18;
 // Une attente courte absorbe les écritures SQLite qui se chevauchent entre
 // deux processus Noon, sans transformer les erreurs persistantes en retry.
 const PERSONAL_DATABASE_BUSY_TIMEOUT_MS = 1500;
@@ -92,7 +92,8 @@ function createSchema(database) {
       id TEXT PRIMARY KEY, hash TEXT NOT NULL UNIQUE, inbox_item_id TEXT,
       score REAL NOT NULL, priority_level TEXT NOT NULL, payload_json TEXT NOT NULL,
       first_detected_at TEXT NOT NULL, last_presented_at TEXT, presentation_count INTEGER NOT NULL DEFAULT 0,
-      user_response TEXT, cooldown_until TEXT, reactivation_key TEXT, expires_at TEXT, status TEXT NOT NULL
+      user_response TEXT, cooldown_until TEXT, reactivation_key TEXT, expires_at TEXT, status TEXT NOT NULL,
+      subject_scope TEXT
     );
     CREATE INDEX IF NOT EXISTS recommendation_status_idx ON recommendations(status, cooldown_until, expires_at);
     CREATE TABLE IF NOT EXISTS followups (
@@ -102,7 +103,8 @@ function createSchema(database) {
     );
     CREATE TABLE IF NOT EXISTS feedback_events (
       id TEXT PRIMARY KEY, recommendation_hash TEXT, value TEXT NOT NULL,
-      category TEXT, created_at TEXT NOT NULL, metadata_json TEXT NOT NULL DEFAULT '{}'
+      category TEXT, created_at TEXT NOT NULL, metadata_json TEXT NOT NULL DEFAULT '{}',
+      subject_scope TEXT
     );
     CREATE TABLE IF NOT EXISTS metrics_events (
       id TEXT PRIMARY KEY, metric TEXT NOT NULL, value REAL NOT NULL,
@@ -558,6 +560,12 @@ function createSchema(database) {
   // inférence ne doit les faire apparaître dans un contexte A3 projet.
   ensureColumn(database, "execution_items", "project_id", "project_id TEXT");
   database.exec("CREATE INDEX IF NOT EXISTS execution_scope_project_idx ON execution_items(subject_scope, project_id, planned_start, updated_at)");
+  // Les recommandations et feedbacks historiques restent sans portée : une
+  // review ciblée ne doit jamais les assimiler au profil demandé.
+  ensureColumn(database, "recommendations", "subject_scope", "subject_scope TEXT");
+  ensureColumn(database, "feedback_events", "subject_scope", "subject_scope TEXT");
+  database.exec("CREATE INDEX IF NOT EXISTS recommendation_subject_time_idx ON recommendations(subject_scope, first_detected_at)");
+  database.exec("CREATE INDEX IF NOT EXISTS feedback_subject_time_idx ON feedback_events(subject_scope, created_at)");
   try {
     database.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS memory_items_fts USING fts5(id UNINDEXED, subject, value_text);`);
     database.ftsAvailable = true;

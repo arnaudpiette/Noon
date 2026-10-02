@@ -231,6 +231,7 @@ function createDailyBriefEngine({
   reviewProvider = () => null,
   audit = null,
   observability = null,
+  subjectScope = "arnaud",
   now = () => Date.now(),
 } = {}) {
   if (!store?.load || !store?.markReady) throw new TypeError("Stockage Daily Brief requis.");
@@ -321,7 +322,7 @@ function createDailyBriefEngine({
             { now: at, stale: action.sourceStale === true }
           ));
           const proactive = await proactiveEngine.evaluate(proactiveSignals, {
-            at, channel: "brief", focusActive: false, remoteModel: false,
+            at, channel: "brief", subjectScope, focusActive: false, remoteModel: false,
           });
           priorities = proactive.recommendations.slice(0, 20).map((item) => ({
             ...item, sourceId: item.sourceReference, source: item.sourceType,

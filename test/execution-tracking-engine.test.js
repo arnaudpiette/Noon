@@ -87,8 +87,8 @@ test("une completion partielle conserve la durée restante fiable", () => {
   const f=fixture();try{const [item]=f.engine.ingestPlan(plan([block("A","2026-08-28T08:00:00Z","2026-08-28T10:00:00Z",{durationMinutes:120})]));f.engine.transition(item.executionItemId,{status:"in_progress",source:"explicit_user_confirmation",progress:50,remainingDurationMinutes:60});const updated=f.repository.get(item.executionItemId);assert.equal(updated.progress,50);assert.equal(updated.remainingDurationMinutes,60);}finally{f.close();}
 });
 
-test("une dérive importante alimente le Proactive Engine", async () => {
-  const f=fixture();try{f.engine.ingestPlan(plan([block("A","2026-08-28T05:00:00Z","2026-08-28T06:00:00Z",{priorityScore:95,dueAt:"2026-08-28T09:00:00Z"})]));const drifts=f.engine.detectDrift({at:BASE});const result=await f.engine.sendDriftsToProactive(drifts,{at:BASE});assert.ok(result.recommendations.length>=1);assert.equal(f.proactiveCalls.length,1);}finally{f.close();}
+test("une dérive importante alimente le Proactive Engine dans le profil demandé", async () => {
+  const f=fixture();try{f.engine.ingestPlan(plan([block("A","2026-08-28T05:00:00Z","2026-08-28T06:00:00Z",{priorityScore:95,dueAt:"2026-08-28T09:00:00Z"})]),{subjectScope:"alexandra"});const drifts=f.engine.detectDrift({at:BASE,subjectScope:"alexandra"});const result=await f.engine.sendDriftsToProactive(drifts,{at:BASE,subjectScope:"alexandra"});assert.ok(result.recommendations.length>=1);assert.equal(f.proactiveCalls.length,1);assert.equal(f.proactiveCalls[0].context.subjectScope,"alexandra");}finally{f.close();}
 });
 
 test("le replan est minimal et protège terminé/en cours", async () => {

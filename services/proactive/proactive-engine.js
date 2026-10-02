@@ -34,7 +34,7 @@ function interruptionLevel(signal, scored) {
   return "STORE_FOR_BRIEF";
 }
 
-function safeRecommendation(signal, scored, level, decision) {
+function safeRecommendation(signal, scored, level, decision, subjectScope) {
   const recommendationId = `recommendation_${hash([signal.id, signal.materialKey]).slice(0, 24)}`;
   return Object.freeze({
     id: recommendationId,
@@ -50,6 +50,7 @@ function safeRecommendation(signal, scored, level, decision) {
     detected: [signal.title],
     inferred: [],
     projectId: signal.projectId,
+    subjectScope,
     score: scored.score,
     priorityLevel: scored.priorityLevel,
     interruptionLevel: level,
@@ -94,22 +95,24 @@ function createProactiveEngine({
     return { ...reviewRuntimeHints, reversible: true };
   }
 
-  function notificationCount(date) {
+  function notificationCount(date, subjectScope) {
     const day = date.toISOString().slice(0, 10);
-    return repository.listRecommendations({ limit: 500 }).filter((item) =>
+    return repository.listRecommendations({ subjectScope, limit: 500 }).filter((item) =>
       item.lastPresentedAt?.startsWith(day) && ["NOTIFY", "URGENT_NOTIFY"].includes(item.payload?.interruptionLevel)
     ).length;
   }
 
   async function evaluate(rawSignals = [], context = {}) {
     const at = context.at instanceof Date ? context.at : now();
+    const subjectScope = typeof context.subjectScope === "string" && context.subjectScope.trim()
+      ? context.subjectScope.trim() : null;
     const protectedBreak = hardRulesRegistry?.isProtectedCalendarTime
       ? hardRulesRegistry.isProtectedCalendarTime(at) : isProtectedBreak(at);
     const activeReviewHints = reviewRuntimeHints && Date.parse(reviewRuntimeHints.expiresAt) > at.getTime()
       ? reviewRuntimeHints : null;
     const notificationLimit = activeReviewHints?.notificationGroupingHint === "increase_grouping"
       ? Math.min(Number(maxNotificationsPerDay), 2) : Number(maxNotificationsPerDay);
-    let notificationsRemaining = Math.max(0, notificationLimit - notificationCount(at));
+    let notificationsRemaining = Math.max(0, notificationLimit - notificationCount(at, subjectScope));
     const signals = rawSignals.filter(Boolean).filter((signal) => !signal.expiresAt || Date.parse(signal.expiresAt) > at.getTime());
     const recommendations = [];
     const ignored = [];
@@ -132,7 +135,7 @@ function createProactiveEngine({
         level = "STORE_FOR_BRIEF";
       }
       if (level === "NOTIFY" && notificationsRemaining <= 0) level = "STORE_FOR_BRIEF";
-      const draft = { ...signal, ...scored, action: signal.action, sourceReference: signal.sourceReference,
+      const draft = { ...signal, ...scored, subjectScope, action: signal.action, sourceReference: signal.sourceReference,
         reactivationKey: signal.materialKey, interruptionLevel: level };
       const decision = deduplicationService.evaluate(draft, at);
       if (!decision.allowed) {
@@ -146,10 +149,10 @@ function createProactiveEngine({
         metrics?.record("proactive_duplicates_suppressed", 1, { category: decision.reason });
         continue;
       }
-      const recommendation = safeRecommendation(signal, scored, level, decision);
+      const recommendation = safeRecommendation(signal, scored, level, decision, subjectScope);
       repository.saveRecommendation({
         hash: decision.hash, score: scored.score, priorityLevel: scored.priorityLevel,
-        payload: recommendation, reactivationKey: signal.materialKey,
+        payload: recommendation, subjectScope, reactivationKey: signal.materialKey,
         expiresAt: signal.expiresAt, status: level === "IGNORE" ? "ignored" : "ready",
       });
       if (level === "IGNORE") {
@@ -184,7 +187,7 @@ function createProactiveEngine({
     const status = value === "dont_remind" ? "dismissed" : value === "later" ? "snoozed" : "ready";
     const operation = () => {
       repository.updateRecommendation(recommendationHash, { userResponse: value, status, cooldownUntil: snoozeUntil });
-      repository.recordFeedback({ recommendationHash, value, category: existing.payload?.signalType || null,
+      repository.recordFeedback({ recommendationHash, value, subjectScope: existing.subjectScope, createdAt: (options.at instanceof Date ? options.at : now()).toISOString(), category: existing.payload?.signalType || null,
         metadata: { snoozeMinutes: value === "later" ? Math.max(5, Number(options.minutes) || 60) : null } });
       metrics?.record(value === "useful" ? "proactive_feedback_useful" : "proactive_feedback_negative", 1,
         { category: existing.payload?.signalType || null });

@@ -1678,16 +1678,15 @@ const reviewLearningEngine = createReviewLearningEngine({
   repository: reviewLearningRepository,
   trackingProvider: ({ subjectScope }) => executionTrackingEngine.list({ subjectScope }),
   planProvider: (date) => dailyPlanStore.get(date),
-  recommendationProvider: ({ start, end }) => personalRepository.listRecommendations({ limit: 500 })
-    .filter((item) => {
-      const at = Date.parse(item.lastPresentedAt || item.firstDetectedAt);
-      return Number.isFinite(at) && at >= start.getTime() && at < end.getTime();
-    }),
-  feedbackProvider: ({ start, end }) => personalRepository.listFeedbackEvents({
-    start: start.toISOString(), end: end.toISOString(), limit: 500,
+  recommendationProvider: ({ start, end, subjectScope }) => personalRepository.listRecommendations({
+    start: start.toISOString(), end: end.toISOString(), subjectScope, limit: 500,
+  }),
+  feedbackProvider: ({ start, end, subjectScope }) => personalRepository.listFeedbackEvents({
+    start: start.toISOString(), end: end.toISOString(), subjectScope, limit: 500,
   }),
   memoryEngine,
   proactiveEngine,
+  subjectScope: "arnaud",
   metrics: metricsService,
   audit: (event, metadata) => toolAuditLog.append(event, metadata),
 });
@@ -8110,6 +8109,8 @@ if (req.method === "POST" && req.url === "/personal-intelligence/inbox") {
 
 if (req.method === "GET" && req.url.startsWith("/personal-intelligence/recommendations")) {
   const url = new URL(req.url, `http://${req.headers.host || DEFAULT_HOST}`);
+  const allowedScopes = new Set(["arnaud", "alexandra", "sinan", "kaan", "household", "projects"]);
+  const subjectScope = allowedScopes.has(url.searchParams.get("subjectScope")) ? url.searchParams.get("subjectScope") : "arnaud";
   const at = new Date();
   const signals = personalInboxService.toPriorityActions().map((item) => {
     const sourceType = ["calendar", "reminders", "notes", "gmail", "projects", "memory", "daily_brief", "local"].includes(item.sourceType)
@@ -8119,6 +8120,7 @@ if (req.method === "GET" && req.url.startsWith("/personal-intelligence/recommend
   const result = await proactiveEngine.evaluate(signals, {
     at,
     channel: "app",
+    subjectScope,
     focusActive: url.searchParams.get("focusActive") === "true",
     remoteModel: false,
   });
