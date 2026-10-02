@@ -629,6 +629,13 @@ function registerIpc() {
     shortcuts: registerShortcuts(), loginItem: app.getLoginItemSettings(),
   }));
   registerTrustedHandler("noon:get-preferences", loadPreferences);
+  registerTrustedHandler("noon:dev-project-rule", async (_event, payload = {}) => {
+    if (!payload || typeof payload !== "object" || !["create", "update", "disable", "delete"].includes(payload.action) || typeof payload.workspaceId !== "string") throw Object.assign(new Error("Demande de règle DEV invalide."), { code: "RULE_MUTATION_INVALID" });
+    if ((payload.action === "create" || payload.action === "update") && (typeof payload.text !== "string" || payload.text.length > 1000)) throw Object.assign(new Error("Texte de règle DEV invalide."), { code: "RULE_TEXT_INVALID" });
+    if (payload.action !== "create" && (!Number.isInteger(payload.expectedVersion) || payload.expectedVersion < 1 || typeof payload.ruleId !== "string")) throw Object.assign(new Error("Version de règle DEV invalide."), { code: "RULE_VERSION_INVALID" });
+    if (typeof serverController?.mutateDevProjectRuleFromTrustedMain !== "function") throw Object.assign(new Error("Service de règles DEV indisponible."), { code: "DEV_PROJECT_RULE_UNAVAILABLE" });
+    return serverController.mutateDevProjectRuleFromTrustedMain({ action: payload.action, workspaceId: payload.workspaceId, ruleId: payload.ruleId, expectedVersion: payload.expectedVersion, text: payload.text });
+  });
   registerTrustedHandler("noon:set-preference", (_event, payload) => setPreference(payload?.key, payload?.value));
   registerTrustedHandler("noon:show-window", showMainWindow);
   registerTrustedHandler("noon:hide-window", () => mainWindow?.hide());

@@ -8,6 +8,7 @@ const invoke = (channel, payload) => ipcRenderer.invoke(channel, payload);
 contextBridge.exposeInMainWorld("noon", Object.freeze({
   getStatus: () => invoke("noon:get-status"),
   getPreferences: () => invoke("noon:get-preferences"),
+  devProjectRule: (payload) => invoke("noon:dev-project-rule", payload),
   setPreference: (key, value) => invoke("noon:set-preference", { key, value }),
   showWindow: () => invoke("noon:show-window"),
   hideWindow: () => invoke("noon:hide-window"),

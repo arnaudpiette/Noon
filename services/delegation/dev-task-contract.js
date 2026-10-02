@@ -53,7 +53,8 @@ function createDevTaskContract(input = {}) {
     allowedPaths: Object.freeze(allowedPaths),
     forbiddenPaths: Object.freeze(forbiddenPaths),
     constraints: Object.freeze([...(input.constraints || [])].map(String).slice(0, 100)),
-    projectInstructions: Object.freeze([...(input.projectInstructions || [])].map(String).slice(0, 20)),
+    // Projection serveur uniquement : ce champ ne porte jamais permissions ni capacités.
+    projectInstructions: Object.freeze([...(input.projectInstructions || [])].map((item) => String(item).trim()).filter(Boolean).slice(0, 20).map((item) => item.slice(0, 1000))),
     validationCommands: Object.freeze([...(input.validationCommands || [])].map(String).slice(0, 12)),
     permissions: Object.freeze(permissions),
     maxIterations: Math.max(1, Math.min(10, Number(input.maxIterations) || 3)),

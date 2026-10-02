@@ -95,6 +95,9 @@ const { createReviewLearningRepository } = require("./services/persistence/repos
 const { createModelPerformanceRepository } = require("./services/persistence/repositories/model-performance-repository");
 const { createArtifactRepository } = require("./services/persistence/repositories/artifact-repository");
 const { createWorkspaceRepository } = require("./services/persistence/repositories/workspace-repository");
+const { createDevProjectRuleRepository } = require("./services/persistence/repositories/dev-project-rule-repository");
+const { createDevProjectRuleResolver } = require("./services/dev/dev-project-rule-resolver");
+const { executeTrustedDevProjectRuleMutation: executeDevProjectRuleCommand } = require("./services/dev/dev-project-rule-command");
 const { createSessionContinuityRepository } = require("./services/persistence/repositories/session-continuity-repository");
 const { createWorkspaceEngine } = require("./services/workspaces/workspace-engine");
 const { createIntentCommandEngine } = require("./services/intents/intent-command-engine");
@@ -742,6 +745,8 @@ const approvalRepository = createApprovalRepository(personalDatabase);
 const transactionalExecutionRepository = createTransactionalExecutionRepository(personalDatabase);
 const artifactRepository = createArtifactRepository(personalDatabase);
 const workspaceRepository = createWorkspaceRepository(personalDatabase);
+const devProjectRuleRepository = createDevProjectRuleRepository(personalDatabase);
+const devProjectRuleResolver = createDevProjectRuleResolver({ repository: devProjectRuleRepository });
 const sessionContinuityRepository = createSessionContinuityRepository(personalDatabase);
 const executionTrackingRepository = createExecutionTrackingRepository(personalDatabase);
 const reviewLearningRepository = createReviewLearningRepository(personalDatabase);
@@ -9321,10 +9326,17 @@ if (requestPath === "/api/dev/native/tasks" && req.method === "POST") {
   try {
     if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403, code: "TRUSTED_UI_REQUIRED" });
     const body = await readJsonBody(req, 128 * 1024);
+    // Le client ne choisit pas les règles persistantes : le projet et le
+    // propriétaire viennent du workspace déjà résolu côté serveur.
+    const workspaceContext = workspaceEngine.context(String(body.workspaceId || ""));
+    const projects = workspaceContext.projects || [];
+    if (projects.length !== 1 || !workspaceContext.workspace?.profileScope) throw Object.assign(new Error("Projet DEV non résolu ou ambigu."), { statusCode: 400, code: "DEV_PROJECT_UNRESOLVED" });
+    const ruleProjection = devProjectRuleResolver.resolve({ projectId: projects[0].id, ownerProfileScope: workspaceContext.workspace.profileScope, taskRestrictions: Array.isArray(body.constraints) ? body.constraints : [] });
     const result = await nativeDevB3Facade.runTask({
       taskId: body.taskId, sessionId: body.sessionId, workspaceId: String(body.workspaceId || ""), repositoryRoot: String(body.repositoryRoot || ""),
       objective: String(body.objective || ""), allowedPaths: Array.isArray(body.allowedPaths) ? body.allowedPaths : undefined,
       forbiddenPaths: Array.isArray(body.forbiddenPaths) ? body.forbiddenPaths : undefined, constraints: Array.isArray(body.constraints) ? body.constraints : [],
+      projectInstructions: ruleProjection.applied.map((rule) => rule.text),
       validationCommands: Array.isArray(body.validationCommands) ? body.validationCommands : [], requiredQuality: body.requiredQuality,
       maxIterations: body.maxIterations, maxDuration: body.maxDuration, maxEstimatedCost: body.maxEstimatedCost,
       localOnly: body.localOnly === true,
@@ -9458,6 +9470,12 @@ function stopNoonServer() {
   });
 }
 
+// server.js est composé dans le processus main Electron (voir electron/main.js).
+// Cette commande reste donc en mémoire : aucun secret ni jeton d'action ne traverse HTTP.
+function mutateDevProjectRuleFromTrustedMain(payload) {
+  return executeDevProjectRuleCommand({ workspaceEngine, repository: devProjectRuleRepository, payload });
+}
+
 if (require.main === module) {
   startNoonServer().catch((error) => {
     console.error("Impossible de démarrer Noon :", error.message);
@@ -9468,6 +9486,7 @@ if (require.main === module) {
 module.exports = {
   server,
   sanitizeResponseOutputForInput,
+  mutateDevProjectRuleFromTrustedMain,
   startNoonServer,
   stopNoonServer,
 };

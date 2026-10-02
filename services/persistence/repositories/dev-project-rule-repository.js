@@ -1,0 +1,32 @@
+"use strict";
+
+const crypto = require("crypto");
+const MAX_ACTIVE_RULES = 20;
+const MAX_RULE_TEXT_LENGTH = 1000;
+const ACTOR = "OWNER_EXPLICIT_UI";
+class DevProjectRuleError extends Error { constructor(code, message) { super(message); this.code = code; } }
+function clean(value) { return String(value || "").replace(/[\0\r\n]+/g, " ").replace(/\s+/g, " ").trim(); }
+function assertText(value) { const text = clean(value); if (!text) throw new DevProjectRuleError("RULE_TEXT_REQUIRED", "Le texte de règle est requis."); if (text.length > MAX_RULE_TEXT_LENGTH) throw new DevProjectRuleError("RULE_TEXT_TOO_LONG", "La règle dépasse la taille autorisée."); return text; }
+function assertActor(actor) { if (actor !== ACTOR) throw new DevProjectRuleError("OWNER_ACTION_REQUIRED", "Une action explicite du propriétaire est requise."); }
+function row(row) { return row && { ruleId: row.rule_id, schemaVersion: Number(row.schema_version), projectId: row.project_id, ownerProfileScope: row.owner_profile_scope, kind: row.kind, text: row.text, status: row.status, version: Number(row.version), createdAt: row.created_at, updatedAt: row.updated_at, deletedAt: row.deleted_at, createdBy: row.created_by, updatedBy: row.updated_by }; }
+function createDevProjectRuleRepository(wrapper, { now = () => new Date().toISOString() } = {}) {
+  function validateInput(input) { assertActor(input.actor); const projectId = clean(input.projectId); const ownerProfileScope = clean(input.ownerProfileScope); if (!projectId || !ownerProfileScope) throw new DevProjectRuleError("RULE_SCOPE_REQUIRED", "Projet et propriétaire requis."); return { projectId, ownerProfileScope }; }
+  if (wrapper.kind === "sqlite") {
+    const db = wrapper.database;
+    const get = (id) => row(db.prepare("SELECT * FROM dev_project_rules WHERE rule_id=?").get(id));
+    const getScoped = (ruleId, projectId, ownerProfileScope) => row(db.prepare("SELECT * FROM dev_project_rules WHERE rule_id=? AND project_id=? AND owner_profile_scope=?").get(ruleId, projectId, ownerProfileScope));
+    const active = (projectId, ownerProfileScope) => db.prepare("SELECT * FROM dev_project_rules WHERE project_id=? AND owner_profile_scope=? AND status='ACTIVE' ORDER BY created_at,rule_id").all(projectId, ownerProfileScope).map(row);
+    function create(input = {}) { const scope = validateInput(input); const text = assertText(input.text); if (active(scope.projectId, scope.ownerProfileScope).length >= MAX_ACTIVE_RULES) throw new DevProjectRuleError("RULE_LIMIT_REACHED", "Nombre maximal de règles actives atteint."); const at = now(); const value = { ruleId: crypto.randomUUID(), ...scope, text, schemaVersion: 1, kind: "BEHAVIOR", status: "ACTIVE", version: 1, createdAt: at, updatedAt: at, deletedAt: null, createdBy: ACTOR, updatedBy: ACTOR }; db.prepare("INSERT INTO dev_project_rules(rule_id,schema_version,project_id,owner_profile_scope,kind,text,status,version,created_at,updated_at,deleted_at,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)").run(value.ruleId,1,value.projectId,value.ownerProfileScope,value.kind,value.text,value.status,1,at,at,null,ACTOR,ACTOR); return get(value.ruleId); }
+    function change(input = {}) { assertActor(input.actor); const scope = validateInput(input); const ruleId = clean(input.ruleId); const expectedVersion = Number(input.expectedVersion); if (!ruleId || !Number.isInteger(expectedVersion) || expectedVersion < 1) throw new DevProjectRuleError("RULE_MUTATION_INVALID", "Mutation de règle invalide."); const text = input.text === undefined ? null : assertText(input.text); const status = input.status || null; const at = now(); const result = db.prepare("UPDATE dev_project_rules SET text=COALESCE(?, text),status=COALESCE(?, status),version=version+1,updated_at=?,deleted_at=CASE WHEN ?='DELETED' THEN ? ELSE deleted_at END,updated_by=? WHERE rule_id=? AND project_id=? AND owner_profile_scope=? AND version=?").run(text,status,at,status,at,ACTOR,ruleId,scope.projectId,scope.ownerProfileScope,expectedVersion); if (result.changes !== 1) throw new DevProjectRuleError("RULE_MUTATION_REFUSED", "Mutation de règle refusée."); return getScoped(ruleId, scope.projectId, scope.ownerProfileScope); }
+    return { kind: "sqlite", create, get, update: (input) => change(input), disable: (input) => change({ ...input, status: "DISABLED" }), remove: (input) => change({ ...input, status: "DELETED" }), listActiveForProject: ({ projectId, ownerProfileScope }) => active(clean(projectId), clean(ownerProfileScope)) };
+  }
+  function all() { return wrapper.load().dev_project_rules || []; }
+  function save(items) { const state = wrapper.load(); state.dev_project_rules = items; wrapper.save(state); }
+  function get(id) { return all().find((item) => item.ruleId === id) || null; }
+  function create(input = {}) { const scope = validateInput(input); const text = assertText(input.text); if (all().filter((x) => x.projectId === scope.projectId && x.ownerProfileScope === scope.ownerProfileScope && x.status === "ACTIVE").length >= MAX_ACTIVE_RULES) throw new DevProjectRuleError("RULE_LIMIT_REACHED", "Nombre maximal de règles actives atteint."); const at = now(); const value = { ruleId: crypto.randomUUID(), schemaVersion: 1, ...scope, kind: "BEHAVIOR", text, status: "ACTIVE", version: 1, createdAt: at, updatedAt: at, deletedAt: null, createdBy: ACTOR, updatedBy: ACTOR }; save([...all(), value]); return value; }
+  // rename() protège un fichier écrit, pas une comparaison de version entre processus.
+  // Les mutations sont donc refusées : aucune garantie inter-processus n'est simulée.
+  function rejectMutation(input = {}) { assertActor(input.actor); validateInput(input); throw new DevProjectRuleError("RULE_MUTATION_STORAGE_UNAVAILABLE", "Mutation de règle indisponible sans stockage transactionnel."); }
+  return { kind: "json-fallback", create: rejectMutation, get, update: rejectMutation, disable: rejectMutation, remove: rejectMutation, listActiveForProject: ({ projectId, ownerProfileScope }) => all().filter((x) => x.projectId === clean(projectId) && x.ownerProfileScope === clean(ownerProfileScope) && x.status === "ACTIVE") };
+}
+module.exports = { ACTOR, DevProjectRuleError, MAX_ACTIVE_RULES, MAX_RULE_TEXT_LENGTH, createDevProjectRuleRepository };
