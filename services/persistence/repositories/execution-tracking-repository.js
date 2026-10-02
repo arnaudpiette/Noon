@@ -27,18 +27,31 @@ function rowItem(row) {
 function createSqliteRepository(wrapper) {
   const db = wrapper.database;
   function transaction(operation) {
-    // recordDuration peut être appelé depuis une transaction de plus haut niveau.
-    // Dans ce cas, elle doit en faire partie plutôt que tenter un BEGIN imbriqué.
+    // Une opération peut être imbriquée dans une transaction de plus haut niveau.
+    // Le savepoint protège alors sa propre atomicité sans terminer la transaction appelante.
     const ownsTransaction = db.isTransaction !== true;
+    const savepoint = ownsTransaction
+      ? null
+      : `execution_tracking_${crypto.randomUUID().replace(/-/g, "")}`;
+
     if (ownsTransaction) db.exec("BEGIN IMMEDIATE");
+    else db.exec(`SAVEPOINT ${savepoint}`);
+
     try {
       const result = operation();
+
       if (ownsTransaction) db.exec("COMMIT");
+      else db.exec(`RELEASE SAVEPOINT ${savepoint}`);
+
       return result;
     } catch (error) {
       if (ownsTransaction) {
         try { db.exec("ROLLBACK"); } catch {}
+      } else {
+        try { db.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`); } catch {}
+        try { db.exec(`RELEASE SAVEPOINT ${savepoint}`); } catch {}
       }
+
       throw error;
     }
   }
@@ -119,7 +132,7 @@ function createSqliteRepository(wrapper) {
   function cleanup(before) {
     return db.prepare("DELETE FROM execution_events WHERE created_at<? AND execution_item_id IN (SELECT id FROM execution_items WHERE status IN ('completed','cancelled'))").run(before).changes;
   }
-  return { kind: "sqlite", appendEvent, cleanup, findByAction, get, getDurationStats, getEvent, insert, list, recordDuration, update };
+  return { kind: "sqlite", appendEvent, cleanup, findByAction, get, getDurationStats, getEvent, insert, list, recordDuration, transaction, update };
 }
 
 function createFallbackRepository(wrapper) {
@@ -131,7 +144,7 @@ function createFallbackRepository(wrapper) {
   function appendEvent(event){const state=load();if(state.execution_events.some(x=>x.eventKey===event.eventKey))return false;state.execution_events.push(event);save(state);return true;}
   function recordDuration(scopeKey,estimated,actual){const state=load();let row=state.duration_statistics.find(x=>x.scopeKey===scopeKey);if(!row){row={scopeKey,sampleCount:0,totalEstimatedMinutes:0,totalActualMinutes:0,samples:[]};state.duration_statistics.push(row);}row.sampleCount+=1;row.totalEstimatedMinutes+=estimated;row.totalActualMinutes+=actual;row.samples=[...row.samples,actual].slice(-50);save(state);}
   function getDurationStats(scopeKey){const row=load().duration_statistics.find(x=>x.scopeKey===scopeKey);if(!row)return null;const samples=[...row.samples].sort((a,b)=>a-b);return{...row,meanActualMinutes:row.totalActualMinutes/row.sampleCount,meanEstimateErrorMinutes:(row.totalActualMinutes-row.totalEstimatedMinutes)/row.sampleCount,medianActualMinutes:samples[Math.floor(samples.length/2)],confidence:row.sampleCount>=5?"high":row.sampleCount>=3?"medium":"low"};}
-  return {kind:"json-fallback",get,list,findByAction:(id,scope="arnaud")=>list({subjectScope:scope}).filter(x=>x.actionId===id),insert,update,appendEvent,getEvent:(key)=>load().execution_events.find(x=>x.eventKey===key)||null,recordDuration,getDurationStats,cleanup:()=>0};
+  return {kind:"json-fallback",get,list,findByAction:(id,scope="arnaud")=>list({subjectScope:scope}).filter(x=>x.actionId===id),insert,update,appendEvent,getEvent:(key)=>load().execution_events.find(x=>x.eventKey===key)||null,recordDuration,getDurationStats,transaction:(operation)=>operation(),cleanup:()=>0};
 }
 
 function createExecutionTrackingRepository(wrapper) {

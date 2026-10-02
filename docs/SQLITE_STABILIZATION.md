@@ -12,7 +12,7 @@ garantie globale pour tous les accès SQLite de Noon.
 | --- | --- | --- | --- | --- | --- |
 | Ouverture de base personnelle | Une connexion concurrente attend brièvement au lieu d'échouer immédiatement sur un verrou d'écriture. | `createPersonalDatabase()` applique `PRAGMA busy_timeout=1500` avant schéma, migrations et écritures d'initialisation ; WAL et clés étrangères restent activés. | `test/personal-database-concurrency.test.js` : 3 contrôles inter-connexions avec worker (PRAGMA, libération avant échéance, verrou persistant). | `DatabaseSync` bloque le thread appelant pendant cette attente bornée ; ce réglage n'est pas un retry applicatif et ne résout pas toute contention. | Corrigé — preuve déterministe historique. |
 | Migrations additives | Une colonne manquante est ajoutée ; une erreur réelle ne devient pas une migration réussie ; la version n'est enregistrée qu'après succès. | `ensureColumn()` inspecte `PRAGMA table_info` avant `ALTER TABLE` ; seule une collision SQLite exacte de la colonne attendue est tolérée, puis sa postcondition est vérifiée. Les erreurs BUSY/LOCKED et inattendues sont propagées. La connexion est fermée à l'échec. | `test/personal-database-migrations.test.js` : 7 contrôles d'idempotence, données historiques, collision concurrente, erreurs et reprise. | Un DDL peut avoir été appliqué avant un échec ultérieur : la reprise est idempotente, sans promettre un rollback DDL global. | Corrigé — preuve déterministe historique. |
-| ExecutionTracking — statistiques de durée | Pour une même clé statistique, lecture, calcul et UPSERT ne perdent pas un incrément concurrent. | `recordDuration()` ouvre une transaction courte `BEGIN IMMEDIATE` lorsqu'elle la possède ; elle participe à une transaction appelante sans la terminer. Calcul, fenêtre de 50 échantillons et UPSERT partagent la transaction. | `test/execution-tracking-duration-concurrency.test.js` : 4 contrôles, dont deux connexions avec worker, rollback d'écriture et rollback externe. Régression Engine sur le rejeu conservant un échantillon. | L'item d'exécution, son événement et l'agrégat ne sont pas rendus atomiques ensemble par ce correctif. L'idempotence dépend toujours de la déduplication d'événements du chemin appelant. | Corrigé — preuve déterministe historique. |
+| ExecutionTracking — completion et statistiques de durée | Une completion fiable converge vers un item `completed`, son événement canonique et exactement un échantillon de durée ; un échec ne laisse aucun sous-ensemble durable et le rejeu ne double pas l'échantillon. | Le repository expose sa transaction courte et le chemin Engine groupe `update(item)`, `appendEvent(event)` et `recordDuration()` dans la même transaction SQLite. `recordDuration()` détecte la transaction appelante et y participe sans commit indépendant. Les métriques et l'audit restent hors de la transaction SQLite. | `test/execution-tracking-completion-atomicity.test.js` injecte des pannes avant/après événement et avant/après durée : chaque panne rollbacke item, événement et agrégat, puis le rejeu converge vers exactement un échantillon. Suites existantes : Engine 25/25 PASS et concurrence durée 4/4 PASS. | La correction empêche les nouveaux états partiels ; elle ne reconstruit pas automatiquement d'éventuels agrégats historiques déjà manquants créés avant ce correctif. | Corrigé — preuve déterministe. |
 | Mémoire privée — `updateMemory()` | La mémoire chiffrée, sa version et son audit réussissent ou échouent ensemble. | Validations et chiffrement sont préparés avant la transaction ; mise à jour, version et audit passent par le helper réentrant (`BEGIN IMMEDIATE` possédé, savepoint appelant). Les notifications suivent seulement un commit possédé. | Régressions historiques de mémoire privée : succès, pannes après écriture et audit, rollback externe, échec interne sous transaction appelante, chiffrement et isolation de profil. | Les tests utilisent des fixtures et injections de panne ; pas de validation sur mémoire personnelle réelle. | Corrigé — preuve déterministe historique. |
 | Mémoire privée — `forgetMemory()`, `purgeSubject()`, `rollbackMigration()` | Suppressions ou statuts, versions et audit restent cohérents ; aucune notification de succès avant un commit possédé. | Les trois opérations réutilisent `transaction()`. `purgeSubject()` sélectionne puis supprime versions et mémoires dans la même transaction, filtrée par profil. `rollbackMigration()` restreint ses cibles éligibles avant suppressions, statuts et audit. | `test/private-memory-destructive-atomic.test.js` et suites privées/migration : 23 contrôles historiques sur bases temporaires, y compris savepoint, rollback externe, pannes intermédiaires, audit et isolation de profil. | Les notifications externes restent hors transaction par nécessité : une erreur de notification après commit ne signifie pas un rollback SQLite. | Corrigé — preuve déterministe historique. |
 | Learning — feedback proactif | Recommandation, feedback et métrique ne laissent pas d'état partiel. | Le chemin de feedback proactif exécute les trois écritures via la transaction du repository lorsqu'elle existe, avec participation à une transaction appelante. | `test/proactive-feedback-atomicity.test.js` : 4 contrôles historiques (succès, panne métrique, commit/rollback externes et échec interne). | Les courses distinctes de `ReviewLearningRepository.save()` sont couvertes séparément ci-dessous. | Corrigé — preuve déterministe historique. |
@@ -49,9 +49,9 @@ garantie globale pour tous les accès SQLite de Noon.
 
 ## Écarts ouverts
 
-1. Le correctif des statistiques ExecutionTracking ne rend pas atomiques
-   ensemble l'item, l'événement et l'agrégat ; c'est une limite de frontière
-   transactionnelle connue, pas une régression attribuée à ce correctif.
+Aucun défaut transactionnel SQLite reproduit ne reste ouvert dans le périmètre
+qualifié par cette matrice. Les limites explicitement documentées restent des
+bornes de preuve, pas des défauts démontrés.
 
 ## Zones laissées inchangées
 
@@ -66,9 +66,10 @@ garantie globale pour tous les accès SQLite de Noon.
 
 Les défauts démontrés dans les zones corrigées ci-dessus disposent de preuves
 statiques et de validations déterministes historiques sur bases temporaires.
-La stabilisation SQLite reste **PARTIAL** : les deux courses de
-`ReviewLearningRepository.save()` et `JobStore.create()` sont corrigées, mais
-la limite ExecutionTracking ci-dessus reste hors du périmètre traité.
+La qualification SQLite est **CLOSED pour le périmètre audité** : les défauts
+concrets reproduits dans cette matrice disposent désormais d'une correction et
+d'une preuve déterministe sur bases temporaires. Cette clôture ne constitue pas
+une garantie générale pour tout futur accès SQLite ajouté à Noon.
 
 Adaptive Routing reste en `SHADOW` par décision produit : cette synthèse ne
 déclenche ni son activation ni un nouveau mécanisme de routage. Toute évolution

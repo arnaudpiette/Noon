@@ -150,30 +150,119 @@ function createExecutionTrackingEngine({
       dependencyRef: input.blocker?.dependencyRef || null,
       detectedAt: occurredAt, confidence,
     } : target === "planned" || target === "in_progress" || target === "completed" ? null : current.blocker;
-    const next = repository.update(executionItemId, current.version, {
-      status: target, progress, confidence,
-      completionSource: source,
-      actualStart: input.actualStart || (target === "in_progress" ? occurredAt : current.actualStart),
-      actualEnd: input.actualEnd || (target === "completed" ? occurredAt : current.actualEnd),
-      remainingDurationMinutes, blocker,
-      deferredUntil: target === "deferred" ? input.deferredUntil || null : current.deferredUntil,
-      manualMove: input.manualMove === true || current.manualMove,
-      plannedStart: input.plannedStart || current.plannedStart,
-      plannedEnd: input.plannedEnd || current.plannedEnd,
-      lastEventAt: occurredAt, lastUpdatedAt: now().toISOString(),
-    });
-    repository.appendEvent({ executionItemId, eventKey: key, eventType: input.eventType || "status_change",
-      fromStatus: current.status, toStatus: target, source, confidence, occurredAt,
-      reasonCode: input.reasonCode || null });
-    if (target === "completed" && next.actualStart && next.actualEnd && confidence >= 0.8) {
-      const actual = Math.max(0, (Date.parse(next.actualEnd) - Date.parse(next.actualStart)) / 60_000);
-      const estimated = current.remainingDurationMinutes || actual;
-      if (actual > 0) {
-        repository.recordDuration(`project:${input.projectId || "general"}`, estimated, actual);
-        metrics?.record("duration_estimate_error", Math.abs(actual - estimated));
-        metrics?.record("duration_estimate_samples", 1);
+    let durationSample = null;
+
+    const persistTransition = () => {
+      const updated = repository.update(
+        executionItemId,
+        current.version,
+        {
+          status: target,
+          progress,
+          confidence,
+          completionSource: source,
+          actualStart:
+            input.actualStart ||
+            (target === "in_progress"
+              ? occurredAt
+              : current.actualStart),
+          actualEnd:
+            input.actualEnd ||
+            (target === "completed"
+              ? occurredAt
+              : current.actualEnd),
+          remainingDurationMinutes,
+          blocker,
+          deferredUntil:
+            target === "deferred"
+              ? input.deferredUntil || null
+              : current.deferredUntil,
+          manualMove:
+            input.manualMove === true ||
+            current.manualMove,
+          plannedStart:
+            input.plannedStart ||
+            current.plannedStart,
+          plannedEnd:
+            input.plannedEnd ||
+            current.plannedEnd,
+          lastEventAt: occurredAt,
+          lastUpdatedAt: now().toISOString(),
+        },
+      );
+
+      repository.appendEvent({
+        executionItemId,
+        eventKey: key,
+        eventType:
+          input.eventType ||
+          "status_change",
+        fromStatus: current.status,
+        toStatus: target,
+        source,
+        confidence,
+        occurredAt,
+        reasonCode:
+          input.reasonCode || null,
+      });
+
+      if (
+        target === "completed" &&
+        updated.actualStart &&
+        updated.actualEnd &&
+        confidence >= 0.8
+      ) {
+        const actual = Math.max(
+          0,
+          (
+            Date.parse(updated.actualEnd) -
+            Date.parse(updated.actualStart)
+          ) / 60_000,
+        );
+
+        const estimated =
+          current.remainingDurationMinutes ||
+          actual;
+
+        if (actual > 0) {
+          repository.recordDuration(
+            `project:${input.projectId || "general"}`,
+            estimated,
+            actual,
+          );
+
+          durationSample = {
+            estimated,
+            actual,
+          };
+        }
       }
+
+      return updated;
+    };
+
+    const next =
+      typeof repository.transaction === "function"
+        ? repository.transaction(
+            persistTransition,
+          )
+        : persistTransition();
+
+    if (durationSample) {
+      metrics?.record(
+        "duration_estimate_error",
+        Math.abs(
+          durationSample.actual -
+          durationSample.estimated,
+        ),
+      );
+
+      metrics?.record(
+        "duration_estimate_samples",
+        1,
+      );
     }
+
     metrics?.record("tracking_status_changes", 1, { category: `${current.status}_to_${target}` });
     metrics?.record(`tracking_${target}`, 1);
     audit?.("tracking.transition", { executionItemId, actionId: current.actionId,
