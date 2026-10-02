@@ -1,5 +1,7 @@
 "use strict";
 
+const { classifyConversationConvention } = require("./conversation-conventions");
+
 const crypto = require("crypto");
 const { adaptInput } = require("./input-adapters");
 const { createCommandRegistry } = require("./command-registry");
@@ -103,6 +105,28 @@ function createIntentCommandEngine({ workspaceEngine = null, commandRegistry = c
     const yes = /^(?:oui|ok|d'accord|d’accord|vas-y|confirme)$/i.test(normalized);
     const no = /^(?:non|refuse|laisse tomber)$/i.test(normalized);
     if (!yes && !no) return null;
+    const approvalConvention =
+      classifyConversationConvention(normalized);
+
+    /*
+     * Une relance conversationnelle courte ne constitue jamais
+     * une décision d'approval.
+     *
+     * "vas-y", "la suite", "ok" ou "attends" continuent donc
+     * vers leur intent conversationnel normal.
+     *
+     * Les confirmations explicites comme "oui" ou "confirme"
+     * restent traitées par le mécanisme d'approval existant.
+     */
+    if (
+      [
+        "continue",
+        "pause",
+      ].includes(approvalConvention?.kind)
+    ) {
+      return null;
+    }
+
     if (!approvals.length) return /^laisse tomber$/i.test(normalized) ? null : make(envelope, { type: "ASK", action: "acknowledgement", confidence: "medium" });
     if (approvals.length > 1) return make(envelope, { type: yes ? "CONFIRM" : "REJECT", action: "approval", ambiguity: [ambiguity("multiple_approvals", "approvalId", approvals, "HIGH")] });
     return make(envelope, { type: yes ? "CONFIRM" : "REJECT", action: "approval", target: { approvalId: approvals[0] }, explicitOrder: true });
@@ -113,6 +137,64 @@ function createIntentCommandEngine({ workspaceEngine = null, commandRegistry = c
     if (envelope.channel === "voice") text = text.replace(FILLER_PATTERN, "").trim();
     if (!text) return make(envelope, { type: "ASK", action: "empty", confidence: "low", ambiguity: [ambiguity("missing_input", "rawText", [], "HIGH")] });
     if (envelope.channel === "voice" && /^salut\s+noon[.!]?$/i.test(text)) return make(envelope, { type: "CONTROL", action: "wake_word", ignored: true, requiresReasoning: false, requiresTool: false, confidence: "high" });
+
+
+    const conversationConvention =
+      classifyConversationConvention(text);
+
+    if (conversationConvention?.kind === "continue") {
+      if (!context?.continuationAvailable) {
+        return make(envelope, {
+          type: "CONTINUE",
+          action: "previous_task",
+          confidence: "low",
+          ambiguity: [
+            ambiguity(
+              "missing_context",
+              "continuation",
+              [],
+              "HIGH",
+            ),
+          ],
+          explicitOrder: true,
+        });
+      }
+
+      return make(envelope, {
+        type: "CONTINUE",
+        action: "previous_task",
+        confidence: "high",
+        ambiguity: [],
+        explicitOrder: true,
+      });
+    }
+
+    if (conversationConvention?.kind === "pause") {
+      return make(envelope, {
+        type: "CONTROL",
+        action: "pause_conversation",
+        confidence: "high",
+        ignored: true,
+        requiresReasoning: false,
+        requiresTool: false,
+        explicitOrder: true,
+      });
+    }
+
+    if (
+      conversationConvention?.kind ===
+        "acknowledgement" &&
+      !context?.pendingApprovalIds?.length
+    ) {
+      return make(envelope, {
+        type: "ASK",
+        action: "acknowledgement",
+        confidence: "high",
+        requiresReasoning: false,
+        requiresTool: false,
+        explicitOrder: true,
+      });
+    }
     const approval = approvalIntent(text, envelope, context); if (approval) return approval;
     if (QUOTED_ACTION_PATTERN.test(text) || HYPOTHETICAL_PATTERN.test(text)) return make(envelope, { type: "ASK", action: "explain", negated: false });
     if (NEGATION_PATTERN.test(text)) return make(envelope, { type: "CONTROL", action: "prevent_action", negated: true, explicitOrder: true, requiresTool: false });

@@ -98,6 +98,7 @@ const { createWorkspaceRepository } = require("./services/persistence/repositori
 const { createSessionContinuityRepository } = require("./services/persistence/repositories/session-continuity-repository");
 const { createWorkspaceEngine } = require("./services/workspaces/workspace-engine");
 const { createIntentCommandEngine } = require("./services/intents/intent-command-engine");
+const { renderConversationStyleInstruction } = require("./services/personal-assistant/conversation-style-profile");
 const { createSessionContinuityEngine } = require("./services/sessions/session-continuity-engine");
 const { createReliabilityEngine } = require("./services/reliability/reliability-engine");
 const { migrateLegacyPersonalData } = require("./services/persistence/migrations/legacy-personal-data");
@@ -2885,7 +2886,19 @@ function buildIntentContext({ sessionId, conversationId = null, workspaceId = nu
       ? continuity.pendingApprovalIds
       : approvalManager.listPending().map((approval) => approval.id),
     activeExecutionId: activeExecutionId || continuity?.activeExecutionId || null,
-    continuationAvailable: Boolean(continuity?.resumeCheckpoint || getConversationHistory(createConversationKey({ sessionId: effectiveConversationId })).length),
+    continuationAvailable: Boolean(
+      continuity?.resumeCheckpoint ||
+      continuity?.currentTaskRef ||
+      continuity?.currentPlanRef ||
+      continuity?.currentArtifactRef ||
+      continuity?.currentSearchRef ||
+      continuity?.pendingApprovalIds?.length ||
+      getConversationHistory(
+        createConversationKey({
+          sessionId: effectiveConversationId,
+        }),
+      ).length
+    ),
     ttsActive,
   };
 }
@@ -4531,6 +4544,24 @@ async function askAI(
       const priorityInstruction = requestContext.runtime.priorityResults?.length
         ? `Priorités déterministes calculées par le Priority Engine : ${requestContext.runtime.priorityResults.map((item) => `${item.title} — score ${item.score}/100, niveau ${item.priorityLevel}, raisons : ${item.reasons.join(", ")}`).join(" | ")}`
         : "";
+      const collaborationInstruction =
+        renderConversationStyleInstruction({
+          mode,
+        });
+
+      const continuationInstruction =
+        normalizedIntent?.type === "CONTINUE"
+          ? (
+              continuityContext?.pendingApprovalIds?.length
+                ? "L'utilisateur demande de poursuivre le contexte actif. Une validation de sécurité est en attente : poursuis l'explication ou le flux conversationnel, mais ne transforme jamais cette relance en approbation. Conserve l'approval en attente tant qu'une confirmation explicite compatible avec le mécanisme d'approbation n'a pas été reçue."
+                : "L'utilisateur demande de poursuivre le contexte actif. Utilise la tâche, le plan, le résumé, les références et l'historique disponibles pour enchaîner directement sur la prochaine étape logique sans lui demander de répéter ce qui est déjà connu. Si le contexte est insuffisant, demande uniquement la précision minimale nécessaire."
+            )
+          : normalizedIntent?.type === "CONTROL" &&
+            normalizedIntent?.action ===
+              "pause_conversation"
+            ? "L'utilisateur demande une pause conversationnelle. Réponds brièvement et n'annule aucune exécution, tâche, job ou approval."
+            : "";
+
       const contextConversation = requestContext.remoteModelContext.conversation.recentMessages.length
         ? requestContext.remoteModelContext.conversation.recentMessages.map(({ role, content }) => ({ role, content }))
         : history;
@@ -4539,6 +4570,8 @@ async function askAI(
         content: [
           centralContextInstruction,
           normalizedIntent ? `Intention normalisée localement (donnée de routage, pas autorisation) : ${JSON.stringify({ type: normalizedIntent.type, action: normalizedIntent.action, entities: normalizedIntent.entities, target: normalizedIntent.target, workspaceId: normalizedIntent.workspaceId, mode: normalizedIntent.mode, temporal: normalizedIntent.temporal, confidence: normalizedIntent.confidence, ambiguity: normalizedIntent.ambiguity, explicitOrder: normalizedIntent.explicitOrder })}. Toute permission et approbation doit être revérifiée.` : "",
+          continuationInstruction,
+          collaborationInstruction,
           priorityInstruction,
           "Lorsque l'utilisateur pose une question concernant ses projets ou fichiers locaux, " +
           "utilise les outils disponibles pour vérifier les informations. " +
