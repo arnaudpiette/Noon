@@ -8,6 +8,14 @@ const {
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { applyUiValidationProfile, isUiValidationMode } = require("./ui-validation-mode");
+// Ce traitement doit rester avant les modules de démarrage susceptibles de
+// composer le serveur ou la persistance.
+const uiValidationProfile = applyUiValidationProfile({
+  normalUserData: app.getPath("userData"), homeDirectory: app.getPath("home"), fsImpl: fs,
+});
+const uiValidationRequested = Boolean(uiValidationProfile) && isUiValidationMode();
+if (uiValidationRequested) app.setPath("userData", uiValidationProfile.profile);
 const sharp = require("sharp");
 const { isSafeExternalUrl, isSafeGoogleAuthorizationUrl, isValidAccelerator, parseNoonDeepLink } = require("./app-core");
 const {
@@ -50,7 +58,7 @@ if (smokeTestRequested && smokeUserData) {
   app.setPath("userData", path.resolve(smokeUserData));
 }
 // Le smoke test utilise un profil et un port isolés ; il ne doit pas réveiller l'instance quotidienne.
-const hasSingleInstanceLock = benchmarkControlCommand || benchmarkControlCommandError ? true : smokeTestRequested || app.requestSingleInstanceLock();
+const hasSingleInstanceLock = benchmarkControlCommand || benchmarkControlCommandError ? true : smokeTestRequested || uiValidationRequested || app.requestSingleInstanceLock();
 let mainWindow = null;
 let devPreviewController = null;
 let tray = null;
@@ -146,7 +154,7 @@ function loadPreferences() {
     showInDock: true,
     ...readJson("preferences.json", {}),
   };
-  return safeModeRequested
+  return safeModeRequested || uiValidationRequested
     ? { ...preferences, wakeWordEnabled: false, creativeBriefEnabled: false }
     : preferences;
 }
@@ -298,7 +306,7 @@ function configureSessionSecurity() {
   });
 }
 async function requestMicrophoneAccess() {
-  if (smokeTestRequested) {
+  if (smokeTestRequested || uiValidationRequested) {
     microphonePermission = "skipped-smoke-test";
     return false;
   }
@@ -333,6 +341,7 @@ async function initializeWakeWordConfiguration(preferences) {
   return configured;
 }
 async function openExternalUrl(rawUrl) {
+  if (uiValidationRequested) return false;
   if (!isSafeExternalUrl(rawUrl)) return false;
   await shell.openExternal(rawUrl);
   return true;
@@ -670,6 +679,7 @@ function registerIpc() {
     return { authenticated: true, method: "password" };
   });
   registerTrustedHandler("noon:open-google-authorization", async (_event, rawUrl) => {
+    if (uiValidationRequested) throw Object.assign(new Error("L'autorisation Google est désactivée pendant la validation UI isolée."), { code: "UI_VALIDATION_EXTERNAL_DISABLED" });
     if (!isSafeGoogleAuthorizationUrl(rawUrl)) {
       const error = new Error("URL d’autorisation Google invalide.");
       error.code = "GOOGLE_OAUTH_AUTHORIZATION_URL_INVALID";
@@ -680,6 +690,7 @@ function registerIpc() {
   });
 
   registerTrustedHandler("noon:open-external", async (_event, rawUrl) => {
+    if (uiValidationRequested) throw Object.assign(new Error("L'ouverture d'URL externe est désactivée pendant la validation UI isolée."), { code: "UI_VALIDATION_EXTERNAL_DISABLED" });
     if (!isSafeExternalUrl(rawUrl)) {
       const error = new Error("URL externe invalide ou non autorisée.");
       error.code = "EXTERNAL_URL_INVALID";
@@ -755,6 +766,7 @@ function registerIpc() {
   registerTrustedHandler(
     "noon:dev-preview-open-external",
     async (_event, rawUrl) => {
+      if (uiValidationRequested) throw Object.assign(new Error("L'ouverture d'URL externe est désactivée pendant la validation UI isolée."), { code: "UI_VALIDATION_EXTERNAL_DISABLED" });
       const target =
         normalizeDevPreviewUrl(
           rawUrl,
@@ -833,6 +845,7 @@ function registerIpc() {
     return wakeWordService?.getStatus();
   });
   registerTrustedHandler("noon:share-conversation", async (_event, payload) => {
+    if (uiValidationRequested) throw Object.assign(new Error("Le partage externe est désactivé pendant la validation UI isolée."), { code: "UI_VALIDATION_EXTERNAL_DISABLED" });
     const target = payload?.target;
     const markdown = typeof payload?.markdown === "string" ? payload.markdown : "";
     const suggestedName = typeof payload?.suggestedName === "string" &&
@@ -865,6 +878,7 @@ function registerIpc() {
     return { message: "WhatsApp ouvert. Aucun message n’a été envoyé automatiquement." };
   });
   registerTrustedHandler("noon:open-system-settings", async (_event, section) => {
+    if (uiValidationRequested) return false;
     const allowed = {
       microphone: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
       notifications: "x-apple.systempreferences:com.apple.preference.notifications",
@@ -984,15 +998,17 @@ async function startNoon() {
       scheduleWakeWordResume(90_000);
     });
   });
-  const migration = await measureStartupPhase("legacy-data-migration", async () => (
-    migrateLegacyData(path.join(__dirname, ".."), userDataDirectory)
-  ));
+  const migration = uiValidationRequested
+    ? { migrated: 0, skipped: true }
+    : await measureStartupPhase("legacy-data-migration", async () => (
+      migrateLegacyData(path.join(__dirname, ".."), userDataDirectory)
+    ));
   logNoonEvent("audit", "data-migration", JSON.stringify({
     migrated: migration.migrated,
     skipped: migration.skipped,
   }));
   localAuthSecret = await measureStartupPhase("local-auth", async () => (
-    smokeTestRequested
+    smokeTestRequested || uiValidationRequested
       ? crypto.randomBytes(32).toString("base64url")
       : getOrCreateLocalSecret()
   ));
@@ -1015,7 +1031,7 @@ async function startNoon() {
       throw new Error("Le port 3000 est occupé par une autre application.");
     }
   }
-  if (!safeModeRequested) {
+  if (!safeModeRequested && !uiValidationRequested) {
     startOptionalStartupPhase({
       operation: () => measureStartupPhase(
         "wake-word-config",

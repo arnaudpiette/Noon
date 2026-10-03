@@ -1,5 +1,7 @@
 // Serveur local de Noon : API, mémoire, budget et outils en lecture seule.
-require("dotenv").config();
+// Le profil UI isolé ne doit jamais importer l'environnement du dépôt.
+if (process.env.NOON_UI_VALIDATION !== "1") require("dotenv").config();
+const { assertUiValidationDataDirectory, isUiValidationExternalRequest } = require("./electron/ui-validation-mode");
 const OpenAI = require("openai");
 const { toFile } = require("openai");
 const { GoogleGenAI } = require("@google/genai");
@@ -9,6 +11,9 @@ const { GoogleGenAI } = require("@google/genai");
 let openai = null;
 let loadOpenAIKeyOnDemand = null;
 function getOpenAIClient() {
+  if (process.env.NOON_UI_VALIDATION === "1") {
+    throw Object.assign(new Error("Le fournisseur OpenAI est désactivé pendant la validation UI isolée."), { code: "UI_VALIDATION_EXTERNAL_DISABLED", statusCode: 503 });
+  }
   if (openai) return openai;
   if (!process.env.OPENAI_API_KEY && loadOpenAIKeyOnDemand) loadOpenAIKeyOnDemand();
   if (!process.env.OPENAI_API_KEY) {
@@ -22,6 +27,9 @@ function getOpenAIClient() {
 let gemini = null;
 let loadGeminiKeyOnDemand = null;
 function getGeminiClient() {
+  if (process.env.NOON_UI_VALIDATION === "1") {
+    throw Object.assign(new Error("Le fournisseur Gemini est désactivé pendant la validation UI isolée."), { code: "UI_VALIDATION_EXTERNAL_DISABLED", statusCode: 503 });
+  }
   if (gemini) return gemini;
   if (!process.env.GEMINI_API_KEY && loadGeminiKeyOnDemand) loadGeminiKeyOnDemand();
   if (!process.env.GEMINI_API_KEY) throw Object.assign(new Error("Credential Gemini absent."), { statusCode: 503 });
@@ -234,6 +242,8 @@ const {
 const DEFAULT_PORT = Number(process.env.NOON_PORT || 3000);
 const DEFAULT_HOST = "127.0.0.1";
 const DATA_DIRECTORY = process.env.NOON_DATA_DIR || __dirname;
+const UI_VALIDATION_MODE = process.env.NOON_UI_VALIDATION === "1";
+assertUiValidationDataDirectory({ dataDirectory: DATA_DIRECTORY });
 fs.mkdirSync(DATA_DIRECTORY, { recursive: true });
 const CREATIVE_IMAGE_PREVIEW_DIRECTORY = path.join(
   DATA_DIRECTORY,
@@ -251,6 +261,10 @@ const runtimeConfig = createRuntimeConfigService({
   },
   observability: (event, metadata) => toolAuditLog.append(`config.${event}`, metadata),
 });
+if (UI_VALIDATION_MODE) {
+  runtimeConfig.set("runtime.executionPreference", "LOCAL_ONLY", { scope: "USER", origin: "ui-validation" });
+  runtimeConfig.set("offline.queueNetworkJobs", false, { scope: "USER", origin: "ui-validation" });
+}
 const featureFlagRegistry = createFeatureFlagRegistry();
 const featureFlags = createFeatureFlagService({
   registry: featureFlagRegistry,
@@ -493,7 +507,7 @@ try {
 } catch {
   // Le serveur Node seul conserve alors le jeton uniquement en mémoire.
 }
-const runtimeSafeStorage = process.env.NOON_SMOKE_TEST === "1"
+const runtimeSafeStorage = process.env.NOON_SMOKE_TEST === "1" || UI_VALIDATION_MODE
   ? null
   : electronSafeStorage;
 const integrationTokenStore = createTokenStore({
@@ -1062,15 +1076,16 @@ const artifactEngine = createArtifactEngine({
   observability: (event, metadata) => toolAuditLog.append(event, metadata),
 });
 artifactEngine.cleanupPreviews();
-const remindersConnector = createAppleConnector({ reliability: reliabilityEngine });
-const notesConnector = createAppleNotesConnector({ reliability: reliabilityEngine });
+const externalCapabilityDisabled = UI_VALIDATION_MODE ? "Cette capacité externe est désactivée pendant la validation UI isolée." : null;
+const remindersConnector = createAppleConnector({ reliability: reliabilityEngine, disabledReason: externalCapabilityDisabled });
+const notesConnector = createAppleNotesConnector({ reliability: reliabilityEngine, disabledReason: externalCapabilityDisabled });
 const gmailConnector = createGmailConnector({
   tokenStore: integrationTokenStore,
   getGoogleAccessToken,
   runtime: localIntelligenceRuntime,
   configured: () => Boolean(process.env.GOOGLE_OAUTH_CLIENT_ID && process.env.GOOGLE_OAUTH_CLIENT_SECRET),
   approvals: approvalManager,
-  reliability: reliabilityEngine,
+  reliability: reliabilityEngine, disabledReason: externalCapabilityDisabled,
 });
 const calendarConnector = createCalendarConnector({
   tokenStore: integrationTokenStore,
@@ -1078,7 +1093,7 @@ const calendarConnector = createCalendarConnector({
   runtime: localIntelligenceRuntime,
   configured: () => Boolean(process.env.GOOGLE_OAUTH_CLIENT_ID && process.env.GOOGLE_OAUTH_CLIENT_SECRET),
   approvals: approvalManager,
-  reliability: reliabilityEngine,
+  reliability: reliabilityEngine, disabledReason: externalCapabilityDisabled,
 });
 
 function sendGoogleCallbackPage(res, { statusCode, title, message }) {
@@ -5400,6 +5415,18 @@ const server = http.createServer(async (req, res) => {
     return res.end(JSON.stringify({
       status: "error",
       message: "Authentification locale requise.",
+    }));
+  }
+
+  // Le serveur HTTP local reste utilisable pour la validation de l'UI. Les
+  // points d'entrée qui initialisent un connecteur ou une session distante
+  // sont arrêtés avant toute lecture de jeton ou appel réseau.
+  if (UI_VALIDATION_MODE && isUiValidationExternalRequest(requestPath)) {
+    res.writeHead(503, { "Cache-Control": "no-store" });
+    return res.end(JSON.stringify({
+      status: "unavailable",
+      code: "UI_VALIDATION_EXTERNAL_DISABLED",
+      message: "Cette capacité externe est désactivée pendant la validation UI isolée.",
     }));
   }
 

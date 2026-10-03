@@ -10,6 +10,9 @@ function createConnector(definition, dependencies = {}) {
   const credentialId = definition.credentialId || definition.id;
   const connected = () => definition.local === true ? Boolean(state.lastSuccessfulRequestAt) : Boolean(tokenStore?.get(credentialId));
   function assertRemoteAvailable() {
+    if (dependencies.disabledReason) {
+      throw Object.assign(new Error(dependencies.disabledReason), { code: "UI_VALIDATION_EXTERNAL_DISABLED" });
+    }
     if (!definition.remoteCapability || !dependencies.runtime) return;
     const result = dependencies.runtime.preflight({ requiredCapabilities: [definition.remoteCapability] });
     if (result.status !== "AVAILABLE") throw Object.assign(new Error("Source distante bloquée par la politique locale ou le réseau."), { code: "REMOTE_CONNECTOR_BLOCKED" });
@@ -28,7 +31,8 @@ function createConnector(definition, dependencies = {}) {
     get status() {
       let health = state.lastError ? "UNAVAILABLE" : state.lastSuccessfulRequestAt ? "HEALTHY" : "UNKNOWN";
       try { if (reliability) health = reliability.snapshot(definition.id).state; } catch {}
-      const authState = state.lastError?.category === "AUTH_REQUIRED" ? "AUTH_REQUIRED"
+      const authState = dependencies.disabledReason ? "DISABLED"
+        : state.lastError?.category === "AUTH_REQUIRED" ? "AUTH_REQUIRED"
         : state.lastError?.category === "PERMISSION_DENIED" ? "PERMISSION_DENIED"
           : definition.local ? (state.lastSuccessfulRequestAt ? "GRANTED" : "UNKNOWN")
             : connected() ? "CONNECTED" : dependencies.configured?.() === false ? "NOT_CONFIGURED" : "AUTH_REQUIRED";
@@ -37,7 +41,7 @@ function createConnector(definition, dependencies = {}) {
         capabilities: definition.capabilities, readCapabilities: definition.readCapabilities,
         writeCapabilities: definition.writeCapabilities, scopes: definition.scopes,
         lastSuccessfulRequestAt: state.lastSuccessfulRequestAt,
-        lastError: state.lastError?.safeMessage || null, reasonCode: state.lastError?.category || null, health,
+        lastError: dependencies.disabledReason || state.lastError?.safeMessage || null, reasonCode: dependencies.disabledReason ? "UI_VALIDATION_EXTERNAL_DISABLED" : state.lastError?.category || null, health,
       };
     },
     assertRemoteAvailable, markSuccess, markError,
