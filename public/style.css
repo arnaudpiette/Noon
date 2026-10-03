@@ -1573,8 +1573,9 @@ body.dev-preview-resizing *{
 /* DEV SOURCE CONTROL UI */
 
 .dev-project-rules-panel{margin:12px;border:1px solid rgba(255,255,255,.13);border-radius:12px;background:rgba(13,18,27,.94);color:var(--text,#f7f8fb)}
+.dev-terminal-actions #devUiValidationProject{max-width:190px;font:inherit;color:inherit;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.2);border-radius:7px;padding:5px}
 .dev-project-rules-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.1)}
-.dev-project-rules-header>div{display:grid;gap:3px}.dev-project-rules-header strong{font-size:14px}.dev-project-rules-scope,.dev-project-rules-readonly,.dev-project-rules-preview{margin:12px 16px;color:var(--muted,#aab2c3);font-size:12px}.dev-project-rules-readonly{color:#ffbf70}.dev-project-rules-list{display:grid;gap:8px;padding:0 16px}.dev-project-rule{display:grid;gap:7px;padding:10px;border-radius:8px;background:rgba(255,255,255,.04)}.dev-project-rule[data-status="DISABLED"]{opacity:.62}.dev-project-rule p{margin:0;white-space:pre-wrap}.dev-project-rule>span{font-size:12px;color:var(--muted,#aab2c3)}.dev-project-rule-actions{display:flex;gap:8px}.dev-project-rule-actions button,.dev-project-rules-header button,.dev-project-rules-form button{font:inherit}.dev-project-rules-empty{margin:0;color:var(--muted,#aab2c3)}.dev-project-rules-form{display:grid;gap:8px;padding:16px}.dev-project-rules-form textarea{resize:vertical;min-height:70px;padding:9px;border-radius:7px;background:#0d121b;color:inherit;border:1px solid rgba(255,255,255,.18)}.dev-project-rules-form textarea:focus-visible,.dev-project-rule-actions button:focus-visible,.dev-project-rules-header button:focus-visible,.dev-project-rules-form button:focus-visible{outline:2px solid var(--figma-blue,#5ea8ff);outline-offset:2px}.dev-project-rules-form div{display:flex;gap:8px}.dev-project-rules-panel footer{display:block;padding:10px 16px;border-top:1px solid rgba(255,255,255,.1);font-size:12px;color:var(--muted,#aab2c3)}#devProjectRulesStatus[data-state="error"]{color:#ff858d}
+.dev-project-rules-header>div{display:grid;gap:3px}.dev-project-rules-header strong{font-size:14px}.dev-project-rules-scope,.dev-project-rules-readonly,.dev-project-rules-preview{margin:12px 16px;color:var(--muted,#aab2c3);font-size:12px}.dev-project-rules-readonly{color:#ffbf70}.dev-project-rules-list{display:grid;gap:8px;padding:0 16px}.dev-project-rule{display:grid;gap:7px;padding:10px;border-radius:8px;background:rgba(255,255,255,.04)}.dev-project-rule[data-status="DISABLED"]{opacity:.62}.dev-project-rule p{margin:0;white-space:pre-wrap}.dev-project-rule>span{font-size:12px;color:var(--muted,#aab2c3)}.dev-project-rule-actions{display:flex;gap:8px}.dev-project-rule-actions button,.dev-project-rules-header button,.dev-project-rules-form button{font:inherit}.dev-project-rules-empty{margin:0;color:var(--muted,#aab2c3)}.dev-project-rules-form{display:grid;gap:8px;padding:16px}.dev-project-rules-form textarea{resize:vertical;min-height:70px;padding:9px;border-radius:7px;background:#0d121b;color:inherit;border:1px solid rgba(255,255,255,.18)}.dev-project-rules-form textarea:focus-visible,.dev-project-rule-actions button:focus-visible,.dev-project-rules-header button:focus-visible,.dev-project-rules-form button:focus-visible{outline:2px solid var(--figma-blue,#5ea8ff);outline-offset:2px}.dev-project-rules-form div{display:flex;gap:8px}.dev-project-rules-panel footer{display:block;padding:10px 16px;border-top:1px solid rgba(255,255,255,.1);font-size:12px;color:var(--muted,#aab2c3)}#devProjectRulesStatus[data-state="error"]{color:#ff858d}.dev-project-rule-reactivate:not(:disabled){border-color:var(--green);background:var(--green);color:#000;font-weight:700}.dev-project-rule-reactivate:not(:disabled):hover{border-color:#caff3d;background:#caff3d}.dev-project-rule-reactivate:focus-visible{outline:2px solid #fff;outline-offset:2px;box-shadow:0 0 0 4px rgba(184,249,0,.32)}.dev-project-rule-reactivate:disabled{border-color:rgba(184,249,0,.28);background:rgba(184,249,0,.18);color:rgba(255,255,255,.74);cursor:not-allowed;opacity:1}
 
 .dev-source-control-panel[hidden]{
   display:none!important
@@ -2166,3 +2167,139 @@ body.dev-preview-resizing *{
   background:#e0505e;
   animation:none
 }
+
+
+/* DEV_TERMINAL_UNIFIED_BUTTONS_START
+   Le bouton Noon est la référence réelle.
+   Les boutons texte gardent une largeur automatique.
+   Les contrôles icônes gardent la même hauteur mais sont carrés. */
+
+/* Boutons texte principaux du terminal */
+#devWorkspaceAgentRun,
+#devWorkspaceAgentCancel,
+#devSourceControlToggle,
+#devProjectRulesToggle,
+#devTerminalCopyOutput,
+#devTerminalExportOutput,
+#devTerminalRun{
+  box-sizing:border-box!important;
+  display:inline-flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+
+  width:auto!important;
+  min-width:max-content!important;
+
+  height:var(--dev-terminal-control-height)!important;
+  min-height:var(--dev-terminal-control-height)!important;
+  max-height:var(--dev-terminal-control-height)!important;
+
+  padding-top:0!important;
+  padding-bottom:0!important;
+  padding-left:var(--dev-terminal-control-padding-x)!important;
+  padding-right:var(--dev-terminal-control-padding-x)!important;
+
+  border-radius:var(--dev-terminal-control-radius)!important;
+
+  font-family:var(--dev-terminal-control-font-family)!important;
+  font-size:var(--dev-terminal-control-font-size)!important;
+  font-weight:var(--dev-terminal-control-font-weight)!important;
+  line-height:1!important;
+  letter-spacing:var(--dev-terminal-control-letter-spacing)!important;
+
+  text-align:center!important;
+  white-space:nowrap!important;
+
+  overflow:visible!important
+}
+
+/* Boutons purement iconographiques */
+#devTerminalAdd,
+#devTerminalCollapse,
+#devTerminalMaximize{
+  box-sizing:border-box!important;
+  display:grid!important;
+  place-items:center!important;
+
+  width:var(--dev-terminal-control-height)!important;
+  min-width:var(--dev-terminal-control-height)!important;
+  max-width:var(--dev-terminal-control-height)!important;
+
+  height:var(--dev-terminal-control-height)!important;
+  min-height:var(--dev-terminal-control-height)!important;
+  max-height:var(--dev-terminal-control-height)!important;
+
+  padding:0!important;
+  margin:0!important;
+
+  border-radius:var(--dev-terminal-control-radius)!important;
+
+  font-family:var(--dev-terminal-control-font-family)!important;
+  font-size:var(--dev-terminal-control-font-size)!important;
+  font-weight:var(--dev-terminal-control-font-weight)!important;
+  line-height:1!important;
+
+  text-align:center!important
+}
+
+/*
+ * Le bouton lui-même ne doit jamais translater lors
+ * de l'animation. Son centre géométrique reste fixe.
+ */
+#devTerminalCollapse{
+  transform-origin:50% 50%!important;
+  transform-box:border-box!important;
+  overflow:visible!important
+}
+
+/*
+ * Si la flèche possède un élément enfant,
+ * c'est lui qui conserve également son axe central.
+ */
+#devTerminalCollapse > *{
+  display:grid!important;
+  width:100%!important;
+  height:100%!important;
+  margin:0!important;
+  padding:0!important;
+  place-items:center!important;
+
+  transform-origin:50% 50%!important;
+  transform-box:border-box!important;
+
+  line-height:1!important
+}
+
+#devTerminalCollapse::before,
+#devTerminalCollapse::after{
+  transform-origin:50% 50%!important;
+  transform-box:fill-box!important
+}
+
+/* DEV_TERMINAL_UNIFIED_BUTTONS_END */
+
+
+/* DEV_PROJECT_RULES_VISIBLE_PANEL_FIX
+   Quand Règles est ouvert, le Terminal devient défilable afin que
+   le panneau ne soit jamais clippé hors de sa hauteur fixe. */
+
+.dev-project-rules-panel[hidden]{
+  display:none!important
+}
+
+#devTerminalPanel:has(#devProjectRulesPanel:not([hidden])){
+  overflow-y:auto!important;
+  overscroll-behavior:contain
+}
+
+#devProjectRulesPanel:not([hidden]){
+  display:block!important;
+  min-height:0;
+  max-height:calc(
+    var(--dev-terminal-height,285px) - 72px
+  );
+  overflow:auto;
+  scroll-margin-block:48px 24px
+}
+
+/* DEV_PROJECT_RULES_VISIBLE_PANEL_FIX_END */

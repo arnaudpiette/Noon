@@ -6,6 +6,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 const invoke = (channel, payload) => ipcRenderer.invoke(channel, payload);
 
 contextBridge.exposeInMainWorld("noon", Object.freeze({
+  uiValidationMode: process.env.NOON_UI_VALIDATION === "1",
   getStatus: () => invoke("noon:get-status"),
   getPreferences: () => invoke("noon:get-preferences"),
   getDevProjectRules: (workspaceId) => invoke("noon:dev-project-rules", { workspaceId }),

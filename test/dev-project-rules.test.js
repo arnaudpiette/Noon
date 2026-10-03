@@ -51,9 +51,24 @@ test("les mutations SQLite lient atomiquement règle, projet, propriétaire et v
   } finally { close(f); }
 });
 
+test("la réactivation ne cible que la règle désactivée attendue et ne ressuscite pas une suppression", () => {
+  const f = fixture(); try {
+    const rule = f.repository.create({ projectId: "p", ownerProfileScope: "owner", text: "Réversible.", actor: ACTOR });
+    const disabled = f.repository.disable({ ruleId: rule.ruleId, projectId: "p", ownerProfileScope: "owner", expectedVersion: rule.version, actor: ACTOR });
+    const enabled = f.repository.enable({ ruleId: rule.ruleId, projectId: "p", ownerProfileScope: "owner", expectedVersion: disabled.version, actor: ACTOR });
+    assert.equal(enabled.status, "ACTIVE"); assert.equal(enabled.version, disabled.version + 1);
+    assert.throws(() => f.repository.enable({ ruleId: rule.ruleId, projectId: "p", ownerProfileScope: "owner", expectedVersion: disabled.version, actor: ACTOR }), (error) => error.code === "RULE_MUTATION_REFUSED");
+    const deleted = f.repository.remove({ ruleId: rule.ruleId, projectId: "p", ownerProfileScope: "owner", expectedVersion: enabled.version, actor: ACTOR });
+    assert.equal(deleted.status, "DELETED");
+    assert.throws(() => f.repository.enable({ ruleId: rule.ruleId, projectId: "p", ownerProfileScope: "owner", expectedVersion: deleted.version, actor: ACTOR }), (error) => error.code === "RULE_MUTATION_REFUSED");
+    assert.equal(f.repository.get(rule.ruleId).status, "DELETED");
+  } finally { close(f); }
+});
+
 test("le fallback JSON refuse les mutations sans promettre un contrôle inter-processus", () => {
   const repository = createDevProjectRuleRepository({ kind: "json-fallback", load: () => ({ dev_project_rules: [] }), save() {} });
   assert.throws(() => repository.create({ projectId: "p", ownerProfileScope: "o", text: "x", actor: ACTOR }), (error) => error.code === "RULE_MUTATION_STORAGE_UNAVAILABLE");
+  assert.throws(() => repository.enable({ projectId: "p", ownerProfileScope: "o", ruleId: "r", expectedVersion: 1, actor: ACTOR }), (error) => error.code === "RULE_MUTATION_STORAGE_UNAVAILABLE");
 });
 
 test("résolution pure conserve une restriction de tâche et ne promeut aucun contenu externe", () => {
@@ -105,6 +120,16 @@ test("la commande main-to-service résout le scope fiable et refuse une règle �
   } finally { close(f); }
 });
 
+test("la commande de confiance réactive avec la version attendue résolue côté service", () => {
+  const f = fixture(); try {
+    const rule = f.repository.create({ projectId: "current-project", ownerProfileScope: "owner", text: "Réversible.", actor: ACTOR });
+    const disabled = f.repository.disable({ ruleId: rule.ruleId, projectId: "current-project", ownerProfileScope: "owner", expectedVersion: rule.version, actor: ACTOR });
+    const workspaceEngine = { context: () => ({ workspace: { profileScope: "owner" }, projects: [{ id: "current-project" }] }) };
+    const enabled = executeTrustedDevProjectRuleMutation({ workspaceEngine, repository: f.repository, payload: { action: "enable", workspaceId: "w", expectedProjectId: "current-project", ruleId: rule.ruleId, expectedVersion: disabled.version } });
+    assert.equal(enabled.status, "ACTIVE"); assert.equal(enabled.version, disabled.version + 1);
+  } finally { close(f); }
+});
+
 test("la mutation refuse un projet résolu différent de celui relu par l'UI", () => {
   let writes = 0;
   const repository = { create() { writes += 1; } };
@@ -126,6 +151,7 @@ test("aucune route HTTP de mutation ni secret d'action n'est présent", () => {
   const main = fs.readFileSync(path.join(__dirname, "..", "electron", "main.js"), "utf8");
   assert.doesNotMatch(server, /\/internal\/dev-project-rules/);
   assert.doesNotMatch(main, /X-Noon-Owner-Action/);
+  assert.match(main, /\["create", "update", "disable", "enable", "delete"\]/);
   assert.match(main, /serverController\.mutateDevProjectRuleFromTrustedMain/);
   assert.match(server, /function mutateDevProjectRuleFromTrustedMain/);
 });

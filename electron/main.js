@@ -58,7 +58,7 @@ if (smokeTestRequested && smokeUserData) {
   app.setPath("userData", path.resolve(smokeUserData));
 }
 // Le smoke test utilise un profil et un port isolés ; il ne doit pas réveiller l'instance quotidienne.
-const hasSingleInstanceLock = benchmarkControlCommand || benchmarkControlCommandError ? true : smokeTestRequested || uiValidationRequested || app.requestSingleInstanceLock();
+const hasSingleInstanceLock = benchmarkControlCommand || benchmarkControlCommandError ? true : smokeTestRequested || app.requestSingleInstanceLock();
 let mainWindow = null;
 let devPreviewController = null;
 let tray = null;
@@ -633,7 +633,8 @@ function registerIpc() {
   });
   registerTrustedHandler("noon:get-status", () => ({
     platform: process.platform, arch: process.arch, packaged: app.isPackaged,
-    buildProfile, safeMode: safeModeRequested,
+    buildProfile, safeMode: safeModeRequested, uiValidationMode: uiValidationRequested,
+    uiValidationProjects: uiValidationRequested ? serverController?.listUiValidationProjectContextsFromTrustedMain?.() || [] : [],
     liveVoiceActive, microphonePermission,
     shortcuts: registerShortcuts(), loginItem: app.getLoginItemSettings(),
   }));
@@ -644,7 +645,7 @@ function registerIpc() {
     return serverController.listDevProjectRulesFromTrustedMain(payload.workspaceId);
   });
   registerTrustedHandler("noon:dev-project-rule", async (_event, payload = {}) => {
-    if (!payload || typeof payload !== "object" || !["create", "update", "disable", "delete"].includes(payload.action) || typeof payload.workspaceId !== "string" || typeof payload.expectedProjectId !== "string") throw Object.assign(new Error("Demande de règle DEV invalide."), { code: "RULE_MUTATION_INVALID" });
+    if (!payload || typeof payload !== "object" || !["create", "update", "disable", "enable", "delete"].includes(payload.action) || typeof payload.workspaceId !== "string" || typeof payload.expectedProjectId !== "string") throw Object.assign(new Error("Demande de règle DEV invalide."), { code: "RULE_MUTATION_INVALID" });
     if ((payload.action === "create" || payload.action === "update") && (typeof payload.text !== "string" || payload.text.length > 1000)) throw Object.assign(new Error("Texte de règle DEV invalide."), { code: "RULE_TEXT_INVALID" });
     if (payload.action !== "create" && (!Number.isInteger(payload.expectedVersion) || payload.expectedVersion < 1 || typeof payload.ruleId !== "string")) throw Object.assign(new Error("Version de règle DEV invalide."), { code: "RULE_VERSION_INVALID" });
     if (typeof serverController?.mutateDevProjectRuleFromTrustedMain !== "function") throw Object.assign(new Error("Service de règles DEV indisponible."), { code: "DEV_PROJECT_RULE_UNAVAILABLE" });

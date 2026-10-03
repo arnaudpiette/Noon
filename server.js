@@ -1,7 +1,7 @@
 // Serveur local de Noon : API, mémoire, budget et outils en lecture seule.
 // Le profil UI isolé ne doit jamais importer l'environnement du dépôt.
 if (process.env.NOON_UI_VALIDATION !== "1") require("dotenv").config();
-const { assertUiValidationDataDirectory, isUiValidationExternalRequest } = require("./electron/ui-validation-mode");
+const { assertUiValidationDataDirectory, isUiValidationExternalRequest, isUiValidationWorkspaceId, resolveUiValidationFixtures } = require("./electron/ui-validation-mode");
 const OpenAI = require("openai");
 const { toFile } = require("openai");
 const { GoogleGenAI } = require("@google/genai");
@@ -244,6 +244,7 @@ const DEFAULT_HOST = "127.0.0.1";
 const DATA_DIRECTORY = process.env.NOON_DATA_DIR || __dirname;
 const UI_VALIDATION_MODE = process.env.NOON_UI_VALIDATION === "1";
 assertUiValidationDataDirectory({ dataDirectory: DATA_DIRECTORY });
+const uiValidationFixtures = UI_VALIDATION_MODE ? resolveUiValidationFixtures() : [];
 fs.mkdirSync(DATA_DIRECTORY, { recursive: true });
 const CREATIVE_IMAGE_PREVIEW_DIRECTORY = path.join(
   DATA_DIRECTORY,
@@ -1007,8 +1008,8 @@ const contextBuilder = createContextBuilder({
 workspaceEngine = createWorkspaceEngine({
   repository: workspaceRepository,
   allowedRoots: (mode) => mode === "read-write"
-    ? localPermissionStore.roots("read-write")
-    : getAllowedDirectories(),
+    ? (UI_VALIDATION_MODE ? uiValidationFixtures.map((fixture) => fixture.rootPath) : localPermissionStore.roots("read-write"))
+    : (UI_VALIDATION_MODE ? uiValidationFixtures.map((fixture) => fixture.rootPath) : getAllowedDirectories()),
   projectProvider: () => getValidRegisteredProjects(),
   conversationProvider: () => normalizeConversationStore(conversationIndex).conversations,
   artifactProvider: () => artifactRepository.listAll(100).map((artifact) => ({
@@ -2003,14 +2004,47 @@ function saveProjectsRegistry(projects) {
   fs.renameSync(temporaryFile, PROJECTS_REGISTRY_FILE);
 }
 
-let projectsRegistry = loadProjectsRegistry();
+let projectsRegistry = UI_VALIDATION_MODE
+  ? uiValidationFixtures.map(({ id, name, rootPath }) => ({ id, name, rootPath, aliases: [name], category: "ui-validation", status: "synthetic" }))
+  : loadProjectsRegistry();
 
 function getValidRegisteredProjects() {
+  if (UI_VALIDATION_MODE) return projectsRegistry;
   return projectsRegistry.filter((project) => {
     const validPath = normalizeFocusPath(project.rootPath);
     return validPath && validPath === project.rootPath;
   });
 }
+
+function initializeUiValidationWorkspaces() {
+  if (!UI_VALIDATION_MODE) return [];
+  return uiValidationFixtures.map((fixture) => {
+    let workspace;
+    try { workspace = workspaceEngine.get(fixture.workspaceId); }
+    catch {
+      workspace = workspaceEngine.create({
+        id: fixture.workspaceId,
+        name: fixture.name,
+        type: "project",
+        profileScope: "ui-validation",
+        memoryScope: `ui-validation:${fixture.id}`,
+        metadata: { uiValidationFixture: fixture.key },
+      });
+    }
+    if (workspace.profileScope !== "ui-validation" || workspace.metadata?.uiValidationFixture !== fixture.key) {
+      throw Object.assign(new Error("Workspace synthétique UI invalide."), { code: "UI_VALIDATION_WORKSPACE_UNSAFE" });
+    }
+    const context = workspaceEngine.context(fixture.workspaceId);
+    if (!context.projects.some((project) => project.id === fixture.id)) workspaceEngine.linkProject(fixture.workspaceId, fixture.id);
+    if (!context.roots.some((root) => root.path === fixture.rootPath && root.mode === "read-only")) workspaceEngine.bindRoot(fixture.workspaceId, fixture.rootPath, "read-only");
+    return { workspaceId: fixture.workspaceId, projectId: fixture.id, name: fixture.name };
+  });
+}
+
+// Les contextes UI Validation sont déclarés ici mais initialisés
+// seulement après conversationIndex : workspaceEngine.context()
+// peut consulter conversationProvider pendant leur création.
+let uiValidationProjectContexts = [];
 
 function scanRegisteredProjects(focusId = null) {
   const catalog = buildFocusCatalog(getAllowedDirectories());
@@ -5086,6 +5120,11 @@ function loadConversationIndex() {
 
 let conversationIndex = loadConversationIndex();
 
+// UI_VALIDATION_INIT_ORDER_FIX
+// conversationIndex doit exister avant tout appel à workspaceEngine.context().
+uiValidationProjectContexts =
+  initializeUiValidationWorkspaces();
+
 function saveConversationIndex() {
   const temporaryFile = `${CONVERSATION_INDEX_FILE}.tmp`;
   fs.writeFileSync(
@@ -6312,6 +6351,15 @@ if (req.method === "GET" && req.url === "/ui-utils.js") {
 // Sert uniquement le contrôleur d'affichage du Control Center.
 if (req.method === "GET" && req.url === "/control-center.js") {
   const filePath = path.join(__dirname, "public", "control-center.js");
+  res.writeHead(200, {
+    "Content-Type": "application/javascript; charset=utf-8",
+  });
+  return res.end(fs.readFileSync(filePath));
+}
+
+// Sert le contrôleur borné des règles DEV du renderer.
+if (req.method === "GET" && req.url === "/dev-project-rules-ui.js") {
+  const filePath = path.join(__dirname, "public", "dev-project-rules-ui.js");
   res.writeHead(200, {
     "Content-Type": "application/javascript; charset=utf-8",
   });
@@ -9500,11 +9548,23 @@ function stopNoonServer() {
 // server.js est composé dans le processus main Electron (voir electron/main.js).
 // Cette commande reste donc en mémoire : aucun secret ni jeton d'action ne traverse HTTP.
 function mutateDevProjectRuleFromTrustedMain(payload) {
+  assertUiValidationWorkspace(payload?.workspaceId);
   return executeDevProjectRuleCommand({ workspaceEngine, repository: devProjectRuleRepository, payload });
 }
 
 function listDevProjectRulesFromTrustedMain(workspaceId) {
+  assertUiValidationWorkspace(workspaceId);
   return listTrustedDevProjectRules({ workspaceEngine, repository: devProjectRuleRepository, workspaceId });
+}
+
+function assertUiValidationWorkspace(workspaceId) {
+  if (UI_VALIDATION_MODE && !isUiValidationWorkspaceId(workspaceId, uiValidationFixtures)) {
+    throw Object.assign(new Error("Ce workspace n'est pas une fixture UI autorisée."), { code: "UI_VALIDATION_WORKSPACE_DENIED" });
+  }
+}
+
+function listUiValidationProjectContextsFromTrustedMain() {
+  return UI_VALIDATION_MODE ? uiValidationProjectContexts.map(({ workspaceId, projectId, name }) => ({ workspaceId, projectId, name })) : [];
 }
 
 if (require.main === module) {
@@ -9518,6 +9578,7 @@ module.exports = {
   server,
   sanitizeResponseOutputForInput,
   listDevProjectRulesFromTrustedMain,
+  listUiValidationProjectContextsFromTrustedMain,
   mutateDevProjectRuleFromTrustedMain,
   startNoonServer,
   stopNoonServer,

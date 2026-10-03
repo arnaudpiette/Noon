@@ -149,6 +149,138 @@ const devProjectRulesPreview = document.getElementById("devProjectRulesPreview")
 const devProjectRulesSave = document.getElementById("devProjectRulesSave");
 const devProjectRulesCancel = document.getElementById("devProjectRulesCancel");
 const devProjectRulesStatus = document.getElementById("devProjectRulesStatus");
+const devUiValidationProject = document.getElementById("devUiValidationProject");
+const devUiValidationProjectLabel = document.getElementById("devUiValidationProjectLabel");
+// DEV_TERMINAL_BUTTON_METRICS_START
+/*
+ * Le premier bouton "Noon" est la référence visuelle
+ * de tous les contrôles principaux du Terminal DEV.
+ *
+ * On lit son style calculé afin d'éviter plusieurs
+ * tailles de texte, hauteurs ou paddings concurrents.
+ */
+function syncDevTerminalButtonMetrics() {
+  const panel =
+    document.getElementById(
+      "devTerminalPanel"
+    );
+
+  const reference =
+    document.getElementById(
+      "devWorkspaceAgentRun"
+    );
+
+  if (
+    !panel ||
+    !reference
+  ) {
+    return;
+  }
+
+  const style =
+    window.getComputedStyle(
+      reference
+    );
+
+  const px = (value) => {
+    const parsed =
+      Number.parseFloat(
+        value
+      );
+
+    return Number.isFinite(parsed)
+      ? parsed
+      : 0;
+  };
+
+  const fontSize =
+    Math.max(
+      1,
+      px(style.fontSize)
+    );
+
+  const lineHeight =
+    style.lineHeight === "normal"
+      ? fontSize * 1.2
+      : Math.max(
+          fontSize,
+          px(style.lineHeight)
+        );
+
+  const calculatedHeight =
+    lineHeight +
+    px(style.paddingTop) +
+    px(style.paddingBottom) +
+    px(style.borderTopWidth) +
+    px(style.borderBottomWidth);
+
+  const referenceHeight =
+    Math.max(
+      px(style.height),
+      px(style.minHeight),
+      calculatedHeight
+    );
+
+  const horizontalPadding =
+    Math.max(
+      px(style.paddingLeft),
+      px(style.paddingRight)
+    );
+
+  panel.style.setProperty(
+    "--dev-terminal-control-height",
+    `${Math.round(
+      referenceHeight
+    )}px`
+  );
+
+  panel.style.setProperty(
+    "--dev-terminal-control-padding-x",
+    `${horizontalPadding}px`
+  );
+
+  panel.style.setProperty(
+    "--dev-terminal-control-font-size",
+    style.fontSize
+  );
+
+  panel.style.setProperty(
+    "--dev-terminal-control-font-weight",
+    style.fontWeight
+  );
+
+  panel.style.setProperty(
+    "--dev-terminal-control-font-family",
+    style.fontFamily
+  );
+
+  panel.style.setProperty(
+    "--dev-terminal-control-letter-spacing",
+    style.letterSpacing
+  );
+
+  panel.style.setProperty(
+    "--dev-terminal-control-radius",
+    style.borderRadius
+  );
+}
+
+syncDevTerminalButtonMetrics();
+
+window.addEventListener(
+  "resize",
+  syncDevTerminalButtonMetrics
+);
+
+document.fonts?.ready
+  ?.then(
+    syncDevTerminalButtonMetrics
+  )
+  .catch(
+    () => {}
+  );
+// DEV_TERMINAL_BUTTON_METRICS_END
+
 const clearChatButton = document.getElementById("clearChat");
 const newConversationButton = document.getElementById(
   "newConversationButton"
@@ -1938,10 +2070,49 @@ const devTerminalState = {
   resizeStartHeight: 0,
 };
 
-const devProjectRulesUi = window.NoonDevProjectRulesUi?.createDevProjectRulesController({
+let uiValidationMode = window.noon?.uiValidationMode === true;
+let uiValidationProjects = [];
+const uiValidationBlockedMessage = "Validation UI isolée : le terminal, l’agent, les commandes et Source Control sont désactivés. Seules les règles des projets synthétiques sont disponibles.";
+
+function uiValidationContext() {
+  const selected = uiValidationProjects.find((project) => project.workspaceId === devUiValidationProject?.value);
+  return selected ? { workspaceId: selected.workspaceId, contextKey: `ui-validation:${selected.workspaceId}`, projectName: selected.name } : null;
+}
+
+function renderUiValidationProjects() {
+  if (!devUiValidationProject || !devUiValidationProjectLabel) return;
+  devUiValidationProject.replaceChildren();
+  for (const project of uiValidationProjects) {
+    const option = document.createElement("option"); option.value = project.workspaceId; option.textContent = project.name; devUiValidationProject.append(option);
+  }
+  devUiValidationProjectLabel.hidden = !uiValidationMode || !uiValidationProjects.length;
+}
+
+const devProjectRulesUi = window.NoonDevProjectRulesUi?.mountDevProjectRulesUi({
   elements: { toggle: devProjectRulesToggle, panel: devProjectRulesPanel, project: devProjectRulesProject, add: devProjectRulesAdd, readOnly: devProjectRulesReadOnly, list: devProjectRulesList, form: devProjectRulesForm, input: devProjectRulesInput, preview: devProjectRulesPreview, save: devProjectRulesSave, cancel: devProjectRulesCancel, status: devProjectRulesStatus },
   bridge: window.noon,
-  getContext: () => ({ workspaceId: devTerminalState.session?.workspaceId || null, contextKey: devTerminalState.contextKey, projectName: devTerminalState.session?.projectName || currentFocus || "Projet DEV" }),
+  getContext: () => uiValidationMode ? uiValidationContext() : ({ workspaceId: devTerminalState.session?.workspaceId || null, contextKey: devTerminalState.contextKey, projectName: devTerminalState.session?.projectName || currentFocus || "Projet DEV" }),
+  getUnavailableReason: () => uiValidationMode && !uiValidationContext() ? "Validation UI isolée : aucun projet synthétique autorisé n’est disponible." : null,
+});
+
+if (!devProjectRulesUi && devProjectRulesToggle && devProjectRulesPanel && devProjectRulesStatus) {
+  devProjectRulesToggle.addEventListener("click", () => {
+    devProjectRulesPanel.hidden = false;
+    devProjectRulesToggle.setAttribute("aria-expanded", "true");
+    devProjectRulesStatus.textContent = "Le module des règles DEV n’a pas pu être chargé. Recharge l’application isolée.";
+    devProjectRulesStatus.dataset.state = "error";
+  });
+}
+
+void window.noon?.getStatus?.().then((status) => {
+  uiValidationMode = status?.uiValidationMode === true;
+  uiValidationProjects = Array.isArray(status?.uiValidationProjects) ? status.uiValidationProjects.filter((project) => typeof project?.workspaceId === "string" && typeof project?.name === "string") : [];
+  renderUiValidationProjects();
+  if (uiValidationMode && currentMode === "DEV") void syncDevTerminalPanel();
+}).catch(() => {});
+
+devUiValidationProject?.addEventListener("change", () => {
+  if (uiValidationMode && !devProjectRulesPanel.hidden) void devProjectRulesUi?.refresh();
 });
 
 // DEV_PROBLEMS_UI_START
@@ -5223,6 +5394,24 @@ async function syncDevTerminalPanel() {
     return;
   }
 
+  if (uiValidationMode) {
+    await closeDevTerminalSession({
+      silent: true,
+    });
+    if (serial !== devTerminalState.syncSerial) return;
+    const context = uiValidationContext();
+    devTerminalProject.textContent = context?.projectName || "Profil isolé";
+    devTerminalMeta.textContent = context ? "Projet synthétique sélectionné pour la validation des règles." : "Aucun workspace personnel n’est chargé dans ce profil.";
+    for (const control of [devWorkspaceAgentRun, devWorkspaceAgentCancel, devTerminalAddButton, devTerminalRun, devSourceControlToggle, devSourceControlRefresh]) {
+      if (!control) continue;
+      control.disabled = true;
+      control.title = uiValidationBlockedMessage;
+    }
+    setDevTerminalStatus(uiValidationBlockedMessage, "idle");
+    devTerminalOutput.textContent = uiValidationBlockedMessage;
+    return;
+  }
+
   devTerminalProject.textContent =
     currentFocus ||
     "Aucun Focus";
@@ -7157,6 +7346,7 @@ modeButtons.forEach((button) => {
 setMode(currentMode, false);
 
 function setFocus(project) {
+  conversationIndexNavigationSerial += 1;
   const projectName =
     typeof project === "string"
       ? project.trim()
@@ -8111,7 +8301,11 @@ async function registerConversation(sessionId, title = "", folderId = "general")
   return data.conversation;
 }
 
+// SIDEBAR_FIRST_CLICK_GUARD_START
+let conversationIndexNavigationSerial = 0;
+
 async function switchConversation(sessionId) {
+  conversationIndexNavigationSerial += 1;
   if (requestInProgress || sessionId === currentSessionId) return;
   currentSessionId = sessionId;
   localStorage.setItem(SESSION_STORAGE_KEY, currentSessionId);
@@ -8609,6 +8803,9 @@ window.addEventListener("resize", closeConversationContextMenu);
 createConversationProjectButton.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); void createConversationProject().catch((error) => updateActivity(error.message)); });
 
 async function loadConversationIndex() {
+  const navigationSerial =
+    conversationIndexNavigationSerial;
+
   try {
     const response = await fetch("/conversations", { cache: "no-store" });
     const data = await response.json();
@@ -8623,6 +8820,12 @@ async function loadConversationIndex() {
       if (key?.startsWith(prefix) && !retainedIds.has(key.slice(prefix.length))) {
         localStorage.removeItem(key);
       }
+    }
+    if (
+      navigationSerial !==
+      conversationIndexNavigationSerial
+    ) {
+      return;
     }
     renderConversationIndex(conversations);
   } catch (error) {
@@ -10367,13 +10570,51 @@ switchView("core");
 const savedSidebarState = localStorage.getItem("noon-sidebar-open");
 setSidebar(savedSidebarState === null ? window.innerWidth > 720 : savedSidebarState !== "false", false);
 loadBudget();
-loadLocalProjects();
 restoreDisplayedConversation();
-const firstSavedQuestion = loadSavedMessages().find((message) => message.type === "user")?.text || "";
-void registerConversation(currentSessionId, firstSavedQuestion)
-  .then(loadConversationIndex)
-  .catch((error) => updateActivity(error.message));
+
+async function initializeSidebarNavigation() {
+  /*
+   * Le démarrage est maintenant déterministe :
+   * projets -> conversation courante -> index.
+   *
+   * Plus de rendu concurrent susceptible
+   * d'écraser le premier clic utilisateur.
+   */
+  await loadLocalProjects();
+
+  const firstSavedQuestion =
+    loadSavedMessages()
+      .find(
+        (message) =>
+          message.type === "user"
+      )
+      ?.text || "";
+
+  try {
+    await registerConversation(
+      currentSessionId,
+      firstSavedQuestion
+    );
+  } catch (error) {
+    updateActivity(
+      error.message
+    );
+  }
+
+  await loadConversationIndex();
+}
+
+void initializeSidebarNavigation()
+  .catch(
+    (error) =>
+      updateActivity(
+        error.message
+      )
+  );
+
 restoreSavedDraft();
+
+// SIDEBAR_FIRST_CLICK_GUARD_END
 checkNoonConnection();
 loadIntegrations();
 loadPendingApprovals();

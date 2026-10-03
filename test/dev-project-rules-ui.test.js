@@ -16,15 +16,29 @@ class Node {
   focus() {}
 }
 
-function setup({ bridge, confirmAction = () => true } = {}) {
+function setup({ bridge, confirmAction = () => true, getUnavailableReason } = {}) {
   const document = { createElement: () => new Node(), createDocumentFragment: () => new Node(true) };
   const window = { confirm: confirmAction };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "public", "dev-project-rules-ui.js"), "utf8"), { window, document });
   const elements = Object.fromEntries(["toggle", "panel", "project", "add", "readOnly", "list", "form", "input", "preview", "save", "cancel", "status"].map((key) => [key, new Node()]));
   elements.panel.hidden = true;
   let context = { workspaceId: "workspace-a", contextKey: "focus-a:/repo-a", projectName: "Projet A" };
-  const controller = window.NoonDevProjectRulesUi.createDevProjectRulesController({ elements, bridge, getContext: () => context, confirmAction });
+  const controller = window.NoonDevProjectRulesUi.createDevProjectRulesController({ elements, bridge, getContext: () => context, getUnavailableReason, confirmAction });
   return { controller, elements, setContext: (value) => { context = value; } };
+}
+
+function setupMountedUi({ bridge, selectedProject = { workspaceId: "ui-validation-workspace-a", name: "Projet synthétique A" } } = {}) {
+  const document = { createElement: () => new Node(), createDocumentFragment: () => new Node(true) };
+  const window = { confirm: () => true };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "public", "dev-project-rules-ui.js"), "utf8"), { window, document });
+  const elements = Object.fromEntries(["toggle", "panel", "project", "add", "readOnly", "list", "form", "input", "preview", "save", "cancel", "status"].map((key) => [key, new Node()]));
+  elements.panel.hidden = true;
+  const controller = window.NoonDevProjectRulesUi.mountDevProjectRulesUi({
+    elements,
+    bridge,
+    getContext: () => ({ workspaceId: selectedProject.workspaceId, contextKey: `ui-validation:${selectedProject.workspaceId}`, projectName: selectedProject.name }),
+  });
+  return { controller, elements };
 }
 
 async function flush() { for (let i = 0; i < 6; i += 1) await Promise.resolve(); }
@@ -55,6 +69,55 @@ test("annulation et refus de confirmation ne produisent aucune mutation", async 
   assert.equal(calls, 0); assert.match(f.elements.status.textContent, /annul/i);
 });
 
+test("un changement de projet pendant la confirmation refuse la mutation", async () => {
+  let calls = 0;
+  let f;
+  f = setup({
+    bridge: {
+      getDevProjectRules: async () => ({ project: { id: "project-a", name: "Projet synthétique A" }, storage: "READ_WRITE", rules: [] }),
+      devProjectRule: async () => { calls += 1; },
+    },
+    confirmAction: () => {
+      f.setContext({ workspaceId: "ui-validation-workspace-b", contextKey: "ui-validation:ui-validation-workspace-b", projectName: "Projet synthétique B" });
+      return true;
+    },
+  });
+  f.setContext({ workspaceId: "ui-validation-workspace-a", contextKey: "ui-validation:ui-validation-workspace-a", projectName: "Projet synthétique A" });
+  await f.controller.refresh();
+  f.elements.input.value = "Ne pas muter après changement.";
+  f.elements.form.emit("submit");
+  await flush();
+  assert.equal(calls, 0);
+  assert.match(f.elements.status.textContent, /projet a changé/i);
+});
+
+test("les contextes synthétiques A et B gardent leurs règles séparées", async () => {
+  const reads = [];
+  const mutations = [];
+  const f = setup({
+    bridge: {
+      async getDevProjectRules(workspaceId) {
+        reads.push(workspaceId);
+        const isA = workspaceId === "ui-validation-workspace-a";
+        return { project: { id: isA ? "ui-validation-project-a" : "ui-validation-project-b", name: isA ? "Projet synthétique A" : "Projet synthétique B" }, storage: "READ_WRITE", rules: [{ ruleId: isA ? "a" : "b", text: isA ? "Règle A" : "Règle B", status: "ACTIVE", version: 1 }] };
+      },
+      async devProjectRule(payload) { mutations.push(payload); },
+    },
+  });
+  f.setContext({ workspaceId: "ui-validation-workspace-a", contextKey: "ui-validation:ui-validation-workspace-a", projectName: "Projet synthétique A" });
+  await f.controller.refresh();
+  assert.equal(f.elements.list.children[0].children[0].textContent, "Règle A");
+  f.setContext({ workspaceId: "ui-validation-workspace-b", contextKey: "ui-validation:ui-validation-workspace-b", projectName: "Projet synthétique B" });
+  await f.controller.refresh();
+  assert.equal(f.elements.list.children[0].children[0].textContent, "Règle B");
+  f.elements.input.value = "Règle B nouvelle";
+  f.elements.form.emit("submit");
+  await flush();
+  assert.deepEqual(reads.slice(0, 2), ["ui-validation-workspace-a", "ui-validation-workspace-b"]);
+  assert.equal(mutations[0].workspaceId, "ui-validation-workspace-b");
+  assert.equal(mutations[0].expectedProjectId, "ui-validation-project-b");
+});
+
 test("changement de projet et fallback restent sans écrasement", async () => {
   let resolveMutation; const pending = new Promise((resolve) => { resolveMutation = resolve; });
   const bridge = { getDevProjectRules: async () => ({ project: { id: "project-a", name: "Projet A" }, storage: "READ_WRITE", rules: [{ ruleId: "r", text: "Initiale", status: "ACTIVE", version: 1 }] }), devProjectRule: async () => pending };
@@ -78,4 +141,144 @@ test("une lecture IPC indisponible ne fabrique pas une liste vide", async () => 
   await f.controller.refresh();
   assert.match(f.elements.status.textContent, /indisponible/i);
   assert.equal(f.elements.list.children.length, 0);
+});
+
+test("le mode isolé explique l’absence de workspace au lieu de faire croire à des règles vides", async () => {
+  const f = setup({ bridge: null, getUnavailableReason: () => "Validation UI isolée : workspace synthétique requis." });
+  f.setContext({ workspaceId: null, contextKey: null, projectName: "Profil isolé" });
+  await f.controller.refresh();
+  assert.match(f.elements.status.textContent, /workspace synthétique requis/i);
+  assert.match(f.elements.readOnly.textContent, /workspace synthétique requis/i);
+  assert.equal(f.elements.list.children.length, 0);
+});
+
+test("le bouton Règles ouvre et referme réellement le panneau", async () => {
+  const bridge = {
+    async getDevProjectRules() {
+      return {
+        project: {
+          id: "project-a",
+          name: "Projet A",
+        },
+        storage: "READ_WRITE",
+        rules: [],
+      };
+    },
+    async devProjectRule() {},
+  };
+
+  const f = setup({ bridge });
+
+  f.elements.panel.hidden = true;
+
+  f.elements.toggle.emit("click");
+  await flush();
+
+  assert.equal(
+    f.elements.panel.hidden,
+    false,
+    "le panneau doit être visible après le clic"
+  );
+
+  assert.equal(
+    f.elements.toggle.attributes.get(
+      "aria-expanded"
+    ),
+    "true"
+  );
+
+  f.elements.toggle.emit("click");
+
+  assert.equal(
+    f.elements.panel.hidden,
+    true,
+    "le second clic doit refermer le panneau"
+  );
+
+  assert.equal(
+    f.elements.toggle.attributes.get(
+      "aria-expanded"
+    ),
+    "false"
+  );
+});
+
+test("le câblage monté depuis la page ouvre les règles du projet synthétique sélectionné", async () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "public", "index.html"), "utf8");
+  const app = fs.readFileSync(path.join(__dirname, "..", "public", "app.js"), "utf8");
+  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
+  const reads = [];
+  const f = setupMountedUi({
+    bridge: {
+      async getDevProjectRules(workspaceId) {
+        reads.push(workspaceId);
+        return { project: { id: "ui-validation-project-a", name: "Projet synthétique A" }, storage: "READ_WRITE", rules: [] };
+      },
+      async devProjectRule() {},
+    },
+  });
+
+  assert.ok(html.indexOf('src="dev-project-rules-ui.js"') < html.indexOf('src="app.js"'));
+  assert.match(server, /req\.method === "GET" && req\.url === "\/dev-project-rules-ui\.js"/);
+  assert.match(app, /NoonDevProjectRulesUi\?\.mountDevProjectRulesUi\(/);
+  assert.match(app, /Le module des règles DEV n’a pas pu être chargé/);
+  f.elements.toggle.emit("click");
+  await flush();
+
+  assert.equal(f.elements.panel.hidden, false, "le panneau doit devenir visible après le clic réel du bouton monté");
+  assert.equal(f.elements.toggle.attributes.get("aria-expanded"), "true");
+  assert.equal(f.elements.project.textContent, "Projet synthétique A");
+  assert.deepEqual(reads, ["ui-validation-workspace-a"]);
+});
+
+test("le câblage UI réactive une règle inactive, transmet sa version et rafraîchit son état", async () => {
+  const mutations = [];
+  let rule = { ruleId: "inactive-a", text: "Règle suspendue.", status: "DISABLED", version: 7 };
+  const f = setupMountedUi({
+    bridge: {
+      async getDevProjectRules() { return { project: { id: "ui-validation-project-a", name: "Projet synthétique A" }, storage: "READ_WRITE", rules: [rule] }; },
+      async devProjectRule(payload) { mutations.push(payload); rule = { ...rule, status: "ACTIVE", version: 8 }; },
+    },
+  });
+  await f.controller.refresh();
+  const reactivate = findButton(f.elements.list, "Réactiver");
+  assert.ok(reactivate); assert.equal(reactivate.className, "dev-project-rule-reactivate");
+  reactivate.emit("click"); reactivate.emit("click");
+  await flush();
+  assert.equal(JSON.stringify(mutations), JSON.stringify([{ action: "enable", workspaceId: "ui-validation-workspace-a", expectedProjectId: "ui-validation-project-a", ruleId: "inactive-a", expectedVersion: 7 }]));
+  assert.equal(findButton(f.elements.list, "Désactiver").disabled, false);
+  assert.match(f.elements.status.textContent, /Règles chargées/i);
+  assert.match(f.elements.list.children[0].children[1].textContent, /Active/);
+});
+
+test("un échec de réactivation conserve l'état inactif et une règle supprimée n'offre aucune réactivation", async () => {
+  const rule = { ruleId: "inactive-a", text: "Règle suspendue.", status: "DISABLED", version: 7 };
+  let calls = 0;
+  const f = setup({ bridge: { getDevProjectRules: async () => ({ project: { id: "project-a", name: "Projet A" }, storage: "READ_WRITE", rules: [rule] }), devProjectRule: async () => { calls += 1; throw Object.assign(new Error("refus"), { code: "RULE_MUTATION_REFUSED" }); } } });
+  await f.controller.refresh(); findButton(f.elements.list, "Réactiver").emit("click"); await flush();
+  assert.equal(calls, 1); assert.ok(findButton(f.elements.list, "Réactiver")); assert.match(f.elements.list.children[0].children[1].textContent, /Inactive/); assert.match(f.elements.status.textContent, /a changé/i);
+  const deleted = setup({ bridge: { getDevProjectRules: async () => ({ project: { id: "project-a", name: "Projet A" }, storage: "READ_WRITE", rules: [{ ...rule, status: "DELETED" }] }), devProjectRule: async () => assert.fail("aucune mutation") } });
+  await deleted.controller.refresh(); assert.equal(findButton(deleted.elements.list, "Réactiver"), null);
+});
+
+test("le panneau Règles ouvert reste visible dans le Terminal", () => {
+  const css = fs.readFileSync(
+    path.join(
+      __dirname,
+      "..",
+      "public",
+      "style.css"
+    ),
+    "utf8"
+  );
+
+  assert.match(
+    css,
+    /#devTerminalPanel:has\(#devProjectRulesPanel:not\(\[hidden\]\)\)\{[\s\S]*overflow-y:auto!important/
+  );
+
+  assert.match(
+    css,
+    /#devProjectRulesPanel:not\(\[hidden\]\)\{[\s\S]*max-height:[\s\S]*overflow:auto/
+  );
 });
