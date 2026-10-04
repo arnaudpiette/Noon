@@ -12,6 +12,10 @@ const {
   searchRepository,
 } = require("./native-repository-tools");
 
+const {
+  buildRepositoryContextManifest,
+} = require("../delegation/repository-context-manifest");
+
 const ALLOWED_PHASES = new Set([
   "PLAN",
   "EDIT",
@@ -545,6 +549,8 @@ function createNativeDevImplementationEngine({
           )
         : [];
 
+    const unavailable = [];
+
     for (
       const file of unique([
         ...requestedFiles,
@@ -569,20 +575,41 @@ function createNativeDevImplementationEngine({
           item.hash
         );
       } catch (error) {
+        // REPOSITORY_CONTEXT_UNAVAILABLE_NORMALIZATION
+        const unavailableCode =
+          ["ENOENT", "ENOTDIR"].includes(
+            error?.code
+          )
+            ? "FILE_UNAVAILABLE"
+            : error?.code;
+
         if (
           ![
             "FILE_UNAVAILABLE",
             "BINARY_FILE_DENIED",
           ].includes(
-            error.code
+            unavailableCode
           )
         ) {
           throw error;
         }
+
+        unavailable.push({
+          path:
+            String(file)
+              .slice(0, 400),
+          code:
+            String(
+              unavailableCode
+            ).slice(0, 80),
+        });
       }
     }
 
-    return searched;
+    return {
+      searched,
+      unavailable,
+    };
   }
 
   function modelFiles(
@@ -756,6 +783,20 @@ function createNativeDevImplementationEngine({
       );
     }
 
+    // REPOSITORY_CONTEXT_MANIFEST_EPHEMERAL
+    // Construit après validation du contrat/preflight.
+    // Il n'est ni ajouté au preflight partagé, ni persisté.
+    const contextManifest =
+      buildRepositoryContextManifest(
+        contract,
+        {
+          agentsFiles:
+            preflight.agentsFiles,
+          packageInfo:
+            preflight,
+        }
+      );
+
     const activeSignal =
       signal ||
       new AbortController()
@@ -902,6 +943,11 @@ function createNativeDevImplementationEngine({
                 preflight
                   .snapshot
                   .files,
+              // REPOSITORY_CONTEXT_MANIFEST_PLAN_ONLY
+              contextManifest:
+                phase === "PLAN"
+                  ? contextManifest
+                  : undefined,
             },
             files:
               modelFiles(
@@ -929,7 +975,7 @@ function createNativeDevImplementationEngine({
           currentModel;
       }
 
-      const searched =
+      const inspection =
         inspect(
           contract,
           taskId,
@@ -970,7 +1016,11 @@ function createNativeDevImplementationEngine({
                   snapshots
                 ),
               searchResults:
-                searched,
+                inspection
+                  .searched,
+              unavailableFiles:
+                inspection
+                  .unavailable,
               previousFailure:
                 priorFailure,
               qualityEscalation,

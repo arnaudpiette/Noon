@@ -253,3 +253,256 @@ test("fixture normalizeEmail : un vrai test rouge est corrigé puis passe", asyn
   const result = await coordinator.runTask({ workspaceId: "w", repositoryRoot: root, objective: "Corriger normalizeEmail", validationCommands: ["node --test test/email.test.js"] });
   assert.equal(result.baseline[0].status, "FAIL"); assert.equal(result.validations[0].status, "PASS"); assert.equal(result.finalVerdict, "PASS");
 });
+
+test(
+  "PLAN reçoit le manifeste avant sélection et EDIT reçoit les lectures indisponibles sans manifeste",
+  async () => {
+    const root =
+      repository({
+        "lib/a.js":
+          "module.exports = 1;\n",
+      });
+
+    let planManifest =
+      null;
+
+    let editUnavailable =
+      null;
+
+    const f =
+      fixture({
+        root,
+
+        reason: ({
+          phase,
+          preflight,
+          files,
+          unavailableFiles,
+        }) => {
+          if (
+            phase === "PLAN"
+          ) {
+            planManifest =
+              preflight
+                .contextManifest;
+
+            assert.ok(
+              planManifest
+            );
+
+            assert.ok(
+              planManifest.files.some(
+                (item) =>
+                  item.path ===
+                  "lib/a.js"
+              )
+            );
+
+            return {
+              files: [
+                "lib/missing.js",
+                "lib/a.js",
+              ],
+            };
+          }
+
+          assert.equal(
+            Object.hasOwn(
+              preflight,
+              "contextManifest"
+            ),
+            false
+          );
+
+          editUnavailable =
+            unavailableFiles;
+
+          assert.deepEqual(
+            unavailableFiles,
+            [
+              {
+                path:
+                  "lib/missing.js",
+
+                code:
+                  "FILE_UNAVAILABLE",
+              },
+            ]
+          );
+
+          const file =
+            files.find(
+              (item) =>
+                item.path ===
+                "lib/a.js"
+            );
+
+          return {
+            operations: [
+              {
+                type:
+                  "MODIFY",
+
+                path:
+                  "lib/a.js",
+
+                expectedHash:
+                  file.hash,
+
+                search:
+                  "module.exports = 1;",
+
+                replacement:
+                  "module.exports = 2;",
+              },
+            ],
+          };
+        },
+      });
+
+    const result =
+      await f.run();
+
+    assert.equal(
+      result.finalVerdict,
+      "PASS",
+      JSON.stringify(result)
+    );
+
+    assert.ok(
+      planManifest
+    );
+
+    assert.deepEqual(
+      editUnavailable,
+      [
+        {
+          path:
+            "lib/missing.js",
+
+          code:
+            "FILE_UNAVAILABLE",
+        },
+      ]
+    );
+  }
+);
+
+test(
+  "NativeDevReasoner sérialise le manifeste et les lectures indisponibles dans son payload borné",
+  async () => {
+    let request =
+      null;
+
+    const reasoner =
+      createNativeDevReasoner({
+        executeStructured:
+          async (input) => {
+            request =
+              input;
+
+            return {
+              summary:
+                "ok",
+
+              files: [],
+
+              searchTerms: [],
+
+              operations: [],
+
+              validationCommands:
+                [],
+            };
+          },
+      });
+
+    await reasoner.reason({
+      phase:
+        "PLAN",
+
+      contract: {
+        taskId:
+          "task-context",
+
+        objective:
+          "Analyser",
+
+        workspaceId:
+          "workspace-context",
+
+        repositoryRoot:
+          "/repo",
+
+        allowedPaths: [
+          "/repo",
+        ],
+
+        constraints: [],
+
+        projectInstructions:
+          [],
+
+        requiredQuality:
+          "NORMAL",
+
+        maxEstimatedCost:
+          1,
+      },
+
+      preflight: {
+        branch:
+          "main",
+
+        contextManifest: {
+          version: 1,
+
+          files: [
+            {
+              path:
+                "lib/a.js",
+
+              extension:
+                ".js",
+
+              sizeBytes:
+                10,
+            },
+          ],
+        },
+      },
+
+      unavailableFiles: [
+        {
+          path:
+            "lib/missing.js",
+
+          code:
+            "FILE_UNAVAILABLE",
+        },
+      ],
+    });
+
+    assert.equal(
+      request.payload
+        .preflight
+        .contextManifest
+        .version,
+      1
+    );
+
+    assert.deepEqual(
+      request.payload
+        .unavailableFiles,
+      [
+        {
+          path:
+            "lib/missing.js",
+
+          code:
+            "FILE_UNAVAILABLE",
+        },
+      ]
+    );
+  }
+);

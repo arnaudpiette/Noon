@@ -263,3 +263,47 @@ test(
     );
   }
 );
+
+
+test(
+  "B3 Native Codebase Analyst conserve un preflight sans manifeste éphémère",
+  async () => {
+    const root =
+      repository();
+
+    const analyst =
+      createNativeCodebaseAnalyst({
+        workspaceEngine: {
+          context: () => ({
+            roots: [
+              {
+                path: root,
+                mode:
+                  "read-write",
+              },
+            ],
+          }),
+        },
+      });
+
+    const result =
+      await analyst.analyzeTask({
+        workspaceId:
+          "workspace-manifest",
+
+        repositoryRoot:
+          root,
+
+        objective:
+          "Cartographier le dépôt",
+      });
+
+    assert.equal(
+      Object.hasOwn(
+        result.preflight,
+        "contextManifest"
+      ),
+      false
+    );
+  }
+);
