@@ -797,3 +797,312 @@ test(
     );
   }
 );
+
+test(
+  "un champ DEV ordinaire contextManifestMode OFF ne peut pas désactiver le manifeste",
+  async () => {
+    const root =
+      repository({
+        "lib/public.js":
+          "module.exports = 1;\n",
+      });
+
+    const f =
+      fixture({
+        root,
+
+        reason: ({
+          phase,
+          files,
+        }) => {
+          if (
+            phase === "PLAN"
+          ) {
+            return {
+              files: [
+                "lib/public.js",
+              ],
+            };
+          }
+
+          const file =
+            files.find(
+              (item) =>
+                item.path ===
+                "lib/public.js"
+            );
+
+          return {
+            operations: [
+              {
+                type:
+                  "MODIFY",
+
+                path:
+                  "lib/public.js",
+
+                expectedHash:
+                  file.hash,
+
+                search:
+                  "module.exports = 1;",
+
+                replacement:
+                  "module.exports = 2;",
+              },
+            ],
+          };
+        },
+      });
+
+    const result =
+      await f.run({
+        contextManifestMode:
+          "OFF",
+      });
+
+    assert.equal(
+      result.finalVerdict,
+      "PASS",
+      JSON.stringify(result)
+    );
+
+    assert.ok(
+      f.calls[0]
+        .preflight
+        .contextManifest
+    );
+
+    assert.equal(
+      result.metrics
+        .contextEvaluation
+        .manifest
+        .mode,
+      "ON"
+    );
+  }
+);
+
+test(
+  "la capability benchmark interne peut désactiver le manifeste uniquement au PLAN",
+  async () => {
+    const {
+      CONTEXT_MANIFEST_EXPERIMENT,
+    } =
+      require(
+        "../services/dev/benchmark/context-manifest-experiment"
+      );
+
+    const root =
+      repository({
+        "lib/benchmark.js":
+          "module.exports = 1;\n",
+      });
+
+    const f =
+      fixture({
+        root,
+
+        reason: ({
+          phase,
+          files,
+        }) => {
+          if (
+            phase === "PLAN"
+          ) {
+            return {
+              files: [
+                "lib/benchmark.js",
+              ],
+            };
+          }
+
+          const file =
+            files.find(
+              (item) =>
+                item.path ===
+                "lib/benchmark.js"
+            );
+
+          return {
+            operations: [
+              {
+                type:
+                  "MODIFY",
+
+                path:
+                  "lib/benchmark.js",
+
+                expectedHash:
+                  file.hash,
+
+                search:
+                  "module.exports = 1;",
+
+                replacement:
+                  "module.exports = 2;",
+              },
+            ],
+          };
+        },
+      });
+
+    const result =
+      await f.run({
+        [CONTEXT_MANIFEST_EXPERIMENT]:
+          "OFF",
+
+        sessionId:
+          "session-context-ab",
+
+        benchmark: {
+          id:
+            "session-context-ab",
+
+          limitUsd:
+            0.5,
+        },
+
+        workspaceAuthorized:
+          true,
+
+        workspaceRoots: [
+          root,
+        ],
+      });
+
+    assert.equal(
+      result.finalVerdict,
+      "PASS",
+      JSON.stringify(result)
+    );
+
+    assert.equal(
+      f.calls[0]
+        .preflight
+        .contextManifest,
+      null
+    );
+
+    assert.equal(
+      f.calls[1]
+        .preflight
+        .contextManifest,
+      undefined
+    );
+
+    assert.deepEqual(
+      result.metrics
+        .contextEvaluation
+        .manifest,
+      {
+        mode:
+          "OFF",
+
+        fileCount:
+          null,
+
+        scanned:
+          null,
+
+        truncated:
+          null,
+
+        excluded:
+          null,
+      }
+    );
+  }
+);
+
+test(
+  "la capability interne seule ne peut pas couper le manifeste hors benchmark",
+  async () => {
+    const {
+      CONTEXT_MANIFEST_EXPERIMENT,
+    } =
+      require(
+        "../services/dev/benchmark/context-manifest-experiment"
+      );
+
+    const root =
+      repository({
+        "lib/non-benchmark.js":
+          "module.exports = 1;\n",
+      });
+
+    const f =
+      fixture({
+        root,
+
+        reason: ({
+          phase,
+          files,
+        }) => {
+          if (
+            phase === "PLAN"
+          ) {
+            return {
+              files: [
+                "lib/non-benchmark.js",
+              ],
+            };
+          }
+
+          const file =
+            files.find(
+              (item) =>
+                item.path ===
+                "lib/non-benchmark.js"
+            );
+
+          return {
+            operations: [
+              {
+                type:
+                  "MODIFY",
+
+                path:
+                  "lib/non-benchmark.js",
+
+                expectedHash:
+                  file.hash,
+
+                search:
+                  "module.exports = 1;",
+
+                replacement:
+                  "module.exports = 2;",
+              },
+            ],
+          };
+        },
+      });
+
+    const result =
+      await f.run({
+        [CONTEXT_MANIFEST_EXPERIMENT]:
+          "OFF",
+      });
+
+    assert.equal(
+      result.finalVerdict,
+      "PASS",
+      JSON.stringify(result)
+    );
+
+    assert.ok(
+      f.calls[0]
+        .preflight
+        .contextManifest
+    );
+
+    assert.equal(
+      result.metrics
+        .contextEvaluation
+        .manifest
+        .mode,
+      "ON"
+    );
+  }
+);

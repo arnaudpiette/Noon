@@ -87,7 +87,7 @@ function createDevBenchmarkService({templates={},participants={},validator,repos
     transitionArmForSession(sessionId,"FAILED",{failureReason:reason});
     restoreAuthorization("failed",sessionId);
   }
-  async function runNext(sessionId){
+  async function runNext(sessionId,options={}){
     const current=repository.getSession(sessionId);
     if(!current||current.cancelRequested||!["READY","RUNNING"].includes(current.state))return null;
     const definition=planForSuite(current.suite_version);if(!definition)throw error("Suite benchmark invalide.","BENCHMARK_SESSION_SUITE_MISMATCH");
@@ -106,6 +106,7 @@ function createDevBenchmarkService({templates={},participants={},validator,repos
     const authorization=runtimeAuthorization?.canExecuteBenchmarkRun?.({sessionId:current.id,runId:item.id,executor:item.participant,workspacePath:workspace,fixturePath:template});
     if(!authorization?.eligible){const reason=authorization?.reason||"AUTHORIZATION_UNAVAILABLE";emit("benchmark_authorization_denied",{sessionId:current.id,runId:item.id,reason});throw Object.assign(error("Exécution benchmark non autorisée.","BENCHMARK_EXECUTION_DENIED"),{reason});}
     const benchmarkBudget=item.participant==="NATIVE_NOON"?benchmarkBudgetContext(current.id,armingRepository,repository):null;
+    const contextManifestMode=item.participant==="NATIVE_NOON"&&options?.contextManifestMode==="OFF"?"OFF":"ON";
     emit("benchmark_authorization_granted",{sessionId:current.id,runId:item.id,authorizationId:authorization.authorizationId});
     const participant=participants[item.participant];
     if(!participant?.execute&&!participant?.run){failSession(sessionId,"PARTICIPANT_UNAVAILABLE");throw error("Participant benchmark indisponible.","BENCHMARK_PARTICIPANT_UNAVAILABLE");}
@@ -115,7 +116,7 @@ function createDevBenchmarkService({templates={},participants={},validator,repos
     changeRun(item.id,"RUNNING",{startFingerprint,startedAt:new Date(now()).toISOString()});
     emit("benchmark_participant_selected",{sessionId:current.id,runId:item.id,participant:item.participant});
     let reported={};
-    try{reported=await (participant.execute||participant.run)({runId:item.id,benchmarkSessionId:current.id,benchmarkId:active.benchmark_id,benchmarkBudget,workspace,objective:task.objective,allowedPaths:["src","test"],forbiddenPaths:[".git","node_modules"],task});emit("benchmark_participant_completed",{sessionId:current.id,runId:item.id,participant:item.participant,backendReached:reported.backendReached===true,backendExitCode:Number.isInteger(reported.backendExitCode)?reported.backendExitCode:null,changedFilesCount:Number.isInteger(reported.changedFilesCount)?reported.changedFilesCount:null,provider:reported.provider||null,model:reported.finalModel||reported.initialModel||null,iterations:Number.isInteger(reported.iterations)?reported.iterations:null});}
+    try{reported=await (participant.execute||participant.run)({runId:item.id,benchmarkSessionId:current.id,benchmarkId:active.benchmark_id,benchmarkBudget,contextManifestMode,workspace,objective:task.objective,allowedPaths:["src","test"],forbiddenPaths:[".git","node_modules"],task});emit("benchmark_participant_completed",{sessionId:current.id,runId:item.id,participant:item.participant,backendReached:reported.backendReached===true,backendExitCode:Number.isInteger(reported.backendExitCode)?reported.backendExitCode:null,changedFilesCount:Number.isInteger(reported.changedFilesCount)?reported.changedFilesCount:null,provider:reported.provider||null,model:reported.finalModel||reported.initialModel||null,iterations:Number.isInteger(reported.iterations)?reported.iterations:null});}
     catch(cause){const failure=cause.code||"PROVIDER_UNAVAILABLE";changeRun(item.id,"INFRASTRUCTURE_BLOCKED",{failureCategory:failure});failSession(sessionId,failure);return repository.getRun(item.id);}
     if(repository.getSession(sessionId).cancelRequested){changeRun(item.id,"CANCELLED");changeSession(sessionId,"CANCELLING");changeSession(sessionId,"CANCELLED",{cancelRequested:true});transitionArmForSession(sessionId,"CANCELLED");restoreAuthorization("cancelled",sessionId);return repository.getRun(item.id);}
     changeRun(item.id,"VALIDATING");

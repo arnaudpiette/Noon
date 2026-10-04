@@ -16,6 +16,10 @@ const {
   buildRepositoryContextManifest,
 } = require("../delegation/repository-context-manifest");
 
+const {
+  contextManifestModeFromInput,
+} = require("./benchmark/context-manifest-experiment");
+
 const ALLOWED_PHASES = new Set([
   "PLAN",
   "EDIT",
@@ -790,18 +794,26 @@ function createNativeDevImplementationEngine({
     }
 
     // REPOSITORY_CONTEXT_MANIFEST_EPHEMERAL
-    // Construit après validation du contrat/preflight.
-    // Il n'est ni ajouté au preflight partagé, ni persisté.
-    const contextManifest =
-      buildRepositoryContextManifest(
-        contract,
-        {
-          agentsFiles:
-            preflight.agentsFiles,
-          packageInfo:
-            preflight,
-        }
+    // ON par défaut. OFF nécessite la capability
+    // interne du benchmark, impossible à forger
+    // par une requête JSON ordinaire.
+    const contextManifestMode =
+      contextManifestModeFromInput(
+        input
       );
+
+    const contextManifest =
+      contextManifestMode === "ON"
+        ? buildRepositoryContextManifest(
+            contract,
+            {
+              agentsFiles:
+                preflight.agentsFiles,
+              packageInfo:
+                preflight,
+            }
+          )
+        : null;
 
     // CODE_CONTEXT_EVALUATION_TELEMETRY
     // Métadonnées seulement : aucun contenu source,
@@ -809,20 +821,36 @@ function createNativeDevImplementationEngine({
     const contextEvaluation = {
       version: 1,
 
-      manifest: {
-        fileCount:
-          contextManifest.files.length,
+      manifest:
+        contextManifest
+          ? {
+              mode: "ON",
 
-        scanned:
-          contextManifest.scanned,
+              fileCount:
+                contextManifest
+                  .files
+                  .length,
 
-        truncated:
-          contextManifest.truncated,
+              scanned:
+                contextManifest
+                  .scanned,
 
-        excluded: {
-          ...contextManifest.excluded,
-        },
-      },
+              truncated:
+                contextManifest
+                  .truncated,
+
+              excluded: {
+                ...contextManifest
+                  .excluded,
+              },
+            }
+          : {
+              mode: "OFF",
+              fileCount: null,
+              scanned: null,
+              truncated: null,
+              excluded: null,
+            },
 
       plan: {
         requestedFiles: [],

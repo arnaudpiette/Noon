@@ -355,3 +355,45 @@ tokens inconnus et sont PASS avant commit.
 
 La prochaine étape prévue reste une micro-évaluation A/B réservée au benchmark
 (`manifest ON` / `manifest OFF`). Elle ne fait pas partie de cette tranche.
+
+## État après ajout du mode A/B du manifeste
+
+La micro-tranche suivante ajoute un seam expérimental strictement réservé au
+benchmark pour comparer le Repository Context Manifest activé et désactivé.
+
+Le comportement de production reste inchangé :
+
+- une tâche DEV normale utilise toujours le manifeste ;
+- un champ JSON public `contextManifestMode: "OFF"` est ignoré ;
+- la capability interne seule ne suffit pas à désactiver le manifeste ;
+- `OFF` exige la capability interne non sérialisable et un contexte benchmark
+  cohérent : session liée au benchmark, budget positif, workspace explicitement
+  autorisé et racines workspace présentes.
+
+Le service benchmark conserve son plan canonique existant. Aucun run
+supplémentaire, aucune migration SQLite et aucun nouveau moteur benchmark ne
+sont introduits.
+
+Le mode choisi est transmis uniquement au participant Native. Le moteur
+d’implémentation enregistre ensuite le mode réellement appliqué dans
+`contextEvaluation.manifest.mode`.
+
+La variante `OFF` retire uniquement le manifeste du PLAN initial. Elle ne
+modifie ni les lectures demandées ensuite, ni l’édition, ni les validations,
+ni les règles de sécurité ou d’autorisation.
+
+Validation déterministe de cette tranche :
+
+- DEV Core : 26/26 tests PASS ;
+- participant Native benchmark : 2/2 tests PASS ;
+- propagation benchmark `ON` par défaut / `OFF` explicite : PASS ;
+- persistance de la télémétrie existante : PASS ;
+- build/lint : PASS ;
+- `git diff --check` : PASS ;
+- aucun fournisseur réel ni benchmark Terra réel exécuté.
+
+La prochaine étape est l’expérience réelle contrôlée : exécuter une même tâche
+Native avec manifeste `ON`, puis avec manifeste `OFF`, sur des snapshots
+identiques, et comparer notamment les fichiers demandés/lus, les fichiers
+indisponibles, les itérations, les cycles de réparation, les tokens et le
+verdict final.

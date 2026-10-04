@@ -7,6 +7,13 @@ const test =
   require("node:test");
 
 const {
+  CONTEXT_MANIFEST_EXPERIMENT,
+} =
+  require(
+    "../services/dev/benchmark/context-manifest-experiment"
+  );
+
+const {
   createNativeNoonBenchmarkParticipant,
 } =
   require(
@@ -151,6 +158,109 @@ test(
           ],
         },
       }
+    );
+  }
+);
+
+
+test(
+  "le participant Native traduit OFF en capability interne non sérialisable",
+  async () => {
+    let received =
+      null;
+
+    const participant =
+      createNativeNoonBenchmarkParticipant({
+        coordinator: {
+          async runTask(input) {
+            received =
+              input;
+
+            return {
+              status:
+                "PASS",
+
+              failureCategory:
+                null,
+
+              metrics: {
+                backendReached:
+                  true,
+
+                iterations:
+                  1,
+
+                repairCycles:
+                  0,
+
+                contextEvaluation: {
+                  manifest: {
+                    mode:
+                      "OFF",
+                  },
+                },
+
+                providerCalls: [],
+
+                fileCount:
+                  0,
+              },
+            };
+          },
+
+          cancelTask() {
+            return true;
+          },
+        },
+      });
+
+    await participant.execute({
+      runId:
+        "run-ab",
+
+      benchmarkSessionId:
+        "session-ab",
+
+      benchmarkBudget: {
+        id:
+          "session-ab",
+      },
+
+      contextManifestMode:
+        "OFF",
+
+      workspace:
+        "/tmp/context-ab",
+
+      objective:
+        "Fixture",
+
+      allowedPaths: [
+        "src",
+      ],
+
+      forbiddenPaths: [
+        ".git",
+      ],
+    });
+
+    assert.equal(
+      received
+        [CONTEXT_MANIFEST_EXPERIMENT],
+      "OFF"
+    );
+
+    assert.equal(
+      received.contextManifestMode,
+      undefined
+    );
+
+    assert.equal(
+      JSON.stringify(received)
+        .includes(
+          "CONTEXT_MANIFEST_EXPERIMENT"
+        ),
+      false
     );
   }
 );
