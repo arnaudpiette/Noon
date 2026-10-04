@@ -21,7 +21,7 @@ function fixture() {
   return { directory, allowed, database, repository, engine, events };
 }
 
-test("le schéma Workspace, Session, Jobs, Sync, Remote et Benchmark est versionné", () => assert.equal(SCHEMA_VERSION, 16));
+test("le schéma Workspace, Session, Jobs, Sync, Remote et Benchmark est versionné", () => assert.equal(SCHEMA_VERSION, 19));
 
 test("crée, renomme et recharge un workspace avec un identifiant stable", () => {
   const f = fixture(); const created = f.engine.create({ name: "Client A", type: "client" });
@@ -68,6 +68,46 @@ test("l'adaptateur legacy est idempotent sans fusion par nom", () => {
   const again = f.engine.ensureLegacy({ legacyId: "focus-a", name: "Autre libellé", rootPath: f.allowed });
   const other = f.engine.ensureLegacy({ legacyId: "focus-b", name: "Même nom" });
   assert.equal(one.id, again.id); assert.notEqual(one.id, other.id); f.database.close();
+});
+
+
+test("un workspace legacy DEV impose un projet exclusif et remplace un ancien lien erroné", () => {
+  const f = fixture();
+
+  const workspace =
+    f.engine.ensureLegacy({
+      legacyId: "focus-a",
+      name: "Projet A",
+      rootPath: f.allowed,
+      projectId: "project-a",
+      exclusiveProject: true,
+    });
+
+  assert.deepEqual(
+    f.engine
+      .context(workspace.id)
+      .projects
+      .map((project) => project.id),
+    ["project-a"]
+  );
+
+  f.engine.ensureLegacy({
+    legacyId: "focus-a",
+    name: "Projet A",
+    rootPath: f.allowed,
+    projectId: "project-b",
+    exclusiveProject: true,
+  });
+
+  assert.deepEqual(
+    f.engine
+      .context(workspace.id)
+      .projects
+      .map((project) => project.id),
+    ["project-b"]
+  );
+
+  f.database.close();
 });
 
 test("un contexte temporaire ne change pas le workspace global", () => {

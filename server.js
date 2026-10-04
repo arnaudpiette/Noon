@@ -6366,6 +6366,30 @@ if (req.method === "GET" && req.url === "/dev-project-rules-ui.js") {
   return res.end(fs.readFileSync(filePath));
 }
 
+
+// Sert le contrôleur du profil d’exécution du Terminal DEV.
+if (
+  req.method === "GET" &&
+  req.url === "/dev-terminal-profile-ui.js"
+) {
+  const filePath = path.join(
+    __dirname,
+    "public",
+    "dev-terminal-profile-ui.js"
+  );
+
+  res.writeHead(200, {
+    "Content-Type":
+      "application/javascript; charset=utf-8",
+    "Cache-Control":
+      "no-store",
+  });
+
+  return res.end(
+    fs.readFileSync(filePath)
+  );
+}
+
 // Sert les utilitaires purs du contrôleur WebRTC.
 if (req.method === "GET" && req.url === "/live-voice-core.js") {
   const filePath = path.join(__dirname, "public", "live-voice-core.js");
@@ -8803,6 +8827,41 @@ if (
         );
       }
 
+      const repositoryRoot =
+        String(
+          body.repositoryRoot
+        );
+
+      const focusSelection =
+        resolveFocusCatalogSelection(
+          focusId,
+          repositoryRoot
+        );
+
+      const normalizedRoot =
+        normalizeFocusPath(
+          repositoryRoot
+        );
+
+      const matchingProjects =
+        normalizedRoot
+          ? getValidRegisteredProjects()
+              .filter(
+                (project) =>
+                  normalizeFocusPath(
+                    project.rootPath
+                  ) === normalizedRoot
+              )
+          : [];
+
+      const resolvedProjectId =
+        focusSelection?.project?.id ||
+        (
+          matchingProjects.length === 1
+            ? matchingProjects[0].id
+            : null
+        );
+
       workspaceId =
         workspaceEngine.ensureLegacy({
           legacyId: focusId,
@@ -8812,13 +8871,21 @@ if (
               focusId
             ).trim() || focusId,
           rootPath:
-            String(
-              body.repositoryRoot
-            ),
+            repositoryRoot,
           type:
             focusId.startsWith("projet-")
               ? "learning"
               : "project",
+
+          // Le Terminal DEV est un contexte
+          // mono-projet. Un ancien lien erroné
+          // ne doit jamais propager les règles
+          // d'un autre Focus.
+          projectId:
+            resolvedProjectId,
+
+          exclusiveProject:
+            true,
 
           // Un terminal DEV n'obtient jamais
           // implicitement un droit d'écriture.

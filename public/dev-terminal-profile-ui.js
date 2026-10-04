@@ -376,15 +376,6 @@
     elements
       ?.select
       ?.addEventListener(
-        "focus",
-        () => {
-          void refresh();
-        }
-      );
-
-    elements
-      ?.select
-      ?.addEventListener(
         "change",
         () => {
           void save(

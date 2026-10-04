@@ -337,3 +337,299 @@ test(
     );
   }
 );
+
+test(
+  "un changement de Focus recharge le profil propre à chaque workspace",
+  async () => {
+    const window = {};
+
+    vm.runInNewContext(
+      fs.readFileSync(
+        path.join(
+          __dirname,
+          "..",
+          "public",
+          "dev-terminal-profile-ui.js"
+        ),
+        "utf8"
+      ),
+      { window }
+    );
+
+    const elements = {
+      label: new Node(),
+      select: new Node(),
+      status: new Node(),
+    };
+
+    let context = {
+      workspaceId: "workspace-a",
+      contextKey: "focus-a:/repo-a",
+      projectName: "Projet A",
+    };
+
+    let version = 1;
+
+    const rulesByWorkspace =
+      new Map([
+        ["workspace-a", []],
+        ["workspace-b", []],
+      ]);
+
+    const projects = {
+      "workspace-a": {
+        id: "project-a",
+        name: "Projet A",
+      },
+      "workspace-b": {
+        id: "project-b",
+        name: "Projet B",
+      },
+    };
+
+    const bridge = {
+      async getDevProjectRules(
+        workspaceId
+      ) {
+        return {
+          project:
+            projects[workspaceId],
+
+          storage:
+            "READ_WRITE",
+
+          rules:
+            structuredClone(
+              rulesByWorkspace.get(
+                workspaceId
+              ) || []
+            ),
+        };
+      },
+
+      async devProjectRule(
+        payload
+      ) {
+        let rules =
+          rulesByWorkspace.get(
+            payload.workspaceId
+          ) || [];
+
+        if (
+          payload.action ===
+          "create"
+        ) {
+          rules = [
+            {
+              ruleId:
+                `terminal-profile-${payload.workspaceId}`,
+              text:
+                payload.text,
+              status:
+                "ACTIVE",
+              version:
+                version++,
+            },
+          ];
+        }
+
+        if (
+          payload.action ===
+          "update"
+        ) {
+          rules =
+            rules.map(
+              (rule) =>
+                rule.ruleId ===
+                  payload.ruleId
+                  ? {
+                      ...rule,
+                      text:
+                        payload.text,
+                      version:
+                        version++,
+                    }
+                  : rule
+            );
+        }
+
+        if (
+          payload.action ===
+          "delete"
+        ) {
+          rules =
+            rules.filter(
+              (rule) =>
+                rule.ruleId !==
+                payload.ruleId
+            );
+        }
+
+        rulesByWorkspace.set(
+          payload.workspaceId,
+          rules
+        );
+
+        return {
+          ok: true,
+        };
+      },
+    };
+
+    const controller =
+      window
+        .NoonDevTerminalProfileUi
+        .createDevTerminalProfileController({
+          elements,
+          bridge,
+          getContext:
+            () => context,
+        });
+
+    await controller.refresh();
+
+    elements.select.value =
+      "STANDARD";
+
+    elements.select.emit(
+      "change"
+    );
+
+    await flush();
+
+    assert.equal(
+      elements.select.value,
+      "STANDARD"
+    );
+
+    context = {
+      workspaceId:
+        "workspace-b",
+      contextKey:
+        "focus-b:/repo-b",
+      projectName:
+        "Projet B",
+    };
+
+    await controller.refresh();
+
+    assert.equal(
+      elements.select.value,
+      "AUTONOMOUS"
+    );
+
+    assert.equal(
+      elements.status.textContent,
+      "Défaut"
+    );
+
+    context = {
+      workspaceId:
+        "workspace-a",
+      contextKey:
+        "focus-a:/repo-a",
+      projectName:
+        "Projet A",
+    };
+
+    await controller.refresh();
+
+    assert.equal(
+      elements.select.value,
+      "STANDARD"
+    );
+
+    assert.equal(
+      elements.status.textContent,
+      "Projet"
+    );
+  }
+);
+
+
+test(
+  "le serveur expose le contrôleur Terminal Profile utilisé par l'interface",
+  () => {
+    const index =
+      fs.readFileSync(
+        path.join(
+          __dirname,
+          "..",
+          "public",
+          "index.html"
+        ),
+        "utf8"
+      );
+
+    const server =
+      fs.readFileSync(
+        path.join(
+          __dirname,
+          "..",
+          "server.js"
+        ),
+        "utf8"
+      );
+
+    assert.match(
+      index,
+      /<script src="dev-terminal-profile-ui\.js"><\/script>/
+    );
+
+    assert.match(
+      server,
+      /req\.url === "\/dev-terminal-profile-ui\.js"/
+    );
+
+    assert.match(
+      server,
+      /"dev-terminal-profile-ui\.js"/
+    );
+  }
+);
+
+
+test(
+  "le focus du menu Terminal ne relance pas un refresh bloquant",
+  async () => {
+    const f =
+      fixture();
+
+    await f.controller
+      .refresh();
+
+    const serialBeforeFocus =
+      f.controller
+        .state
+        .serial;
+
+    assert.equal(
+      f.elements
+        .select
+        .disabled,
+      false
+    );
+
+    f.elements
+      .select
+      .emit(
+        "focus"
+      );
+
+    await flush();
+
+    assert.equal(
+      f.controller
+        .state
+        .serial,
+      serialBeforeFocus
+    );
+
+    assert.equal(
+      f.elements
+        .select
+        .disabled,
+      false
+    );
+  }
+);

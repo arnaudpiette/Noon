@@ -88,11 +88,92 @@ function createWorkspaceEngine({ repository, allowedRoots = () => [], projectPro
   function temporaryContext(id, overrides = {}) { const base = context(id); return { ...base, temporary: true, activeProject: overrides.projectId ? projectProvider().find((item) => item.id === overrides.projectId) || null : base.activeProject, relevantRoots: overrides.roots || base.relevantRoots }; }
   function health(id) { const value = context(id); const issues = [...value.warnings]; for (const item of value.conversations) if (item.orphan) issues.push({ code: "ORPHAN_CONVERSATION", id: item.id }); for (const item of value.artifacts) if (item.orphan) issues.push({ code: "ORPHAN_ARTIFACT", id: item.id }); const linkedProjects = repository.links(id).projects; for (const item of linkedProjects) if (!value.projects.some((project) => project.id === item.id)) issues.push({ code: "ORPHAN_PROJECT", id: item.id }); emit("workspace_health_checked", { workspaceId: id, issueCount: issues.length }); return { workspaceId: id, healthy: issues.length === 0, issues }; }
   function ensureLegacy(input = {}) {
-    const legacyId = clean(input.legacyId, 120); if (!legacyId) throw new WorkspaceError("LEGACY_ID_REQUIRED", "Identifiant legacy requis.");
-    const id = `workspace-legacy-${crypto.createHash("sha256").update(`${legacyId}:${input.rootPath || ""}`).digest("hex").slice(0, 20)}`;
+    const legacyId = clean(input.legacyId, 120);
+
+    if (!legacyId) {
+      throw new WorkspaceError(
+        "LEGACY_ID_REQUIRED",
+        "Identifiant legacy requis."
+      );
+    }
+
+    const id =
+      `workspace-legacy-${crypto
+        .createHash("sha256")
+        .update(`${legacyId}:${input.rootPath || ""}`)
+        .digest("hex")
+        .slice(0, 20)}`;
+
     let workspace = repository.get(id);
-    if (!workspace) workspace = create({ id, name: input.name || legacyId, type: input.type || "project", memoryScope: input.memoryScope || `project:${legacyId}`, metadata: { legacyId, migration: "shadow" } });
-    if (input.rootPath && !repository.links(id).roots.some((root) => root.path === input.rootPath)) bindRoot(id, input.rootPath, input.mode || "read-only");
+
+    if (!workspace) {
+      workspace = create({
+        id,
+        name: input.name || legacyId,
+        type: input.type || "project",
+        memoryScope:
+          input.memoryScope ||
+          `project:${legacyId}`,
+        metadata: {
+          legacyId,
+          migration: "shadow",
+        },
+      });
+    }
+
+    if (
+      input.rootPath &&
+      !repository
+        .links(id)
+        .roots
+        .some(
+          (root) =>
+            root.path === input.rootPath
+        )
+    ) {
+      bindRoot(
+        id,
+        input.rootPath,
+        input.mode || "read-only"
+      );
+    }
+
+    const projectId =
+      clean(input.projectId, 120);
+
+    if (input.exclusiveProject === true) {
+      for (
+        const linked of
+        repository.links(id).projects
+      ) {
+        if (
+          !projectId ||
+          linked.id !== projectId
+        ) {
+          unlinkProject(
+            id,
+            linked.id
+          );
+        }
+      }
+    }
+
+    if (
+      projectId &&
+      !repository
+        .links(id)
+        .projects
+        .some(
+          (linked) =>
+            linked.id === projectId
+        )
+    ) {
+      linkProject(
+        id,
+        projectId
+      );
+    }
+
     return workspace;
   }
   return { create, update, archive, logicalDelete, activate, openWorkspace: activate, getActiveWorkspace: active, active, resolve, get: (id) => requireWorkspace(id), list: (options) => repository.list(options), linkProject, unlinkProject, bindRoot, unbindRoot, linkConversation, moveConversation, unlinkConversation, linkArtifact, context, temporaryContext, health, ensureLegacy, workspaceForConversation: repository.workspaceForConversation };
