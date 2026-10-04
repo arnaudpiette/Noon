@@ -149,6 +149,9 @@ const devProjectRulesPreview = document.getElementById("devProjectRulesPreview")
 const devProjectRulesSave = document.getElementById("devProjectRulesSave");
 const devProjectRulesCancel = document.getElementById("devProjectRulesCancel");
 const devProjectRulesStatus = document.getElementById("devProjectRulesStatus");
+const devTerminalExecutionProfileLabel = document.getElementById("devTerminalExecutionProfileLabel");
+const devTerminalExecutionProfile = document.getElementById("devTerminalExecutionProfile");
+const devTerminalExecutionProfileStatus = document.getElementById("devTerminalExecutionProfileStatus");
 const devUiValidationProject = document.getElementById("devUiValidationProject");
 const devUiValidationProjectLabel = document.getElementById("devUiValidationProjectLabel");
 // DEV_TERMINAL_BUTTON_METRICS_START
@@ -2104,6 +2107,23 @@ if (!devProjectRulesUi && devProjectRulesToggle && devProjectRulesPanel && devPr
   });
 }
 
+
+const devTerminalProfileUi = window.NoonDevTerminalProfileUi?.createDevTerminalProfileController({
+  elements: {
+    label: devTerminalExecutionProfileLabel,
+    select: devTerminalExecutionProfile,
+    status: devTerminalExecutionProfileStatus,
+  },
+  bridge: window.noon,
+  getContext: () => uiValidationMode
+    ? uiValidationContext()
+    : ({
+        workspaceId: devTerminalState.session?.workspaceId || null,
+        contextKey: devTerminalState.contextKey,
+        projectName: devTerminalState.session?.projectName || currentFocus || "Projet DEV",
+      }),
+});
+
 void window.noon?.getStatus?.().then((status) => {
   uiValidationMode = status?.uiValidationMode === true;
   uiValidationProjects = Array.isArray(status?.uiValidationProjects) ? status.uiValidationProjects.filter((project) => typeof project?.workspaceId === "string" && typeof project?.name === "string") : [];
@@ -2113,6 +2133,7 @@ void window.noon?.getStatus?.().then((status) => {
 
 devUiValidationProject?.addEventListener("change", () => {
   if (uiValidationMode && !devProjectRulesPanel.hidden) void devProjectRulesUi?.refresh();
+  if (uiValidationMode) void devTerminalProfileUi?.refresh();
 });
 
 // DEV_PROBLEMS_UI_START
@@ -5312,6 +5333,8 @@ async function openDevTerminalSession(
 
   devTerminalState.contextKey =
     `${currentFocusId}:${currentFocusPath}`;
+
+  void devTerminalProfileUi?.refresh();
 
   if (!devProjectRulesPanel.hidden) void devProjectRulesUi?.refresh();
 

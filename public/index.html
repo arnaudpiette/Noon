@@ -631,7 +631,32 @@
                   Règles
                 </button>
 
-                <label id="devUiValidationProjectLabel" hidden>
+
+                <label
+                  id="devTerminalExecutionProfileLabel"
+                  class="dev-terminal-profile-control"
+                  title="Profil terminal par défaut : Autonome."
+                >
+                  <span class="dev-terminal-profile-label">Mode</span>
+
+                  <select
+                    id="devTerminalExecutionProfile"
+                    aria-label="Profil d’exécution du Terminal DEV"
+                  >
+                    <option value="AUTONOMOUS">Autonome</option>
+                    <option value="STANDARD">Standard</option>
+                    <option value="STEP_BY_STEP">Pas à pas</option>
+                  </select>
+
+                  <span
+                    id="devTerminalExecutionProfileStatus"
+                    class="dev-terminal-profile-status"
+                  >
+                    Défaut
+                  </span>
+                </label>
+
+<label id="devUiValidationProjectLabel" hidden>
                   <span class="sr-only">Projet synthétique</span>
                   <select id="devUiValidationProject" aria-label="Projet synthétique"></select>
                 </label>
@@ -1136,6 +1161,7 @@
   <script src="ui-utils.js"></script>
   <script src="control-center.js"></script>
   <script src="dev-project-rules-ui.js"></script>
+  <script src="dev-terminal-profile-ui.js"></script>
   <script src="app.js"></script>
   <script src="live-voice-core.js"></script>
   <script src="live-voice.js"></script>

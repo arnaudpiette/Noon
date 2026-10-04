@@ -21,7 +21,8 @@
       elements.project.textContent = state.projectName;
       elements.list.replaceChildren();
       const fragment = document.createDocumentFragment();
-      for (const rule of state.rules) {
+      const visibleRules = state.rules.filter((rule) => !/^\[NOON_TERMINAL_PROFILE:(AUTONOMOUS|STANDARD|STEP_BY_STEP)\]$/.test(String(rule?.text || "").trim()));
+      for (const rule of visibleRules) {
         const item = document.createElement("article"); item.className = "dev-project-rule"; item.dataset.status = rule.status;
         const text = document.createElement("p"); text.textContent = rule.text;
         const meta = document.createElement("span"); meta.textContent = `${rule.status === "ACTIVE" ? "Active" : "Inactive"} · ce projet · v${rule.version}`;
@@ -35,7 +36,7 @@
         if (actionable) { const stateAction = document.createElement("button"); stateAction.type = "button"; stateAction.textContent = rule.status === "ACTIVE" ? "Désactiver" : "Réactiver"; stateAction.className = rule.status === "ACTIVE" ? "" : "dev-project-rule-reactivate"; stateAction.disabled = state.readOnly || state.mutating; stateAction.addEventListener("click", () => void mutate(rule.status === "ACTIVE" ? "disable" : "enable", rule)); actions.append(stateAction); }
         actions.append(remove); item.append(text, meta, actions); fragment.append(item);
       }
-      if (state.readAvailable && !state.rules.length) { const empty = document.createElement("p"); empty.className = "dev-project-rules-empty"; empty.textContent = "Aucune règle pour ce projet."; fragment.append(empty); }
+      if (state.readAvailable && !visibleRules.length) { const empty = document.createElement("p"); empty.className = "dev-project-rules-empty"; empty.textContent = "Aucune règle pour ce projet."; fragment.append(empty); }
       elements.list.append(fragment);
       elements.form.hidden = state.readOnly;
       elements.add.disabled = state.readOnly || state.mutating;

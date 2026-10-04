@@ -86,7 +86,32 @@ test("résolution pure conserve une restriction de tâche et ne promeut aucun co
 test("la projection atteint le raisonneur factice, sans contourner le payload privacy", async () => {
   let request; const reasoner = createNativeDevReasoner({ executeStructured: async (input) => { request = input; return { result: { summary: "ok", files: [], searchTerms: [], operations: [], validationCommands: [] } }; } });
   await reasoner.reason({ phase: "PLAN", contract: { taskId: "t", objective: "x", workspaceId: "w", repositoryRoot: "/repo", allowedPaths: ["/repo"], constraints: ["Sans commit"], projectInstructions: ["Préférer le test ciblé"], localOnly: false } });
-  assert.deepEqual(request.payload.projectInstructions, ["Préférer le test ciblé"]);
+  assert.equal(
+    request.payload.terminalExecutionProfile,
+    "AUTONOMOUS"
+  );
+
+  assert.match(
+    request.payload.projectInstructions[0],
+    /Mode terminal AUTONOMOUS/
+  );
+
+  assert.equal(
+    request.payload.projectInstructions.includes(
+      "Préférer le test ciblé"
+    ),
+    true
+  );
+
+  assert.equal(
+    request.payload.projectInstructions.some(
+      (instruction) =>
+        String(instruction).includes(
+          "NOON_TERMINAL_PROFILE"
+        )
+    ),
+    false
+  );
   assert.deepEqual(request.payload.constraints, ["Sans commit"]);
 });
 
