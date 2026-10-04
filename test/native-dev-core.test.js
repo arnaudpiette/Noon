@@ -138,6 +138,20 @@ test("Noon Dev natif modifie un fichier lu, valide et n'utilise jamais Codex", a
   assert.equal(result.metrics.modelCallCount, 2); assert.equal(result.metrics.estimatedCost, 0.003); assert.equal(result.metrics.providerCalls[0].provider, "openai"); assert.equal(result.metrics.inputTokens, 1); assert.equal(result.metrics.outputTokens, 1);
 });
 
+test("TASK_FAILURE conserve la telemetry des appels fournisseur déjà effectués", async () => {
+  const root = repository({ "lib/email.js": "module.exports = value => value;\n" });
+  const f = fixture({ root, reason: ({ phase }) => ({ files: phase === "PLAN" ? ["lib/email.js"] : [], operations: [], providerMetrics: { provider: "fake-openai", model: "telemetry-fixture", usage: { inputTokens: phase === "PLAN" ? 3 : 0, outputTokens: phase === "PLAN" ? 0 : 5 }, estimatedCost: phase === "PLAN" ? 0.01 : 0.02 } }) });
+  const result = await f.run();
+  assert.equal(result.failureCategory, "TASK_FAILURE");
+  assert.equal(result.finalVerdict, "FAIL");
+  assert.equal(result.metrics.providerCalls.length, 2);
+  assert.equal(result.metrics.inputTokens, 3);
+  assert.equal(result.metrics.outputTokens, 5);
+  assert.equal(result.metrics.estimatedCost, 0.03);
+  assert.equal(result.metrics.contextEvaluation.manifest.mode, "ON");
+  assert.deepEqual(result.metrics.contextEvaluation.plan.requestedFiles, ["lib/email.js"]);
+});
+
 test("une première validation rouge déclenche une seule réparation bornée", async () => {
   const root = repository({ "lib/email.js": "function normalizeEmail(v) { return v; }\n" }); let validationCount = 0;
   const f = fixture({ root, validations: () => { validationCount += 1; return validationCount === 2 ? "FAIL" : "PASS"; }, reason: ({ phase, files }) => {

@@ -683,6 +683,66 @@ function createNativeDevCoordinator({
       const failure =
         safeError(error);
 
+      const partial =
+        error?.nativeDevTelemetry;
+
+      const providerCalls =
+        Array.isArray(partial?.providerCalls)
+          ? partial.providerCalls
+          : null;
+
+      const inputTokens =
+        providerCalls?.some(
+          (item) =>
+            item?.usage?.inputTokens != null ||
+            item?.usage?.input_tokens != null
+        )
+          ? providerCalls.reduce(
+              (sum, item) =>
+                sum +
+                Math.max(
+                  0,
+                  Number(
+                    item?.usage?.inputTokens ??
+                      item?.usage?.input_tokens ??
+                      0
+                  ) || 0
+                ),
+              0
+            )
+          : null;
+
+      const outputTokens =
+        providerCalls?.some(
+          (item) =>
+            item?.usage?.outputTokens != null ||
+            item?.usage?.output_tokens != null
+        )
+          ? providerCalls.reduce(
+              (sum, item) =>
+                sum +
+                Math.max(
+                  0,
+                  Number(
+                    item?.usage?.outputTokens ??
+                      item?.usage?.output_tokens ??
+                      0
+                  ) || 0
+                ),
+              0
+            )
+          : null;
+
+      const estimatedCosts =
+        providerCalls
+          ?.map((item) => item.estimatedCost)
+          .filter(Number.isFinite) || [];
+
+      const actualCosts =
+        providerCalls
+          ?.map((item) => item.actualCost)
+          .filter(Number.isFinite) || [];
+
       const finalVerdict =
         [
           "CANCELLED",
@@ -725,6 +785,32 @@ function createNativeDevCoordinator({
           success: false,
           failureCategory:
             failure.code,
+          ...(partial
+            ? {
+                iterations: partial.iterations,
+                repairCycles: partial.repairCycles,
+                providerCalls,
+                modelCallCount: providerCalls.length,
+                inputTokens,
+                outputTokens,
+                contextEvaluation:
+                  partial.contextEvaluation,
+                estimatedCost: estimatedCosts.length
+                  ? estimatedCosts.reduce(
+                      (sum, value) => sum + value,
+                      0
+                    )
+                  : null,
+                actualCost: actualCosts.length
+                  ? actualCosts.reduce(
+                      (sum, value) => sum + value,
+                      0
+                    )
+                  : null,
+                escalationCount:
+                  partial.escalationCount,
+              }
+            : {}),
         },
       };
 

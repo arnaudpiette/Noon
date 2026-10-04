@@ -890,6 +890,21 @@ function createNativeDevImplementationEngine({
     let currentModel = null;
     let escalationCount = 0;
 
+    const failureTelemetry = () => ({
+      iterations: iterations.length,
+      repairCycles: Math.max(0, iterations.length - 1),
+      providerCalls: [...providerCalls],
+      escalationCount,
+      contextEvaluation: {
+        ...contextEvaluation,
+        execution: {
+          iterations: iterations.length,
+          repairCycles: Math.max(0, iterations.length - 1),
+        },
+      },
+    });
+
+    try {
     for (
       let iteration = 1;
       iteration <=
@@ -1261,6 +1276,13 @@ function createNativeDevImplementationEngine({
           failed.outputTail || ""
         ).slice(-4000),
       };
+    }
+    } catch (error) {
+      // Le coordinator doit pouvoir retourner les appels déjà observés sans
+      // transformer une erreur d'exécution en succès ni inventer une métrique.
+      throw Object.assign(error, {
+        nativeDevTelemetry: failureTelemetry(),
+      });
     }
 
     return {
