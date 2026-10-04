@@ -549,6 +549,7 @@ function createNativeDevImplementationEngine({
           )
         : [];
 
+    const read = [];
     const unavailable = [];
 
     for (
@@ -573,6 +574,10 @@ function createNativeDevImplementationEngine({
           taskId,
           item.relative,
           item.hash
+        );
+
+        read.push(
+          item.relative
         );
       } catch (error) {
         // REPOSITORY_CONTEXT_UNAVAILABLE_NORMALIZATION
@@ -607,6 +612,7 @@ function createNativeDevImplementationEngine({
     }
 
     return {
+      read,
       searched,
       unavailable,
     };
@@ -797,6 +803,39 @@ function createNativeDevImplementationEngine({
         }
       );
 
+    // CODE_CONTEXT_EVALUATION_TELEMETRY
+    // Métadonnées seulement : aucun contenu source,
+    // aucun hash et aucune nouvelle autorité.
+    const contextEvaluation = {
+      version: 1,
+
+      manifest: {
+        fileCount:
+          contextManifest.files.length,
+
+        scanned:
+          contextManifest.scanned,
+
+        truncated:
+          contextManifest.truncated,
+
+        excluded: {
+          ...contextManifest.excluded,
+        },
+      },
+
+      plan: {
+        requestedFiles: [],
+        searchTerms: [],
+      },
+
+      inspection: {
+        readFiles: [],
+        unavailableFiles: [],
+        searchResults: [],
+      },
+    };
+
     const activeSignal =
       signal ||
       new AbortController()
@@ -984,6 +1023,65 @@ function createNativeDevImplementationEngine({
           snapshots
         );
 
+      if (iteration === 1) {
+        contextEvaluation.plan = {
+          requestedFiles:
+            proposal.files
+              .map(
+                (value) =>
+                  String(value)
+                    .replace(
+                      /[\r\n]/g,
+                      " "
+                    )
+                    .slice(0, 400)
+              )
+              .slice(0, 30),
+
+          searchTerms:
+            proposal.searchTerms
+              .map(
+                (value) =>
+                  String(value)
+                    .replace(
+                      /[\r\n]/g,
+                      " "
+                    )
+                    .slice(0, 200)
+              )
+              .slice(0, 12),
+        };
+
+        contextEvaluation.inspection = {
+          readFiles:
+            inspection.read
+              .map(String)
+              .slice(0, 40),
+
+          unavailableFiles:
+            inspection.unavailable
+              .map(
+                (item) => ({
+                  path:
+                    String(
+                      item?.path || ""
+                    ).slice(0, 400),
+
+                  code:
+                    String(
+                      item?.code || ""
+                    ).slice(0, 80),
+                })
+              )
+              .slice(0, 40),
+
+          searchResults:
+            inspection.searched
+              .map(String)
+              .slice(0, 80),
+        };
+      }
+
       let edits =
         proposal;
 
@@ -1145,6 +1243,22 @@ function createNativeDevImplementationEngine({
       ],
       providerCalls,
       escalationCount,
+
+      contextEvaluation: {
+        ...contextEvaluation,
+
+        execution: {
+          iterations:
+            iterations.length,
+
+          repairCycles:
+            Math.max(
+              0,
+              iterations.length - 1
+            ),
+        },
+      },
+
       lastValidations:
         iterations.at(-1)
           ?.validations || [],

@@ -297,3 +297,61 @@ sur des tâches réelles. Les candidats restant issus de l'audit sont notamment 
 
 Ces points restent des travaux futurs et ne sont pas implémentés dans cette
 tranche.
+
+## État après ajout de la télémétrie d’évaluation
+
+Une seconde tranche minimale ajoute maintenant une télémétrie bornée pour
+mesurer l’utilité réelle du contexte avant toute évolution vers un graphe de
+symboles ou d’imports.
+
+Le flux réutilise exclusivement l’architecture existante :
+
+```text
+Repository Context Manifest
+  -> Terra PLAN
+  -> inspection / lectures
+  -> NativeDevImplementationEngine
+  -> NativeDevCoordinator.metrics
+  -> Native Noon benchmark participant
+  -> DevBenchmarkService
+  -> benchmark_runs / validationSummary
+```
+
+La télémétrie `contextEvaluation` expose uniquement :
+
+- manifeste : nombre de fichiers, nombre d’éléments parcourus, troncature et
+  compteurs d’exclusion ;
+- PLAN initial : chemins demandés et termes de recherche bornés ;
+- inspection initiale : chemins effectivement lus, fichiers indisponibles et
+  chemins trouvés par la recherche ;
+- exécution : nombre d’itérations et cycles de réparation.
+
+Elle ne persiste aucun contenu source, aucun hash de fichier et n’accorde
+aucune autorité supplémentaire. Le journal DEV reste le mécanisme existant pour
+la traçabilité interne des lectures.
+
+Le Coordinator agrège également les compteurs de tokens fournis par les appels
+modèle. Une absence de métrique reste `null` et n’est pas transformée en faux
+zéro. Le benchmark persiste ces compteurs dans les colonnes
+`input_tokens` / `output_tokens` déjà existantes ; aucune migration de base
+n’est nécessaire. `contextEvaluation` est stocké dans
+`validation_summary_json`.
+
+La sémantique de `firstPassSuccess` est également durcie : si
+`repairCycles` n’est pas connu, le résultat reste inconnu au lieu de supposer
+zéro réparation.
+
+Validation déterministe de cette tranche :
+
+- DEV Core : 23/23 tests PASS après le dernier ajustement de métriques ;
+- test dédié du participant Native benchmark : PASS ;
+- persistance benchmark ciblée : PASS ;
+- build/lint : PASS ;
+- `git diff --check` : PASS ;
+- aucun fournisseur réel, réseau, Electron ou benchmark réel exécuté.
+
+Ces validations ont été relancées après le dernier ajustement `null` des
+tokens inconnus et sont PASS avant commit.
+
+La prochaine étape prévue reste une micro-évaluation A/B réservée au benchmark
+(`manifest ON` / `manifest OFF`). Elle ne fait pas partie de cette tranche.

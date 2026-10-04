@@ -135,7 +135,7 @@ test("Noon Dev natif modifie un fichier lu, valide et n'utilise jamais Codex", a
   const result = await f.run();
   assert.equal(result.finalVerdict, "PASS", JSON.stringify(result)); assert.equal(result.executionMode, "NATIVE_NOON"); assert.equal(result.codexUsed, false);
   assert.match(fs.readFileSync(path.join(root, "lib/email.js"), "utf8"), /trim\(\)\.toLowerCase/);
-  assert.equal(result.metrics.modelCallCount, 2); assert.equal(result.metrics.estimatedCost, 0.003); assert.equal(result.metrics.providerCalls[0].provider, "openai");
+  assert.equal(result.metrics.modelCallCount, 2); assert.equal(result.metrics.estimatedCost, 0.003); assert.equal(result.metrics.providerCalls[0].provider, "openai"); assert.equal(result.metrics.inputTokens, 1); assert.equal(result.metrics.outputTokens, 1);
 });
 
 test("une première validation rouge déclenche une seule réparation bornée", async () => {
@@ -503,6 +503,297 @@ test(
             "FILE_UNAVAILABLE",
         },
       ]
+    );
+  }
+);
+
+test(
+  "Code Context telemetry expose uniquement les métadonnées de sélection initiale",
+  async () => {
+    const root =
+      repository({
+        "lib/a.js":
+          "module.exports = 1;\n",
+      });
+
+    const f =
+      fixture({
+        root,
+
+        reason: ({
+          phase,
+          files,
+        }) => {
+          if (
+            phase === "PLAN"
+          ) {
+            return {
+              files: [
+                "lib/missing.js",
+                "lib/a.js",
+              ],
+
+              searchTerms: [
+                "module.exports",
+              ],
+            };
+          }
+
+          const file =
+            files.find(
+              (item) =>
+                item.path ===
+                "lib/a.js"
+            );
+
+          return {
+            operations: [
+              {
+                type:
+                  "MODIFY",
+
+                path:
+                  "lib/a.js",
+
+                expectedHash:
+                  file.hash,
+
+                search:
+                  "module.exports = 1;",
+
+                replacement:
+                  "module.exports = 2;",
+              },
+            ],
+          };
+        },
+      });
+
+    const result =
+      await f.run();
+
+    assert.equal(
+      result.finalVerdict,
+      "PASS",
+      JSON.stringify(result)
+    );
+
+    const telemetry =
+      result.metrics
+        .contextEvaluation;
+
+    assert.equal(
+      result.metrics.inputTokens,
+      null
+    );
+
+    assert.equal(
+      result.metrics.outputTokens,
+      null
+    );
+
+
+    assert.equal(
+      telemetry.version,
+      1
+    );
+
+    assert.ok(
+      telemetry.manifest
+        .fileCount >= 1
+    );
+
+    assert.deepEqual(
+      telemetry.plan
+        .requestedFiles,
+      [
+        "lib/missing.js",
+        "lib/a.js",
+      ]
+    );
+
+    assert.deepEqual(
+      telemetry.plan
+        .searchTerms,
+      [
+        "module.exports",
+      ]
+    );
+
+    assert.ok(
+      telemetry.inspection
+        .readFiles
+        .includes(
+          "lib/a.js"
+        )
+    );
+
+    assert.deepEqual(
+      telemetry.inspection
+        .unavailableFiles,
+      [
+        {
+          path:
+            "lib/missing.js",
+
+          code:
+            "FILE_UNAVAILABLE",
+        },
+      ]
+    );
+
+    assert.ok(
+      telemetry.inspection
+        .searchResults
+        .includes(
+          "lib/a.js"
+        )
+    );
+
+    assert.deepEqual(
+      telemetry.execution,
+      {
+        iterations: 1,
+        repairCycles: 0,
+      }
+    );
+
+    const serialized =
+      JSON.stringify(
+        telemetry
+      );
+
+    assert.doesNotMatch(
+      serialized,
+      /module\.exports = 1/
+    );
+
+    assert.doesNotMatch(
+      serialized,
+      /"hash"/
+    );
+  }
+);
+
+test(
+  "Code Context telemetry compte réellement les cycles de réparation",
+  async () => {
+    const root =
+      repository({
+        "lib/email.js":
+          "function normalizeEmail(v) { return v; }\n",
+      });
+
+    let validationCount =
+      0;
+
+    const f =
+      fixture({
+        root,
+
+        validations:
+          () => {
+            validationCount += 1;
+
+            return validationCount === 2
+              ? "FAIL"
+              : "PASS";
+          },
+
+        reason: ({
+          phase,
+          files,
+        }) => {
+          if (
+            phase === "PLAN"
+          ) {
+            return {
+              files: [
+                "lib/email.js",
+              ],
+            };
+          }
+
+          const file =
+            files.find(
+              (item) =>
+                item.path ===
+                "lib/email.js"
+            );
+
+          if (
+            phase === "EDIT"
+          ) {
+            return {
+              operations: [
+                {
+                  type:
+                    "MODIFY",
+
+                  path:
+                    "lib/email.js",
+
+                  expectedHash:
+                    file.hash,
+
+                  search:
+                    "return v;",
+
+                  replacement:
+                    "return v.trim();",
+                },
+              ],
+            };
+          }
+
+          return {
+            operations: [
+              {
+                type:
+                  "MODIFY",
+
+                path:
+                  "lib/email.js",
+
+                expectedHash:
+                  file.hash,
+
+                search:
+                  "return v.trim();",
+
+                replacement:
+                  "return v.trim().toLowerCase();",
+              },
+            ],
+          };
+        },
+      });
+
+    const result =
+      await f.run();
+
+    assert.equal(
+      result.finalVerdict,
+      "PASS",
+      JSON.stringify(result)
+    );
+
+    assert.equal(
+      result.metrics.iterations,
+      2
+    );
+
+    assert.equal(
+      result.metrics.repairCycles,
+      1
+    );
+
+    assert.equal(
+      result.metrics
+        .contextEvaluation
+        .execution
+        .repairCycles,
+      1
     );
   }
 );

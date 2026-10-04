@@ -539,6 +539,77 @@ function createNativeDevCoordinator({
             implementation
               .providerCalls,
 
+          repairCycles:
+            Math.max(
+              0,
+              implementation
+                .iterations
+                .length - 1
+            ),
+
+          inputTokens:
+            implementation
+              .providerCalls
+              .some(
+                (item) =>
+                  item?.usage
+                    ?.inputTokens != null ||
+                  item?.usage
+                    ?.input_tokens != null
+              )
+              ? implementation
+                  .providerCalls
+                  .reduce(
+                    (sum, item) =>
+                      sum +
+                      Math.max(
+                        0,
+                        Number(
+                          item?.usage
+                            ?.inputTokens ??
+                          item?.usage
+                            ?.input_tokens ??
+                          0
+                        ) || 0
+                      ),
+                    0
+                  )
+              : null,
+
+          outputTokens:
+            implementation
+              .providerCalls
+              .some(
+                (item) =>
+                  item?.usage
+                    ?.outputTokens != null ||
+                  item?.usage
+                    ?.output_tokens != null
+              )
+              ? implementation
+                  .providerCalls
+                  .reduce(
+                    (sum, item) =>
+                      sum +
+                      Math.max(
+                        0,
+                        Number(
+                          item?.usage
+                            ?.outputTokens ??
+                          item?.usage
+                            ?.output_tokens ??
+                          0
+                        ) || 0
+                      ),
+                    0
+                  )
+              : null,
+
+          contextEvaluation:
+            implementation
+              .contextEvaluation ||
+            null,
+
           modelCallCount:
             implementation
               .providerCalls
