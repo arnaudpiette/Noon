@@ -32,32 +32,346 @@ function atomicWrite(file, content) {
   const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${crypto.randomUUID()}.tmp`);
   fs.writeFileSync(temporary, content, { mode: 0o600 }); fs.renameSync(temporary, file);
 }
-function applyOperation(contract, operation, snapshots, { allowDelete = false } = {}) {
-  if (!operation || !["CREATE", "MODIFY", "DELETE"].includes(operation.type)) throw Object.assign(new Error("Opération DEV invalide."), { code: "MALFORMED_OPERATION" });
-  const target = resolveFile(contract, operation.path);
-  if (operation.type === "DELETE" && !allowDelete) throw Object.assign(new Error("Suppression non autorisée."), { code: "PERMISSION_FAILURE" });
-  const currentExists = fs.existsSync(target.absolute);
-  const current = currentExists ? fs.readFileSync(target.absolute, "utf8") : null;
-  const currentHash = current === null ? null : digest(current);
-  if (operation.type !== "CREATE") {
-    const inspected = snapshots.get(target.relative);
-    if (!inspected) throw Object.assign(new Error("Lecture préalable requise."), { code: "READ_BEFORE_WRITE_REQUIRED" });
-    if (operation.expectedHash !== inspected.hash || currentHash !== inspected.hash) throw Object.assign(new Error("Le fichier a changé depuis sa lecture."), { code: "STALE_FILE_STATE" });
-  } else if (currentExists) throw Object.assign(new Error("Le fichier à créer existe déjà."), { code: "STALE_FILE_STATE" });
-  let next = "";
-  if (operation.type === "MODIFY") {
-    if (typeof operation.search !== "string" || !operation.search || typeof operation.replacement !== "string") throw Object.assign(new Error("Patch MODIFY incomplet."), { code: "MALFORMED_OPERATION" });
-    const first = current.indexOf(operation.search); const last = current.lastIndexOf(operation.search);
-    if (first < 0 || first !== last) throw Object.assign(new Error("Précondition de patch non unique."), { code: "PATCH_PRECONDITION_FAILED" });
-    next = current.slice(0, first) + operation.replacement + current.slice(first + operation.search.length);
-  } else if (operation.type === "CREATE") {
-    if (typeof operation.content !== "string") throw Object.assign(new Error("Contenu CREATE absent."), { code: "MALFORMED_OPERATION" });
-    fs.mkdirSync(path.dirname(target.absolute), { recursive: true }); next = operation.content;
+function prepareOperation(
+  contract,
+  operation,
+  snapshots,
+  {
+    allowDelete = false,
+  } = {}
+) {
+  if (
+    !operation ||
+    ![
+      "CREATE",
+      "MODIFY",
+      "DELETE",
+    ].includes(
+      operation.type
+    )
+  ) {
+    throw Object.assign(
+      new Error(
+        "Opération DEV invalide."
+      ),
+      {
+        code:
+          "MALFORMED_OPERATION",
+      }
+    );
   }
-  if (CONTENT_SECRET.test(next)) throw Object.assign(new Error("Secret potentiel détecté dans le patch."), { code: "SECRET_ADDED" });
-  if (operation.type === "DELETE") fs.unlinkSync(target.absolute); else atomicWrite(target.absolute, next);
-  return { ok: true, result: { path: target.relative, hash: operation.type === "DELETE" ? null : digest(next), preHash: currentHash, postHash: operation.type === "DELETE" ? null : digest(next) }, changedTargets: [target.relative] };
+
+  const target =
+    resolveFile(
+      contract,
+      operation.path
+    );
+
+  if (
+    operation.type ===
+      "DELETE" &&
+    !allowDelete
+  ) {
+    throw Object.assign(
+      new Error(
+        "Suppression non autorisée."
+      ),
+      {
+        code:
+          "PERMISSION_FAILURE",
+      }
+    );
+  }
+
+  const currentExists =
+    fs.existsSync(
+      target.absolute
+    );
+
+  const current =
+    currentExists
+      ? fs.readFileSync(
+          target.absolute,
+          "utf8"
+        )
+      : null;
+
+  const currentHash =
+    current === null
+      ? null
+      : digest(
+          current
+        );
+
+  if (
+    operation.type !==
+      "CREATE"
+  ) {
+    const inspected =
+      snapshots.get(
+        target.relative
+      );
+
+    if (!inspected) {
+      throw Object.assign(
+        new Error(
+          "Lecture préalable requise."
+        ),
+        {
+          code:
+            "READ_BEFORE_WRITE_REQUIRED",
+        }
+      );
+    }
+
+    if (
+      operation.expectedHash !==
+        inspected.hash ||
+      currentHash !==
+        inspected.hash
+    ) {
+      throw Object.assign(
+        new Error(
+          "Le fichier a changé depuis sa lecture."
+        ),
+        {
+          code:
+            "STALE_FILE_STATE",
+        }
+      );
+    }
+  } else if (
+    currentExists
+  ) {
+    throw Object.assign(
+      new Error(
+        "Le fichier à créer existe déjà."
+      ),
+      {
+        code:
+          "STALE_FILE_STATE",
+      }
+    );
+  }
+
+  let next =
+    null;
+
+  if (
+    operation.type ===
+      "MODIFY"
+  ) {
+    if (
+      typeof operation.search !==
+        "string" ||
+      !operation.search ||
+      typeof operation.replacement !==
+        "string"
+    ) {
+      throw Object.assign(
+        new Error(
+          "Patch MODIFY incomplet."
+        ),
+        {
+          code:
+            "MALFORMED_OPERATION",
+        }
+      );
+    }
+
+    const first =
+      current.indexOf(
+        operation.search
+      );
+
+    const last =
+      current.lastIndexOf(
+        operation.search
+      );
+
+    if (
+      first < 0 ||
+      first !== last
+    ) {
+      throw Object.assign(
+        new Error(
+          "Précondition de patch non unique."
+        ),
+        {
+          code:
+            "PATCH_PRECONDITION_FAILED",
+        }
+      );
+    }
+
+    next =
+      current.slice(
+        0,
+        first
+      ) +
+      operation.replacement +
+      current.slice(
+        first +
+          operation.search.length
+      );
+  } else if (
+    operation.type ===
+      "CREATE"
+  ) {
+    if (
+      typeof operation.content !==
+        "string"
+    ) {
+      throw Object.assign(
+        new Error(
+          "Contenu CREATE absent."
+        ),
+        {
+          code:
+            "MALFORMED_OPERATION",
+        }
+      );
+    }
+
+    next =
+      operation.content;
+  }
+
+  if (
+    next !== null &&
+    CONTENT_SECRET.test(
+      next
+    )
+  ) {
+    throw Object.assign(
+      new Error(
+        "Secret potentiel détecté dans le patch."
+      ),
+      {
+        code:
+          "SECRET_ADDED",
+      }
+    );
+  }
+
+  return {
+    target,
+    currentHash,
+    next,
+  };
 }
+
+function validateOperation(
+  contract,
+  operation,
+  snapshots,
+  options = {}
+) {
+  const prepared =
+    prepareOperation(
+      contract,
+      operation,
+      snapshots,
+      options
+    );
+
+  return {
+    ok: true,
+    path:
+      prepared
+        .target
+        .relative,
+    preHash:
+      prepared
+        .currentHash,
+    postHash:
+      operation.type ===
+        "DELETE"
+        ? null
+        : digest(
+            prepared.next
+          ),
+  };
+}
+
+function applyOperation(
+  contract,
+  operation,
+  snapshots,
+  options = {}
+) {
+  const prepared =
+    prepareOperation(
+      contract,
+      operation,
+      snapshots,
+      options
+    );
+
+  const {
+    target,
+    currentHash,
+    next,
+  } = prepared;
+
+  if (
+    operation.type ===
+      "CREATE"
+  ) {
+    fs.mkdirSync(
+      path.dirname(
+        target.absolute
+      ),
+      {
+        recursive: true,
+      }
+    );
+  }
+
+  if (
+    operation.type ===
+      "DELETE"
+  ) {
+    fs.unlinkSync(
+      target.absolute
+    );
+  } else {
+    atomicWrite(
+      target.absolute,
+      next
+    );
+  }
+
+  const postHash =
+    operation.type ===
+      "DELETE"
+      ? null
+      : digest(
+          next
+        );
+
+  return {
+    ok: true,
+
+    result: {
+      path:
+        target.relative,
+
+      hash:
+        postHash,
+
+      preHash:
+        currentHash,
+
+      postHash,
+    },
+
+    changedTargets: [
+      target.relative,
+    ],
+  };
+}
+
 async function runSafeCommand(command, cwd, timeout = 120_000, signal = null) {
   const decision = classifyDevCommand(command);
   if (!decision.allowed) return { command, status: "DENIED", exitCode: null, durationMs: 0, failureCategory: decision.reasonCode };
@@ -90,4 +404,4 @@ function searchRepository(contract, terms = [], { maxFiles = 40, maxMatches = 80
   return [...new Set(matches)].slice(0, maxFiles);
 }
 
-module.exports = { CONTENT_SECRET, applyOperation, digest, readText, resolveFile, runSafeCommand, searchRepository };
+module.exports = { CONTENT_SECRET, applyOperation, digest, readText, resolveFile, runSafeCommand, searchRepository, validateOperation };

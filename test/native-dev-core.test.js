@@ -1829,3 +1829,241 @@ test(
     );
   }
 );
+
+
+test(
+  "DEV Core Reliability : Patch Preflight refuse tout le batch avant écriture si une opération ultérieure est invalide",
+  async () => {
+    const root =
+      repository({
+        "lib/a.js":
+          "module.exports = 1;\n",
+
+        "lib/b.js":
+          "module.exports = 10;\n",
+      });
+
+    const f =
+      fixture({
+        root,
+
+        reason: ({
+          phase,
+          files,
+        }) => {
+          if (
+            phase === "PLAN"
+          ) {
+            return {
+              files: [
+                "lib/a.js",
+                "lib/b.js",
+              ],
+
+              searchTerms: [],
+              operations: [],
+              validationCommands:
+                [],
+            };
+          }
+
+          const a =
+            files.find(
+              (item) =>
+                item.path ===
+                "lib/a.js"
+            );
+
+          const b =
+            files.find(
+              (item) =>
+                item.path ===
+                "lib/b.js"
+            );
+
+          assert.ok(a);
+          assert.ok(b);
+
+          return {
+            operations: [
+              {
+                type:
+                  "MODIFY",
+
+                path:
+                  "lib/a.js",
+
+                expectedHash:
+                  a.hash,
+
+                search:
+                  "module.exports = 1;",
+
+                replacement:
+                  "module.exports = 2;",
+              },
+
+              {
+                type:
+                  "MODIFY",
+
+                path:
+                  "lib/b.js",
+
+                expectedHash:
+                  b.hash,
+
+                search:
+                  "texte inexistant",
+
+                replacement:
+                  "module.exports = 20;",
+              },
+            ],
+          };
+        },
+      });
+
+    const result =
+      await f.run();
+
+    assert.equal(
+      result.finalVerdict,
+      "FAIL"
+    );
+
+    assert.equal(
+      result.failureCategory,
+      "PATCH_PRECONDITION_FAILED"
+    );
+
+    assert.equal(
+      fs.readFileSync(
+        path.join(
+          root,
+          "lib/a.js"
+        ),
+        "utf8"
+      ),
+      "module.exports = 1;\n"
+    );
+
+    assert.equal(
+      fs.readFileSync(
+        path.join(
+          root,
+          "lib/b.js"
+        ),
+        "utf8"
+      ),
+      "module.exports = 10;\n"
+    );
+  }
+);
+
+test(
+  "DEV Core Reliability : Patch Preflight refuse deux opérations sur la même cible avant toute écriture",
+  async () => {
+    const root =
+      repository({
+        "lib/a.js":
+          "module.exports = 1;\n",
+      });
+
+    const f =
+      fixture({
+        root,
+
+        reason: ({
+          phase,
+          files,
+        }) => {
+          if (
+            phase === "PLAN"
+          ) {
+            return {
+              files: [
+                "lib/a.js",
+              ],
+
+              searchTerms: [],
+              operations: [],
+              validationCommands:
+                [],
+            };
+          }
+
+          const file =
+            files.find(
+              (item) =>
+                item.path ===
+                "lib/a.js"
+            );
+
+          assert.ok(file);
+
+          return {
+            operations: [
+              {
+                type:
+                  "MODIFY",
+
+                path:
+                  "lib/a.js",
+
+                expectedHash:
+                  file.hash,
+
+                search:
+                  "module.exports = 1;",
+
+                replacement:
+                  "module.exports = 2;",
+              },
+
+              {
+                type:
+                  "MODIFY",
+
+                path:
+                  "./lib/a.js",
+
+                expectedHash:
+                  file.hash,
+
+                search:
+                  "module.exports = 1;",
+
+                replacement:
+                  "module.exports = 3;",
+              },
+            ],
+          };
+        },
+      });
+
+    const result =
+      await f.run();
+
+    assert.equal(
+      result.finalVerdict,
+      "FAIL"
+    );
+
+    assert.equal(
+      result.failureCategory,
+      "DUPLICATE_EDIT_TARGET"
+    );
+
+    assert.equal(
+      fs.readFileSync(
+        path.join(
+          root,
+          "lib/a.js"
+        ),
+        "utf8"
+      ),
+      "module.exports = 1;\n"
+    );
+  }
+);

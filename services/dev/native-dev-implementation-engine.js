@@ -7,6 +7,7 @@ const {
   CONTENT_SECRET,
   applyOperation,
   readText,
+  validateOperation,
   resolveFile,
   runSafeCommand,
   searchRepository,
@@ -883,44 +884,148 @@ function createNativeDevImplementationEngine({
   ) {
     const changed = [];
 
-    for (const raw of operations) {
-      const operation = {
-        type: raw.type,
-        path: String(
-          raw.path || ""
-        ),
-        expectedHash:
-          raw.expectedHash ??
-          null,
-        search:
-          raw.search ?? null,
-        replacement:
-          raw.replacement ??
-          null,
-        content:
-          raw.content ?? null,
-        iteration,
-      };
+    const normalized =
+      operations.map(
+        (raw) => ({
+          type:
+            raw.type,
 
-      resolveFile(
-        contract,
-        operation.path
+          path:
+            String(
+              raw.path || ""
+            ),
+
+          expectedHash:
+            raw.expectedHash ??
+            null,
+
+          search:
+            raw.search ??
+            null,
+
+          replacement:
+            raw.replacement ??
+            null,
+
+          content:
+            raw.content ??
+            null,
+
+          iteration,
+        })
       );
 
+    // DEV_CORE_PATCH_PREFLIGHT_V1
+    // Tout le batch est vérifié avant la première écriture.
+    // Un mauvais second patch ne doit jamais laisser le
+    // premier fichier déjà modifié.
+    const targets =
+      new Set();
+
+    for (
+      const operation of
+      normalized
+    ) {
+      try {
+        const target =
+          resolveFile(
+            contract,
+            operation.path
+          );
+
+        if (
+          targets.has(
+            target.relative
+          )
+        ) {
+          throw Object.assign(
+            new Error(
+              "Plusieurs opérations ciblent le même fichier."
+            ),
+            {
+              code:
+                "DUPLICATE_EDIT_TARGET",
+            }
+          );
+        }
+
+        targets.add(
+          target.relative
+        );
+
+        validateOperation(
+          contract,
+          operation,
+          snapshots
+        );
+
+        const executionOperation =
+          {
+            ...operation,
+
+            path:
+              path.resolve(
+                contract.repositoryRoot,
+                operation.path
+              ),
+          };
+
+        authorize(
+          contract,
+          {
+            skillId:
+              "noon_dev_apply_edit",
+
+            operation:
+              "update local file",
+
+            args:
+              executionOperation,
+          },
+          "WRITE",
+          taskId
+        );
+      } catch (error) {
+        journal.recordFileOperation(
+          taskId,
+          {
+            ...operation,
+
+            status:
+              `PREFLIGHT_${
+                safeError(
+                  error
+                ).code
+              }`,
+          }
+        );
+
+        throw error;
+      }
+    }
+
+    for (
+      const operation of
+      normalized
+    ) {
       const executionOperation =
         {
           ...operation,
-          path: path.resolve(
-            contract.repositoryRoot,
-            operation.path
-          ),
+
+          path:
+            path.resolve(
+              contract.repositoryRoot,
+              operation.path
+            ),
         };
 
       const step = {
         skillId:
           "noon_dev_apply_edit",
+
         operation:
           "update local file",
+
         args:
           executionOperation,
       };
@@ -947,9 +1052,13 @@ function createNativeDevImplementationEngine({
           taskId,
           {
             ...operation,
-            status: "APPLIED",
+
+            status:
+              "APPLIED",
+
             preHash:
               applied.preHash,
+
             postHash:
               applied.postHash,
           }
@@ -959,7 +1068,9 @@ function createNativeDevImplementationEngine({
           applied.path
         );
 
-        if (applied.hash) {
+        if (
+          applied.hash
+        ) {
           snapshots.set(
             applied.path,
             readText(
@@ -973,6 +1084,7 @@ function createNativeDevImplementationEngine({
           taskId,
           {
             ...operation,
+
             status:
               safeError(
                 error
