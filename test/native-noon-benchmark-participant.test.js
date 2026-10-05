@@ -218,6 +218,9 @@ test(
       runId:
         "run-ab",
 
+      executionTaskId:
+        "run-ab-context-ab-off",
+
       benchmarkSessionId:
         "session-ab",
 
@@ -248,6 +251,16 @@ test(
       received
         [CONTEXT_MANIFEST_EXPERIMENT],
       "OFF"
+    );
+
+    assert.equal(
+      received.taskId,
+      "run-ab-context-ab-off"
+    );
+
+    assert.equal(
+      received.workspaceId,
+      "run-ab-context-ab-off"
     );
 
     assert.equal(

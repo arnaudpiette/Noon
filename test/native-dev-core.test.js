@@ -1120,3 +1120,366 @@ test(
     );
   }
 );
+
+
+test(
+  "Context Closure V1 utilise le petit manifeste quand PLAN ne sélectionne aucun fichier",
+  async () => {
+    const root =
+      repository({
+        "src/controller.js":
+          "module.exports = {};\n",
+
+        "src/service.js":
+          "const store=require('./store');module.exports=()=>store.value;\n",
+
+        "src/store.js":
+          "module.exports={value:1};\n",
+
+        "test/state.test.js":
+          "module.exports={};\n",
+      });
+
+    let editFiles =
+      [];
+
+    const f =
+      fixture({
+        root,
+
+        allowedPaths: [
+          "src",
+          "test",
+        ],
+
+        reason: ({
+          phase,
+          files,
+        }) => {
+          if (
+            phase === "PLAN"
+          ) {
+            return {
+              files: [],
+              searchTerms: [],
+              operations: [],
+            };
+          }
+
+          editFiles =
+            files.map(
+              (item) =>
+                item.path
+            );
+
+          const service =
+            files.find(
+              (item) =>
+                item.path ===
+                "src/service.js"
+            );
+
+          assert.ok(service);
+
+          return {
+            operations: [
+              {
+                type:
+                  "MODIFY",
+
+                path:
+                  "src/service.js",
+
+                expectedHash:
+                  service.hash,
+
+                search:
+                  "store.value;",
+
+                replacement:
+                  "store.value + 1;",
+              },
+            ],
+          };
+        },
+      });
+
+    const result =
+      await f.run();
+
+    assert.equal(
+      result.finalVerdict,
+      "PASS",
+      JSON.stringify(result)
+    );
+
+    assert.ok(
+      editFiles.includes(
+        "src/controller.js"
+      )
+    );
+
+    assert.ok(
+      editFiles.includes(
+        "src/service.js"
+      )
+    );
+
+    assert.ok(
+      editFiles.includes(
+        "src/store.js"
+      )
+    );
+
+    assert.ok(
+      editFiles.includes(
+        "test/state.test.js"
+      )
+    );
+
+    assert.ok(
+      result.metrics
+        .contextEvaluation
+        .inspection
+        .fallbackReadFiles
+        .includes(
+          "src/service.js"
+        )
+    );
+
+    assert.ok(
+      result.metrics
+        .contextEvaluation
+        .inspection
+        .fallbackReadFiles
+        .includes(
+          "src/store.js"
+        )
+    );
+  }
+);
+
+test(
+  "Context Closure V1 lit une dépendance locale directe avant EDIT sans traverser node_modules ou le scope",
+  async () => {
+    const root =
+      repository({
+        "src/service.js":
+          "const store=require('./store');require('./node_modules/pkg');require('../outside');module.exports=()=>store.value;\n",
+
+        "src/store.js":
+          "module.exports={value:1};\n",
+
+        "src/node_modules/pkg.js":
+          "module.exports='never-context';\n",
+
+        "outside.js":
+          "module.exports='outside';\n",
+      });
+
+    let editFiles =
+      [];
+
+    const f =
+      fixture({
+        root,
+
+        allowedPaths: [
+          "src",
+        ],
+
+        reason: ({
+          phase,
+          files,
+        }) => {
+          if (
+            phase === "PLAN"
+          ) {
+            return {
+              files: [
+                "src/service.js",
+              ],
+
+              searchTerms: [],
+              operations: [],
+            };
+          }
+
+          editFiles =
+            files.map(
+              (item) =>
+                item.path
+            );
+
+          const service =
+            files.find(
+              (item) =>
+                item.path ===
+                "src/service.js"
+            );
+
+          return {
+            operations: [
+              {
+                type:
+                  "MODIFY",
+
+                path:
+                  "src/service.js",
+
+                expectedHash:
+                  service.hash,
+
+                search:
+                  "store.value;",
+
+                replacement:
+                  "store.value + 1;",
+              },
+            ],
+          };
+        },
+      });
+
+    const result =
+      await f.run({
+        forbiddenPaths: [
+          ".git",
+          "node_modules",
+        ],
+      });
+
+    assert.equal(
+      result.finalVerdict,
+      "PASS",
+      JSON.stringify(result)
+    );
+
+    assert.ok(
+      editFiles.includes(
+        "src/service.js"
+      )
+    );
+
+    assert.ok(
+      editFiles.includes(
+        "src/store.js"
+      )
+    );
+
+    assert.equal(
+      editFiles.includes(
+        "src/node_modules/pkg.js"
+      ),
+      false
+    );
+
+    assert.equal(
+      editFiles.includes(
+        "outside.js"
+      ),
+      false
+    );
+
+    assert.deepEqual(
+      result.metrics
+        .contextEvaluation
+        .inspection
+        .dependencyReadFiles,
+      [
+        "src/store.js",
+      ]
+    );
+  }
+);
+
+test(
+  "Context Closure V1 refuse un EDIT aveugle si aucun code source n'a été lu",
+  async () => {
+    const {
+      CONTEXT_MANIFEST_EXPERIMENT,
+    } =
+      require(
+        "../services/dev/benchmark/context-manifest-experiment"
+      );
+
+    const root =
+      repository({
+        "src/a.js":
+          "module.exports=1;\n",
+      });
+
+    let reasonerCalls =
+      0;
+
+    const f =
+      fixture({
+        root,
+
+        allowedPaths: [
+          "src",
+        ],
+
+        reason:
+          () => {
+            reasonerCalls += 1;
+
+            return {
+              files: [],
+              searchTerms: [],
+              operations: [],
+            };
+          },
+      });
+
+    const result =
+      await f.run({
+        [CONTEXT_MANIFEST_EXPERIMENT]:
+          "OFF",
+
+        sessionId:
+          "session-zero-context",
+
+        benchmark: {
+          id:
+            "session-zero-context",
+
+          limitUsd:
+            0.5,
+        },
+
+        workspaceAuthorized:
+          true,
+
+        workspaceRoots: [
+          root,
+        ],
+      });
+
+    assert.equal(
+      result.finalVerdict,
+      "FAIL"
+    );
+
+    assert.equal(
+      result.failureCategory,
+      "SOURCE_CONTEXT_REQUIRED"
+    );
+
+    assert.equal(
+      reasonerCalls,
+      1
+    );
+
+    assert.equal(
+      fs.readFileSync(
+        path.join(
+          root,
+          "src/a.js"
+        ),
+        "utf8"
+      ),
+      "module.exports=1;\n"
+    );
+  }
+);

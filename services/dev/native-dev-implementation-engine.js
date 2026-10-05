@@ -216,6 +216,116 @@ function unique(items) {
   ];
 }
 
+
+const CONTEXT_FALLBACK_MAX_FILES =
+  12;
+
+const LOCAL_DEPENDENCY_MAX_FILES =
+  12;
+
+const LOCAL_DEPENDENCY_EXTENSIONS =
+  Object.freeze([
+    ".js",
+    ".cjs",
+    ".mjs",
+    ".jsx",
+    ".ts",
+    ".tsx",
+  ]);
+
+function relativeDependencySpecifiers(
+  content
+) {
+  const source =
+    String(content || "");
+
+  const found = [];
+
+  const patterns = [
+    /\brequire\s*\(\s*["'](\.{1,2}\/[^"']+)["']\s*\)/g,
+    /\bimport\s*\(\s*["'](\.{1,2}\/[^"']+)["']\s*\)/g,
+    /\b(?:import|export)\s+(?:[^"'`;]*?\s+from\s+)?["'](\.{1,2}\/[^"']+)["']/g,
+  ];
+
+  for (const pattern of patterns) {
+    let match;
+
+    while (
+      (match = pattern.exec(source)) !==
+      null
+    ) {
+      const specifier =
+        String(match[1] || "");
+
+      if (
+        specifier.startsWith("./") ||
+        specifier.startsWith("../")
+      ) {
+        found.push(specifier);
+      }
+
+      if (
+        found.length >=
+        LOCAL_DEPENDENCY_MAX_FILES
+      ) {
+        break;
+      }
+    }
+  }
+
+  return unique(found).slice(
+    0,
+    LOCAL_DEPENDENCY_MAX_FILES
+  );
+}
+
+function localDependencyCandidates(
+  sourceRelative,
+  specifier
+) {
+  const base =
+    path.posix.normalize(
+      path.posix.join(
+        path.posix.dirname(
+          String(sourceRelative || "")
+        ),
+        String(specifier || "")
+      )
+    );
+
+  if (
+    !base ||
+    base === ".." ||
+    base.startsWith("../") ||
+    path.posix.isAbsolute(base) ||
+    base
+      .split("/")
+      .includes("node_modules")
+  ) {
+    return [];
+  }
+
+  if (
+    path.posix.extname(base)
+  ) {
+    return [base];
+  }
+
+  return unique([
+    base,
+
+    ...LOCAL_DEPENDENCY_EXTENSIONS.map(
+      (extension) =>
+        `${base}${extension}`
+    ),
+
+    ...LOCAL_DEPENDENCY_EXTENSIONS.map(
+      (extension) =>
+        `${base}/index${extension}`
+    ),
+  ]);
+}
+
 function isBlockingValidationFailure(
   result = {}
 ) {
@@ -619,6 +729,113 @@ function createNativeDevImplementationEngine({
       read,
       searched,
       unavailable,
+    };
+  }
+
+
+  function inspectLocalDependencies(
+    contract,
+    taskId,
+    snapshots,
+    seedFiles
+  ) {
+    const read = [];
+
+    const seeds =
+      unique(
+        Array.isArray(seedFiles)
+          ? seedFiles
+          : []
+      ).slice(0, 40);
+
+    for (const seed of seeds) {
+      const snapshot =
+        snapshots.get(seed);
+
+      if (
+        !snapshot ||
+        typeof snapshot.content !==
+          "string"
+      ) {
+        continue;
+      }
+
+      const specifiers =
+        relativeDependencySpecifiers(
+          snapshot.content
+        );
+
+      for (const specifier of specifiers) {
+        const candidates =
+          localDependencyCandidates(
+            seed,
+            specifier
+          );
+
+        for (const candidate of candidates) {
+          if (
+            snapshots.has(candidate)
+          ) {
+            break;
+          }
+
+          try {
+            const item =
+              readText(
+                contract,
+                candidate
+              );
+
+            snapshots.set(
+              item.relative,
+              item
+            );
+
+            journal.recordRead(
+              taskId,
+              item.relative,
+              item.hash
+            );
+
+            read.push(
+              item.relative
+            );
+
+            break;
+          } catch (error) {
+            if (
+              [
+                "ENOENT",
+                "ENOTDIR",
+                "FILE_UNAVAILABLE",
+                "BINARY_FILE_DENIED",
+                "OUT_OF_SCOPE_CHANGE",
+              ].includes(
+                error?.code
+              )
+            ) {
+              continue;
+            }
+
+            throw error;
+          }
+        }
+
+        if (
+          read.length >=
+          LOCAL_DEPENDENCY_MAX_FILES
+        ) {
+          return {
+            read:
+              unique(read),
+          };
+        }
+      }
+    }
+
+    return {
+      read:
+        unique(read),
     };
   }
 
@@ -1057,7 +1274,7 @@ function createNativeDevImplementationEngine({
           currentModel;
       }
 
-      const inspection =
+      let inspection =
         inspect(
           contract,
           taskId,
@@ -1065,6 +1282,80 @@ function createNativeDevImplementationEngine({
           proposal.searchTerms,
           snapshots
         );
+
+      const fallbackReadFiles =
+        [];
+
+      if (
+        iteration === 1 &&
+        contextManifest &&
+        contextManifest
+          .truncated === false &&
+        contextManifest
+          .files
+          .length > 0 &&
+        contextManifest
+          .files
+          .length <=
+          CONTEXT_FALLBACK_MAX_FILES &&
+        inspection.read.length === 0
+      ) {
+        const fallback =
+          inspect(
+            contract,
+            taskId,
+            contextManifest.files.map(
+              (item) =>
+                item.path
+            ),
+            [],
+            snapshots
+          );
+
+        fallbackReadFiles.push(
+          ...fallback.read
+        );
+
+        inspection = {
+          read:
+            unique([
+              ...inspection.read,
+              ...fallback.read,
+            ]),
+
+          searched:
+            unique([
+              ...inspection.searched,
+              ...fallback.searched,
+            ]),
+
+          unavailable: [
+            ...inspection.unavailable,
+            ...fallback.unavailable,
+          ],
+        };
+      }
+
+      const dependencyClosure =
+        inspectLocalDependencies(
+          contract,
+          taskId,
+          snapshots,
+          inspection.read
+        );
+
+      const dependencyReadFiles =
+        dependencyClosure.read;
+
+      inspection = {
+        ...inspection,
+
+        read:
+          unique([
+            ...inspection.read,
+            ...dependencyReadFiles,
+          ]),
+      };
 
       if (iteration === 1) {
         contextEvaluation.plan = {
@@ -1122,7 +1413,46 @@ function createNativeDevImplementationEngine({
             inspection.searched
               .map(String)
               .slice(0, 80),
+
+          fallbackReadFiles:
+            fallbackReadFiles
+              .map(String)
+              .slice(
+                0,
+                CONTEXT_FALLBACK_MAX_FILES
+              ),
+
+          dependencyReadFiles:
+            dependencyReadFiles
+              .map(String)
+              .slice(
+                0,
+                LOCAL_DEPENDENCY_MAX_FILES
+              ),
         };
+      }
+
+      const requiresExistingSource =
+        !proposal.operations.length ||
+        proposal.operations.some(
+          (operation) =>
+            operation?.type ===
+              "MODIFY"
+        );
+
+      if (
+        snapshots.size === 0 &&
+        requiresExistingSource
+      ) {
+        throw Object.assign(
+          new Error(
+            "Aucun contexte source lisible avant édition."
+          ),
+          {
+            code:
+              "SOURCE_CONTEXT_REQUIRED",
+          }
+        );
       }
 
       let edits =

@@ -30,7 +30,7 @@ function make(f) { return createContextManifestAbExperiment({ repository: f.repo
 
 test("A/B impose ON puis OFF, rematérialise, valide deux snapshots et ne mute aucun run", async () => {
   const f = fixture(); const result = await make(f).run(f.session.id);
-  assert.deepEqual(f.calls.map((call) => call.contextManifestMode), ["ON", "OFF"]); assert.equal(result.variants.ON.startFingerprint, result.variants.OFF.startFingerprint); assert.equal(f.hidden.length, 2); assert.equal(result.canonicalRunsMutated, false);
+  assert.deepEqual(f.calls.map((call) => call.contextManifestMode), ["ON", "OFF"]); assert.deepEqual(f.calls.map((call) => call.executionTaskId), ["r8-context-ab-on", "r8-context-ab-off"]); assert.ok(f.calls.every((call) => call.runId === "r8")); assert.equal(result.variants.ON.startFingerprint, result.variants.OFF.startFingerprint); assert.equal(f.hidden.length, 2); assert.equal(result.canonicalRunsMutated, false);
   assert.equal(result.variants.ON.contextEvaluation.manifest.mode, "ON"); assert.equal(result.variants.OFF.contextEvaluation.manifest.mode, "OFF"); assert.deepEqual(f.runs.map((run) => run.state), Array(8).fill("PENDING")); fs.rmSync(f.root, { recursive: true, force: true });
 });
 test("A/B refuse session, runs, autorisation et snapshot invalides avant participant", async () => {

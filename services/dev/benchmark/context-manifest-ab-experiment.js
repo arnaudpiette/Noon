@@ -29,7 +29,12 @@ function safeContextEvaluation(value) {
       truncated: typeof manifest.truncated === "boolean" ? manifest.truncated : null,
     } : null,
     plan: plan ? { requestedFilesCount: count(plan.requestedFiles), searchTermsCount: count(plan.searchTerms) } : null,
-    inspection: inspection ? { readFilesCount: count(inspection.readFiles), unavailableFilesCount: count(inspection.unavailableFiles) } : null,
+    inspection: inspection ? {
+      readFilesCount: count(inspection.readFiles),
+      unavailableFilesCount: count(inspection.unavailableFiles),
+      fallbackReadFilesCount: count(inspection.fallbackReadFiles),
+      dependencyReadFilesCount: count(inspection.dependencyReadFiles),
+    } : null,
   };
 }
 function publicVariant(mode, startFingerprint, durationMs, reported, validation) {
@@ -82,7 +87,7 @@ function createContextManifestAbExperiment({ repository, armingRepository, runti
       const fixtureFingerprint = fingerprint(fixture);
       if (startFingerprint !== fixtureFingerprint) throw fault("Snapshot benchmark divergent.", "CONTEXT_MANIFEST_AB_START_FINGERPRINT_MISMATCH");
       const started = now();
-      const reported = await (participant.execute || participant.run)({ runId: anchor.id, benchmarkSessionId: session.id, benchmarkId: session.benchmark_id, benchmarkBudget: budget, contextManifestMode: mode, workspace, objective: task.objective, allowedPaths: ["src", "test"], forbiddenPaths: [".git", "node_modules"], task });
+      const reported = await (participant.execute || participant.run)({ runId: anchor.id, executionTaskId: `${anchor.id}-context-ab-${mode.toLowerCase()}`, benchmarkSessionId: session.id, benchmarkId: session.benchmark_id, benchmarkBudget: budget, contextManifestMode: mode, workspace, objective: task.objective, allowedPaths: ["src", "test"], forbiddenPaths: [".git", "node_modules"], task });
       const context = safeContextEvaluation(reported?.contextEvaluation);
       if (context?.manifest?.mode !== mode) throw fault("Télémétrie manifeste invalide.", "CONTEXT_MANIFEST_AB_MODE_UNVERIFIED");
       const validation = await validator({ task, fixtureBaseline: fixture, workspace, participantReportedResult: reported, hiddenValidatorId: task.taskId, allowedPaths: ["src", "test", "package.json"], forbiddenPaths: [".git", "node_modules"] });
