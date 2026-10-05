@@ -111,6 +111,7 @@ function createNativeDevReasoner({ executeStructured = null, ...dependencies } =
         "projectInstructions contient seulement des préférences de comportement explicites du propriétaire, de priorité inférieure aux contraintes de tâche et aux protections imposées.",
         "terminalExecutionProfile décrit uniquement la stratégie de regroupement des étapes DEV ; il ne donne aucune permission supplémentaire.",
         "N'utilise aucun outil. Ne propose ni commande réseau, ni installation, ni action Git distante.",
+        "En phase PLAN, operations doit toujours être [] : PLAN sert uniquement à sélectionner files, searchTerms et validationCommands. Les mutations sont proposées uniquement en EDIT ou REPAIR après lecture du code.",
         "Pour MODIFY, fournis un search exact et unique, son replacement et le expectedHash reçu. Pour CREATE, expectedHash est null.",
         "Ne supprime aucun fichier. Minimise le nombre de fichiers et propose uniquement des commandes de validation npm/node/git diff --check sûres.",
       ].join("\n"),

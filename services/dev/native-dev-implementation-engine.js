@@ -1384,6 +1384,10 @@ function createNativeDevImplementationEngine({
                     .slice(0, 200)
               )
               .slice(0, 12),
+
+          ignoredOperationsCount:
+            proposal.operations
+              .length,
         };
 
         contextEvaluation.inspection = {
@@ -1432,12 +1436,25 @@ function createNativeDevImplementationEngine({
         };
       }
 
+      const repositoryKnownEmpty =
+        phase === "PLAN" &&
+        contextManifest &&
+        contextManifest
+          .truncated === false &&
+        contextManifest
+          .files
+          .length === 0;
+
       const requiresExistingSource =
-        !proposal.operations.length ||
-        proposal.operations.some(
-          (operation) =>
-            operation?.type ===
-              "MODIFY"
+        !repositoryKnownEmpty &&
+        (
+          phase === "PLAN" ||
+          !proposal.operations.length ||
+          proposal.operations.some(
+            (operation) =>
+              operation?.type ===
+                "MODIFY"
+          )
         );
 
       if (
@@ -1455,10 +1472,15 @@ function createNativeDevImplementationEngine({
         );
       }
 
+      // DEV_CORE_PLAN_DISCOVERY_ONLY
+      // Une opération proposée pendant PLAN n'est jamais exécutable.
+      // PLAN sélectionne le contexte ; EDIT produit le premier patch
+      // uniquement après inspection réelle du repository.
       let edits =
         proposal;
 
       if (
+        phase === "PLAN" ||
         !edits.operations
           .length
       ) {
@@ -1466,7 +1488,7 @@ function createNativeDevImplementationEngine({
           normalizeReasoning(
             await reasoner.reason({
               phase:
-                iteration === 1
+                phase === "PLAN"
                   ? "EDIT"
                   : "REPAIR",
               contract,
@@ -1513,6 +1535,25 @@ function createNativeDevImplementationEngine({
               .model ||
             currentModel;
         }
+      }
+
+      if (
+        snapshots.size === 0 &&
+        edits.operations.some(
+          (operation) =>
+            operation?.type ===
+              "MODIFY"
+        )
+      ) {
+        throw Object.assign(
+          new Error(
+            "Une modification exige une lecture préalable du code source."
+          ),
+          {
+            code:
+              "SOURCE_CONTEXT_REQUIRED",
+          }
+        );
       }
 
       if (

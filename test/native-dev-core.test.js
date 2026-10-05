@@ -1483,3 +1483,349 @@ test(
     );
   }
 );
+
+
+test(
+  "DEV Core Reliability : PLAN est discovery-only et ne peut jamais fournir le patch appliqué",
+  async () => {
+    const root =
+      repository({
+        "lib/a.js":
+          "module.exports = 1;\n",
+      });
+
+    const phases = [];
+
+    const f =
+      fixture({
+        root,
+
+        reason: ({
+          phase,
+          files,
+        }) => {
+          phases.push(
+            phase
+          );
+
+          if (
+            phase === "PLAN"
+          ) {
+            return {
+              files: [
+                "lib/a.js",
+              ],
+
+              searchTerms: [],
+
+              operations: [
+                {
+                  type:
+                    "MODIFY",
+
+                  path:
+                    "lib/a.js",
+
+                  expectedHash:
+                    null,
+
+                  search:
+                    "module.exports = 1;",
+
+                  replacement:
+                    "module.exports = 999;",
+                },
+              ],
+
+              validationCommands:
+                [],
+            };
+          }
+
+          assert.equal(
+            phase,
+            "EDIT"
+          );
+
+          const file =
+            files.find(
+              (item) =>
+                item.path ===
+                "lib/a.js"
+            );
+
+          assert.ok(
+            file
+          );
+
+          return {
+            operations: [
+              {
+                type:
+                  "MODIFY",
+
+                path:
+                  "lib/a.js",
+
+                expectedHash:
+                  file.hash,
+
+                search:
+                  "module.exports = 1;",
+
+                replacement:
+                  "module.exports = 2;",
+              },
+            ],
+          };
+        },
+      });
+
+    const result =
+      await f.run();
+
+    assert.equal(
+      result.finalVerdict,
+      "PASS",
+      JSON.stringify(result)
+    );
+
+    assert.deepEqual(
+      phases,
+      [
+        "PLAN",
+        "EDIT",
+      ]
+    );
+
+    assert.equal(
+      fs.readFileSync(
+        path.join(
+          root,
+          "lib/a.js"
+        ),
+        "utf8"
+      ),
+      "module.exports = 2;\n"
+    );
+
+    assert.equal(
+      result.metrics
+        .contextEvaluation
+        .plan
+        .ignoredOperationsCount,
+      1
+    );
+  }
+);
+
+
+test(
+  "DEV Core Reliability : un scope vide autorise CREATE via EDIT mais jamais un MODIFY aveugle",
+  async () => {
+    const root =
+      repository({});
+
+    const phases = [];
+
+    const f =
+      fixture({
+        root,
+
+        allowedPaths: [
+          "src",
+        ],
+
+        reason: ({
+          phase,
+        }) => {
+          phases.push(
+            phase
+          );
+
+          if (
+            phase === "PLAN"
+          ) {
+            return {
+              files: [],
+              searchTerms: [],
+
+              // Même si PLAN tente une mutation,
+              // elle ne doit jamais être exécutée.
+              operations: [
+                {
+                  type:
+                    "MODIFY",
+
+                  path:
+                    "src/ghost.js",
+
+                  expectedHash:
+                    null,
+
+                  search:
+                    "ghost",
+
+                  replacement:
+                    "invalid",
+                },
+              ],
+
+              validationCommands:
+                [],
+            };
+          }
+
+          assert.equal(
+            phase,
+            "EDIT"
+          );
+
+          return {
+            operations: [
+              {
+                type:
+                  "CREATE",
+
+                path:
+                  "src/App.js",
+
+                expectedHash:
+                  null,
+
+                search:
+                  null,
+
+                replacement:
+                  null,
+
+                content:
+                  "module.exports = 'created';\n",
+              },
+            ],
+          };
+        },
+      });
+
+    const result =
+      await f.run({
+        objective:
+          "Créer src/App.js",
+      });
+
+    assert.equal(
+      result.finalVerdict,
+      "PASS",
+      JSON.stringify(result)
+    );
+
+    assert.deepEqual(
+      phases,
+      [
+        "PLAN",
+        "EDIT",
+      ]
+    );
+
+    assert.equal(
+      fs.readFileSync(
+        path.join(
+          root,
+          "src/App.js"
+        ),
+        "utf8"
+      ),
+      "module.exports = 'created';\n"
+    );
+
+    assert.equal(
+      fs.existsSync(
+        path.join(
+          root,
+          "src/ghost.js"
+        )
+      ),
+      false
+    );
+  }
+);
+
+test(
+  "DEV Core Reliability : un scope vide refuse encore MODIFY produit par EDIT",
+  async () => {
+    const root =
+      repository({});
+
+    const f =
+      fixture({
+        root,
+
+        allowedPaths: [
+          "src",
+        ],
+
+        reason: ({
+          phase,
+        }) => {
+          if (
+            phase === "PLAN"
+          ) {
+            return {
+              files: [],
+              searchTerms: [],
+              operations: [],
+              validationCommands:
+                [],
+            };
+          }
+
+          return {
+            operations: [
+              {
+                type:
+                  "MODIFY",
+
+                path:
+                  "src/missing.js",
+
+                expectedHash:
+                  null,
+
+                search:
+                  "x",
+
+                replacement:
+                  "y",
+              },
+            ],
+          };
+        },
+      });
+
+    const result =
+      await f.run({
+        objective:
+          "Modifier src/missing.js",
+      });
+
+    assert.equal(
+      result.finalVerdict,
+      "FAIL"
+    );
+
+    assert.equal(
+      result.failureCategory,
+      "SOURCE_CONTEXT_REQUIRED"
+    );
+
+    assert.equal(
+      fs.existsSync(
+        path.join(
+          root,
+          "src/missing.js"
+        )
+      ),
+      false
+    );
+  }
+);
