@@ -9,6 +9,7 @@ const {
   readText,
   validateOperation,
   resolveFile,
+  rollbackOperation,
   runSafeCommand,
   searchRepository,
 } = require("./native-repository-tools");
@@ -917,10 +918,11 @@ function createNativeDevImplementationEngine({
 
     // DEV_CORE_PATCH_PREFLIGHT_V1
     // Tout le batch est vérifié avant la première écriture.
-    // Un mauvais second patch ne doit jamais laisser le
-    // premier fichier déjà modifié.
     const targets =
       new Set();
+
+    const rollbackPlan =
+      new Map();
 
     for (
       const operation of
@@ -953,10 +955,43 @@ function createNativeDevImplementationEngine({
           target.relative
         );
 
-        validateOperation(
-          contract,
-          operation,
-          snapshots
+        const validation =
+          validateOperation(
+            contract,
+            operation,
+            snapshots
+          );
+
+        const sourceSnapshot =
+          snapshots.get(
+            target.relative
+          );
+
+        rollbackPlan.set(
+          target.relative,
+          {
+            type:
+              operation.type,
+
+            path:
+              target.relative,
+
+            preHash:
+              validation.preHash,
+
+            postHash:
+              validation.postHash,
+
+            preContent:
+              operation.type ===
+                "MODIFY"
+                ? sourceSnapshot
+                    ?.content ??
+                  null
+                : null,
+
+            iteration,
+          }
         );
 
         const executionOperation =
@@ -1004,10 +1039,220 @@ function createNativeDevImplementationEngine({
       }
     }
 
-    for (
-      const operation of
-      normalized
+    const appliedEntries =
+      [];
+
+    // DEV_CORE_PATCH_COMPENSATION_V1
+    // Les préimages restent uniquement en mémoire.
+    // Elles ne sont jamais ajoutées aux args, journaux
+    // ou données fournisseur.
+    async function rollbackApplied(
+      originalError
     ) {
+      if (
+        appliedEntries.length ===
+          0
+      ) {
+        throw originalError;
+      }
+
+      let rollbackFailure =
+        null;
+
+      for (
+        const entry of
+        [...appliedEntries]
+          .reverse()
+      ) {
+        const rollbackType =
+          entry.type ===
+            "CREATE"
+            ? "DELETE"
+            : "MODIFY";
+
+        const rollbackArgs = {
+          type:
+            rollbackType,
+
+          path:
+            path.resolve(
+              contract.repositoryRoot,
+              entry.path
+            ),
+
+          expectedHash:
+            entry.postHash,
+
+          search:
+            null,
+
+          replacement:
+            null,
+
+          content:
+            null,
+
+          iteration,
+        };
+
+        const step = {
+          skillId:
+            "noon_dev_apply_edit",
+
+          operation:
+            "rollback local file",
+
+          args:
+            rollbackArgs,
+        };
+
+        try {
+          const restored =
+            await executeSkill(
+              contract,
+              taskId,
+              step,
+              "WRITE",
+              {
+                applyEdit:
+                  () =>
+                    rollbackOperation(
+                      contract,
+                      entry
+                    ),
+              }
+            );
+
+          journal.recordFileOperation(
+            taskId,
+            {
+              type:
+                entry.type,
+
+              path:
+                entry.path,
+
+              status:
+                "ROLLED_BACK",
+
+              preHash:
+                entry.postHash,
+
+              postHash:
+                restored.postHash,
+
+              iteration,
+            }
+          );
+
+          if (
+            entry.type ===
+              "CREATE"
+          ) {
+            snapshots.delete(
+              entry.path
+            );
+          } else {
+            snapshots.set(
+              entry.path,
+              readText(
+                contract,
+                entry.path
+              )
+            );
+          }
+        } catch (
+          rollbackError
+        ) {
+          if (
+            !rollbackFailure
+          ) {
+            rollbackFailure =
+              rollbackError;
+          }
+
+          journal.recordFileOperation(
+            taskId,
+            {
+              type:
+                entry.type,
+
+              path:
+                entry.path,
+
+              status:
+                `ROLLBACK_${
+                  safeError(
+                    rollbackError
+                  ).code
+                }`,
+
+              preHash:
+                entry.postHash,
+
+              postHash:
+                null,
+
+              iteration,
+            }
+          );
+        }
+      }
+
+      if (
+        rollbackFailure
+      ) {
+        throw Object.assign(
+          new Error(
+            "Le rollback DEV est incomplet car un fichier a changé après l'écriture Noon."
+          ),
+          {
+            code:
+              "PATCH_ROLLBACK_INCOMPLETE",
+
+            cause:
+              originalError,
+          }
+        );
+      }
+
+      throw originalError;
+    }
+
+    for (
+      let index = 0;
+      index <
+        normalized.length;
+      index += 1
+    ) {
+      const operation =
+        normalized[
+          index
+        ];
+
+      // Revalidation du reste du batch au plus près
+      // de chaque écriture. Si un éditeur externe
+      // change un futur fichier, on compense ce que
+      // Noon a déjà appliqué.
+      try {
+        for (
+          const pending of
+          normalized.slice(
+            index
+          )
+        ) {
+          validateOperation(
+            contract,
+            pending,
+            snapshots
+          );
+        }
+      } catch (error) {
+        await rollbackApplied(
+          error
+        );
+      }
+
       const executionOperation =
         {
           ...operation,
@@ -1068,6 +1313,19 @@ function createNativeDevImplementationEngine({
           applied.path
         );
 
+        const rollbackEntry =
+          rollbackPlan.get(
+            applied.path
+          );
+
+        if (
+          rollbackEntry
+        ) {
+          appliedEntries.push(
+            rollbackEntry
+          );
+        }
+
         if (
           applied.hash
         ) {
@@ -1092,7 +1350,9 @@ function createNativeDevImplementationEngine({
           }
         );
 
-        throw error;
+        await rollbackApplied(
+          error
+        );
       }
     }
 

@@ -372,6 +372,192 @@ function applyOperation(
   };
 }
 
+function rollbackOperation(
+  contract,
+  entry
+) {
+  if (
+    !entry ||
+    ![
+      "CREATE",
+      "MODIFY",
+    ].includes(
+      entry.type
+    )
+  ) {
+    throw Object.assign(
+      new Error(
+        "Compensation DEV invalide."
+      ),
+      {
+        code:
+          "MALFORMED_ROLLBACK",
+      }
+    );
+  }
+
+  const target =
+    resolveFile(
+      contract,
+      entry.path
+    );
+
+  const currentExists =
+    fs.existsSync(
+      target.absolute
+    );
+
+  // Un CREATE déjà supprimé correspond déjà
+  // à son état antérieur : absent.
+  if (
+    entry.type ===
+      "CREATE" &&
+    !currentExists
+  ) {
+    return {
+      ok: true,
+
+      result: {
+        path:
+          target.relative,
+
+        hash:
+          null,
+
+        preHash:
+          null,
+
+        postHash:
+          null,
+
+        alreadyRestored:
+          true,
+      },
+
+      changedTargets: [
+        target.relative,
+      ],
+    };
+  }
+
+  if (
+    !currentExists
+  ) {
+    throw Object.assign(
+      new Error(
+        "Le fichier à restaurer a changé depuis l'écriture Noon."
+      ),
+      {
+        code:
+          "ROLLBACK_STALE_FILE_STATE",
+      }
+    );
+  }
+
+  const current =
+    fs.readFileSync(
+      target.absolute,
+      "utf8"
+    );
+
+  const currentHash =
+    digest(
+      current
+    );
+
+  if (
+    currentHash !==
+      entry.postHash
+  ) {
+    throw Object.assign(
+      new Error(
+        "Le fichier à restaurer a été modifié après l'écriture Noon."
+      ),
+      {
+        code:
+          "ROLLBACK_STALE_FILE_STATE",
+      }
+    );
+  }
+
+  if (
+    entry.type ===
+      "CREATE"
+  ) {
+    fs.unlinkSync(
+      target.absolute
+    );
+
+    return {
+      ok: true,
+
+      result: {
+        path:
+          target.relative,
+
+        hash:
+          null,
+
+        preHash:
+          currentHash,
+
+        postHash:
+          null,
+      },
+
+      changedTargets: [
+        target.relative,
+      ],
+    };
+  }
+
+  if (
+    typeof entry.preContent !==
+      "string" ||
+    digest(
+      entry.preContent
+    ) !==
+      entry.preHash
+  ) {
+    throw Object.assign(
+      new Error(
+        "L'image mémoire de restauration est invalide."
+      ),
+      {
+        code:
+          "ROLLBACK_PREIMAGE_INVALID",
+      }
+    );
+  }
+
+  atomicWrite(
+    target.absolute,
+    entry.preContent
+  );
+
+  return {
+    ok: true,
+
+    result: {
+      path:
+        target.relative,
+
+      hash:
+        entry.preHash,
+
+      preHash:
+        currentHash,
+
+      postHash:
+        entry.preHash,
+    },
+
+    changedTargets: [
+      target.relative,
+    ],
+  };
+}
+
 async function runSafeCommand(command, cwd, timeout = 120_000, signal = null) {
   const decision = classifyDevCommand(command);
   if (!decision.allowed) return { command, status: "DENIED", exitCode: null, durationMs: 0, failureCategory: decision.reasonCode };
@@ -404,4 +590,4 @@ function searchRepository(contract, terms = [], { maxFiles = 40, maxMatches = 80
   return [...new Set(matches)].slice(0, maxFiles);
 }
 
-module.exports = { CONTENT_SECRET, applyOperation, digest, readText, resolveFile, runSafeCommand, searchRepository, validateOperation };
+module.exports = { CONTENT_SECRET, applyOperation, digest, readText, resolveFile, rollbackOperation, runSafeCommand, searchRepository, validateOperation };

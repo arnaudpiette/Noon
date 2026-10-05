@@ -2067,3 +2067,388 @@ test(
     );
   }
 );
+
+
+test(
+  "DEV Core Reliability : Patch Compensation restaure les écritures Noon si un futur fichier change pendant le batch",
+  async () => {
+    const root =
+      repository({
+        "lib/a.js":
+          "module.exports = 1;\n",
+
+        "lib/b.js":
+          "module.exports = 10;\n",
+      });
+
+    let writeChecks =
+      0;
+
+    let injected =
+      false;
+
+    const securityPolicy = {
+      evaluate({
+        actionRequest,
+      }) {
+        if (
+          actionRequest
+            ?.actionClass ===
+          "WRITE"
+        ) {
+          writeChecks +=
+            1;
+
+          // Deux checks preflight,
+          // deux checks pour l'écriture de A,
+          // puis l'autorisation initiale de B.
+          if (
+            writeChecks ===
+              5 &&
+            !injected
+          ) {
+            injected =
+              true;
+
+            fs.writeFileSync(
+              path.join(
+                root,
+                "lib/b.js"
+              ),
+              "module.exports = 999;\n"
+            );
+          }
+        }
+
+        return {
+          outcome:
+            "ALLOW",
+
+          policyVersion:
+            "test",
+        };
+      },
+    };
+
+    const f =
+      fixture({
+        root,
+        securityPolicy,
+
+        reason: ({
+          phase,
+          files,
+        }) => {
+          if (
+            phase === "PLAN"
+          ) {
+            return {
+              files: [
+                "lib/a.js",
+                "lib/b.js",
+              ],
+
+              searchTerms: [],
+              operations: [],
+              validationCommands:
+                [],
+            };
+          }
+
+          const a =
+            files.find(
+              (item) =>
+                item.path ===
+                "lib/a.js"
+            );
+
+          const b =
+            files.find(
+              (item) =>
+                item.path ===
+                "lib/b.js"
+            );
+
+          return {
+            operations: [
+              {
+                type:
+                  "MODIFY",
+
+                path:
+                  "lib/a.js",
+
+                expectedHash:
+                  a.hash,
+
+                search:
+                  "module.exports = 1;",
+
+                replacement:
+                  "module.exports = 2;",
+              },
+
+              {
+                type:
+                  "MODIFY",
+
+                path:
+                  "lib/b.js",
+
+                expectedHash:
+                  b.hash,
+
+                search:
+                  "module.exports = 10;",
+
+                replacement:
+                  "module.exports = 20;",
+              },
+            ],
+          };
+        },
+      });
+
+    const result =
+      await f.run();
+
+    assert.equal(
+      result.finalVerdict,
+      "FAIL"
+    );
+
+    assert.equal(
+      result.failureCategory,
+      "TRANSACTION_FAILED"
+    );
+
+    // A avait été modifié par Noon :
+    // il doit revenir à son état initial.
+    assert.equal(
+      fs.readFileSync(
+        path.join(
+          root,
+          "lib/a.js"
+        ),
+        "utf8"
+      ),
+      "module.exports = 1;\n"
+    );
+
+    // B a été modifié extérieurement :
+    // Noon ne doit jamais l'écraser.
+    assert.equal(
+      fs.readFileSync(
+        path.join(
+          root,
+          "lib/b.js"
+        ),
+        "utf8"
+      ),
+      "module.exports = 999;\n"
+    );
+
+    const journal =
+      f.journal.load(
+        result.taskId
+      );
+
+    assert.ok(
+      journal.fileOperations.some(
+        (item) =>
+          item.path ===
+            "lib/a.js" &&
+          item.status ===
+            "ROLLED_BACK"
+      )
+    );
+  }
+);
+
+test(
+  "DEV Core Reliability : Patch Compensation refuse de rollback un fichier Noon modifié ensuite par une source externe",
+  async () => {
+    const root =
+      repository({
+        "lib/a.js":
+          "module.exports = 1;\n",
+
+        "lib/b.js":
+          "module.exports = 10;\n",
+      });
+
+    let writeChecks =
+      0;
+
+    let injected =
+      false;
+
+    const securityPolicy = {
+      evaluate({
+        actionRequest,
+      }) {
+        if (
+          actionRequest
+            ?.actionClass ===
+          "WRITE"
+        ) {
+          writeChecks +=
+            1;
+
+          if (
+            writeChecks ===
+              5 &&
+            !injected
+          ) {
+            injected =
+              true;
+
+            // A a déjà été écrit par Noon.
+            // Une source externe le change ensuite.
+            fs.writeFileSync(
+              path.join(
+                root,
+                "lib/a.js"
+              ),
+              "module.exports = 777;\n"
+            );
+
+            // B change aussi afin de faire
+            // échouer le reste du batch.
+            fs.writeFileSync(
+              path.join(
+                root,
+                "lib/b.js"
+              ),
+              "module.exports = 999;\n"
+            );
+          }
+        }
+
+        return {
+          outcome:
+            "ALLOW",
+
+          policyVersion:
+            "test",
+        };
+      },
+    };
+
+    const f =
+      fixture({
+        root,
+        securityPolicy,
+
+        reason: ({
+          phase,
+          files,
+        }) => {
+          if (
+            phase === "PLAN"
+          ) {
+            return {
+              files: [
+                "lib/a.js",
+                "lib/b.js",
+              ],
+
+              searchTerms: [],
+              operations: [],
+              validationCommands:
+                [],
+            };
+          }
+
+          const a =
+            files.find(
+              (item) =>
+                item.path ===
+                "lib/a.js"
+            );
+
+          const b =
+            files.find(
+              (item) =>
+                item.path ===
+                "lib/b.js"
+            );
+
+          return {
+            operations: [
+              {
+                type:
+                  "MODIFY",
+
+                path:
+                  "lib/a.js",
+
+                expectedHash:
+                  a.hash,
+
+                search:
+                  "module.exports = 1;",
+
+                replacement:
+                  "module.exports = 2;",
+              },
+
+              {
+                type:
+                  "MODIFY",
+
+                path:
+                  "lib/b.js",
+
+                expectedHash:
+                  b.hash,
+
+                search:
+                  "module.exports = 10;",
+
+                replacement:
+                  "module.exports = 20;",
+              },
+            ],
+          };
+        },
+      });
+
+    const result =
+      await f.run();
+
+    assert.equal(
+      result.finalVerdict,
+      "FAIL"
+    );
+
+    assert.equal(
+      result.failureCategory,
+      "PATCH_ROLLBACK_INCOMPLETE"
+    );
+
+    // Noon refuse de remplacer le travail
+    // externe par son ancienne préimage.
+    assert.equal(
+      fs.readFileSync(
+        path.join(
+          root,
+          "lib/a.js"
+        ),
+        "utf8"
+      ),
+      "module.exports = 777;\n"
+    );
+
+    assert.equal(
+      fs.readFileSync(
+        path.join(
+          root,
+          "lib/b.js"
+        ),
+        "utf8"
+      ),
+      "module.exports = 999;\n"
+    );
+  }
+);
