@@ -881,7 +881,9 @@ function createNativeDevImplementationEngine({
     taskId,
     operations,
     snapshots,
-    iteration
+    iteration,
+    signal,
+    deadline
   ) {
     const changed = [];
 
@@ -1219,6 +1221,48 @@ function createNativeDevImplementationEngine({
       throw originalError;
     }
 
+    // DEV_CORE_PATCH_EXECUTION_GUARD_V1
+    // L'annulation et le timeout sont revalidés
+    // avant et après chaque écriture. Si Noon a
+    // déjà écrit, la compensation V1 est utilisée.
+    function ensureExecutionActive() {
+      if (
+        signal?.aborted
+      ) {
+        throw Object.assign(
+          new Error(
+            "Tâche annulée."
+          ),
+          {
+            code:
+              "CANCELLED",
+          }
+        );
+      }
+
+      if (
+        Number.isFinite(
+          Number(
+            deadline
+          )
+        ) &&
+        now() >=
+          Number(
+            deadline
+          )
+      ) {
+        throw Object.assign(
+          new Error(
+            "Délai DEV dépassé."
+          ),
+          {
+            code:
+              "TIMEOUT",
+          }
+        );
+      }
+    }
+
     for (
       let index = 0;
       index <
@@ -1235,6 +1279,8 @@ function createNativeDevImplementationEngine({
       // change un futur fichier, on compense ce que
       // Noon a déjà appliqué.
       try {
+        ensureExecutionActive();
+
         for (
           const pending of
           normalized.slice(
@@ -1350,6 +1396,14 @@ function createNativeDevImplementationEngine({
           }
         );
 
+        await rollbackApplied(
+          error
+        );
+      }
+
+      try {
+        ensureExecutionActive();
+      } catch (error) {
         await rollbackApplied(
           error
         );
@@ -1949,7 +2003,9 @@ function createNativeDevImplementationEngine({
           taskId,
           edits.operations,
           snapshots,
-          iteration
+          iteration,
+          activeSignal,
+          effectiveDeadline
         );
 
       changed.forEach(

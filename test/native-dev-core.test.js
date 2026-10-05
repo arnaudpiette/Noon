@@ -32,7 +32,7 @@ function repository(files = {}) {
   for (const [name, content] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(root, name)), { recursive: true }); fs.writeFileSync(path.join(root, name), content); }
   execFileSync("git", ["add", "."], { cwd: root }); execFileSync("git", ["commit", "-qm", "fixture"], { cwd: root }); return root;
 }
-function fixture({ root, reason, validations = () => "PASS", mode = "LIMITED", maxIterations = 3, allowedPaths, securityPolicy = null } = {}) {
+function fixture({ root, reason, validations = () => "PASS", mode = "LIMITED", maxIterations = 3, allowedPaths, securityPolicy = null, now = () => Date.now() } = {}) {
   const skillRegistry = createSkillRegistry();
   const transactionalExecutionEngine = createTransactionalExecutionEngine({ repository: memoryRepository(), skillRegistry });
   const journalDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "noon-dev-journal-"));
@@ -43,6 +43,7 @@ function fixture({ root, reason, validations = () => "PASS", mode = "LIMITED", m
     operationalSecurityPolicy: securityPolicy || { evaluate: () => ({ outcome: "ALLOW", policyVersion: "test" }) }, skillRegistry,
     reasoner: { async reason(input) { calls.push(input); return reason(input); } }, journal, featureMode: (input) => typeof mode === "function" ? mode(input) : mode,
     validationRunner: async (command) => { const status = validations(command, calls); return { command, status, exitCode: status === "PASS" ? 0 : 1, durationMs: 1, outputTail: status === "PASS" ? "" : "assertion failed", failureCategory: status === "PASS" ? null : "TEST_FAILURE" }; },
+    now,
   });
   const run = (extra = {}) => coordinator.runTask({ workspaceId: "workspace-fixture", repositoryRoot: root, objective: "Corriger normalizeEmail", validationCommands: ["npm test"], maxIterations, allowedPaths, ...extra });
   return { coordinator, journal, journalDirectory, calls, run };
@@ -2449,6 +2450,294 @@ test(
         "utf8"
       ),
       "module.exports = 999;\n"
+    );
+  }
+);
+
+
+test(
+  "DEV Core Reliability : une annulation après écriture déclenche la compensation avant CANCELLED",
+  async () => {
+    const root =
+      repository({
+        "lib/a.js":
+          "module.exports = 1;\n",
+      });
+
+    const controller =
+      new AbortController();
+
+    const f =
+      fixture({
+        root,
+
+        reason: ({
+          phase,
+          files,
+        }) => {
+          if (
+            phase === "PLAN"
+          ) {
+            return {
+              files: [
+                "lib/a.js",
+              ],
+
+              searchTerms: [],
+              operations: [],
+              validationCommands:
+                [],
+            };
+          }
+
+          const file =
+            files.find(
+              (item) =>
+                item.path ===
+                "lib/a.js"
+            );
+
+          assert.ok(
+            file
+          );
+
+          return {
+            operations: [
+              {
+                type:
+                  "MODIFY",
+
+                path:
+                  "lib/a.js",
+
+                expectedHash:
+                  file.hash,
+
+                search:
+                  "module.exports = 1;",
+
+                replacement:
+                  "module.exports = 2;",
+              },
+            ],
+          };
+        },
+      });
+
+    const originalRecord =
+      f.journal
+        .recordFileOperation;
+
+    f.journal
+      .recordFileOperation =
+      (
+        taskId,
+        operation
+      ) => {
+        const result =
+          originalRecord(
+            taskId,
+            operation
+          );
+
+        if (
+          operation.path ===
+            "lib/a.js" &&
+          operation.status ===
+            "APPLIED"
+        ) {
+          controller.abort();
+        }
+
+        return result;
+      };
+
+    const result =
+      await f.run({
+        signal:
+          controller.signal,
+      });
+
+    assert.equal(
+      result.finalVerdict,
+      "CANCELLED"
+    );
+
+    assert.equal(
+      result.failureCategory,
+      "CANCELLED"
+    );
+
+    assert.equal(
+      fs.readFileSync(
+        path.join(
+          root,
+          "lib/a.js"
+        ),
+        "utf8"
+      ),
+      "module.exports = 1;\n"
+    );
+
+    const journal =
+      f.journal.load(
+        result.taskId
+      );
+
+    assert.ok(
+      journal.fileOperations.some(
+        (item) =>
+          item.path ===
+            "lib/a.js" &&
+          item.status ===
+            "ROLLED_BACK"
+      )
+    );
+  }
+);
+
+test(
+  "DEV Core Reliability : un timeout après écriture déclenche la compensation avant TIMEOUT",
+  async () => {
+    const root =
+      repository({
+        "lib/a.js":
+          "module.exports = 1;\n",
+      });
+
+    let clock =
+      0;
+
+    const f =
+      fixture({
+        root,
+
+        now:
+          () =>
+            clock,
+
+        reason: ({
+          phase,
+          files,
+        }) => {
+          if (
+            phase === "PLAN"
+          ) {
+            return {
+              files: [
+                "lib/a.js",
+              ],
+
+              searchTerms: [],
+              operations: [],
+              validationCommands:
+                [],
+            };
+          }
+
+          const file =
+            files.find(
+              (item) =>
+                item.path ===
+                "lib/a.js"
+            );
+
+          assert.ok(
+            file
+          );
+
+          return {
+            operations: [
+              {
+                type:
+                  "MODIFY",
+
+                path:
+                  "lib/a.js",
+
+                expectedHash:
+                  file.hash,
+
+                search:
+                  "module.exports = 1;",
+
+                replacement:
+                  "module.exports = 2;",
+              },
+            ],
+          };
+        },
+      });
+
+    const originalRecord =
+      f.journal
+        .recordFileOperation;
+
+    f.journal
+      .recordFileOperation =
+      (
+        taskId,
+        operation
+      ) => {
+        const result =
+          originalRecord(
+            taskId,
+            operation
+          );
+
+        if (
+          operation.path ===
+            "lib/a.js" &&
+          operation.status ===
+            "APPLIED"
+        ) {
+          clock =
+            2_000;
+        }
+
+        return result;
+      };
+
+    const result =
+      await f.run({
+        maxDuration:
+          1_000,
+      });
+
+    assert.equal(
+      result.finalVerdict,
+      "TIMEOUT"
+    );
+
+    assert.equal(
+      result.failureCategory,
+      "TIMEOUT"
+    );
+
+    assert.equal(
+      fs.readFileSync(
+        path.join(
+          root,
+          "lib/a.js"
+        ),
+        "utf8"
+      ),
+      "module.exports = 1;\n"
+    );
+
+    const journal =
+      f.journal.load(
+        result.taskId
+      );
+
+    assert.ok(
+      journal.fileOperations.some(
+        (item) =>
+          item.path ===
+            "lib/a.js" &&
+          item.status ===
+            "ROLLED_BACK"
+      )
     );
   }
 );
