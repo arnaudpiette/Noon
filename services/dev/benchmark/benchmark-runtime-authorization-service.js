@@ -42,7 +42,7 @@ function createBenchmarkRuntimeAuthorizationService({
   now = () => Date.now(), createAuthorizationId = () => crypto.randomUUID(),
 } = {}) {
   if (!runtimeConfig?.state || !runtimeConfig?.replaceState) throw new TypeError("RuntimeConfigService requis.");
-  if (!benchmarkRepository?.getSession || !benchmarkRepository?.getRun) throw new TypeError("BenchmarkRepository requis.");
+  if (!benchmarkRepository?.getSession || !benchmarkRepository?.getRun || !benchmarkRepository?.claimContextManifestAb || !benchmarkRepository?.completeContextManifestAb) throw new TypeError("BenchmarkRepository requis.");
   if (!armingRepository?.getArmBySessionId) throw new TypeError("BenchmarkArmingRepository requis.");
   const fixtureEntries = Object.entries(fixtureRegistry || {});
   if (fixtureEntries.length !== 4) throw new TypeError("Registre canonique des fixtures benchmark requis.");
@@ -132,7 +132,31 @@ function createBenchmarkRuntimeAuthorizationService({
     if (fixture !== record.fixturePaths[run.task_id]) return deny("FIXTURE_NOT_ALLOWED");
     return { eligible: true, reason: "BENCHMARK_LIMITED_AUTHORIZED", authorizationId: record.authorizationId };
   }
-  return { activate, canExecuteBenchmarkRun, recover, revoke, current: () => authorization() };
+  function claimContextManifestAb(input = {}) {
+    const eligibility = canExecuteBenchmarkRun(input);
+    if (!eligibility.eligible) return eligibility;
+    const record = validateRecord(authorization());
+    if (record.contextManifestAb) return deny("CONTEXT_MANIFEST_AB_ALREADY_CLAIMED");
+    const claim = {
+      version: 1,
+      sessionId: record.sessionId,
+      runId: String(input.runId || ""),
+      state: "STARTED",
+      startedAt: new Date(timestamp()).toISOString(),
+    };
+    const acquired = benchmarkRepository.claimContextManifestAb(record.sessionId, claim);
+    if (!acquired.claimed) return deny(acquired.reason || "CONTEXT_MANIFEST_AB_ALREADY_CLAIMED");
+    persistProjection({ ...record, contextManifestAb: acquired.claim }, { event: "benchmark_context_manifest_ab_claimed" });
+    return { ...eligibility, claimed: true, claim: structuredClone(acquired.claim) };
+  }
+  function completeContextManifestAb(sessionId) {
+    const record = validateRecord(authorization());
+    const claim = record.contextManifestAb;
+    if (claim?.state !== "STARTED" || claim.sessionId !== String(sessionId || "")) throw fault("Expérience A/B non revendiquée.", "CONTEXT_MANIFEST_AB_CLAIM_INVALID");
+    const completed = benchmarkRepository.completeContextManifestAb(record.sessionId, { ...claim, state: "COMPLETED", completedAt: new Date(timestamp()).toISOString() });
+    persistProjection({ ...record, contextManifestAb: completed }, { event: "benchmark_context_manifest_ab_completed" });
+  }
+  return { activate, canExecuteBenchmarkRun, claimContextManifestAb, completeContextManifestAb, recover, revoke, current: () => authorization() };
 }
 
 module.exports = { AUTHORIZATION_TTL_MS, AUTHORIZATION_VERSION, createBenchmarkRuntimeAuthorizationService };

@@ -10,6 +10,7 @@ const { createRuntimeConfigService } = require("../services/config/runtime-confi
 const { createBenchmarkControlPlane } = require("../services/dev/benchmark/benchmark-control-plane");
 const { createBenchmarkRuntime } = require("../services/dev/benchmark/benchmark-runtime");
 const { createPersonalDatabase, SCHEMA_VERSION } = require("../services/persistence/database");
+const { CONTEXT_MANIFEST_EXPERIMENT } = require("../services/dev/benchmark/context-manifest-experiment");
 
 function setup(existing = {}) {
   const root = existing.root || fs.mkdtempSync(path.join(os.tmpdir(), "noon-b4-"));
@@ -70,8 +71,9 @@ test("le redémarrage après cleanup ne ressuscite rien et n'auto-exécute aucun
   f = setup(identity); assert.equal(f.runtime.runtimeAuthorization.current().state, "REVOKED"); assert.equal(f.runtime.repository.getSession(prepared.session.id).state, "CANCELLED"); assert.equal(f.runtime.armingRepository.getArm(arm.armId).state, "CANCELLED"); assert.deepEqual(f.calls, { native: 0, codex: 0, provider: 0, spend: 0 }); f.database.close();
 });
 
-test("B4 conserve SQLite v16, ses tables canoniques et son intégrité", () => {
-  const f = setup(); assert.equal(SCHEMA_VERSION, 16); assert.equal(f.database.database.prepare("PRAGMA integrity_check").get().integrity_check, "ok"); for (const name of ["benchmark_arms", "benchmark_sessions", "benchmark_runs"]) assert.ok(f.database.database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name)); f.database.close();
+test("B4 initialise SQLite au schéma courant et enregistre sa migration", () => {
+  const f = setup(); const migration = f.database.database.prepare("SELECT version,name FROM schema_migrations WHERE version=?").get(SCHEMA_VERSION);
+  assert.equal(f.database.kind, "sqlite"); assert.equal(migration.version, SCHEMA_VERSION); assert.equal(migration.name, "personal-intelligence-base"); assert.equal(f.database.database.prepare("PRAGMA integrity_check").get().integrity_check, "ok"); for (const name of ["benchmark_arms", "benchmark_sessions", "benchmark_runs"]) assert.ok(f.database.database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name)); f.database.close();
 });
 
 test("B19A prépare un unique probe Codex figé sans modifier le pilote", async () => {
@@ -89,4 +91,13 @@ test("B19A refuse session, workspace, reprise et backend non atteint sans Native
   const userRepository = fs.mkdtempSync(path.join(f.root, "user-repository-")); fs.mkdirSync(path.join(userRepository, "src")); assert.equal(f.runtime.runtimeAuthorization.canExecuteBenchmarkRun({ sessionId: prepared.session.id, runId: run.id, executor: "CODEX", workspacePath: userRepository, fixturePath: authorization.fixturePaths["normalize-email"] }).reason, "WORKSPACE_NOT_ALLOWED");
   const symlink = path.join(f.root, "workspace-link"); fs.symlinkSync(userRepository, symlink); assert.equal(f.runtime.runtimeAuthorization.canExecuteBenchmarkRun({ sessionId: prepared.session.id, runId: run.id, executor: "CODEX", workspacePath: symlink, fixturePath: authorization.fixturePaths["normalize-email"] }).reason, "WORKSPACE_NOT_ALLOWED");
   const result = await f.control.execute("runCodexProbe", { sessionId: prepared.session.id }); assert.equal(result.state, "INFRASTRUCTURE_BLOCKED"); assert.equal(result.failure_category, "EXECUTION_NOT_REACHED"); assert.deepEqual(calls, { native: 0, codex: 1, provider: 0, spend: 0 }); f.database.close();
+});
+
+test("context A/B compose le runtime et control-plane réels avec fixtures et Native simulés", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "noon-context-ab-runtime-")); const fixture = path.join(root, "fixture"); fs.mkdirSync(path.join(fixture, "src"), { recursive: true }); fs.mkdirSync(path.join(fixture, "test"));
+  fs.writeFileSync(path.join(fixture, "package.json"), '{"scripts":{"test":"node --test"}}'); fs.writeFileSync(path.join(fixture, "src", "base.js"), "module.exports=true;\n"); fs.writeFileSync(path.join(fixture, "test", "state.test.js"), "");
+  const database = createPersonalDatabase(path.join(root, "temporary.sqlite")); const runtimeConfig = createRuntimeConfigService({ registry: createConfigRegistry(), filePath: path.join(root, "runtime.json") }); const calls = [];
+  const runtime = createBenchmarkRuntime({ database, runtimeConfig, benchmarkWorkspaceRoot: path.join(root, "workspaces"), templates: Object.fromEntries(["normalize-email", "slugify-title", "backend-user-update", "multifile-state-flow"].map((id) => [id, fixture])), featureMode: ({ sessionId } = {}) => runtimeConfig.state().flags["dev.benchmark"]?.allowSessions?.includes(sessionId) ? "LIMITED" : "OFF", resolveHiddenValidator: () => () => ({ status: "PASS" }), nativeDevCoordinator: { runTask: async (input) => { calls.push(input); fs.writeFileSync(path.join(input.repositoryRoot, "src", `${input[CONTEXT_MANIFEST_EXPERIMENT]}.js`), "module.exports=true;\n"); return { status: "SUCCESS", metrics: { backendReached: true, fileCount: 1, iterations: 1, repairCycles: 0, contextEvaluation: { version: 1, manifest: { mode: input[CONTEXT_MANIFEST_EXPERIMENT], fileCount: 1, scanned: true, truncated: false } }, providerCalls: [] } }; }, cancelTask: async () => {} }, devDelegationRunner: { runDevTask: async () => { throw new Error("CODEX must not run"); }, cancelTask: async () => {} } });
+  const control = createBenchmarkControlPlane({ runtime, featureMode: ({ sessionId } = {}) => runtimeConfig.state().flags["dev.benchmark"]?.allowSessions?.includes(sessionId) ? "LIMITED" : "OFF" }); const arm = await control.execute("arm", {}); const prepared = await control.execute("prepare", { armId: arm.armId }); const result = await control.execute("runContextAb", { sessionId: prepared.session.id });
+  assert.deepEqual(calls.map((input) => input[CONTEXT_MANIFEST_EXPERIMENT]), ["ON", "OFF"]); assert.ok(result.variants.ON.finalValid); assert.ok(result.variants.OFF.finalValid); assert.ok(runtime.repository.listSessionRuns(prepared.session.id).every((run) => run.state === "PENDING")); database.close(); fs.rmSync(root, { recursive: true, force: true });
 });

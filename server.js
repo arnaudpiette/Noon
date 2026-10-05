@@ -8699,6 +8699,13 @@ if (benchmarkAction && req.method === "POST") {
   catch (error) { res.writeHead(error.code === "FEATURE_DISABLED" ? 409 : 400, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ status: "error", code: error.code || "BENCHMARK_CONTROL_FAILED" })); }
 }
 
+const benchmarkContextAb = requestPath.match(/^\/api\/dev\/benchmark\/context-ab\/([^/]+)$/);
+if (benchmarkContextAb && req.method === "POST") {
+  if (req.headers["x-noon-request"] !== "1") { res.writeHead(403); return res.end(); }
+  try { const result = await benchmarkControlPlane.execute("runContextAb", { ...(await readJsonBody(req, 2 * 1024)), sessionId: decodeURIComponent(benchmarkContextAb[1]) }); res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" }); return res.end(JSON.stringify({ status: "ok", result })); }
+  catch (error) { res.writeHead(error.code === "FEATURE_DISABLED" ? 409 : 400, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ status: "error", code: error.code || "CONTEXT_MANIFEST_AB_FAILED" })); }
+}
+
 const benchmarkRead = requestPath.match(/^\/api\/dev\/benchmark\/(status|results)\/([^/]+)$/);
 if (benchmarkRead && req.method === "GET") {
   if (req.headers["x-noon-request"] !== "1") { res.writeHead(403); return res.end(); }

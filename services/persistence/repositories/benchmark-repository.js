@@ -36,6 +36,33 @@ function createBenchmarkRepository(wrapper) {
       .run(state, changes.nextRunIndex ?? null, changes.cancelRequested == null ? null : Number(Boolean(changes.cancelRequested)), now(), id);
     return getSession(id);
   }
+  function claimContextManifestAb(sessionId, claim) {
+    return transaction(() => {
+      const current = getSession(sessionId);
+      if (!current) throw Object.assign(new Error("Session benchmark inconnue."), { code: "BENCHMARK_SESSION_NOT_FOUND" });
+      const existing = current.versionMetadata?.contextManifestAb;
+      if (existing) return { claimed: false, claim: existing };
+      if (current.state !== "READY") return { claimed: false, reason: "CONTEXT_MANIFEST_AB_SESSION_NOT_READY" };
+      const runs = listSessionRuns(sessionId);
+      if (runs.length !== 8 || runs.some((item) => item.state !== "PENDING")) return { claimed: false, reason: "CONTEXT_MANIFEST_AB_RUNS_NOT_PENDING" };
+      const metadata = { ...(current.versionMetadata || {}), contextManifestAb: claim };
+      db.prepare("UPDATE benchmark_sessions SET version_metadata_json=?,updated_at=? WHERE id=?")
+        .run(JSON.stringify(metadata), now(), sessionId);
+      return { claimed: true, claim: getSession(sessionId).versionMetadata.contextManifestAb };
+    });
+  }
+  function completeContextManifestAb(sessionId, completedClaim) {
+    return transaction(() => {
+      const current = getSession(sessionId);
+      if (!current) throw Object.assign(new Error("Session benchmark inconnue."), { code: "BENCHMARK_SESSION_NOT_FOUND" });
+      const existing = current.versionMetadata?.contextManifestAb;
+      if (existing?.state !== "STARTED") throw Object.assign(new Error("Expérience A/B non revendiquée."), { code: "CONTEXT_MANIFEST_AB_CLAIM_INVALID" });
+      const metadata = { ...(current.versionMetadata || {}), contextManifestAb: completedClaim };
+      db.prepare("UPDATE benchmark_sessions SET version_metadata_json=?,updated_at=? WHERE id=?")
+        .run(JSON.stringify(metadata), now(), sessionId);
+      return getSession(sessionId).versionMetadata.contextManifestAb;
+    });
+  }
   function updateRunState(id, state, changes = {}) {
     db.prepare(`UPDATE benchmark_runs SET state=?,start_fingerprint=COALESCE(?,start_fingerprint),started_at=COALESCE(?,started_at),ended_at=COALESCE(?,ended_at),failure_category=COALESCE(?,failure_category),participant_reported_status=COALESCE(?,participant_reported_status),updated_at=? WHERE id=?`)
       .run(state, changes.startFingerprint ?? null, changes.startedAt ?? null, changes.endedAt ?? null, changes.failureCategory ?? null, changes.participantReportedStatus ?? null, now(), id);
@@ -73,7 +100,7 @@ function createBenchmarkRepository(wrapper) {
   }
   function results(sessionId) { return listSessionRuns(sessionId).filter((item) => item.resultFinalized); }
   function aggregate(sessionId) { const all = results(sessionId); const infrastructure = all.filter((item) => ["PROVIDER_UNAVAILABLE","AGENT_UNAVAILABLE","NETWORK_FAILURE","RATE_LIMIT","AUTH_ERROR","TIMEOUT","BENCHMARK_BUDGET_EXCEEDED"].includes(item.failure_category)); return { rawRunCount: all.length, qualityEligibleRunCount: all.length - infrastructure.length, infrastructureExcludedCount: infrastructure.length }; }
-  return { kind: "sqlite", database: db, transaction, createSession, createSessionWithinTransaction, getSession, getRun, listSessionRuns, updateSessionState, updateRunState, saveParticipantResult, saveNormalizedResult, recoverInterrupted, getResults: results, aggregate };
+  return { kind: "sqlite", database: db, transaction, createSession, createSessionWithinTransaction, getSession, getRun, listSessionRuns, updateSessionState, claimContextManifestAb, completeContextManifestAb, updateRunState, saveParticipantResult, saveNormalizedResult, recoverInterrupted, getResults: results, aggregate };
 }
 
 module.exports = { createBenchmarkRepository };

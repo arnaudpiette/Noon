@@ -13,6 +13,7 @@ const { createNativeNoonBenchmarkParticipant } = require("./native-noon-benchmar
 const { createCodexBenchmarkParticipant } = require("./codex-benchmark-participant");
 const { createBenchmarkFixtureRegistry } = require("./fixture-registry");
 const { getHiddenValidator } = require("./hidden-validator-registry");
+const { createContextManifestAbExperiment } = require("./context-manifest-ab-experiment");
 
 function materializeBenchmarkWorkspace(template, target) {
   fs.mkdirSync(target, { recursive: true });
@@ -62,6 +63,7 @@ function createBenchmarkRuntime({ database, runtimeConfig, benchmarkWorkspaceRoo
     return { workspace, peer };
   }
   const devService = createDevBenchmarkService({ repository, armingRepository, runtimeAuthorization, participants, validator, templates, featureMode: () => "LIMITED", workspaceFactory, observability });
+  const contextManifestAb = createContextManifestAbExperiment({ repository, armingRepository, runtimeAuthorization, templates, participant: participants.NATIVE_NOON, validator, materializeWorkspace: materializeBenchmarkWorkspace });
   const service = {
     ...devService,
     prepare(input) {
@@ -84,6 +86,7 @@ function createBenchmarkRuntime({ database, runtimeConfig, benchmarkWorkspaceRoo
     armingService,
     runtimeAuthorization,
     service,
+    runContextAb: (sessionId) => contextManifestAb.run(sessionId),
     armPilot: () => armingService.armPilot(),
     armCodexAuthenticityProbe: () => armingService.armCodexAuthenticityProbe(),
     disarmArm,

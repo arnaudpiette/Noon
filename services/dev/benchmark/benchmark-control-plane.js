@@ -1,6 +1,6 @@
 "use strict";
 
-const WRITE_METHODS = new Set(["arm", "prepare", "runNext", "cancel", "resume", "disarm", "armCodexProbe", "prepareCodexProbe", "runCodexProbe"]);
+const WRITE_METHODS = new Set(["arm", "prepare", "runNext", "runContextAb", "cancel", "resume", "disarm", "armCodexProbe", "prepareCodexProbe", "runCodexProbe"]);
 const { CODEX_PROBE_SUITE_VERSION, SUITE_VERSION, runPlan } = require("../dev-benchmark-service");
 function rejectUnknown(input, allowed) {
   for (const key of Object.keys(input || {})) if (!allowed.includes(key)) throw Object.assign(new Error("Champ de contrôle benchmark interdit."), { code: "BENCHMARK_REQUEST_INVALID" });
@@ -42,6 +42,10 @@ function createBenchmarkControlPlane({ runtime, featureMode = () => "OFF" } = {}
       if (action === "runCodexProbe") {
         if (!session || session.suite_version !== CODEX_PROBE_SUITE_VERSION) throw Object.assign(new Error("Session probe Codex invalide."), { code: "CODEX_PROBE_SESSION_INVALID" });
         enabled(sessionId); return runtime.service.runNext(sessionId);
+      }
+      if (action === "runContextAb") {
+        if (!session || session.suite_version !== SUITE_VERSION) throw Object.assign(new Error("Session A/B invalide."), { code: "CONTEXT_MANIFEST_AB_SESSION_INVALID" });
+        enabled(sessionId); return runtime.runContextAb(sessionId);
       }
       if (action === "resume" && session?.suite_version === CODEX_PROBE_SUITE_VERSION) throw Object.assign(new Error("Reprise probe Codex interdite."), { code: "CODEX_PROBE_RETRY_DENIED" });
       if (["runNext", "resume"].includes(action)) enabled(sessionId);

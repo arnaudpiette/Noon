@@ -9,6 +9,7 @@ const OPERATIONS = Object.freeze({
   status: { method: "GET", path: ({ sessionId }) => `/api/dev/benchmark/status/${encodeURIComponent(sessionId)}` },
   results: { method: "GET", path: ({ sessionId }) => `/api/dev/benchmark/results/${encodeURIComponent(sessionId)}` },
   "run-next": { method: "POST", path: ({ sessionId }) => `/api/dev/benchmark/run-next/${encodeURIComponent(sessionId)}`, body: () => ({}) },
+  "context-ab": { method: "POST", path: ({ sessionId }) => `/api/dev/benchmark/context-ab/${encodeURIComponent(sessionId)}`, body: () => ({}) },
   cancel: { method: "POST", path: ({ sessionId }) => `/api/dev/benchmark/cancel/${encodeURIComponent(sessionId)}`, body: () => ({}) },
   "codex-probe-arm": { method: "POST", path: () => "/api/dev/benchmark/codex-probe/arm", body: () => ({}) },
   "codex-probe-prepare": { method: "POST", path: () => "/api/dev/benchmark/codex-probe/prepare", body: ({ armId }) => ({ armId }) },
@@ -39,7 +40,7 @@ function parseBenchmarkControlCommand(argv = []) {
   const consumed = new Set([0, ...arm.consumed.map((index) => index + 1), ...session.consumed.map((index) => index + 1)]);
   if (args.some((_value, index) => !consumed.has(index))) throw commandError("BENCHMARK_COMMAND_INVALID");
   const needsArm = ["prepare", "codex-probe-prepare"].includes(operation);
-  const needsSession = ["status", "results", "run-next", "cancel", "codex-probe-run"].includes(operation);
+  const needsSession = ["status", "results", "run-next", "context-ab", "cancel", "codex-probe-run"].includes(operation);
   if (needsArm !== Boolean(arm.value) || needsSession !== Boolean(session.value)) throw commandError("BENCHMARK_COMMAND_INVALID");
   if (arm.value && !IDENTIFIER.test(arm.value)) throw commandError("BENCHMARK_COMMAND_INVALID");
   if (session.value && !IDENTIFIER.test(session.value)) throw commandError("BENCHMARK_COMMAND_INVALID");

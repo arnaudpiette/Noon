@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const { Worker } = require("node:worker_threads");
 const { createConfigRegistry } = require("../services/config/config-registry");
 const { createRuntimeConfigService } = require("../services/config/runtime-config-service");
 const { createBenchmarkArmingService } = require("../services/dev/benchmark/benchmark-arming-service");
@@ -27,11 +28,36 @@ function fixture() {
   return { root, configFile, database, benchmarkRepository, armingRepository, runtimeConfig, prepared, workspace, fixtures, makeAuthorization, setClock(value) { clock = value; } };
 }
 function input(f, runIndex = 0, overrides = {}) { const run = f.prepared.runs[runIndex]; return { sessionId: f.prepared.session.id, runId: run.id, executor: run.participant, workspacePath: f.workspace, fixturePath: f.fixtures[run.task_id], ...overrides }; }
+function concurrentRepositoryClaims({ databasePath, sessionId, claim }) {
+  const gate = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT); const databaseModule = require.resolve("../services/persistence/database"); const repositoryModule = require.resolve("../services/persistence/repositories/benchmark-repository");
+  const source = `const { parentPort, workerData } = require("node:worker_threads"); const { createPersonalDatabase } = require(workerData.databaseModule); const { createBenchmarkRepository } = require(workerData.repositoryModule); const database = createPersonalDatabase(workerData.databasePath); const repository = createBenchmarkRepository(database); parentPort.postMessage({ ready: true }); Atomics.wait(new Int32Array(workerData.gate), 0, 0); try { parentPort.postMessage({ result: repository.claimContextManifestAb(workerData.sessionId, workerData.claim) }); } catch (error) { parentPort.postMessage({ error: { code: error.code, message: error.message } }); } finally { database.close(); }`;
+  return new Promise((resolve, reject) => {
+    const workers = [0, 1].map(() => new Worker(source, { eval: true, workerData: { gate, databasePath, sessionId, claim, databaseModule, repositoryModule } })); const results = []; let ready = 0;
+    for (const worker of workers) {
+      worker.once("error", reject);
+      worker.on("message", (message) => { if (message.ready) { ready += 1; if (ready === workers.length) { Atomics.store(new Int32Array(gate), 0, 1); Atomics.notify(new Int32Array(gate), 0, workers.length); } } else { results.push(message); if (results.length === workers.length) resolve(results); } });
+    }
+  });
+}
 
 test("une session préparée crée une autorisation LIMITED persistante et idempotente", () => { const f = fixture(); const service = f.makeAuthorization(); const first = service.activate({ sessionId: "session-A", workspacePath: f.workspace }); const version = f.runtimeConfig.state().configVersion; const second = service.activate({ sessionId: "session-A", workspacePath: f.workspace }); assert.deepEqual(second, first); assert.equal(f.runtimeConfig.state().configVersion, version); assert.equal(f.runtimeConfig.state().flags["dev.benchmark"].mode, "LIMITED"); assert.deepEqual(f.runtimeConfig.state().flags["dev.benchmark"].allowSessions, ["session-A"]); f.database.close(); });
 test("l'activation refuse une session inconnue ou un workspace inexistant", () => { const f = fixture(); const service = f.makeAuthorization(); assert.throws(() => service.activate({ sessionId: "missing", workspacePath: f.workspace }), (error) => error.code === "BENCHMARK_ARM_BOUND_INTEGRITY_ERROR"); assert.throws(() => service.activate({ sessionId: "session-A", workspacePath: path.join(f.workspace, "missing") }), (error) => error.code === "BENCHMARK_WORKSPACE_INVALID"); f.database.close(); });
 test("l'allowlist session refuse une autre session et un run étranger", () => { const f = fixture(); const service = f.makeAuthorization(); service.activate({ sessionId: "session-A", workspacePath: f.workspace }); assert.equal(service.canExecuteBenchmarkRun(input(f, 0, { sessionId: "session-B" })).eligible, false); f.benchmarkRepository.createSession({ id: "session-B", benchmarkId: "other", suiteVersion: "benchmark-suite-v1", idempotencyKey: "other", state: "READY" }, [{ id: "run-B", runIndex: 1, taskId: "normalize-email", participant: "NATIVE_NOON" }]); assert.equal(service.canExecuteBenchmarkRun(input(f, 0, { runId: "run-B" })).reason, "RUN_SESSION_MISMATCH"); f.database.close(); });
 test("workspace et fixture doivent correspondre exactement aux chemins canoniques", () => { const f = fixture(); const service = f.makeAuthorization(); service.activate({ sessionId: "session-A", workspacePath: f.workspace }); assert.equal(service.canExecuteBenchmarkRun(input(f)).eligible, true); const other = fs.mkdtempSync(path.join(f.root, "other-")); assert.equal(service.canExecuteBenchmarkRun(input(f, 0, { workspacePath: other })).reason, "WORKSPACE_NOT_ALLOWED"); assert.equal(service.canExecuteBenchmarkRun(input(f, 0, { workspacePath: path.dirname(f.workspace) })).reason, "WORKSPACE_NOT_ALLOWED"); assert.equal(service.canExecuteBenchmarkRun(input(f, 0, { fixturePath: other })).reason, "FIXTURE_NOT_ALLOWED"); f.database.close(); });
+test("le claim A/B est acquis avant effet, persiste et refuse toute reprise après redémarrage", () => { const f = fixture(); const service = f.makeAuthorization(); service.activate({ sessionId: "session-A", workspacePath: f.workspace }); const claimed = service.claimContextManifestAb(input(f, 7)); assert.equal(claimed.claimed, true); assert.equal(f.runtimeConfig.state().benchmarkRuntimeAuthorization.contextManifestAb.state, "STARTED"); assert.equal(f.benchmarkRepository.getSession("session-A").versionMetadata.contextManifestAb.state, "STARTED"); const restarted = createRuntimeConfigService({ registry: createConfigRegistry(), filePath: f.configFile, now: () => START }); const recovered = f.makeAuthorization(restarted); recovered.recover(); assert.equal(recovered.claimContextManifestAb(input(f, 7)).reason, "CONTEXT_MANIFEST_AB_ALREADY_CLAIMED"); f.database.close(); });
+test("le claim A/B SQLite exclut deux processus sur la même session", async () => {
+  const f = fixture(); const claim = { version: 1, sessionId: "session-A", runId: f.prepared.runs[7].id, state: "STARTED", startedAt: new Date(START).toISOString() };
+  const results = await concurrentRepositoryClaims({ databasePath: path.join(f.root, "noon.sqlite"), sessionId: "session-A", claim });
+  assert.equal(results.filter((item) => item.result?.claimed).length, 1); assert.equal(results.filter((item) => item.result?.claimed === false).length, 1);
+  assert.deepEqual(f.benchmarkRepository.getSession("session-A").versionMetadata.contextManifestAb, claim); assert.ok(f.benchmarkRepository.listSessionRuns("session-A").every((run) => run.state === "PENDING")); f.database.close();
+});
+test("le claim A/B relit atomiquement la session et les huit runs canoniques", async (t) => {
+  for (const mutation of ["session", "run"]) await t.test(mutation, () => {
+    const f = fixture(); const claim = { version: 1, sessionId: "session-A", runId: f.prepared.runs[7].id, state: "STARTED", startedAt: new Date(START).toISOString() };
+    if (mutation === "session") f.benchmarkRepository.updateSessionState("session-A", "CANCELLED"); else f.benchmarkRepository.updateRunState(f.prepared.runs[0].id, "RUNNING");
+    const denied = f.benchmarkRepository.claimContextManifestAb("session-A", claim); assert.equal(denied.claimed, false); assert.equal(f.benchmarkRepository.getSession("session-A").versionMetadata.contextManifestAb, undefined); f.database.close();
+  });
+});
 test("Native et Codex sont autorisés séparément", async (t) => { for (const permissions of [{ nativeAllowed: true, codexAllowed: false }, { nativeAllowed: false, codexAllowed: true }]) await t.test(JSON.stringify(permissions), () => { const f = fixture(); const service = f.makeAuthorization(); service.activate({ sessionId: "session-A", workspacePath: f.workspace, ...permissions }); const native = service.canExecuteBenchmarkRun(input(f, 0)); const codex = service.canExecuteBenchmarkRun(input(f, 1)); assert.equal(native.eligible, permissions.nativeAllowed); assert.equal(codex.eligible, permissions.codexAllowed); f.database.close(); }); });
 test("un exécuteur différent de celui du run est refusé", () => { const f = fixture(); const service = f.makeAuthorization(); service.activate({ sessionId: "session-A", workspacePath: f.workspace }); assert.equal(service.canExecuteBenchmarkRun(input(f, 0, { executor: "CODEX" })).reason, "EXECUTOR_MISMATCH"); f.database.close(); });
 test("une corruption du plan après activation et les kill switches échouent fermés", async (t) => {

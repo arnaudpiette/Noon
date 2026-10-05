@@ -20,7 +20,7 @@ test("B10 suite utilise l'auth locale et la route canonique", async () => {
 });
 
 test("B10 expose uniquement l'allowlist benchmark fixe", () => {
-  for (const operation of ["suite", "arm", "prepare", "status", "results", "run-next", "cancel", "codex-probe-arm", "codex-probe-prepare", "codex-probe-run"]) assert.ok(parseBenchmarkControlCommand(["Noon", "--benchmark-control", operation, ...["prepare", "codex-probe-prepare"].includes(operation) ? ["--arm-id", "arm-A"] : ["status", "results", "run-next", "cancel", "codex-probe-run"].includes(operation) ? ["--session-id", "session-A"] : []]));
+  for (const operation of ["suite", "arm", "prepare", "status", "results", "run-next", "context-ab", "cancel", "codex-probe-arm", "codex-probe-prepare", "codex-probe-run"]) assert.ok(parseBenchmarkControlCommand(["Noon", "--benchmark-control", operation, ...["prepare", "codex-probe-prepare"].includes(operation) ? ["--arm-id", "arm-A"] : ["status", "results", "run-next", "context-ab", "cancel", "codex-probe-run"].includes(operation) ? ["--session-id", "session-A"] : []]));
 });
 
 test("B10 rejette chemin, URL et options arbitraires avant fetch", async () => {
