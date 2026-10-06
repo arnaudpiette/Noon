@@ -148,6 +148,7 @@ const { createDevDelegationRunner } = require("./services/delegation/dev-delegat
 const { createNativeDevCoordinator } = require("./services/dev/native-dev-coordinator");
 const { createNativeDevOrchestrator } = require("./services/dev/native-dev-orchestrator");
 const { createNativeDevOrchestratorFacade } = require("./services/dev/native-dev-orchestrator-facade");
+const { createNativeDevUiExecutionService } = require("./services/dev/native-dev-ui-execution-service");
 const { createDevWorkspaceTerminalService } = require("./services/dev/workspace-terminal-service");
 const { createDevWorkspaceAgentExecutionLoop } = require("./services/dev/workspace-agent-execution-loop");
 const { createDevTaskJournal } = require("./services/dev/dev-task-journal");
@@ -1470,7 +1471,7 @@ const nativeDevCoordinator = createNativeDevCoordinator({
 
 /*
  * B3 multi-agents :
- * - utilisé uniquement par les routes /api/dev/native/tasks
+ * - utilisé par /api/dev/native/tasks et le bridge /api/dev/native-ui
  * - le benchmark conserve nativeDevCoordinator directement.
  */
 const nativeDevB3Orchestrator = createNativeDevOrchestrator({
@@ -1508,6 +1509,38 @@ const nativeDevB3Facade = createNativeDevOrchestratorFacade({
     workspaceId: input.workspaceId,
     sessionId: input.sessionId,
   }).mode,
+});
+
+const nativeDevUiExecutionService = createNativeDevUiExecutionService({
+  terminalService:
+    devWorkspaceTerminalService,
+
+  nativeDevFacade:
+    nativeDevB3Facade,
+
+  workspaceEngine,
+
+  projectRuleResolver:
+    devProjectRuleResolver,
+
+  featureMode: ({
+    workspaceId,
+    sessionId,
+  }) =>
+    featureFlags.evaluate(
+      "dev.native-core",
+      {
+        workspaceId,
+        sessionId,
+      }
+    ).mode,
+
+  observability:
+    (event, metadata) =>
+      toolAuditLog.append(
+        `dev.native-ui.${event}`,
+        metadata
+      ),
 });
 
 // Les extensions enrichissent les registries existants ; elles ne reçoivent jamais les services internes bruts.
@@ -9531,6 +9564,189 @@ if (devWorkspaceAgentStatus && req.method === "GET") {
     );
   } catch (error) {
     return sendDevTerminalError(res, error);
+  }
+}
+
+if (
+  requestPath ===
+    "/api/dev/native-ui/executions" &&
+  req.method === "POST"
+) {
+  try {
+    requireTrustedDevUi(req);
+
+    const body =
+      await readJsonBody(
+        req,
+        16 * 1024
+      );
+
+    const execution =
+      nativeDevUiExecutionService
+        .start({
+          workspaceSessionId:
+            String(
+              body.workspaceSessionId ||
+              ""
+            ),
+
+          validationCommand:
+            String(
+              body.validationCommand ||
+              ""
+            ),
+        });
+
+    res.writeHead(
+      202,
+      {
+        "Content-Type":
+          "application/json",
+        "Cache-Control":
+          "no-store",
+      }
+    );
+
+    return res.end(
+      JSON.stringify({
+        status: "ok",
+        execution,
+        progress:
+          publicDevProgress(
+            execution.taskId
+          ),
+      })
+    );
+  } catch (error) {
+    return sendDevTerminalError(
+      res,
+      error
+    );
+  }
+}
+
+const nativeDevUiCancel =
+  requestPath.match(
+    /^\/api\/dev\/native-ui\/executions\/([^/]+)\/cancel$/
+  );
+
+if (
+  nativeDevUiCancel &&
+  req.method === "POST"
+) {
+  try {
+    requireTrustedDevUi(req);
+
+    const taskId =
+      decodeURIComponent(
+        nativeDevUiCancel[1]
+      );
+
+    const result =
+      nativeDevUiExecutionService
+        .cancel(
+          taskId
+        );
+
+    res.writeHead(
+      result.cancelled
+        ? 200
+        : 409,
+      {
+        "Content-Type":
+          "application/json",
+        "Cache-Control":
+          "no-store",
+      }
+    );
+
+    return res.end(
+      JSON.stringify({
+        status:
+          result.cancelled
+            ? "ok"
+            : "error",
+
+        ...result,
+
+        execution:
+          nativeDevUiExecutionService
+            .get(
+              taskId
+            ),
+
+        progress:
+          publicDevProgress(
+            taskId
+          ),
+      })
+    );
+  } catch (error) {
+    return sendDevTerminalError(
+      res,
+      error
+    );
+  }
+}
+
+const nativeDevUiStatus =
+  requestPath.match(
+    /^\/api\/dev\/native-ui\/executions\/([^/]+)$/
+  );
+
+if (
+  nativeDevUiStatus &&
+  req.method === "GET"
+) {
+  try {
+    requireTrustedDevUi(req);
+
+    const taskId =
+      decodeURIComponent(
+        nativeDevUiStatus[1]
+      );
+
+    const execution =
+      nativeDevUiExecutionService
+        .get(
+          taskId
+        );
+
+    res.writeHead(
+      execution
+        ? 200
+        : 404,
+      {
+        "Content-Type":
+          "application/json",
+        "Cache-Control":
+          "no-store",
+      }
+    );
+
+    return res.end(
+      JSON.stringify(
+        execution
+          ? {
+              status: "ok",
+              execution,
+              progress:
+                publicDevProgress(
+                  taskId
+                ),
+            }
+          : {
+              status: "error",
+              code:
+                "DEV_NATIVE_UI_NOT_FOUND",
+            }
+      )
+    );
+  } catch (error) {
+    return sendDevTerminalError(
+      res,
+      error
+    );
   }
 }
 
