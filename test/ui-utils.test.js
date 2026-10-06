@@ -12,6 +12,7 @@ const {
   createChatRequestPayload,
   maskPrivateMemoryValue,
   privateMemoryCategoryLabel,
+  presentDevProgress,
 } = require("../public/ui-utils");
 
 test("échappe les valeurs injectées dans les chaînes HTML", () => {
@@ -69,3 +70,174 @@ test("conserve la catégorie existante et utilise Autres uniquement si elle manq
   assert.equal(privateMemoryCategoryLabel("préférences"), "préférences");
   assert.equal(privateMemoryCategoryLabel(""), "Autres");
 });
+
+
+test(
+  "présente le cycle Native DEV sans exposer ses données privées",
+  () => {
+    const cases = [
+      [
+        {
+          source:
+            "native_dev",
+          state:
+            "RUNNING",
+          phase:
+            "PLAN",
+          progress: 10,
+        },
+        "Analyse · 10%",
+      ],
+      [
+        {
+          source:
+            "native_dev",
+          state:
+            "RUNNING",
+          phase:
+            "VALIDATION",
+          progress: 25,
+        },
+        "Baseline · 25%",
+      ],
+      [
+        {
+          source:
+            "native_dev",
+          state:
+            "RUNNING",
+          phase:
+            "ACTION",
+          progress: 45,
+        },
+        "Implémentation · 45%",
+      ],
+      [
+        {
+          source:
+            "native_dev",
+          state:
+            "RUNNING",
+          phase:
+            "VALIDATION",
+          progress: 80,
+        },
+        "Review · 80%",
+      ],
+      [
+        {
+          source:
+            "native_dev",
+          state:
+            "SUCCEEDED",
+          phase:
+            "VALIDATION",
+          progress: 100,
+        },
+        "Terminé et vérifié · 100%",
+      ],
+    ];
+
+    for (
+      const [
+        progress,
+        label,
+      ] of cases
+    ) {
+      assert.equal(
+        presentDevProgress(
+          progress
+        ).label,
+        label
+      );
+    }
+
+    const privateProjection =
+      presentDevProgress({
+        source:
+          "native_dev",
+        state:
+          "RUNNING",
+        phase:
+          "ACTION",
+        progress: 45,
+
+        rawPrompt:
+          "SECRET_PROMPT",
+
+        content:
+          "SECRET_SOURCE",
+
+        reasoning:
+          "SECRET_REASONING",
+      });
+
+    assert.doesNotMatch(
+      JSON.stringify(
+        privateProjection
+      ),
+      /SECRET_/
+    );
+  }
+);
+
+test(
+  "présente échec annulation attente et fallback du Workspace Agent",
+  () => {
+    assert.equal(
+      presentDevProgress({
+        source:
+          "native_dev",
+        state:
+          "FAILED",
+        phase:
+          "FINALIZE",
+      }).label,
+      "Échec"
+    );
+
+    assert.equal(
+      presentDevProgress({
+        source:
+          "native_dev",
+        state:
+          "CANCELLED",
+        phase:
+          "ACTION",
+      }).label,
+      "Annulé"
+    );
+
+    assert.equal(
+      presentDevProgress({
+        source:
+          "dev_agent_loop",
+        state:
+          "WAITING",
+        phase:
+          "APPROVAL",
+      }).label,
+      "Validation requise"
+    );
+
+    assert.deepEqual(
+      presentDevProgress(
+        null,
+        {
+          status:
+            "COMPLETED",
+          phase:
+            "STOP",
+        }
+      ),
+      {
+        label:
+          "Terminé",
+        state:
+          "completed",
+        progress:
+          null,
+      }
+    );
+  }
+);

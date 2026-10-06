@@ -12,6 +12,7 @@ const {
   privateMemoryCategoryLabel,
   normalizeSafeChatUrl,
   renderChatMarkdown,
+  presentDevProgress,
 } = window.NoonUiUtils;
 const chatForm = document.getElementById("chatForm");
 const promptInput = document.getElementById("prompt");
@@ -6036,17 +6037,62 @@ function clearDevWorkspaceAgent() {
   devWorkspaceAgentCancel.disabled = true;
 }
 
-function renderDevWorkspaceAgent(execution) {
-  if (!execution || execution.executionId !== devWorkspaceAgentExecutionId) return;
-  const labels = { PLAN: "Planning…", ACTION: "Running…", VALIDATION: "Validating…", OBSERVATION: "Observing…", STOP: "Deciding…" };
-  const terminal = ["COMPLETED", "FAILED", "BLOCKED", "CANCELLED"].includes(execution.status);
-  devWorkspaceAgentState.textContent = terminal
-    ? execution.status === "COMPLETED" ? "Done" : execution.status === "BLOCKED" ? "Blocked" : execution.status === "CANCELLED" ? "Cancelled" : "Failed"
-    : labels[execution.phase] || execution.status;
-  devWorkspaceAgentState.dataset.state = execution.status.toLowerCase();
-  devWorkspaceAgentRun.disabled = !terminal;
-  devWorkspaceAgentCancel.disabled = terminal;
-  if (terminal) devWorkspaceAgentExecutionId = null;
+function renderDevWorkspaceAgent(
+  execution,
+  progress = null
+) {
+  if (
+    !execution ||
+    execution.executionId !==
+      devWorkspaceAgentExecutionId
+  ) {
+    return;
+  }
+
+  const presentation =
+    presentDevProgress(
+      progress,
+      execution
+    );
+
+  const terminal =
+    [
+      "COMPLETED",
+      "FAILED",
+      "BLOCKED",
+      "CANCELLED",
+    ].includes(
+      execution.status
+    );
+
+  devWorkspaceAgentState
+    .textContent =
+    presentation.label;
+
+  devWorkspaceAgentState
+    .dataset.state =
+    presentation.state;
+
+  devWorkspaceAgentState
+    .title =
+    presentation.label;
+
+  devWorkspaceAgentState
+    .setAttribute(
+      "aria-label",
+      presentation.label
+    );
+
+  devWorkspaceAgentRun.disabled =
+    !terminal;
+
+  devWorkspaceAgentCancel.disabled =
+    terminal;
+
+  if (terminal) {
+    devWorkspaceAgentExecutionId =
+      null;
+  }
 }
 
 async function showDevWorkspaceAgentTerminal(execution, sessionId, serial) {
@@ -6074,7 +6120,7 @@ async function refreshDevWorkspaceAgent() {
     if (serial !== devWorkspaceAgentSerial || executionId !== devWorkspaceAgentExecutionId ||
       sessionId !== devTerminalState.session?.id || contextKey !== devTerminalState.contextKey || currentMode !== "DEV") return;
     await showDevWorkspaceAgentTerminal(data.execution, sessionId, serial);
-    renderDevWorkspaceAgent(data.execution);
+    renderDevWorkspaceAgent(data.execution, data.progress);
   } catch {
     if (serial === devWorkspaceAgentSerial) clearDevWorkspaceAgent();
   }
@@ -6106,7 +6152,7 @@ devWorkspaceAgentRun.addEventListener("click", async () => {
     });
     if (serial !== devWorkspaceAgentSerial || sessionId !== devTerminalState.session?.id) return;
     devWorkspaceAgentExecutionId = data.execution.executionId;
-    renderDevWorkspaceAgent(data.execution);
+    renderDevWorkspaceAgent(data.execution, data.progress);
     void refreshDevWorkspaceAgent();
   } catch {
     if (serial === devWorkspaceAgentSerial) clearDevWorkspaceAgent();

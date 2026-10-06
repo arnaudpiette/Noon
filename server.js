@@ -642,6 +642,33 @@ const userProgressAdapter =
       userProgressEngine,
   });
 
+function publicDevProgress(
+  executionId
+) {
+  const id =
+    String(
+      executionId || ""
+    ).trim();
+
+  if (!id) {
+    return null;
+  }
+
+  try {
+    return toChatProgressEvent(
+      userProgressEngine.latest(
+        id
+      )
+    );
+  } catch {
+    /*
+     * La projection de progression
+     * ne doit jamais casser l'API DEV.
+     */
+    return null;
+  }
+}
+
 const orchestratorObservability =
   createOrchestratorProgressObservability({
     observability:
@@ -9441,7 +9468,16 @@ if (requestPath === "/api/dev/workspace-agent/executions" && req.method === "POS
         : null,
     });
     res.writeHead(202, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "ok", execution }));
+    return res.end(
+      JSON.stringify({
+        status: "ok",
+        execution,
+        progress:
+          publicDevProgress(
+            execution.executionId
+          ),
+      })
+    );
   } catch (error) {
     return sendDevTerminalError(res, error);
   }
@@ -9475,7 +9511,24 @@ if (devWorkspaceAgentStatus && req.method === "GET") {
       decodeURIComponent(devWorkspaceAgentStatus[1])
     );
     res.writeHead(execution ? 200 : 404, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify(execution ? { status: "ok", execution } : { status: "error", code: "EXECUTION_NOT_FOUND" }));
+    return res.end(
+      JSON.stringify(
+        execution
+          ? {
+              status: "ok",
+              execution,
+              progress:
+                publicDevProgress(
+                  execution.executionId
+                ),
+            }
+          : {
+              status: "error",
+              code:
+                "EXECUTION_NOT_FOUND",
+            }
+      )
+    );
   } catch (error) {
     return sendDevTerminalError(res, error);
   }
@@ -9502,7 +9555,15 @@ if (requestPath === "/api/dev/native/tasks" && req.method === "POST") {
       permissions: ["READ_WRITE_WORKSPACE", "TERMINAL_SAFE"],
     });
     res.writeHead(result.finalVerdict === "FAIL" ? 422 : 200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify(result));
+    return res.end(
+      JSON.stringify({
+        ...result,
+        progress:
+          publicDevProgress(
+            result.taskId
+          ),
+      })
+    );
   } catch (error) {
     res.writeHead(error.statusCode || 400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     return res.end(JSON.stringify({ status: "error", code: error.code || "DEV_TASK_FAILURE", message: error.message }));
@@ -9521,8 +9582,44 @@ if (requestPath === "/api/dev/budget" && req.method === "GET") {
 
 if (requestPath.startsWith("/api/dev/native/tasks/") && req.method === "GET") {
   if (req.headers["x-noon-request"] !== "1") { res.writeHead(403); return res.end(); }
-  const taskId = decodeURIComponent(requestPath.slice("/api/dev/native/tasks/".length)); const result = nativeDevB3Facade.getTaskStatus(taskId);
-  res.writeHead(result ? 200 : 404, { "Content-Type": "application/json", "Cache-Control": "no-store" }); return res.end(JSON.stringify(result || { status: "not_found" }));
+  const taskId =
+    decodeURIComponent(
+      requestPath.slice(
+        "/api/dev/native/tasks/".length
+      )
+    );
+
+  const result =
+    nativeDevB3Facade.getTaskStatus(
+      taskId
+    );
+
+  res.writeHead(
+    result ? 200 : 404,
+    {
+      "Content-Type":
+        "application/json",
+      "Cache-Control":
+        "no-store",
+    }
+  );
+
+  return res.end(
+    JSON.stringify(
+      result
+        ? {
+            ...result,
+            progress:
+              publicDevProgress(
+                taskId
+              ),
+          }
+        : {
+            status:
+              "not_found",
+          }
+    )
+  );
 }
 
 if (requestPath.startsWith("/api/dev/native/tasks/") && requestPath.endsWith("/cancel") && req.method === "POST") {

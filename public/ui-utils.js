@@ -359,6 +359,240 @@
     });
   }
 
+  function presentDevProgress(
+    progress,
+    execution = {}
+  ) {
+    const publicProgress =
+      progress &&
+      typeof progress === "object"
+        ? progress
+        : null;
+
+    const state =
+      String(
+        publicProgress?.state || ""
+      ).toUpperCase();
+
+    const phase =
+      String(
+        publicProgress?.phase || ""
+      ).toUpperCase();
+
+    const source =
+      String(
+        publicProgress?.source || ""
+      ).toLowerCase();
+
+    const numericProgress =
+      Number(
+        publicProgress?.progress
+      );
+
+    const percent =
+      Number.isFinite(
+        numericProgress
+      )
+        ? Math.max(
+            0,
+            Math.min(
+              100,
+              Math.round(
+                numericProgress
+              )
+            )
+          )
+        : null;
+
+    function withPercent(
+      label
+    ) {
+      return percent === null
+        ? label
+        : `${label} · ${percent}%`;
+    }
+
+    if (state) {
+      let label = null;
+
+      if (
+        state === "SUCCEEDED"
+      ) {
+        label =
+          source ===
+            "native_dev" &&
+          phase ===
+            "VALIDATION"
+            ? "Terminé et vérifié"
+            : "Terminé";
+      } else if (
+        state === "FAILED"
+      ) {
+        label = "Échec";
+      } else if (
+        state === "CANCELLED"
+      ) {
+        label = "Annulé";
+      } else if (
+        state === "BLOCKED"
+      ) {
+        label =
+          phase === "RECOVERY"
+            ? "Reprise requise"
+            : "Bloqué";
+      } else if (
+        state === "WAITING"
+      ) {
+        label =
+          phase === "APPROVAL"
+            ? "Validation requise"
+            : "En attente";
+      } else if (
+        source === "native_dev"
+      ) {
+        if (phase === "PLAN") {
+          label = "Analyse";
+        } else if (
+          phase === "ACTION"
+        ) {
+          label =
+            "Implémentation";
+        } else if (
+          phase ===
+          "VALIDATION"
+        ) {
+          if (
+            percent !== null &&
+            percent <= 30
+          ) {
+            label =
+              "Baseline";
+          } else if (
+            percent !== null &&
+            percent >= 70
+          ) {
+            label =
+              "Review";
+          } else {
+            label =
+              "Vérification";
+          }
+        } else if (
+          phase === "TOOL"
+        ) {
+          label = "Outil";
+        } else if (
+          phase === "RECOVERY"
+        ) {
+          label =
+            "Récupération";
+        } else if (
+          phase === "FINALIZE"
+        ) {
+          label =
+            "Finalisation";
+        }
+      } else {
+        const labels = {
+          PLAN:
+            "Planification",
+          ACTION:
+            "Exécution",
+          TOOL:
+            "Outil",
+          VALIDATION:
+            "Vérification",
+          APPROVAL:
+            "Validation requise",
+          RECOVERY:
+            "Récupération",
+          FINALIZE:
+            "Finalisation",
+        };
+
+        label =
+          labels[phase] ||
+          null;
+      }
+
+      if (label) {
+        return {
+          label:
+            withPercent(
+              label
+            ),
+
+          state:
+            state.toLowerCase(),
+
+          progress:
+            percent,
+        };
+      }
+    }
+
+    /*
+     * Fallback legacy :
+     * conserve l'ancienne UI si aucun
+     * ProgressEvent n'est encore disponible.
+     */
+    const executionStatus =
+      String(
+        execution?.status || ""
+      ).toUpperCase();
+
+    const executionPhase =
+      String(
+        execution?.phase || ""
+      ).toUpperCase();
+
+    const terminalLabels = {
+      COMPLETED:
+        "Terminé",
+      FAILED:
+        "Échec",
+      BLOCKED:
+        "Bloqué",
+      CANCELLED:
+        "Annulé",
+    };
+
+    const phaseLabels = {
+      PLAN:
+        "Planification",
+      ACTION:
+        "Exécution",
+      VALIDATION:
+        "Vérification",
+      OBSERVATION:
+        "Observation",
+      STOP:
+        "Décision",
+    };
+
+    return {
+      label:
+        terminalLabels[
+          executionStatus
+        ] ||
+        phaseLabels[
+          executionPhase
+        ] ||
+        executionStatus ||
+        "Noon prêt",
+
+      state:
+        executionStatus
+          ? executionStatus
+              .toLowerCase()
+          : "idle",
+
+      progress:
+        null,
+    };
+  }
+
+
   return {
     escapeHtml,
     parseFocusCommand,
@@ -372,6 +606,7 @@
     renderChatMarkdown,
     renderBriefMarkdown,
     renderDailyBriefStructured,
+    presentDevProgress,
   };
 
 });

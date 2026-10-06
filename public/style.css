@@ -1587,7 +1587,7 @@ body.dev-preview-resizing *{
 }
 
 .dev-workspace-agent-state{
-  max-width:90px;
+  max-width:170px;
   overflow:hidden;
   color:#858b8f;
   font-size:8px;
@@ -1595,9 +1595,11 @@ body.dev-preview-resizing *{
   white-space:nowrap
 }
 
-.dev-workspace-agent-state[data-state="completed"]{color:var(--figma-green)}
+.dev-workspace-agent-state[data-state="completed"],
+.dev-workspace-agent-state[data-state="succeeded"]{color:var(--figma-green)}
 .dev-workspace-agent-state[data-state="failed"],
-.dev-workspace-agent-state[data-state="blocked"]{color:#ff858d}
+.dev-workspace-agent-state[data-state="blocked"],
+.dev-workspace-agent-state[data-state="cancelled"]{color:#ff858d}
 
 .dev-terminal-panel.is-source-control{
   grid-template-rows:auto minmax(0,1fr)
