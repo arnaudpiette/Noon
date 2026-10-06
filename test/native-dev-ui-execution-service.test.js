@@ -39,6 +39,25 @@ function deferred() {
 
 function fixture({
   mode = "LIMITED",
+  lastValidationState = {
+    command:
+      "npm test",
+
+    classification:
+      "SAFE_READ",
+
+    reasonCode:
+      "AUTHORIZED_VALIDATION",
+
+    exitCode:
+      0,
+
+    signal:
+      null,
+
+    status:
+      "PASS",
+  },
 } = {}) {
   const run =
     deferred();
@@ -47,9 +66,11 @@ function fixture({
     run: [],
     cancel: [],
     rules: [],
+    claims: [],
   };
 
   let taskCounter = 0;
+  let validationClaimed = false;
 
   const nativeDevFacade = {
     runTask(input) {
@@ -100,7 +121,49 @@ function fixture({
 
             repositoryRoot:
               "/tmp/noon-native-ui",
+
+            executionState:
+              "READY",
+
+            lastValidationState:
+              lastValidationState
+                ? structuredClone(
+                    lastValidationState
+                  )
+                : null,
           };
+        },
+
+        claimAuthorizedValidation({ sessionId, command }) {
+          calls.claims.push({ sessionId, command });
+          const state = lastValidationState;
+
+          const validResult =
+            (state?.status === "PASS" && state.exitCode === 0) ||
+            (
+              state?.status === "FAIL" &&
+              Number.isInteger(state.exitCode) &&
+              state.exitCode !== 0
+            );
+
+          if (
+            validationClaimed ||
+            sessionId !== "workspace-session-1" ||
+            !state ||
+            state.command !== command ||
+            state.classification !== "SAFE_READ" ||
+            ![
+              "AUTHORIZED_VALIDATION",
+              "AUTHORIZED_TARGETED_VALIDATION",
+            ].includes(state.reasonCode) ||
+            state.signal != null ||
+            !validResult
+          ) {
+            return false;
+          }
+
+          validationClaimed = true;
+          return true;
         },
       },
 
@@ -331,6 +394,141 @@ test(
       completed.actualCost,
       0.01
     );
+  }
+);
+
+test(
+  "Native DEV UI refuse une validation forgée absente de l’état terminal serveur",
+  () => {
+    const f =
+      fixture({
+        lastValidationState: {
+          command:
+            "npm run build",
+
+          classification:
+            "SAFE_READ",
+
+          reasonCode:
+            "AUTHORIZED_VALIDATION",
+
+          exitCode:
+            0,
+
+          signal:
+            null,
+
+          status:
+            "PASS",
+        },
+      });
+
+    assert.throws(
+      () =>
+        f.service.start({
+          workspaceSessionId:
+            "workspace-session-1",
+
+          validationCommand:
+            "npm test",
+        }),
+      {
+        code:
+          "DEV_NATIVE_UI_VALIDATION_NOT_AUTHORIZED",
+
+        statusCode:
+          409,
+      }
+    );
+
+    assert.equal(
+      f.calls.run.length,
+      0
+    );
+  }
+);
+
+test(
+  "Native DEV UI accepte une validation SAFE_READ terminée en FAIL afin de pouvoir la corriger",
+  () => {
+    const f =
+      fixture({
+        lastValidationState: {
+          command:
+            "npm test",
+
+          classification:
+            "SAFE_READ",
+
+          reasonCode:
+            "AUTHORIZED_VALIDATION",
+
+          exitCode:
+            1,
+
+          signal:
+            null,
+
+          status:
+            "FAIL",
+        },
+      });
+
+    const started =
+      f.service.start({
+        workspaceSessionId:
+          "workspace-session-1",
+
+        validationCommand:
+          "npm test",
+      });
+
+    assert.equal(
+      started.status,
+      "RUNNING"
+    );
+
+    assert.equal(
+      f.calls.run.length,
+      1
+    );
+  }
+);
+
+
+test(
+  "Native DEV UI refuse le rejeu d’une validation consommée",
+  async () => {
+    const f = fixture();
+
+    const input = {
+      workspaceSessionId: "workspace-session-1",
+      validationCommand: "npm test",
+    };
+
+    const started = f.service.start(input);
+
+    f.run.resolve({
+      taskId: started.taskId,
+      finalVerdict: "PASS",
+      metrics: {},
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(
+      f.service.get(started.taskId).status,
+      "COMPLETED"
+    );
+
+    assert.throws(
+      () => f.service.start(input),
+      {
+        code: "DEV_NATIVE_UI_VALIDATION_NOT_AUTHORIZED",
+      }
+    );
+
+    assert.equal(f.calls.run.length, 1);
   }
 );
 

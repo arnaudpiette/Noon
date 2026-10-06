@@ -741,6 +741,55 @@ function createDevWorkspaceTerminalService({
     return decision;
   }
 
+  function claimAuthorizedValidation(input = {}) {
+    const session = requireSession(input.sessionId);
+    const command = String(input.command || "").trim();
+    const state = session.lastValidationState;
+    const decision = classifyDevCommand(command);
+
+    const completedAt = Date.parse(
+      state?.completedAt || ""
+    );
+    const ageMs = now() - completedAt;
+
+    const validResult =
+      (state?.status === "PASS" && state.exitCode === 0) ||
+      (
+        state?.status === "FAIL" &&
+        Number.isInteger(state.exitCode) &&
+        state.exitCode !== 0
+      );
+
+    const authorized = Boolean(
+      command &&
+      session.executionState === "READY" &&
+      state &&
+      state.command === command &&
+      state.origin === "USER" &&
+      state.nativeUiClaimedAt == null &&
+      state.classification === "SAFE_READ" &&
+      decision.allowed === true &&
+      decision.classification === "SAFE_READ" &&
+      state.reasonCode === decision.reasonCode &&
+      [
+        "AUTHORIZED_VALIDATION",
+        "AUTHORIZED_TARGETED_VALIDATION",
+      ].includes(state.reasonCode) &&
+      state.signal == null &&
+      validResult &&
+      Number.isFinite(completedAt) &&
+      ageMs >= 0 &&
+      ageMs <= 30 * 60_000
+    );
+
+    if (!authorized) return false;
+
+    // Claim serveur synchrone : une seule consommation.
+    state.nativeUiClaimedAt = iso();
+
+    return true;
+  }
+
   function runCommand(input = {}) {
     const session = requireSession(
       input.sessionId
@@ -971,6 +1020,10 @@ function createDevWorkspaceTerminalService({
       }
 
       session.lastValidationState = {
+        origin: terminal.owner,
+        completedAt: iso(),
+        nativeUiClaimedAt: null,
+
         command:
           commandDecision.classification ===
           "SAFE_READ"
@@ -1840,6 +1893,7 @@ function createDevWorkspaceTerminalService({
     getCompletions,
     createTerminal,
     runCommand,
+    claimAuthorizedValidation,
     poll,
     closeTerminal,
     closeSession,

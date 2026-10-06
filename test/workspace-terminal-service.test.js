@@ -30,7 +30,10 @@ function fakeChild(pid = 4242) {
   return child;
 }
 
-function fixture(context, { mode = "read-write" } = {}) {
+function fixture(context, {
+  mode = "read-write",
+  now = () => Date.now(),
+} = {}) {
   const root = fs.mkdtempSync(
     path.join(os.tmpdir(), "noon-terminal-root-")
   );
@@ -99,6 +102,7 @@ function fixture(context, { mode = "read-write" } = {}) {
     workspaceEngine,
     operationalSecurityPolicy,
     spawnProcess,
+    now,
     environment: {
       PATH: process.env.PATH || "/usr/bin:/bin",
       HOME: "/Users/test",
@@ -1571,3 +1575,105 @@ test(
     );
   }
 );
+
+/* NATIVE_UI_SERVER_AUTH_REGRESSIONS */
+
+test("autorisation Native : commande terminée, exacte et à usage unique", (t) => {
+  const f = fixture(t);
+  const { session, terminal } = createSessionAndTerminal(f);
+
+  const claim = (command = "npm test") =>
+    f.service.claimAuthorizedValidation({
+      sessionId: session.id,
+      command,
+    });
+
+  assert.equal(claim(), false);
+
+  f.service.runCommand({
+    sessionId: session.id,
+    terminalId: terminal.id,
+    origin: "USER",
+    command: "npm test",
+  });
+
+  assert.equal(claim(), false);
+
+  f.children.at(-1).emit("close", 0, null);
+
+  assert.equal(claim("npm run build"), false);
+  assert.equal(claim(), true);
+  assert.equal(claim(), false);
+});
+
+test("autorisation Native : FAIL légitime, signal refusé", (t) => {
+  const f = fixture(t);
+  const { session, terminal } = createSessionAndTerminal(f);
+
+  const claim = () =>
+    f.service.claimAuthorizedValidation({
+      sessionId: session.id,
+      command: "npm test",
+    });
+
+  f.service.runCommand({
+    sessionId: session.id,
+    terminalId: terminal.id,
+    origin: "USER",
+    command: "npm test",
+  });
+
+  f.children.at(-1).emit("close", 1, null);
+  assert.equal(claim(), true);
+
+  f.service.runCommand({
+    sessionId: session.id,
+    terminalId: terminal.id,
+    origin: "USER",
+    command: "npm test",
+  });
+
+  f.children.at(-1).emit("close", null, "SIGTERM");
+  assert.equal(claim(), false);
+});
+
+test("autorisation Native : expiration et origine NOON refusées", (t) => {
+  let clock = Date.parse("2026-10-06T08:00:00.000Z");
+  const f = fixture(t, { now: () => clock });
+  const { session, terminal } = createSessionAndTerminal(f);
+
+  const claim = () =>
+    f.service.claimAuthorizedValidation({
+      sessionId: session.id,
+      command: "npm test",
+    });
+
+  f.service.runCommand({
+    sessionId: session.id,
+    terminalId: terminal.id,
+    origin: "USER",
+    command: "npm test",
+  });
+
+  f.children.at(-1).emit("close", 0, null);
+
+  clock += 31 * 60_000;
+  assert.equal(claim(), false);
+
+  const noon = f.service.createTerminal({
+    sessionId: session.id,
+    owner: "NOON",
+  });
+
+  f.service.runCommand({
+    sessionId: session.id,
+    terminalId: noon.id,
+    origin: "NOON",
+    command: "npm test",
+  });
+
+  f.children.at(-1).emit("close", 0, null);
+  assert.equal(claim(), false);
+});
+
+/* NATIVE_UI_SERVER_AUTH_REGRESSIONS_END */

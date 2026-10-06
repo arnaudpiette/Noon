@@ -149,6 +149,15 @@ function createNativeDevUiExecutionService({
   }
 
   if (
+    typeof terminalService?.claimAuthorizedValidation !==
+    "function"
+  ) {
+    throw new TypeError(
+      "Autorisation terminal serveur requise."
+    );
+  }
+
+  if (
     typeof nativeDevFacade
       ?.runTask !==
       "function" ||
@@ -411,6 +420,19 @@ function createNativeDevUiExecutionService({
       throw executionError(
         "DEV_NATIVE_UI_TASK_ID_INVALID",
         "Identifiant Native DEV invalide."
+      );
+    }
+
+    if (
+      terminalService.claimAuthorizedValidation({
+        sessionId: workspaceSessionId,
+        command: validationCommand,
+      }) !== true
+    ) {
+      throw executionError(
+        "DEV_NATIVE_UI_VALIDATION_NOT_AUTHORIZED",
+        "Validation terminal absente, expirée ou déjà utilisée. Relance la validation.",
+        409
       );
     }
 
