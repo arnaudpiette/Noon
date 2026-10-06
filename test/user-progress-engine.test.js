@@ -631,3 +631,40 @@ test(
     );
   },
 );
+
+
+test(
+  "Progress accepte la source native_dev sans exposer de contenu",
+  () => {
+    const progress =
+      engine();
+
+    const result =
+      progress.publish({
+        executionId:
+          "native-dev-progress",
+        state:
+          STATES.RUNNING,
+        phase:
+          PHASES.ACTION,
+        source:
+          "native_dev",
+        progress: 45,
+      });
+
+    assert.equal(
+      result.emitted,
+      true,
+    );
+
+    assert.equal(
+      result.event.source,
+      "native_dev",
+    );
+
+    assert.equal(
+      result.event.progress,
+      45,
+    );
+  }
+);

@@ -602,3 +602,227 @@ test(
     );
   },
 );
+
+
+test(
+  "Native DEV projette analyse baseline implémentation review et succès vérifié",
+  () => {
+    const f =
+      fixture();
+
+    const executionId =
+      "native-dev-task-1";
+
+    const cases = [
+      [
+        "dev_orchestrator.analysis_started",
+        "PLAN",
+        10,
+      ],
+      [
+        "dev_orchestrator.baseline_started",
+        "VALIDATION",
+        25,
+      ],
+      [
+        "dev_orchestrator.implementation_started",
+        "ACTION",
+        45,
+      ],
+      [
+        "dev_orchestrator.review_started",
+        "VALIDATION",
+        80,
+      ],
+      [
+        "dev_orchestrator.completed",
+        "VALIDATION",
+        100,
+      ],
+    ];
+
+    for (
+      const [
+        eventName,
+        phase,
+        progress,
+      ] of cases
+    ) {
+      f.adapter.nativeDev(
+        eventName,
+        {
+          taskId:
+            executionId,
+        },
+      );
+
+      const latest =
+        f.progressEngine.latest(
+          executionId
+        );
+
+      assert.equal(
+        latest.phase,
+        phase
+      );
+
+      assert.equal(
+        latest.progress,
+        progress
+      );
+
+      assert.equal(
+        latest.source,
+        "native_dev"
+      );
+    }
+
+    const finalEvent =
+      f.progressEngine.latest(
+        executionId
+      );
+
+    assert.equal(
+      finalEvent.state,
+      "SUCCEEDED"
+    );
+
+    assert.equal(
+      finalEvent.label,
+      "Terminé et vérifié"
+    );
+  }
+);
+
+test(
+  "Native DEV projette échec et annulation sans faux succès",
+  () => {
+    const f =
+      fixture();
+
+    f.adapter.nativeDev(
+      "dev_orchestrator.failed",
+      {
+        taskId:
+          "native-dev-fail",
+        failureCategory:
+          "VALIDATION_FAILURE",
+      },
+    );
+
+    let event =
+      f.progressEngine.latest(
+        "native-dev-fail"
+      );
+
+    assert.equal(
+      event.state,
+      "FAILED"
+    );
+
+    assert.equal(
+      event.phase,
+      "FINALIZE"
+    );
+
+    assert.equal(
+      event.reasonCode,
+      "VALIDATION_FAILURE"
+    );
+
+    f.adapter.nativeDev(
+      "dev_orchestrator.cancelled",
+      {
+        taskId:
+          "native-dev-cancel",
+      },
+    );
+
+    event =
+      f.progressEngine.latest(
+        "native-dev-cancel"
+      );
+
+    assert.equal(
+      event.state,
+      "CANCELLED"
+    );
+
+    assert.equal(
+      event.reasonCode,
+      "USER_CANCELLED"
+    );
+  }
+);
+
+test(
+  "Native DEV ne projette jamais les champs privés de l'observabilité B3",
+  () => {
+    const captured =
+      [];
+
+    const adapter =
+      createUserProgressAdapter({
+        progressEngine: {
+          publish(event) {
+            captured.push(
+              event
+            );
+
+            return {
+              emitted: true,
+              event,
+            };
+          },
+        },
+      });
+
+    adapter.nativeDev(
+      "dev_orchestrator.implementation_started",
+      {
+        taskId:
+          "native-dev-private",
+
+        rawPrompt:
+          "SECRET_PROMPT",
+
+        content:
+          "SECRET_SOURCE",
+
+        reasoning:
+          "SECRET_REASONING",
+
+        args: {
+          token:
+            "SECRET_TOKEN",
+        },
+      },
+    );
+
+    const serialized =
+      JSON.stringify(
+        captured
+      );
+
+    assert.doesNotMatch(
+      serialized,
+      /SECRET_/
+    );
+
+    assert.deepEqual(
+      Object.keys(
+        captured[0]
+      ).sort(),
+      [
+        "currentStep",
+        "executionId",
+        "phase",
+        "progress",
+        "source",
+        "state",
+        "stepId",
+        "totalSteps",
+      ].sort()
+    );
+  }
+);

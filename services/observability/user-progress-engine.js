@@ -27,6 +27,7 @@ const SOURCES = new Set([
   "transactional_execution",
   "background_job",
   "dev_agent_loop",
+  "native_dev",
   "execution_tracking",
   "system",
 ]);

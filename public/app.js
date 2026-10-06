@@ -8100,7 +8100,8 @@ function chatProgressPresentation(
     ).toUpperCase();
 
   const rootExecution =
-    source === "orchestrator";
+    source === "orchestrator" ||
+    source === "native_dev";
 
   if (
     state === "WAITING" &&

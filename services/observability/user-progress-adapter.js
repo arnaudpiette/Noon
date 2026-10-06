@@ -630,6 +630,135 @@ function createUserProgressAdapter({
   }
 
 
+  function nativeDev(
+    event,
+    metadata = {},
+  ) {
+    const name =
+      String(event || "")
+        .trim()
+        .toLowerCase();
+
+    const executionId =
+      metadata.executionId ||
+      metadata.execution_id ||
+      metadata.taskId ||
+      metadata.task_id;
+
+    const reasonCode =
+      safeCode(
+        metadata.failureCategory ||
+        metadata.reasonCode ||
+        metadata.code,
+      );
+
+    const base = {
+      executionId,
+      stepId: null,
+      source: "native_dev",
+      ...common(metadata),
+    };
+
+    // PROGRESS_OBSERVABILITY_NATIVE_DEV_V1
+    // Projection volontairement minimale.
+    // Aucun prompt, contenu source, arguments
+    // ou raisonnement interne n'est propagé.
+    if (
+      name ===
+      "dev_orchestrator.analysis_started"
+    ) {
+      return publish({
+        ...base,
+        state: "RUNNING",
+        phase: "PLAN",
+        progress: 10,
+      });
+    }
+
+    if (
+      name ===
+      "dev_orchestrator.baseline_started"
+    ) {
+      return publish({
+        ...base,
+        state: "RUNNING",
+        phase: "VALIDATION",
+        progress: 25,
+      });
+    }
+
+    if (
+      name ===
+      "dev_orchestrator.implementation_started"
+    ) {
+      return publish({
+        ...base,
+        state: "RUNNING",
+        phase: "ACTION",
+        progress: 45,
+      });
+    }
+
+    if (
+      name ===
+      "dev_orchestrator.review_started"
+    ) {
+      return publish({
+        ...base,
+        state: "RUNNING",
+        phase: "VALIDATION",
+        progress: 80,
+      });
+    }
+
+    if (
+      name ===
+      "dev_orchestrator.cancelled"
+    ) {
+      return publish({
+        ...base,
+        state: "CANCELLED",
+        phase: "ACTION",
+        reasonCode:
+          "USER_CANCELLED",
+      });
+    }
+
+    if (
+      name ===
+      "dev_orchestrator.failed"
+    ) {
+      return publish({
+        ...base,
+        state: "FAILED",
+        phase: "FINALIZE",
+        reasonCode:
+          reasonCode ||
+          "DEV_ORCHESTRATION_FAILED",
+      });
+    }
+
+    if (
+      name ===
+      "dev_orchestrator.completed"
+    ) {
+      return publish({
+        ...base,
+        state: "SUCCEEDED",
+        phase: "VALIDATION",
+        progress: 100,
+      });
+    }
+
+    return {
+      emitted: false,
+      ignored: true,
+      reason:
+        "UNMAPPED_EVENT",
+    };
+  }
+
+
   function orchestrator(
     event,
     metadata = {},
@@ -850,6 +979,7 @@ function createUserProgressAdapter({
     transactional,
     backgroundJob,
     devAgent,
+    nativeDev,
     orchestrator,
   };
 }

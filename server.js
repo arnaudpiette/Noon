@@ -1461,7 +1461,17 @@ const nativeDevB3Orchestrator = createNativeDevOrchestrator({
     workspaceId: input.workspaceId,
     sessionId: input.sessionId,
   }).value,
-  observability: (event, metadata) => toolAuditLog.append(`dev.b3.${event}`, metadata),
+  observability: (event, metadata) => {
+    toolAuditLog.append(
+      `dev.b3.${event}`,
+      metadata,
+    );
+
+    userProgressAdapter.nativeDev(
+      event,
+      metadata,
+    );
+  },
 });
 
 const nativeDevB3Facade = createNativeDevOrchestratorFacade({
