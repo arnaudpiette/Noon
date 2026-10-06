@@ -580,9 +580,9 @@
             </div>
 
             <div class="dev-terminal-actions">
-              <span id="devWorkspaceAgentState" class="dev-workspace-agent-state" role="status">Noon prêt</span>
+              <span id="devWorkspaceAgentState" class="dev-workspace-agent-state" data-state="idle" role="status" aria-label="Noon prêt">Noon prêt</span>
               <div class="dev-terminal-action-group dev-workspace-agent-actions" role="group" aria-label="Agent Noon">
-                <button id="devWorkspaceAgentRun" type="button" aria-label="Lancer Noon" title="Lancer Noon">Noon</button>
+                <button id="devWorkspaceAgentRun" type="button" aria-label="Lancer Noon" aria-pressed="false" title="Lancer Noon">Noon</button>
                 <button id="devWorkspaceAgentCancel" type="button" aria-label="Arrêter l’exécution Noon" title="Arrêter Noon" disabled>Stop</button>
               </div>
 
@@ -637,8 +637,6 @@
                   class="dev-terminal-profile-control"
                   title="Profil terminal par défaut : Autonome."
                 >
-                  <span class="dev-terminal-profile-label">Mode</span>
-
                   <select
                     id="devTerminalExecutionProfile"
                     aria-label="Profil d’exécution du Terminal DEV"
@@ -651,6 +649,7 @@
                   <span
                     id="devTerminalExecutionProfileStatus"
                     class="dev-terminal-profile-status"
+                    hidden
                   >
                     Défaut
                   </span>

@@ -6089,11 +6089,43 @@ let devNativeExecutionId = null;
 let devAgentExecutionKind = null;
 let devWorkspaceAgentSerial = 0;
 
+function setDevWorkspaceAgentActive(
+  active
+) {
+  const isActive =
+    active === true;
+
+  devWorkspaceAgentRun.dataset.active =
+    String(isActive);
+
+  devWorkspaceAgentRun.setAttribute(
+    "aria-pressed",
+    String(isActive)
+  );
+
+  devWorkspaceAgentRun.setAttribute(
+    "aria-label",
+    isActive
+      ? "Noon actif"
+      : "Lancer Noon"
+  );
+
+  devWorkspaceAgentRun.title =
+    isActive
+      ? "Noon actif"
+      : "Lancer Noon";
+}
+
 function clearDevWorkspaceAgent() {
   devWorkspaceAgentSerial += 1;
   devWorkspaceAgentExecutionId = null;
   devNativeExecutionId = null;
   devAgentExecutionKind = null;
+
+  setDevWorkspaceAgentActive(
+    false
+  );
+
   devWorkspaceAgentState.textContent = "Noon prêt";
   devWorkspaceAgentState.dataset.state = "idle";
   devWorkspaceAgentRun.disabled = false;
@@ -6145,6 +6177,10 @@ function renderDevWorkspaceAgent(
       "aria-label",
       presentation.label
     );
+
+  setDevWorkspaceAgentActive(
+    !terminal
+  );
 
   devWorkspaceAgentRun.disabled =
     !terminal;
@@ -6302,6 +6338,10 @@ function renderDevNativeExecution(
     presentation.label
   );
 
+  setDevWorkspaceAgentActive(
+    !terminal
+  );
+
   devWorkspaceAgentRun.disabled =
     !terminal;
 
@@ -6416,6 +6456,10 @@ async function refreshDevNativeExecution() {
 
       devAgentExecutionKind =
         null;
+
+      setDevWorkspaceAgentActive(
+        false
+      );
 
       devWorkspaceAgentRun.disabled =
         false;
@@ -6677,6 +6721,10 @@ devWorkspaceAgentRun.addEventListener("click", async () => {
   const serial =
     ++devWorkspaceAgentSerial;
 
+  setDevWorkspaceAgentActive(
+    true
+  );
+
   devWorkspaceAgentRun.disabled =
     true;
 
@@ -6733,6 +6781,10 @@ devWorkspaceAgentRun.addEventListener("click", async () => {
 
       devAgentExecutionKind =
         null;
+
+      setDevWorkspaceAgentActive(
+        false
+      );
 
       devWorkspaceAgentRun.disabled =
         false;
