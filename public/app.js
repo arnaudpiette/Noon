@@ -6444,6 +6444,19 @@ async function refreshDevNativeExecution() {
       data.execution,
       data.progress
     );
+
+    if (
+      [
+        "COMPLETED",
+        "FAILED",
+        "CANCELLED",
+        "TIMEOUT",
+      ].includes(
+        data.execution?.status
+      )
+    ) {
+      await refreshDevProblems();
+    }
   } catch (error) {
     if (
       serial ===

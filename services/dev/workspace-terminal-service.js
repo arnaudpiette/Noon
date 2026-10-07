@@ -790,6 +790,109 @@ function createDevWorkspaceTerminalService({
     return true;
   }
 
+  function applyNativeValidationResult(input = {}) {
+    const session = requireSession(input.sessionId);
+    const workspaceId = clean(input.workspaceId, 160);
+    const command = clean(input.command, MAX_COMMAND_LENGTH);
+    const validation = input.validation && typeof input.validation === "object"
+      ? input.validation
+      : null;
+    const nativeStartedAt = Date.parse(input.startedAt || "");
+    const completedAt = Date.parse(input.completedAt || "");
+    const currentAt = Date.parse(
+      session.problems?.updatedAt ||
+      session.lastValidationState?.completedAt ||
+      ""
+    );
+
+    if (
+      !workspaceId ||
+      workspaceId !== session.workspaceId ||
+      !command ||
+      validation?.command !== command ||
+      !["PASS", "FAIL"].includes(validation?.status) ||
+      !Number.isFinite(nativeStartedAt) ||
+      !Number.isFinite(completedAt)
+    ) {
+      return { applied: false, reason: "NATIVE_VALIDATION_CONTEXT_INVALID" };
+    }
+
+    if (
+      session.problems?.status === "RUNNING" ||
+      (
+        session.problems?.origin !== "NATIVE" &&
+        Number.isFinite(currentAt) &&
+        currentAt > nativeStartedAt
+      ) ||
+      (Number.isFinite(currentAt) && completedAt <= currentAt)
+    ) {
+      return { applied: false, reason: "NATIVE_VALIDATION_STALE" };
+    }
+
+    if (
+      session.problems?.command &&
+      session.problems.command !== command
+    ) {
+      return { applied: false, reason: "NATIVE_VALIDATION_NOT_COVERED" };
+    }
+
+    const exitCode = Number.isInteger(validation.exitCode)
+      ? validation.exitCode
+      : null;
+    const output = typeof validation.outputTail === "string"
+      ? validation.outputTail
+      : "";
+    const truncated = validation.outputTruncated === true;
+
+    if (!output && input.finalVerdict === "PASS") {
+      return { applied: false, reason: "NATIVE_VALIDATION_PROOF_MISSING" };
+    }
+
+    let problems;
+
+    if (!output || truncated || exitCode === null) {
+      problems = {
+        status: "UNRESOLVED",
+        source: inferDevProblemSource(command),
+        command,
+        exitCode,
+        counts: { total: 0, error: 0, warning: 0, info: 0 },
+        truncated,
+        problems: [],
+      };
+    } else {
+      problems = parseDevProblems({
+        command,
+        repositoryRoot: session.repositoryRoot,
+        exitCode,
+        stdout: output,
+      });
+
+      const recognizableSuccess =
+        /(?:TAP version|^1\.\.\d+|^ok\s+\d+|# pass\s+\d+|\btests?\s+\d+)/mi.test(
+          output
+        );
+
+      if (
+        exitCode === 0 &&
+        problems.status === "EMPTY" &&
+        !recognizableSuccess
+      ) {
+        problems.status = "UNRESOLVED";
+      }
+    }
+
+    session.problems = {
+      ...problems,
+      terminalId: session.problems?.terminalId || null,
+      updatedAt: new Date(completedAt).toISOString(),
+      origin: "NATIVE",
+      taskId: clean(input.taskId, 180) || null,
+    };
+
+    return { applied: true, status: session.problems.status };
+  }
+
   function runCommand(input = {}) {
     const session = requireSession(
       input.sessionId
@@ -944,6 +1047,8 @@ function createDevWorkspaceTerminalService({
         },
         truncated: false,
         problems: [],
+        updatedAt: iso(),
+        origin: terminal.owner,
       };
     }
 
@@ -1013,6 +1118,8 @@ function createDevWorkspaceTerminalService({
           ...parsedProblems,
           terminalId:
             terminal.id,
+          updatedAt: iso(),
+          origin: terminal.owner,
         };
 
         session.activeProblemsRunId =
@@ -1894,6 +2001,7 @@ function createDevWorkspaceTerminalService({
     createTerminal,
     runCommand,
     claimAuthorizedValidation,
+    applyNativeValidationResult,
     poll,
     closeTerminal,
     closeSession,

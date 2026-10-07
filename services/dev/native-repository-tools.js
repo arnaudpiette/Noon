@@ -564,10 +564,12 @@ async function runSafeCommand(command, cwd, timeout = 120_000, signal = null) {
   const started = Date.now();
   try {
     const { stdout, stderr } = await execFileAsync(decision.execution[0], decision.execution[1], { cwd, timeout, signal, maxBuffer: 2 * 1024 * 1024, env: { PATH: process.env.PATH, LANG: process.env.LANG || "C.UTF-8", CI: "1", NO_COLOR: "1" } });
-    return { command, status: "PASS", exitCode: 0, durationMs: Date.now() - started, outputTail: `${stdout || ""}\n${stderr || ""}`.trim().slice(-4000), failureCategory: null };
+    const output = `${stdout || ""}\n${stderr || ""}`.trim();
+    return { command, status: "PASS", exitCode: 0, durationMs: Date.now() - started, outputTail: output.slice(-4000), outputTruncated: output.length > 4000, failureCategory: null };
   } catch (error) {
     const category = error.name === "AbortError" ? "CANCELLED" : error.killed ? "TIMEOUT" : "TEST_FAILURE";
-    return { command, status: "FAIL", exitCode: Number.isInteger(error.code) ? error.code : null, signal: error.signal || null, durationMs: Date.now() - started, outputTail: `${error.stdout || ""}\n${error.stderr || ""}`.trim().slice(-4000), failureCategory: category };
+    const output = `${error.stdout || ""}\n${error.stderr || ""}`.trim();
+    return { command, status: "FAIL", exitCode: Number.isInteger(error.code) ? error.code : null, signal: error.signal || null, durationMs: Date.now() - started, outputTail: output.slice(-4000), outputTruncated: output.length > 4000, failureCategory: category };
   }
 }
 function searchRepository(contract, terms = [], { maxFiles = 40, maxMatches = 80 } = {}) {

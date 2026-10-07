@@ -279,6 +279,18 @@ test(
 );
 
 test(
+  "la fin Native relit Problems via le consommateur UI réel",
+  () => {
+    const terminalSource = terminalUiSource();
+
+    assert.match(
+      terminalSource,
+      /async function refreshDevNativeExecution[\s\S]*data\.execution\?\.status[\s\S]*await refreshDevProblems\(\)/
+    );
+  }
+);
+
+test(
   "Problems calcule les compteurs depuis les diagnostics réellement affichables",
   () => {
     const source =

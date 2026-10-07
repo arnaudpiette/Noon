@@ -158,6 +158,15 @@ function createNativeDevUiExecutionService({
   }
 
   if (
+    typeof terminalService?.applyNativeValidationResult !==
+    "function"
+  ) {
+    throw new TypeError(
+      "Synchronisation Problems Native requise."
+    );
+  }
+
+  if (
     typeof nativeDevFacade
       ?.runTask !==
       "function" ||
@@ -549,6 +558,14 @@ function createNativeDevUiExecutionService({
     )
       .then(
         (result) => {
+          const validation = Array.isArray(result?.validations)
+            ? result.validations.filter(
+              (item) =>
+                item?.command === validationCommand &&
+                ["PASS", "FAIL"].includes(item?.status)
+            ).at(-1) || null
+            : null;
+
           const projected =
             safeResult(
               result
@@ -583,6 +600,21 @@ function createNativeDevUiExecutionService({
             new Date(
               now()
             ).toISOString();
+
+          if (!record.cancelRequested && validation) {
+            try {
+              terminalService.applyNativeValidationResult({
+                sessionId: workspaceSessionId,
+                workspaceId,
+                command: validationCommand,
+                validation,
+                taskId,
+                startedAt: record.startedAt,
+                completedAt: record.endedAt,
+                finalVerdict: record.result?.finalVerdict || null,
+              });
+            } catch {}
+          }
 
           emit(
             "completed",

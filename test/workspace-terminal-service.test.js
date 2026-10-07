@@ -1676,4 +1676,113 @@ test("autorisation Native : expiration et origine NOON refusées", (t) => {
   assert.equal(claim(), false);
 });
 
+test("Problems remplace le FAIL USER par la validation Native équivalente PASS", (t) => {
+  let clock = Date.parse("2026-10-07T08:00:00.000Z");
+  const f = fixture(t, { now: () => clock });
+  const { session, terminal } = createSessionAndTerminal(f);
+
+  f.service.runCommand({ sessionId: session.id, terminalId: terminal.id, origin: "USER", command: "npm test" });
+  f.children.at(-1).stderr.emit("data", "test at test/add.test.js:10:1\nAssertionError [ERR_ASSERTION]: -1 !== 5");
+  f.children.at(-1).emit("close", 1, null);
+  assert.equal(f.service.getSession(session.id).problems.status, "READY");
+
+  clock += 1_000;
+  const result = f.service.applyNativeValidationResult({
+    sessionId: session.id,
+    workspaceId: "workspace-test",
+    command: "npm test",
+    validation: { command: "npm test", status: "PASS", exitCode: 0, outputTail: "1..1\nok 1 - add", outputTruncated: false },
+    taskId: "native-1",
+    startedAt: "2026-10-07T08:00:00.500Z",
+    completedAt: new Date(clock).toISOString(),
+    finalVerdict: "PASS",
+  });
+
+  assert.deepEqual(result, { applied: true, status: "EMPTY" });
+  assert.equal(f.service.getSession(session.id).problems.counts.total, 0);
+});
+
+test("Problems Native actualise un échec prouvé sans fabriquer un succès", (t) => {
+  const f = fixture(t);
+  const { session } = createSessionAndTerminal(f);
+  const result = f.service.applyNativeValidationResult({
+    sessionId: session.id,
+    workspaceId: "workspace-test",
+    command: "npm test",
+    validation: { command: "npm test", status: "FAIL", exitCode: 1, outputTail: "test at test/add.test.js:10:1\nAssertionError [ERR_ASSERTION]: still broken", outputTruncated: false },
+    taskId: "native-fail",
+    startedAt: "2026-10-07T07:59:00.000Z",
+    completedAt: "2026-10-07T08:00:00.000Z",
+    finalVerdict: "FAIL",
+  });
+
+  assert.deepEqual(result, { applied: true, status: "READY" });
+  assert.equal(f.service.getSession(session.id).problems.counts.error, 1);
+});
+
+test("Problems conserve les diagnostics non couverts et ignore les résultats Native tardifs", (t) => {
+  let clock = Date.parse("2026-10-07T08:00:00.000Z");
+  const f = fixture(t, { now: () => clock });
+  const { session, terminal } = createSessionAndTerminal(f);
+
+  f.service.runCommand({ sessionId: session.id, terminalId: terminal.id, origin: "USER", command: "npm test" });
+  f.children.at(-1).emit("close", 0, null);
+  clock += 1_000;
+  const late = f.service.applyNativeValidationResult({ sessionId: session.id, workspaceId: "workspace-test", command: "npm test", validation: { command: "npm test", status: "FAIL", exitCode: 1, outputTail: "test at test/add.test.js:10:1\nAssertionError [ERR_ASSERTION]: old", outputTruncated: false }, startedAt: "2026-10-07T07:59:00.000Z", completedAt: "2026-10-07T07:59:59.000Z", finalVerdict: "FAIL" });
+  assert.equal(late.reason, "NATIVE_VALIDATION_STALE");
+
+  const other = f.service.applyNativeValidationResult({ sessionId: session.id, workspaceId: "workspace-other", command: "npm test", validation: { command: "npm test", status: "PASS", exitCode: 0, outputTail: "1..1", outputTruncated: false }, startedAt: new Date(clock).toISOString(), completedAt: new Date(clock + 1_000).toISOString(), finalVerdict: "PASS" });
+  assert.equal(other.reason, "NATIVE_VALIDATION_CONTEXT_INVALID");
+
+  f.service.runCommand({ sessionId: session.id, terminalId: terminal.id, origin: "USER", command: "npm run lint" });
+  f.children.at(-1).stderr.emit("data", "src/new.js:1:1 error lint issue");
+  f.children.at(-1).emit("close", 1, null);
+  const uncovered = f.service.applyNativeValidationResult({ sessionId: session.id, workspaceId: "workspace-test", command: "npm test", validation: { command: "npm test", status: "PASS", exitCode: 0, outputTail: "1..1", outputTruncated: false }, startedAt: new Date(clock).toISOString(), completedAt: new Date(clock + 2_000).toISOString(), finalVerdict: "PASS" });
+  assert.equal(uncovered.reason, "NATIVE_VALIDATION_NOT_COVERED");
+  assert.equal(f.service.getSession(session.id).problems.command, "npm run lint");
+});
+
+test("Problems ne laisse pas un résultat Native écraser une validation USER plus récente en cours", (t) => {
+  let clock = Date.parse("2026-10-07T08:00:00.000Z");
+  const f = fixture(t, { now: () => clock });
+  const { session, terminal } = createSessionAndTerminal(f);
+
+  f.service.runCommand({ sessionId: session.id, terminalId: terminal.id, origin: "USER", command: "npm test" });
+  f.children.at(-1).emit("close", 1, null);
+  clock += 1_000;
+  f.service.runCommand({ sessionId: session.id, terminalId: terminal.id, origin: "USER", command: "npm test" });
+
+  const stale = f.service.applyNativeValidationResult({
+    sessionId: session.id,
+    workspaceId: "workspace-test",
+    command: "npm test",
+    validation: { command: "npm test", status: "PASS", exitCode: 0, outputTail: "1..1", outputTruncated: false },
+    startedAt: "2026-10-07T08:00:00.500Z",
+    completedAt: "2026-10-07T08:00:02.000Z",
+    finalVerdict: "PASS",
+  });
+
+  assert.equal(stale.reason, "NATIVE_VALIDATION_STALE");
+  assert.equal(f.service.getSession(session.id).problems.status, "RUNNING");
+});
+
+test("Problems refuse de vider sans sortie Native et signale une sortie tronquée", (t) => {
+  const f = fixture(t);
+  const { session, terminal } = createSessionAndTerminal(f);
+  f.service.runCommand({ sessionId: session.id, terminalId: terminal.id, origin: "USER", command: "npm test" });
+  f.children.at(-1).stderr.emit("data", "test at test/add.test.js:10:1\nAssertionError [ERR_ASSERTION]: -1 !== 5");
+  f.children.at(-1).emit("close", 1, null);
+
+  const missing = f.service.applyNativeValidationResult({ sessionId: session.id, workspaceId: "workspace-test", command: "npm test", validation: { command: "npm test", status: "PASS", exitCode: 0, outputTail: "", outputTruncated: false }, startedAt: "2026-10-07T07:59:00.000Z", completedAt: "2026-10-07T08:00:00.000Z", finalVerdict: "PASS" });
+  assert.equal(missing.reason, "NATIVE_VALIDATION_PROOF_MISSING");
+  assert.equal(f.service.getSession(session.id).problems.counts.error, 1);
+
+  const uninterpretable = f.service.applyNativeValidationResult({ sessionId: session.id, workspaceId: "workspace-test", command: "npm test", validation: { command: "npm test", status: "PASS", exitCode: 0, outputTail: "validation complete", outputTruncated: false }, startedAt: "2026-10-07T07:59:00.000Z", completedAt: "2026-10-07T08:00:30.000Z", finalVerdict: "PASS" });
+  assert.deepEqual(uninterpretable, { applied: true, status: "UNRESOLVED" });
+
+  const truncated = f.service.applyNativeValidationResult({ sessionId: session.id, workspaceId: "workspace-test", command: "npm test", validation: { command: "npm test", status: "PASS", exitCode: 0, outputTail: "partial output", outputTruncated: true }, startedAt: "2026-10-07T07:59:00.000Z", completedAt: "2026-10-07T08:01:00.000Z", finalVerdict: "PASS" });
+  assert.deepEqual(truncated, { applied: true, status: "UNRESOLVED" });
+  assert.equal(f.service.getSession(session.id).problems.status, "UNRESOLVED");
+});
+
 /* NATIVE_UI_SERVER_AUTH_REGRESSIONS_END */

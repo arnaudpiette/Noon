@@ -67,6 +67,7 @@ function fixture({
     cancel: [],
     rules: [],
     claims: [],
+    appliedValidations: [],
   };
 
   let taskCounter = 0;
@@ -164,6 +165,14 @@ function fixture({
 
           validationClaimed = true;
           return true;
+        },
+
+        applyNativeValidationResult(input) {
+          calls.appliedValidations.push(
+            structuredClone(input)
+          );
+
+          return { applied: true };
         },
       },
 
@@ -646,5 +655,60 @@ test(
       final.failureCategory,
       "CANCELLED"
     );
+  }
+);
+
+test(
+  "Native DEV UI transmet uniquement la validation finale prouvée au terminal",
+  async () => {
+    const f = fixture();
+    const started = f.service.start({
+      workspaceSessionId: "workspace-session-1",
+      validationCommand: "npm test",
+    });
+
+    f.run.resolve({
+      taskId: started.taskId,
+      finalVerdict: "PASS",
+      validations: [{
+        command: "npm test",
+        status: "PASS",
+        exitCode: 0,
+        outputTail: "1..1\nok 1 - fixture",
+        outputTruncated: false,
+      }],
+      metrics: {},
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(f.calls.appliedValidations.length, 1);
+    assert.equal(f.calls.appliedValidations[0].sessionId, "workspace-session-1");
+    assert.equal(f.calls.appliedValidations[0].workspaceId, "workspace-1");
+    assert.equal(f.calls.appliedValidations[0].command, "npm test");
+    assert.equal(f.calls.appliedValidations[0].validation.exitCode, 0);
+    assert.ok(Date.parse(f.calls.appliedValidations[0].startedAt));
+  }
+);
+
+test(
+  "Native DEV UI ne vide pas Problems quand la tâche PASS ne contient aucune validation",
+  async () => {
+    const f = fixture();
+    const started = f.service.start({
+      workspaceSessionId: "workspace-session-1",
+      validationCommand: "npm test",
+    });
+
+    f.run.resolve({
+      taskId: started.taskId,
+      finalVerdict: "PASS",
+      validations: [],
+      metrics: {},
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(f.calls.appliedValidations.length, 0);
   }
 );
