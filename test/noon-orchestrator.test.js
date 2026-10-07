@@ -9,6 +9,7 @@ const { createOpenAIProviderAdapter } = require("../services/models/providers/op
 const { PROVIDERS } = require("../services/models/model-registry");
 const { createProviderPrivacyPolicy } = require("../services/security/provider-privacy-policy");
 const { createOperationalSecurityPolicy } = require("../services/security/operational-security-policy");
+const { createInterventionPermissionEngine } = require("../services/security/intervention-permission-engine");
 const { createIntentCommandEngine } = require("../services/intents/intent-command-engine");
 const { createReliabilityEngine } = require("../services/reliability/reliability-engine");
 
@@ -98,6 +99,8 @@ function createFixture({ responses = [], executeSkill, stream = false, maxRounds
     recheckHardRules,
     recheckConnector,
     operationalSecurityPolicy,
+    interventionPermissionEngine:
+      createInterventionPermissionEngine(),
     transactionalExecutionEngine,
     delegationEngine,
     reliabilityEngine,

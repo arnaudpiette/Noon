@@ -46,6 +46,7 @@ function classifyError(error) {
 }
 
 function createNoonOrchestrator({
+    interventionPermissionEngine = null,
   contextBuilder,
   selectModel,
   modelFallbacks,
@@ -79,6 +80,81 @@ function createNoonOrchestrator({
   delegationEngine = null,
   now = () => Date.now(),
 } = {}) {
+
+  function applyInterventionDecision({
+    actionRequest,
+    securityDecision,
+    skillPolicy = {},
+    profileScope = null,
+    workspaceId = null,
+  } = {}) {
+    if (
+      !interventionPermissionEngine ||
+      !securityDecision
+    ) {
+      return securityDecision;
+    }
+
+    const rawActionClass =
+      String(
+        securityDecision.actionClass ||
+        skillPolicy.level ||
+        actionRequest?.actionClass ||
+        "READ"
+      ).toUpperCase();
+
+    const normalizedActionClass =
+      ({
+        EXTERNAL: "EXECUTE",
+        DELETE: "DESTRUCTIVE",
+        UPDATE: "WRITE",
+        CREATE: "WRITE",
+      })[rawActionClass] ||
+      rawActionClass;
+
+    const actionClass =
+      [
+        "READ",
+        "SUGGEST",
+        "PREPARE",
+        "WRITE",
+        "EXECUTE",
+        "DESTRUCTIVE",
+      ].includes(
+        normalizedActionClass
+      )
+        ? normalizedActionClass
+        : (
+            securityDecision.outcome ===
+              "REQUIRE_APPROVAL"
+              ? "EXECUTE"
+              : "READ"
+          );
+
+    const interventionDecision =
+      interventionPermissionEngine
+        .evaluate({
+          actionRequest: {
+            ...(actionRequest || {}),
+            actionClass,
+          },
+
+          securityDecision,
+          profileScope,
+          workspaceId,
+        });
+
+    /*
+     * OperationalSecurityPolicy reste l'autorité canonique.
+     * InterventionPermissionEngine n'écrase jamais son outcome
+     * dans le chemin NoonOrchestrator.
+     */
+    return {
+      ...securityDecision,
+      interventionDecision,
+    };
+  }
+
   if (!contextBuilder?.buildContext) throw new TypeError("Context Builder requis.");
   if (typeof selectModel !== "function") throw new TypeError("Model Router requis.");
   if (typeof modelFallbacks !== "function") throw new TypeError("Fallbacks modèle requis.");
@@ -530,6 +606,64 @@ function createNoonOrchestrator({
       if (operationalSecurityPolicy) {
         policyDecision = evaluateCurrentPolicy();
         operationalSecurityPolicy.compareLegacy(policyDecision, legacyDecision);
+        policyDecision =
+          applyInterventionDecision({
+            actionRequest: {
+              origin:
+                actionRequestOverrides?.origin ||
+                normalizedIntent.origin ||
+                (
+                  state.request.channel === "voice"
+                    ? "explicit_user_voice"
+                    : "explicit_user_chat"
+                ),
+              skillId: toolCall.name,
+              operation:
+                actionRequestOverrides?.operation ||
+                toolCall.name,
+              args,
+              target:
+                args.path ||
+                args.outputDirectory ||
+                args.to ||
+                args.target ||
+                args.eventId ||
+                null,
+              workspaceId:
+                state.request.workspaceId ||
+                null,
+              profileScope:
+                state.request.profileScope ||
+                "arnaud",
+            },
+            securityDecision: policyDecision,
+            skillPolicy:
+              skill?.permissions || {},
+            profileScope:
+              state.request.profileScope ||
+              "arnaud",
+            workspaceId:
+              state.request.workspaceId ||
+              null,
+          });
+
+        if (policyDecision?.interventionDecision) {
+          trace(
+            "intervention_decision",
+            state,
+            {
+              decision:
+                policyDecision
+                  .interventionDecision
+                  .decision,
+              actionFingerprint:
+                policyDecision
+                  .interventionDecision
+                  .actionFingerprint ||
+                null,
+            }
+          );
+        }
         if (policyDecision.outcome === "DENY") {
           throw Object.assign(new Error("Action refusée par la politique de sécurité opérationnelle."), { code: "SECURITY_POLICY_DENIED", policyDecision });
         }
@@ -840,10 +974,24 @@ function createNoonOrchestrator({
         });
 
         // Évaluer la proposition selon la politique de sécurité
-        const policyDecision = operationalSecurityPolicy.evaluate({
+        let policyDecision = operationalSecurityPolicy.evaluate({
           actionRequest,
           skillPolicy: {},
         });
+
+        policyDecision =
+          applyInterventionDecision({
+            actionRequest,
+            securityDecision:
+              policyDecision,
+            skillPolicy: {},
+            profileScope:
+              state.request.profileScope ||
+              "arnaud",
+            workspaceId:
+              state.request.workspaceId ||
+              null,
+          });
 
         proposalResults.push({
           toolRequestId: proposal.toolRequestId,
