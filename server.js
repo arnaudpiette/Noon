@@ -96,6 +96,7 @@ const { assertRemoteVoiceAvailable, createRealtimeVoiceConfig } = require("./ser
 const { createPlanningPreferenceStore } = require("./lib/planning-preferences");
 const { SCHEMA_VERSION, createPersonalDatabase, loadSqlite } = require("./services/persistence/database");
 const { createPersonalIntelligenceRepository } = require("./services/persistence/repositories/personal-intelligence-repository");
+const { createGoalStrategyRepository } = require("./services/persistence/repositories/goal-strategy-repository");
 const { createApprovalRepository } = require("./services/persistence/repositories/approval-repository");
 const { createTransactionalExecutionRepository } = require("./services/persistence/repositories/transactional-execution-repository");
 const { createExecutionTrackingRepository } = require("./services/persistence/repositories/execution-tracking-repository");
@@ -133,6 +134,7 @@ const { inspectGitStatus } = require("./lib/git-status");
 const { createAmbientContextEngine } = require("./services/context/ambient-context-engine");
 const { createDecisionSupportEngine } = require("./services/decision/decision-support-engine");
 const { createGoalStrategyEngine } = require("./services/goals/goal-strategy-engine");
+const { createGoalRegistry } = require("./services/goals/goal-registry");
 const { createCapacityService, createPortfolioCapacityEngine } = require("./services/portfolio");
 const { createNoonOrchestrator } = require("./services/orchestration/noon-orchestrator");
 const { createOpenAIProviderAdapter } = require("./services/models/providers/openai-provider");
@@ -784,6 +786,7 @@ if (backgroundJobEngine) {
   }
 }
 const personalRepository = createPersonalIntelligenceRepository(personalDatabase);
+const goalStrategyRepository = createGoalStrategyRepository(personalDatabase);
 const approvalRepository = createApprovalRepository(personalDatabase);
 const transactionalExecutionRepository = createTransactionalExecutionRepository(personalDatabase);
 const artifactRepository = createArtifactRepository(personalDatabase);
@@ -898,6 +901,9 @@ const decisionSupportEngine = createDecisionSupportEngine({
   audit: (event, metadata) => toolAuditLog.append(event, metadata),
 });
 const goalStrategyEngine = createGoalStrategyEngine({
+  registry: createGoalRegistry({
+    repository: goalStrategyRepository,
+  }),
   projectProvider: () => getValidRegisteredProjects(),
   workspaceProvider: () => workspaceEngine?.list?.() || [],
   featureMode: "LIMITED",
