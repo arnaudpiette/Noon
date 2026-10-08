@@ -141,6 +141,12 @@ const { createGoalStrategyEngine } = require("./services/goals/goal-strategy-eng
 const { createGoalRegistry } = require("./services/goals/goal-registry");
 const { createCapacityService, createPortfolioCapacityEngine } = require("./services/portfolio");
 const { createNoonOrchestrator } = require("./services/orchestration/noon-orchestrator");
+const {
+  createAgentEvaluationEngine,
+} = require("./services/evaluation/agent-evaluation-engine");
+const {
+  createAgentEvaluationRuntime,
+} = require("./services/evaluation/agent-evaluation-runtime");
 const { createOpenAIProviderAdapter } = require("./services/models/providers/openai-provider");
 const { createGeminiProviderAdapter } = require("./services/models/providers/gemini-provider");
 const { createProviderShadowRunner } = require("./services/models/provider-shadow-runner");
@@ -1740,7 +1746,7 @@ function captureActionPreconditions({ args = {} } = {}) {
   }
 }
 
-const noonOrchestrator = createNoonOrchestrator({
+const baseNoonOrchestrator = createNoonOrchestrator({
   interventionPermissionEngine,
   contextBuilder,
   reliabilityEngine,
@@ -1811,6 +1817,23 @@ const noonOrchestrator = createNoonOrchestrator({
   audit: (event, metadata) => toolAuditLog.append(event, metadata),
   observability: orchestratorObservability,
 });
+const agentEvaluationEngine =
+  createAgentEvaluationEngine();
+
+const noonOrchestrator =
+  createAgentEvaluationRuntime({
+    orchestrator:
+      baseNoonOrchestrator,
+    engine:
+      agentEvaluationEngine,
+    observability:
+      (event, metadata) =>
+        toolAuditLog.append(
+          `agent-evaluation.${event}`,
+          metadata
+        ),
+  });
+
 const privateSeedImporter = privateMemoryService.available
   ? createPrivateSeedImporter(privateMemoryService)
   : null;

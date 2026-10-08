@@ -57,3 +57,32 @@ Le résultat pourra ensuite être consommé par :
 - Learning / Adaptive Routing.
 
 Ces consommateurs ne sont pas raccordés dans V1.
+
+## Runtime bridge V2
+
+`AgentEvaluationRuntime` enveloppe la façade publique du `NoonOrchestrator` sans modifier son autorité interne.
+
+Le bridge intercepte uniquement les résultats terminaux de `run()` et `resume()`.
+
+Il ne réévalue pas les workflows en attente d'approbation.
+
+### Preuves runtime
+
+Pour l'Orchestrator, un `toolCall` marqué `succeeded` constitue une preuve système. Dans le chemin mutant canonique, ce statut n'est ajouté qu'après succès vérifié du `TransactionalExecutionEngine`.
+
+Pour DEV, les validations programmatiques et le `diffReview` sont projetés comme preuves déterministes.
+
+`finalVerdict` seul n'est jamais une preuve suffisante.
+
+### Autorité
+
+Le bridge :
+
+- ne change jamais le résultat canonique ;
+- ne déclenche aucune action ;
+- ne retry aucune opération ;
+- ne modifie pas les approvals ;
+- ne modifie pas le Transactional Execution Engine ;
+- ajoute seulement `metadata.agentEvaluation`.
+
+`AgentEvaluationEngine` reste donc consommateur des preuves existantes, jamais leur propriétaire.

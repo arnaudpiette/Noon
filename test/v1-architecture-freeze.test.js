@@ -11,11 +11,33 @@ function source(relativePath) {
   return fs.readFileSync(path.join(root, relativePath), "utf8");
 }
 
-test("le chemin chat principal délègue au NoonOrchestrator canonique", () => {
+test("le chemin chat principal conserve le NoonOrchestrator canonique derrière la façade d'évaluation runtime", () => {
   const server = source("server.js");
-  assert.match(server, /const noonOrchestrator = createNoonOrchestrator\(/);
-  assert.match(server, /const execution = await noonOrchestrator\.run\(\{/);
-  assert.match(server, /await noonOrchestrator\.resume\(\{/);
+
+  assert.match(
+    server,
+    /const baseNoonOrchestrator = createNoonOrchestrator\(\{/
+  );
+
+  assert.match(
+    server,
+    /const noonOrchestrator =\s*createAgentEvaluationRuntime\(\{/
+  );
+
+  assert.match(
+    server,
+    /orchestrator:\s*baseNoonOrchestrator/
+  );
+
+  assert.match(
+    server,
+    /const execution = await\s*noonOrchestrator\.run\(\{/
+  );
+
+  assert.match(
+    server,
+    /await noonOrchestrator\.resume\(\{/
+  );
 });
 
 test("les propriétaires V1 canoniques restent présents et exportés", () => {
