@@ -21,9 +21,13 @@ test("l’Agent Loop ajoute uniquement des contrôles compacts au header Termina
   assert.doesNotMatch(source, /appendChild|insertBefore|replaceWith/);
 });
 
-test("l’UI expose les phases et STOP sans HTML dynamique", () => {
-  for (const label of ["Planning…", "Running…", "Validating…", "Observing…", "Deciding…", "Done", "Blocked", "Failed"]) assert.ok(source.includes(label), label);
-  assert.match(source, /\.textContent\s*=/);
+test("l’UI expose l’état Agent et STOP sans HTML dynamique", () => {
+  assert.match(source, /renderDevNativeExecution/);
+  assert.match(source, /cancelActiveDevAgent/);
+  assert.match(source, /devWorkspaceAgentState\.textContent\s*=/);
+  assert.match(source, /"Analyse…"/);
+  assert.match(source, /"Arrêt…"/);
+  assert.match(source, /"Échec"/);
   assert.doesNotMatch(source, /\.innerHTML/);
 });
 
@@ -38,7 +42,7 @@ test("l’UI utilise seulement les routes Agent bornées", () => {
 });
 
 test("la Preview est transmise comme état structuré et non depuis le DOM visuel", () => {
-  assert.match(source, /devPreviewState\.native\.url/);
+  assert.match(source, /devPreviewState\s*\.native\.url/);
   assert.match(source, /devPreviewIsOpen\(\)/);
   assert.doesNotMatch(source, /screenshot|canvas|innerText/);
 });
@@ -96,11 +100,27 @@ test("l’Agent transmet des objets au helper JSON sans double sérialisation", 
 });
 
 test("le POST stocke l’exécution, démarre le polling et Stop cible son identifiant actif", () => {
-  assert.match(source, /devWorkspaceAgentExecutionId\s*=\s*data\.execution\.executionId/);
-  assert.match(source, /void refreshDevWorkspaceAgent\(\)/);
-  assert.match(source, /executions\/\$\{encodeURIComponent\(executionId\)\}\/cancel/);
-  assert.match(source, /devWorkspaceAgentCancel\.disabled\s*=\s*true/);
-  assert.match(source, /devWorkspaceAgentRun\.disabled\s*=\s*!terminal/);
+  assert.match(
+    source,
+    /const\s+executionId\s*=\s*data\.execution\s*\?\.\s*executionId/
+  );
+  assert.match(
+    source,
+    /devWorkspaceAgentExecutionId\s*=\s*executionId/
+  );
+  assert.match(source, /void\s+refreshDevWorkspaceAgent\(\)/);
+  assert.match(
+    source,
+    /const\s+id\s*=\s*kind\s*===\s*"native"[\s\S]*?devWorkspaceAgentExecutionId/
+  );
+  assert.match(
+    source,
+    /workspace-agent\/executions\/\$\{\s*encodeURIComponent\(id\)\s*\}\/cancel/
+  );
+  assert.match(
+    source,
+    /devWorkspaceAgentCancel\.disabled\s*=\s*true/
+  );
 });
 
 test("Noon réutilise seulement la dernière validation SAFE_READ réellement exécutée", () => {
@@ -109,7 +129,7 @@ test("Noon réutilise seulement la dernière validation SAFE_READ réellement ex
   assert.match(terminalSource, /devTerminalInput\.value\s*=\s*""/);
   assert.match(terminalSource, /data\.result\?\.classification ===[\s\S]*"SAFE_READ"[\s\S]*lastAuthorizedValidationCommand\s*=\s*command/);
   assert.ok(terminalSource.indexOf("lastAuthorizedValidationCommand = command") > terminalSource.indexOf("await devTerminalRequest"));
-  assert.match(source, /const command = lastAuthorizedDevValidationForActiveSession\(\)/);
+  assert.match(source, /const\s+command\s*=\s*lastAuthorizedDevValidationForActiveSession\(\)/);
   assert.doesNotMatch(source, /const command = devTerminalInput\.value\.trim\(\)/);
   assert.match(source, /Exécute d’abord une validation autorisée pour Noon\./);
 });

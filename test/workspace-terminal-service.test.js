@@ -1767,22 +1767,116 @@ test("Problems ne laisse pas un résultat Native écraser une validation USER pl
 });
 
 test("Problems refuse de vider sans sortie Native et signale une sortie tronquée", (t) => {
-  const f = fixture(t);
+  let clock = Date.parse("2026-10-07T08:00:00.000Z");
+  const f = fixture(t, { now: () => clock });
   const { session, terminal } = createSessionAndTerminal(f);
-  f.service.runCommand({ sessionId: session.id, terminalId: terminal.id, origin: "USER", command: "npm test" });
-  f.children.at(-1).stderr.emit("data", "test at test/add.test.js:10:1\nAssertionError [ERR_ASSERTION]: -1 !== 5");
+
+  f.service.runCommand({
+    sessionId: session.id,
+    terminalId: terminal.id,
+    origin: "USER",
+    command: "npm test",
+  });
+
+  f.children.at(-1).stdout.emit(
+    "data",
+    [
+      "not ok 1 - addition",
+      `location: '${session.repositoryRoot}/test/add.test.js:10:1'`,
+      "failureType: 'testCodeFailure'",
+      "error: 'Expected -1 to equal 5'",
+      "code: 'ERR_ASSERTION'",
+      "",
+    ].join("\n")
+  );
+
   f.children.at(-1).emit("close", 1, null);
 
-  const missing = f.service.applyNativeValidationResult({ sessionId: session.id, workspaceId: "workspace-test", command: "npm test", validation: { command: "npm test", status: "PASS", exitCode: 0, outputTail: "", outputTruncated: false }, startedAt: "2026-10-07T07:59:00.000Z", completedAt: "2026-10-07T08:00:00.000Z", finalVerdict: "PASS" });
-  assert.equal(missing.reason, "NATIVE_VALIDATION_PROOF_MISSING");
-  assert.equal(f.service.getSession(session.id).problems.counts.error, 1);
+  assert.equal(
+    f.service.getSession(session.id).problems.counts.error,
+    1
+  );
 
-  const uninterpretable = f.service.applyNativeValidationResult({ sessionId: session.id, workspaceId: "workspace-test", command: "npm test", validation: { command: "npm test", status: "PASS", exitCode: 0, outputTail: "validation complete", outputTruncated: false }, startedAt: "2026-10-07T07:59:00.000Z", completedAt: "2026-10-07T08:00:30.000Z", finalVerdict: "PASS" });
-  assert.deepEqual(uninterpretable, { applied: true, status: "UNRESOLVED" });
+  const missing = f.service.applyNativeValidationResult({
+    sessionId: session.id,
+    workspaceId: "workspace-test",
+    command: "npm test",
+    validation: {
+      command: "npm test",
+      status: "PASS",
+      exitCode: 0,
+      outputTail: "",
+      outputTruncated: false,
+    },
+    startedAt: "2026-10-07T08:00:00.500Z",
+    completedAt: "2026-10-07T08:00:01.000Z",
+    finalVerdict: "PASS",
+  });
 
-  const truncated = f.service.applyNativeValidationResult({ sessionId: session.id, workspaceId: "workspace-test", command: "npm test", validation: { command: "npm test", status: "PASS", exitCode: 0, outputTail: "partial output", outputTruncated: true }, startedAt: "2026-10-07T07:59:00.000Z", completedAt: "2026-10-07T08:01:00.000Z", finalVerdict: "PASS" });
-  assert.deepEqual(truncated, { applied: true, status: "UNRESOLVED" });
-  assert.equal(f.service.getSession(session.id).problems.status, "UNRESOLVED");
+  assert.equal(
+    missing.reason,
+    "NATIVE_VALIDATION_PROOF_MISSING"
+  );
+
+  assert.equal(
+    f.service.getSession(session.id).problems.counts.error,
+    1
+  );
+
+  const uninterpretable =
+    f.service.applyNativeValidationResult({
+      sessionId: session.id,
+      workspaceId: "workspace-test",
+      command: "npm test",
+      validation: {
+        command: "npm test",
+        status: "PASS",
+        exitCode: 0,
+        outputTail: "validation complete",
+        outputTruncated: false,
+      },
+      startedAt: "2026-10-07T08:00:01.500Z",
+      completedAt: "2026-10-07T08:00:02.000Z",
+      finalVerdict: "PASS",
+    });
+
+  assert.deepEqual(
+    uninterpretable,
+    {
+      applied: true,
+      status: "UNRESOLVED",
+    }
+  );
+
+  const truncated =
+    f.service.applyNativeValidationResult({
+      sessionId: session.id,
+      workspaceId: "workspace-test",
+      command: "npm test",
+      validation: {
+        command: "npm test",
+        status: "PASS",
+        exitCode: 0,
+        outputTail: "partial output",
+        outputTruncated: true,
+      },
+      startedAt: "2026-10-07T08:00:02.500Z",
+      completedAt: "2026-10-07T08:00:03.000Z",
+      finalVerdict: "PASS",
+    });
+
+  assert.deepEqual(
+    truncated,
+    {
+      applied: true,
+      status: "UNRESOLVED",
+    }
+  );
+
+  assert.equal(
+    f.service.getSession(session.id).problems.status,
+    "UNRESOLVED"
+  );
 });
 
 /* NATIVE_UI_SERVER_AUTH_REGRESSIONS_END */
