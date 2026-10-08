@@ -17,6 +17,13 @@ const REMOTE_BLOCKED_STATUSES = new Set([
   "inferred", "rejected", "expired", "blocked",
 ]);
 const FAMILY_PROFILE_IDS = new Set(["alexandra", "sinan", "kaan", "household"]);
+const RESOLVABLE_CONTEXT_SOURCES = new Set([
+  "private_memory",
+  "structured_memory",
+  "legacy_memory",
+  "project_memory",
+  "conversation_memory",
+]);
 
 function textValue(value) {
   if (typeof value === "string") return value;
@@ -347,6 +354,7 @@ function createMemoryEngine({
         value: message.content,
         role: message.role,
         source: "conversation_memory",
+        resolvable: Boolean(message.id),
         profileId: null,
         category: "conversation",
         confidence: 1,
@@ -468,10 +476,157 @@ function createMemoryEngine({
     };
   }
 
-  return { getRelevantContext, lastUsage: () => structuredClone(lastUsage), proposeCandidate, search };
+  // Relecture étroite destinée aux références locales du Context Offloader.
+  // Cette API consulte l'autorité existante par identifiant et ne maintient
+  // aucune copie parallèle du contenu.
+  function canResolveContextSource(sourceType) {
+    switch (String(sourceType || "")) {
+      case "private_memory": return privateMemoryService?.available === true && typeof privateMemoryService.getMemory === "function";
+      case "structured_memory": return typeof structuredRepository?.getMemory === "function";
+      case "legacy_memory": return typeof legacyStore?.load === "function";
+      case "project_memory": return typeof projectProvider === "function";
+      case "conversation_memory": return typeof conversationProvider === "function";
+      default: return false;
+    }
+  }
+
+  function resolveContextSource(ref = {}, resolution = {}) {
+    const sourceType = String(ref.sourceType || "");
+    const sourceId = String(ref.sourceId || "");
+    if (!canResolveContextSource(sourceType) || !sourceId) return null;
+    const authorization = resolution.authorizationContext && typeof resolution.authorizationContext === "object"
+      ? resolution.authorizationContext
+      : {};
+    const remote = resolution.access === "remote";
+    const confirmedMemoryIds = Array.isArray(authorization.confirmedMemoryIds)
+      ? authorization.confirmedMemoryIds.map(String)
+      : [];
+    const denied = () => ({ authorized: false });
+
+    if (sourceType === "private_memory") {
+      if (!privateMemoryService?.available || !privateMemoryService.getMemory) return null;
+      const item = privateMemoryService.getMemory(sourceId);
+      if (!item) return null;
+      if (authorization.includePrivate === false || item.status !== "confirmed" || isExpired(item, now())) return denied();
+      if (ref.subjectScope && item.subjectId !== ref.subjectScope) return denied();
+      if (authorization.profileScope && ref.profileScope !== authorization.profileScope) return denied();
+      if (!privateMemoryService.isProfileEnabled?.(item.subjectId)) return denied();
+      let settings;
+      try { settings = privateMemoryService.settings(); }
+      catch { return denied(); }
+      if (settings?.enabled === false || (item.consentRequired && item.consentStatus !== "granted")) return denied();
+      const registryDecision = hardRulesRegistry?.canUseMemoryRemotely(item, confirmedMemoryIds);
+      const policyAllowed = registryDecision
+        ? registryDecision.allowed
+        : item.apiPolicy !== "local_only" &&
+          (item.apiPolicy !== "confirm_each_use" || confirmedMemoryIds.includes(item.id));
+      const sensitiveBlocked = ["high", "restricted"].includes(item.sensitivity) && !settings?.sensitiveApiAllowed;
+      let selectedForCurrentUse = true;
+      if (remote && privateContextBuilder?.build) {
+        try {
+          selectedForCurrentUse = privateContextBuilder.build({
+            question: String(authorization.query || ""),
+            focus: authorization.projectId || null,
+            confirmedIds: confirmedMemoryIds,
+          })?.memoryIds?.includes(item.id) === true;
+        } catch {
+          selectedForCurrentUse = false;
+        }
+      }
+      const allowedForRemoteModel = policyAllowed && !sensitiveBlocked && selectedForCurrentUse;
+      return {
+        content: item.statement,
+        authorized: true,
+        localOnly: !allowedForRemoteModel,
+        allowedForRemoteModel,
+        privacyClass: ["high", "restricted"].includes(item.sensitivity) ? "RESTRICTED" : "PRIVATE",
+      };
+    }
+
+    if (sourceType === "structured_memory") {
+      const item = structuredRepository?.getMemory?.(sourceId);
+      if (!item) return null;
+      if (item.useAllowed === false || REMOTE_BLOCKED_STATUSES.has(item.status) || isExpired(item, now())) return denied();
+      const subjectScope = item.metadata?.profileId || null;
+      if (ref.subjectScope && subjectScope !== ref.subjectScope) return denied();
+      if (authorization.profileScope && ref.profileScope !== authorization.profileScope) return denied();
+      const policy = {
+        id: item.id,
+        apiPolicy: item.metadata?.apiPolicy || "contextual",
+        consentRequired: item.metadata?.consentRequired === true,
+        consentStatus: item.metadata?.consentStatus,
+      };
+      const allowedForRemoteModel = hardRulesRegistry
+        ? hardRulesRegistry.canUseMemoryRemotely(policy, confirmedMemoryIds).allowed
+        : !REMOTE_BLOCKED_POLICIES.has(policy.apiPolicy) &&
+          (!policy.consentRequired || policy.consentStatus === "granted");
+      return {
+        content: item.value,
+        authorized: true,
+        localOnly: !allowedForRemoteModel,
+        allowedForRemoteModel,
+        privacyClass: ["high", "restricted"].includes(item.sensitivity) ? "RESTRICTED" : "PRIVATE",
+      };
+    }
+
+    if (sourceType === "legacy_memory") {
+      const item = legacyStore?.load?.().memories?.find((candidate) => candidate.id === sourceId) || null;
+      return item ? {
+        content: item.text,
+        authorized: true,
+        localOnly: false,
+        allowedForRemoteModel: true,
+        privacyClass: "PRIVATE",
+      } : null;
+    }
+
+    if (sourceType === "project_memory") {
+      if (authorization.projectId && authorization.projectId !== sourceId) return denied();
+      const item = (projectProvider?.({ ...authorization, projectId: sourceId }) || [])
+        .find((candidate) => candidate.id === sourceId);
+      if (!item) return null;
+      return {
+        content: {
+          name: item.name,
+          objective: item.objective,
+          currentState: item.currentState,
+          nextAction: item.nextAction,
+          blockers: item.blockers || [],
+        },
+        authorized: true,
+        localOnly: false,
+        allowedForRemoteModel: true,
+        privacyClass: "PRIVATE",
+      };
+    }
+
+    if (authorization.includeConversation === false ||
+        authorization.conversationId !== ref.conversationId) return denied();
+    const message = (conversationProvider?.({
+      conversationId: ref.conversationId,
+      limit: 60,
+    }) || []).find((candidate) => candidate.id === sourceId);
+    return message ? {
+      content: message.content,
+      authorized: true,
+      localOnly: false,
+      allowedForRemoteModel: true,
+      privacyClass: "PERSONAL",
+    } : null;
+  }
+
+  return {
+    canResolveContextSource,
+    getRelevantContext,
+    lastUsage: () => structuredClone(lastUsage),
+    proposeCandidate,
+    resolveContextSource,
+    search,
+  };
 }
 
 module.exports = {
+  RESOLVABLE_CONTEXT_SOURCES,
   SOURCE_PRIORITY,
   createMemoryEngine,
   normalizeForDeduplication,

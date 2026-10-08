@@ -3,6 +3,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const { createContextBuilder, estimateTokens } = require("../services/context/context-builder");
+const { createContextOffloader } = require("../services/context/context-offloader");
 const { createHardRulesRegistry } = require("../services/rules/hard-rules-registry");
 const { PROVIDERS } = require("../services/models/model-registry");
 const { createProviderPrivacyPolicy } = require("../services/security/provider-privacy-policy");
@@ -14,6 +15,29 @@ function memoryResult(overrides = {}) {
     conversationContext: [], privateContext: [], localOnlyContext: [], remoteContext: [],
     metadata: { counts: { excludedPrivacy: 0, deduplicated: 0 }, truncated: false },
     ...overrides,
+  };
+}
+
+const authoritativeScope = Object.freeze({
+  profileScope: "arnaud",
+  workspaceId: "workspace-a",
+  projectId: "project-a",
+  sessionId: "session-a",
+  conversationId: "conversation-a",
+});
+
+function authoritativeScopeProvider() {
+  return { ...authoritativeScope };
+}
+
+function withAuthoritativeScope(input = {}) {
+  return {
+    ...input,
+    profileScope: "arnaud",
+    workspaceId: "workspace-a",
+    projectId: "project-a",
+    sessionId: "session-a",
+    conversationId: "conversation-a",
   };
 }
 
@@ -161,14 +185,18 @@ test("A3 respecte le budget A1 et conserve un contexte utilisable quand une sour
   const guarded = createContextBuilder({
     personalityProvider: () => "Noon", hardRulesRegistry: createHardRulesRegistry(),
     memoryEngine: { getRelevantContext: () => memoryResult() },
+    authoritativeScopeProvider,
     authorizedContextSources: { async collect() { return {
       items: [{ sourceType: "gmail", sourceId: "mail", relevance: 1, localOnly: true, payload: { excerpt: "x".repeat(10_000) } }],
       diagnostics: { gmail: { selected: true, status: "ERROR", count: 0, truncated: false, durationMs: 1 } },
     }; } },
   });
   assert.ok(builder.buildContext({ query: "bonjour" }).remoteModelContext);
-  const context = await guarded.buildContextAsync({ query: "email", maxContextTokens: 256 });
+  const context = await guarded.buildContextAsync(withAuthoritativeScope({ query: "email", maxContextTokens: 256 }));
   assert.equal(context.localContext.authorizedSources.length, 0);
+  assert.equal(context.offloadedRefs.length, 1);
+  assert.equal(context.offloadedRefs[0].sourceType, "gmail");
+  assert.equal(context.offloadedRefs[0].resolvable, false);
   assert.equal(context.budget.usedTokens, context.metadata.estimatedTokens);
   assert.equal(context.diagnostics.sourceDiagnostics.gmail.status, "ERROR");
 });
@@ -322,6 +350,223 @@ test("la sélection réduit un contexte exhaustif représentatif", () => {
   const context = builder.buildContext({ query: "Question ciblée", maxContextTokens: 1000 });
   assert.ok(context.metadata.estimatedTokens < estimateTokens(allPossible));
   assert.equal(context.metadata.memoryIds.length, 1);
+});
+
+test("un contexte sous budget ne crée aucune référence offload", () => {
+  const { builder } = createFixture(memoryResult({
+    remoteContext: [memory("small", "Contexte court")],
+  }));
+  const context = builder.buildContext({ query: "Question", maxContextTokens: 1000 });
+  assert.deepEqual(context.offloadedRefs, []);
+  assert.equal(context.metadata.offloadedCount, 0);
+  assert.equal(context.metadata.offloadRefCount, 0);
+});
+
+test("le dépassement conserve l'item prioritaire et offloade le suivant par référence", () => {
+  const source = new Map([
+    ["high", `prioritaire ${"a".repeat(580)}`],
+    ["low", `secondaire ${"b".repeat(580)}`],
+  ]);
+  const offloader = createContextOffloader({
+    now: () => Date.parse("2026-10-08T08:00:00.000Z"),
+    sourceResolver: (ref) => ({
+      content: source.get(ref.sourceId),
+      authorized: true,
+      localOnly: false,
+      allowedForRemoteModel: true,
+      privacyClass: "PRIVATE",
+    }),
+  });
+  const builder = createContextBuilder({
+    personalityProvider: () => "Noon",
+    hardRulesRegistry: {
+      inferIntent: () => "general",
+      version: () => "1",
+      getRulesForContext: () => [],
+    },
+    memoryEngine: {
+      getRelevantContext: () => memoryResult({
+        remoteContext: [
+          memory("high", source.get("high"), { relevance: 2 }),
+          memory("low", source.get("low"), { relevance: 1 }),
+        ],
+      }),
+    },
+    contextOffloader: offloader,
+    authoritativeScopeProvider,
+  });
+  const input = withAuthoritativeScope({
+    query: "Question",
+    maxContextTokens: 256,
+  });
+  const first = builder.buildContext(input);
+  assert.deepEqual(first.metadata.memoryIds, ["high"]);
+  assert.equal(first.offloadedRefs.length, 1);
+  assert.equal(first.offloadedRefs[0].sourceId, "low");
+  assert.equal(first.metadata.offloadedApproximateTokens > 0, true);
+  assert.doesNotMatch(JSON.stringify(first.offloadedRefs), /secondaire/);
+
+  const repeated = builder.buildContext(input);
+  assert.equal(repeated.offloadedRefs[0].id, first.offloadedRefs[0].id);
+
+  const retrieved = builder.buildContext({ ...input, offloadRefIds: [first.offloadedRefs[0].id] });
+  assert.deepEqual(retrieved.localContext.offloaded.map((item) => item.sourceId), ["low"]);
+  assert.equal(retrieved.userContext.offloaded.every((item) => Object.keys(item).join(",") === "value"), true);
+  assert.equal(retrieved.metadata.retrievedOffloadCount, 1);
+  assert.match(builder.renderRemoteSystemContext(retrieved), /secondaire/);
+  assert.doesNotMatch(
+    JSON.stringify(retrieved.remoteModelContext),
+    /offload_|sourceId|localOnly|contentFingerprint|expiresAt/
+  );
+});
+
+test("une source évincée non relisible reste explicitement UNRESOLVABLE", () => {
+  const builder = createContextBuilder({
+    personalityProvider: () => "Noon",
+    hardRulesRegistry: {
+      inferIntent: () => "general",
+      version: () => "1",
+      getRulesForContext: () => [],
+    },
+    memoryEngine: { getRelevantContext: () => memoryResult() },
+    goalContextProvider: () => [{
+      goalId: "goal-large",
+      title: "Objectif",
+      activeMilestone: "x".repeat(1200),
+      relevantConstraint: null,
+      alignmentNeed: null,
+    }],
+    authoritativeScopeProvider,
+  });
+  const context = builder.buildContext(withAuthoritativeScope({ query: "Objectif", maxContextTokens: 256 }));
+  assert.equal(context.offloadedRefs.length, 1);
+  assert.equal(context.offloadedRefs[0].sourceType, "goals");
+  assert.equal(context.offloadedRefs[0].resolvable, false);
+  assert.equal(context.metadata.offloadUnresolvableCount, 1);
+  assert.doesNotMatch(JSON.stringify(context.offloadedRefs), /x{40}/);
+});
+
+test("une privacy actuelle plus stricte bloque la réinjection distante", () => {
+  const value = `mémoire ${"x".repeat(1200)}`;
+  const offloader = createContextOffloader({
+    sourceResolver: () => ({
+      content: value,
+      authorized: true,
+      localOnly: false,
+      allowedForRemoteModel: true,
+      privacyClass: "PRIVATE",
+    }),
+  });
+  let blockCurrentContent = false;
+  const builder = createContextBuilder({
+    personalityProvider: () => "Noon",
+    hardRulesRegistry: {
+      inferIntent: () => "general",
+      version: () => "1",
+      getRulesForContext: () => [],
+    },
+    memoryEngine: {
+      getRelevantContext: () => memoryResult({ remoteContext: [memory("privacy", value)] }),
+    },
+    contextOffloader: offloader,
+    authoritativeScopeProvider,
+    privacyClassifier: (fragment) => ({
+      source: fragment.source,
+      classification: fragment.classification,
+      localOnly: false,
+      providerRestrictions: [],
+      secretDetected: blockCurrentContent,
+      redactionRequired: blockCurrentContent,
+    }),
+  });
+  const input = withAuthoritativeScope({ query: "Question", maxContextTokens: 256 });
+  const initial = builder.buildContext(input);
+  assert.equal(initial.offloadedRefs.length, 1);
+  blockCurrentContent = true;
+  assert.throws(
+    () => builder.buildContext({ ...input, offloadRefIds: [initial.offloadedRefs[0].id] }),
+    (error) => error.code === "OFFLOAD_PRIVACY_FORBIDDEN"
+  );
+});
+
+test("les règles et permissions autoritaires ne sont ni tronquées ni offloadées", () => {
+  const rule = { id: "security.required", statement: `Instruction prioritaire ${"r".repeat(1800)}` };
+  const builder = createContextBuilder({
+    personalityProvider: () => "Identité Noon",
+    hardRulesRegistry: {
+      inferIntent: () => "general",
+      version: () => "1",
+      getRulesForContext: () => [rule],
+    },
+    memoryEngine: {
+      getRelevantContext: () => memoryResult({
+        remoteContext: [memory("secondary", "m".repeat(1200))],
+      }),
+    },
+    permissionsProvider: () => [{ capability: "READ", granted: true }],
+  });
+  const context = builder.buildContext({ query: "Question active", maxContextTokens: 256 });
+  assert.deepEqual(context.system.hardRules, [rule]);
+  assert.deepEqual(context.runtime.permissions, [{ capability: "READ", granted: true }]);
+  assert.equal(context.offloadedRefs.some((ref) => ref.sourceType === "hard_rules"), false);
+  assert.equal(context.offloadedRefs.some((ref) => ref.sourceType === "permissions"), false);
+});
+
+test("l'offload refuse le scope absent ou contradictoire sans dégrader le contexte ordinaire", () => {
+  const value = "v".repeat(1400);
+  const build = (provider) => createContextBuilder({
+    personalityProvider: () => "Noon",
+    hardRulesRegistry: { inferIntent: () => "general", version: () => "1", getRulesForContext: () => [] },
+    memoryEngine: { getRelevantContext: () => memoryResult({ remoteContext: [memory("m1", value)] }) },
+    authoritativeScopeProvider: provider,
+  });
+  const withoutScope = build(null).buildContext({ query: "Question", maxContextTokens: 256 });
+  assert.equal(withoutScope.offloadedRefs.length, 0);
+  assert.equal(withoutScope.remoteModelContext.userContext.memories.length, 0);
+
+  const conflicting = build(authoritativeScopeProvider).buildContext({
+    ...withAuthoritativeScope({ query: "Question", maxContextTokens: 256 }), workspaceId: "workspace-other",
+  });
+  assert.equal(conflicting.offloadedRefs.length, 0);
+  assert.throws(
+    () => build(authoritativeScopeProvider).buildContext({ query: "Question", offloadRefIds: ["offload_0123456789abcdef0123456789abcdef"] }),
+    (error) => error.code === "OFFLOAD_SCOPE_REQUIRED"
+  );
+});
+
+test("un changement de session ou de projet empêche la récupération d'une référence antérieure", () => {
+  const values = new Map([["m1", "v".repeat(1400)]]);
+  let currentScope = { ...authoritativeScope };
+  const builder = createContextBuilder({
+    personalityProvider: () => "Noon",
+    hardRulesRegistry: { inferIntent: () => "general", version: () => "1", getRulesForContext: () => [] },
+    memoryEngine: { getRelevantContext: () => memoryResult({ remoteContext: [memory("m1", values.get("m1"))] }) },
+    authoritativeScopeProvider: () => ({ ...currentScope }),
+  });
+  const first = builder.buildContext(withAuthoritativeScope({ query: "Question", maxContextTokens: 256 }));
+  assert.equal(first.offloadedRefs.length, 1);
+  currentScope = { ...authoritativeScope, sessionId: "session-b", projectId: "project-b" };
+  assert.throws(
+    () => builder.buildContext({
+      ...withAuthoritativeScope({ query: "Question", maxContextTokens: 256 }),
+      sessionId: "session-b", projectId: "project-b", offloadRefIds: [first.offloadedRefs[0].id],
+    }),
+    (error) => error.code === "OFFLOAD_SCOPE_MISMATCH"
+  );
+});
+
+test("le dépassement des éléments obligatoires est signalé sans être confondu avec une troncature", () => {
+  const rule = { id: "security.required", statement: "r".repeat(1600) };
+  const builder = createContextBuilder({
+    personalityProvider: () => "Identité Noon",
+    hardRulesRegistry: { inferIntent: () => "general", version: () => "1", getRulesForContext: () => [rule] },
+    memoryEngine: { getRelevantContext: () => memoryResult() },
+  });
+  const context = builder.buildContext({ query: "Question", maxContextTokens: 256 });
+  assert.equal(context.metadata.mandatoryBudgetExceeded, true);
+  assert.ok(context.metadata.mandatoryBudgetOverageTokens > 0);
+  assert.equal(context.budget.mandatoryBudgetExceeded, true);
+  assert.equal(context.metadata.truncated, false);
 });
 
 test("injecte une synthèse structurée sans recopier les preuves brutes", () => {

@@ -7,7 +7,7 @@ const { normalizeRoutingMetadata } = require("../models/routing-metadata");
 
 const DEFAULT_RETENTION_DAYS = 30;
 const SENSITIVE_KEY = /(prompt|response|content|message|question|query|email|address|path|file|attachment|audio|transcript|token|secret|password|argument|result|payload|statement|value)/i;
-const SAFE_METRIC_KEY = /^(inputTokens|outputTokens|cachedTokens|contextEstimatedTokens|estimatedTokens|budgetTokens|contextBudget|attachments|sourceCount|expectedCount|textLength|contextCacheHits|contextCacheMisses|contextCacheHitRate|contextCacheEntries|contextCacheMemoryBytesEstimate|contextTokensBefore|contextTokensAfter|contextTokensSaved|contextFingerprint|contextSegments|timeToFirstAudioMs|timeToFirstTokenMs|ttsMs|ttsStartMs|ttsTotalMs|transcriptionMs|realtimeConnectMs|firstAudioMs)$/i;
+const SAFE_METRIC_KEY = /^(inputTokens|outputTokens|cachedTokens|contextEstimatedTokens|estimatedTokens|budgetTokens|contextBudget|attachments|sourceCount|expectedCount|textLength|contextCacheHits|contextCacheMisses|contextCacheHitRate|contextCacheEntries|contextCacheMemoryBytesEstimate|contextTokensBefore|contextTokensAfter|contextTokensSaved|contextOffloadedCount|contextOffloadRefCount|contextOffloadedApproximateTokens|contextOffloadUnresolvableCount|contextOffloadRetrievedCount|contextMandatoryBudgetOverageTokens|contextFingerprint|contextSegments|timeToFirstAudioMs|timeToFirstTokenMs|ttsMs|ttsStartMs|ttsTotalMs|transcriptionMs|realtimeConnectMs|firstAudioMs)$/i;
 const EMAIL = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 const PRIVATE_PATH = /(?:\/Users\/|\/home\/|[A-Z]:\\Users\\)[^\s"']+/gi;
 const SECRET = /(?:sk-|Bearer\s+|token[=:]\s*)[A-Za-z0-9._-]{8,}/gi;

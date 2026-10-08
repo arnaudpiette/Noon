@@ -4,6 +4,7 @@
 // donnée et ne contourne jamais MemoryEngine pour consulter une mémoire.
 
 const { createContextCache } = require("./context-cache");
+const { ContextOffloadError, createContextOffloader } = require("./context-offloader");
 
 const DEFAULT_TOKEN_BUDGETS = Object.freeze({
   chat: 6000,
@@ -83,11 +84,72 @@ function createContextBuilder({
   permissionsProvider = () => [],
   privacyClassifier = null,
   cache = createContextCache(),
+  contextOffloader = null,
+  authoritativeScopeProvider = null,
   debug = null,
 } = {}) {
   if (typeof personalityProvider !== "function") throw new TypeError("personalityProvider est requis.");
   if (!hardRulesRegistry?.getRulesForContext) throw new TypeError("hardRulesRegistry est requis.");
   if (!memoryEngine?.getRelevantContext) throw new TypeError("memoryEngine est requis.");
+
+  const offloader = contextOffloader || createContextOffloader({
+    sourceResolver(ref, resolution) {
+      const resolved = memoryEngine.resolveContextSource?.(ref, resolution);
+      if (resolved) return resolved;
+      if (ref.sourceType !== "conversation_memory" || typeof conversationProvider !== "function") return null;
+      const authorization = resolution?.authorizationContext || {};
+      if (authorization.includeConversation === false ||
+          authorization.conversationId !== ref.conversationId) return { authorized: false };
+      const message = (conversationProvider({ conversationId: ref.conversationId, limit: 60 }) || [])
+        .find((item) => item.id === ref.sourceId);
+      return message ? {
+        content: message.content,
+        authorized: true,
+        localOnly: false,
+        allowedForRemoteModel: true,
+        privacyClass: "PERSONAL",
+      } : null;
+    },
+    canResolve(sourceType) {
+      return memoryEngine.canResolveContextSource?.(sourceType) === true ||
+        (sourceType === "conversation_memory" && typeof conversationProvider === "function");
+    },
+    observability(event, metadata) { debug?.(event, metadata); },
+  });
+
+  function offloadScope(input = {}, resolved = {}) {
+    if (typeof authoritativeScopeProvider !== "function") return null;
+    let scope;
+    try {
+      scope = authoritativeScopeProvider({ input, resolved });
+    } catch {
+      return null;
+    }
+    if (!scope || typeof scope !== "object") return null;
+    const canonical = {
+      profileScope: scope.profileScope ? String(scope.profileScope) : null,
+      workspaceId: scope.workspaceId ? String(scope.workspaceId) : null,
+      projectId: scope.projectId ? String(scope.projectId) : null,
+      sessionId: scope.sessionId ? String(scope.sessionId) : null,
+      conversationId: scope.conversationId ? String(scope.conversationId) : null,
+    };
+    if (!canonical.profileScope || !canonical.sessionId || !canonical.conversationId) return null;
+    const supplied = {
+      profileScope: input.profileScope,
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
+      sessionId: input.sessionId || input.sessionContext?.sessionId,
+      conversationId: input.conversationId,
+    };
+    if (!supplied.sessionId || !supplied.conversationId) return null;
+    for (const [field, value] of Object.entries(supplied)) {
+      if (value != null && String(value) !== canonical[field]) return null;
+    }
+    for (const field of ["workspaceId", "projectId"]) {
+      if (resolved[field] != null && String(resolved[field]) !== canonical[field]) return null;
+    }
+    return canonical;
+  }
 
   function buildContext(input = {}) {
     const startedAt = performance.now();
@@ -184,6 +246,7 @@ function createContextBuilder({
           value: message.content,
           role: message.role,
           source: "conversation_memory",
+          resolvable: Boolean(message.id),
           updatedAt: message.updatedAt || null,
           allowedForRemoteModel: true,
         }));
@@ -226,6 +289,17 @@ function createContextBuilder({
       copyOnRead: false,
       scope: { sessionId: input.conversationId || null, projectId },
     });
+    const classifyPrivacy = (fragment) => {
+      if (typeof privacyClassifier === "function") return privacyClassifier(fragment);
+      return {
+        source: fragment.source,
+        classification: fragment.classification,
+        localOnly: fragment.localOnly === true,
+        providerRestrictions: [...(fragment.providerRestrictions || [])],
+        secretDetected: false,
+        redactionRequired: fragment.redactionRequired === true,
+      };
+    };
     const toolSegment = requestedTools.length > 0
       ? cached("tools", {
         intent, channel, mode: input.mode || null, requestedTools, version: versions.tools,
@@ -321,12 +395,20 @@ function createContextBuilder({
       tokensBefore: 0,
       tokensAfter: 0,
       tokensSaved: 0,
+      mandatoryBudgetExceeded: false,
+      mandatoryBudgetOverageTokens: 0,
       complexityHints: {
         hasTools: requestedTools.length > 0,
         hasFiles: Boolean(input.hasFiles),
         requiresReasoning: ["analysis", "development", "project", "memory"].includes(intent),
       },
       ambientSignalIds: ambient?.signalIds || [],
+      offloadedCount: 0,
+      offloadRefCount: 0,
+      offloadedApproximateTokens: 0,
+      offloadedApproximateCharacters: 0,
+      offloadUnresolvableCount: 0,
+      retrievedOffloadCount: 0,
     };
     metadata.inclusionReasons.push(
       { id: "noon.personality", source: "personality", reason: "system_identity" },
@@ -369,24 +451,67 @@ function createContextBuilder({
     const summaryItem = conversationItems.find((item) => item.role === "system");
     const recentMessages = conversationItems
       .filter((item) => item !== summaryItem && ["user", "assistant"].includes(item.role))
-      .map((item) => ({ id: item.id, role: item.role, content: item.value, source: item.source }));
+      .map((item) => ({
+        id: item.id,
+        role: item.role,
+        content: item.value,
+        source: item.source,
+        resolvable: item.resolvable,
+      }));
 
     // Les règles sont incompressibles. Le reste est ajouté dans l'ordre de
     // priorité documenté et les éléments secondaires sont supprimés d'abord.
     let usedTokens = estimateTokens(personality) + hardRules.reduce((sum, rule) => sum + estimateTokens(rule.statement), 0);
-    metadata.tokensBefore = usedTokens +
-      projectItems.reduce((sum, item) => sum + estimateTokens(item.value), 0) +
-      relevantGoals.reduce((sum, item) => sum + estimateTokens(item), 0) +
-      remoteMemories.reduce((sum, item) => sum + estimateTokens(item.value), 0) +
-      recentMessages.reduce((sum, item) => sum + estimateTokens(item.content), 0) +
-      (summaryItem ? estimateTokens(summaryItem.value) : 0);
-    function keepWithinBudget(items, valueOf, reason, idTarget) {
+    metadata.mandatoryBudgetExceeded = usedTokens > maxContextTokens;
+    metadata.mandatoryBudgetOverageTokens = Math.max(0, usedTokens - maxContextTokens);
+    const scope = offloadScope(input, {
+      workspaceId: workspaceContext?.workspace?.id || input.workspaceId || null,
+      projectId,
+    });
+    const offloadedRefs = [];
+    function registerOffload(item, content, reason, options = {}) {
+      if (!item?.id || !scope) return null;
+      try {
+        const ref = offloader.offload({
+          ...scope,
+          sourceType: options.sourceType || item.source || reason,
+          sourceId: item.id,
+          subjectScope: options.subjectScope || item.profileId || null,
+          privacyClass: options.privacyClass || item.classification || "UNKNOWN",
+          localOnly: options.localOnly === true,
+          resolvable: options.resolvable === false || item.resolvable === false
+            ? false
+            : options.resolvable,
+          content,
+          approximateTokens: estimateTokens(content),
+          approximateCharacters: textValue(content).length,
+          ttlMs: input.offloadTtlMs,
+          reason,
+        });
+        offloadedRefs.push(ref);
+        metadata.offloadedCount += 1;
+        metadata.offloadRefCount = offloadedRefs.length;
+        metadata.offloadedApproximateTokens += ref.approximateTokens;
+        metadata.offloadedApproximateCharacters += ref.approximateCharacters;
+        if (!ref.resolvable) metadata.offloadUnresolvableCount += 1;
+        return ref;
+      } catch (error) {
+        debug?.("context-offloader.registration-failed", {
+          count: 1,
+          code: String(error?.code || error?.name || "OFFLOAD_ERROR").slice(0, 80),
+        });
+        return null;
+      }
+    }
+    function keepWithinBudget(items, valueOf, reason, idTarget, options = {}) {
       const kept = [];
       for (const item of items) {
-        const cost = estimateTokens(valueOf(item));
+        const content = valueOf(item);
+        const cost = estimateTokens(content);
         if (usedTokens + cost > maxContextTokens) {
           metadata.truncated = true;
-          metadata.exclusionReasons.push({ id: item.id || null, reason: "context_budget" });
+          metadata.exclusionReasons.push({ id: item.id || null, source: options.sourceType || item.source || reason, reason: "context_budget" });
+          registerOffload(item, content, "context_budget", options);
           continue;
         }
         usedTokens += cost;
@@ -397,12 +522,100 @@ function createContextBuilder({
       return kept;
     }
 
-    const newestConversationFirst = [...recentMessages].reverse();
+    const requestedOffloadIds = Array.isArray(input.offloadRefIds)
+      ? input.offloadRefIds.map(String).slice(0, 20)
+      : [];
+    const offloadAccess = (input.purpose || "remote_model") === "remote_model" ? "remote" : "local";
+    if (requestedOffloadIds.length && !scope) {
+      throw new ContextOffloadError("OFFLOAD_SCOPE_REQUIRED", "La récupération exige une portée canonique active.");
+    }
+    const resolvedOffloadsRaw = requestedOffloadIds.length
+      ? offloader.resolveMany(requestedOffloadIds, {
+        scope,
+        access: offloadAccess,
+        authorizationContext: {
+          query,
+          intent,
+          profileScope: scope.profileScope,
+          workspaceId: scope.workspaceId,
+          projectId,
+          sessionId: scope.sessionId,
+          conversationId: scope.conversationId,
+          confirmedMemoryIds: [...(input.confirmedMemoryIds || [])].map(String),
+          includePrivate: input.includePrivate !== false,
+          includeConversation: input.includeConversation !== false,
+          permissions,
+          requestedTools,
+        },
+      })
+      : [];
+    const resolvedOffloads = resolvedOffloadsRaw.map((resolved) => {
+      const currentPrivacy = classifyPrivacy({
+        source: resolved.ref.sourceType,
+        classification: resolved.policy.privacyClass,
+        content: resolved.content,
+        localOnly: resolved.policy.localOnly,
+        providerRestrictions: resolved.policy.providerRestrictions,
+      });
+      if (offloadAccess === "remote" &&
+          (currentPrivacy.localOnly === true || currentPrivacy.redactionRequired === true)) {
+        throw new ContextOffloadError(
+          "OFFLOAD_PRIVACY_FORBIDDEN",
+          "La politique de confidentialité actuelle interdit la projection de cette source."
+        );
+      }
+      return { ...resolved, currentPrivacy };
+    });
+    const resolvedSourceKeys = new Set(
+      resolvedOffloads.map(({ ref }) => `${ref.sourceType}:${ref.sourceId}`)
+    );
+    const candidateProjects = projectItems.filter((item) => !resolvedSourceKeys.has(`project_memory:${item.id}`));
+    const candidateGoals = relevantGoals.filter((item) => !resolvedSourceKeys.has(`goals:${item.goalId}`));
+    const candidateMemories = remoteMemories.filter((item) => !resolvedSourceKeys.has(`${item.source || "memory"}:${item.id}`));
+    const candidateMessages = recentMessages.filter((item) => !resolvedSourceKeys.has(`conversation_memory:${item.id}`));
+    metadata.tokensBefore = usedTokens +
+      resolvedOffloads.reduce((sum, item) => sum + estimateTokens(item.content), 0) +
+      candidateProjects.reduce((sum, item) => sum + estimateTokens(item.value), 0) +
+      candidateGoals.reduce((sum, item) => sum + estimateTokens(item), 0) +
+      candidateMemories.reduce((sum, item) => sum + estimateTokens(item.value), 0) +
+      candidateMessages.reduce((sum, item) => sum + estimateTokens(item.content), 0) +
+      (summaryItem ? estimateTokens(summaryItem.value) : 0);
+    const keptResolvedOffloads = [];
+    for (const resolved of resolvedOffloads) {
+      const cost = estimateTokens(resolved.content);
+      if (usedTokens + cost > maxContextTokens) {
+        metadata.truncated = true;
+        metadata.exclusionReasons.push({
+          id: resolved.ref.id,
+          source: resolved.ref.sourceType,
+          reason: "context_budget",
+        });
+        continue;
+      }
+      usedTokens += cost;
+      keptResolvedOffloads.push({
+        refId: resolved.ref.id,
+        sourceType: resolved.ref.sourceType,
+        sourceId: resolved.ref.sourceId,
+        privacyClass: resolved.currentPrivacy.classification || "UNKNOWN",
+        providerRestrictions: resolved.currentPrivacy.providerRestrictions || [],
+        value: resolved.content,
+      });
+      metadata.retrievedOffloadCount += 1;
+      metadata.inclusionReasons.push({
+        id: resolved.ref.id,
+        source: resolved.ref.sourceType,
+        reason: "explicit_offload_retrieval",
+      });
+    }
+
+    const newestConversationFirst = [...candidateMessages].reverse();
     const keptConversation = keepWithinBudget(
       newestConversationFirst,
       (item) => item.content,
       "recent_conversation",
-      metadata.conversationIds
+      metadata.conversationIds,
+      { sourceType: "conversation_memory", privacyClass: "PERSONAL" }
     ).reverse();
     let summary = null;
     const sessionSummary = sessionSegment.summary
@@ -416,26 +629,29 @@ function createContextBuilder({
         metadata.inclusionReasons.push({ id: sessionSummary.id, source: sessionSummary.source, reason: "conversation_summary" });
       } else {
         metadata.truncated = true;
-        metadata.exclusionReasons.push({ id: sessionSummary.id, reason: "context_budget" });
+        metadata.exclusionReasons.push({ id: sessionSummary.id, source: sessionSummary.source, reason: "context_budget" });
+        registerOffload(sessionSummary, sessionSummary.value, "context_budget", {
+          sourceType: sessionSummary.source,
+          privacyClass: "PERSONAL",
+          resolvable: false,
+        });
       }
     }
-    const keptProjects = keepWithinBudget(projectItems, (item) => item.value, "active_project", metadata.projectIds);
+    const keptProjects = keepWithinBudget(candidateProjects, (item) => item.value, "active_project", metadata.projectIds, {
+      sourceType: "project_memory",
+      privacyClass: "PRIVATE",
+    });
     const goalIds = [];
-    const keptGoals = keepWithinBudget(relevantGoals.map((item) => ({ ...item, id: item.goalId })), (item) => item, "relevant_goal", goalIds)
+    const keptGoals = keepWithinBudget(candidateGoals.map((item) => ({ ...item, id: item.goalId })), (item) => item, "relevant_goal", goalIds, {
+      sourceType: "goals",
+      privacyClass: "PERSONAL",
+      resolvable: false,
+    })
       .map(({ id: _id, ...item }) => item);
-    const keptMemories = keepWithinBudget(remoteMemories, (item) => item.value, "relevant_memory", metadata.memoryIds);
+    const keptMemories = keepWithinBudget(candidateMemories, (item) => item.value, "relevant_memory", metadata.memoryIds, {
+      privacyClass: "PRIVATE",
+    });
 
-    const classifyPrivacy = (fragment) => {
-      if (typeof privacyClassifier === "function") return privacyClassifier(fragment);
-      return {
-        source: fragment.source,
-        classification: fragment.classification,
-        localOnly: fragment.localOnly === true,
-        providerRestrictions: [...(fragment.providerRestrictions || [])],
-        secretDetected: false,
-        redactionRequired: fragment.redactionRequired === true,
-      };
-    };
     const privacyInputs = [
       { source: "personality", classification: "PUBLIC", content: personality },
       ...hardRules.map((rule) => ({ source: "hard_rules", classification: "PUBLIC", content: rule.statement })),
@@ -448,6 +664,12 @@ function createContextBuilder({
         classification: item.classification || "PRIVATE",
         content: item.value,
         providerRestrictions: item.providerRestrictions || [],
+      })),
+      ...keptResolvedOffloads.map((item) => ({
+        source: item.sourceType,
+        classification: item.privacyClass,
+        content: item.value,
+        providerRestrictions: item.providerRestrictions,
       })),
       ...(workspaceContext ? [{ source: "workspace", classification: "PRIVATE", content: workspaceContext }] : []),
     ];
@@ -481,15 +703,19 @@ function createContextBuilder({
       projectIds: metadata.projectIds,
       goalIds,
       conversationIds: metadata.conversationIds,
+      offloadRefIds: offloadedRefs.map((ref) => ref.id),
+      retrievedOffloadRefIds: keptResolvedOffloads.map((item) => item.refId),
       versions,
     });
     metadata.durationMs = performance.now() - startedAt;
 
+    const remoteResolvedOffloads = keptResolvedOffloads.map((item) => ({ value: item.value }));
     const userContext = {
       memories: keptMemories,
       people: keptMemories.filter((item) => item.profileId && !String(item.profileId).startsWith("project:")),
       projects: keptProjects,
       relevantGoals: keptGoals,
+      offloaded: remoteResolvedOffloads,
       workspace: workspaceContext,
     };
     const conversation = { recentMessages: keptConversation, summary };
@@ -529,6 +755,8 @@ function createContextBuilder({
       localOnly,
       projects: keptProjects,
       relevantGoals: keptGoals,
+      offloaded: keptResolvedOffloads,
+      offloadedRefs,
       conversation,
       workspace: workspaceContext,
     };
@@ -543,6 +771,7 @@ function createContextBuilder({
       ambient: ambient || { signals: [], signalIds: [], ambientAuthority: false },
       decision: runtime.decision || null,
       goals: keptGoals,
+      offloaded: { resolved: keptResolvedOffloads, references: offloadedRefs },
     };
 
     debug?.("context-builder.summary", {
@@ -563,6 +792,10 @@ function createContextBuilder({
       cacheMisses: metadata.cacheMisses,
       cacheEntries: metadata.cacheEntries,
       tokensSaved: metadata.tokensSaved,
+      offloadedCount: metadata.offloadedCount,
+      offloadRefCount: metadata.offloadRefCount,
+      offloadedApproximateTokens: metadata.offloadedApproximateTokens,
+      offloadUnresolvableCount: metadata.offloadUnresolvableCount,
     });
 
     // Contrat A1 : ces projections ne contiennent jamais les valeurs des
@@ -587,6 +820,8 @@ function createContextBuilder({
       maximumTokens: maxContextTokens, usedTokens: metadata.estimatedTokens,
       tokensBeforePruning: metadata.tokensBefore, tokensSaved: metadata.tokensSaved,
       truncated: metadata.truncated,
+      mandatoryBudgetExceeded: metadata.mandatoryBudgetExceeded,
+      mandatoryBudgetOverageTokens: metadata.mandatoryBudgetOverageTokens,
     });
     const privacy = Object.freeze({
       classificationCounts: { ...metadata.privacy.classificationCounts },
@@ -613,7 +848,7 @@ function createContextBuilder({
     });
     metadata.contractVersion = 1;
     return {
-      system, userContext, conversation, runtime, localContext, remoteModelContext, segments, metadata,
+      system, userContext, conversation, runtime, localContext, remoteModelContext, segments, metadata, offloadedRefs,
       sources, included: sources.filter((item) => item.included), excluded: sources.filter((item) => !item.included),
       budget, privacy, cache: cacheView, diagnostics,
     };
@@ -656,6 +891,9 @@ function createContextBuilder({
     if (remote.userContext.memories.length) {
       sections.push(`Contexte mémorisé pertinent : ${remote.userContext.memories.map((item) => textValue(item.value)).join(" | ")}`);
     }
+    if (remote.userContext.offloaded?.length) {
+      sections.push(`Contexte local récupéré explicitement : ${remote.userContext.offloaded.map((item) => textValue(item.value)).join(" | ")}`);
+    }
     if (remote.userContext.authorizedSources?.length) {
       sections.push(`Sources opérationnelles autorisées : ${JSON.stringify(remote.userContext.authorizedSources)}`);
     }
@@ -677,10 +915,36 @@ function createContextBuilder({
     });
     const maximumTokens = context.budget.maximumTokens;
     let usedTokens = context.budget.usedTokens;
-    const localItems = []; const remoteItems = []; let truncated = context.budget.truncated;
+    const authorizedTokensBefore = (sourceResult.items || [])
+      .reduce((sum, item) => sum + estimateTokens(item.payload), 0);
+    const localItems = []; const remoteItems = []; const asyncOffloadedRefs = []; let truncated = context.budget.truncated;
+    const scope = offloadScope(input, {
+      workspaceId: context.metadata.workspaceId,
+      projectId: context.diagnostics.entityResolution.entityId || input.projectId || null,
+    });
     for (const item of sourceResult.items || []) {
       const cost = estimateTokens(item.payload);
-      if (usedTokens + cost > maximumTokens) { truncated = true; continue; }
+      if (usedTokens + cost > maximumTokens) {
+        truncated = true;
+        if (item.sourceId && scope) {
+          try {
+            asyncOffloadedRefs.push(offloader.offload({
+              ...scope,
+              sourceType: item.sourceType,
+              sourceId: item.sourceId,
+              privacyClass: item.privacyClass || "UNKNOWN",
+              localOnly: item.localOnly === true,
+              resolvable: false,
+              content: item.payload,
+              approximateTokens: cost,
+              approximateCharacters: textValue(item.payload).length,
+              ttlMs: input.offloadTtlMs,
+              reason: "context_budget",
+            }));
+          } catch {}
+        }
+        continue;
+      }
       usedTokens += cost; localItems.push(item);
       const classified = typeof privacyClassifier === "function" ? privacyClassifier({
         source: item.sourceType, classification: item.privacyClass, content: item.payload,
@@ -697,26 +961,47 @@ function createContextBuilder({
     const metadata = {
       ...context.metadata,
       estimatedTokens: usedTokens, tokensAfter: usedTokens,
-      tokensSaved: Math.max(0, context.metadata.tokensBefore - usedTokens),
+      tokensBefore: context.metadata.tokensBefore + authorizedTokensBefore,
+      tokensSaved: Math.max(0, context.metadata.tokensBefore + authorizedTokensBefore - usedTokens),
       truncated, sourceDiagnostics,
+      offloadedCount: context.metadata.offloadedCount + asyncOffloadedRefs.length,
+      offloadRefCount: context.metadata.offloadRefCount + asyncOffloadedRefs.length,
+      offloadedApproximateTokens: context.metadata.offloadedApproximateTokens +
+        asyncOffloadedRefs.reduce((sum, ref) => sum + ref.approximateTokens, 0),
+      offloadedApproximateCharacters: context.metadata.offloadedApproximateCharacters +
+        asyncOffloadedRefs.reduce((sum, ref) => sum + ref.approximateCharacters, 0),
+      offloadUnresolvableCount: context.metadata.offloadUnresolvableCount +
+        asyncOffloadedRefs.filter((ref) => !ref.resolvable).length,
+      contextFingerprint: cache.fingerprint({
+        base: context.metadata.contextFingerprint,
+        authorizedOffloadRefIds: asyncOffloadedRefs.map((ref) => ref.id),
+      }),
     };
-    const localContext = { ...context.localContext, authorizedSources: localItems };
+    const offloadedRefs = [...context.offloadedRefs, ...asyncOffloadedRefs];
+    const localContext = { ...context.localContext, authorizedSources: localItems, offloadedRefs };
     const userContext = { ...context.userContext, authorizedSources: remoteItems };
     const remoteModelContext = { ...context.remoteModelContext, userContext };
-    const segments = { ...context.segments, authorizedSources: { local: localItems, remote: remoteItems, diagnostics: sourceDiagnostics } };
+    const segments = {
+      ...context.segments,
+      authorizedSources: { local: localItems, remote: remoteItems, diagnostics: sourceDiagnostics },
+      offloaded: { ...context.segments.offloaded, references: offloadedRefs },
+    };
     const sourceEntries = Object.entries(sourceDiagnostics).map(([source, detail]) => ({
       source, sourceId: null, included: detail.status === "AVAILABLE" && detail.count > 0,
       reason: detail.selected ? "authorized_context_source" : "skipped_not_relevant",
       privacyClassification: "UNKNOWN",
     }));
     const sources = [...context.sources, ...sourceEntries];
-    const budget = Object.freeze({ ...context.budget, usedTokens, tokensSaved: metadata.tokensSaved, truncated });
+    const budget = Object.freeze({ ...context.budget, usedTokens, tokensSaved: metadata.tokensSaved, truncated,
+      mandatoryBudgetExceeded: metadata.mandatoryBudgetExceeded,
+      mandatoryBudgetOverageTokens: metadata.mandatoryBudgetOverageTokens,
+    });
     const diagnostics = Object.freeze({ ...context.diagnostics,
       durationMs: context.diagnostics.durationMs + Object.values(sourceDiagnostics).reduce((sum, item) => sum + item.durationMs, 0),
       sourceCount: sources.length, includedCount: sources.filter((item) => item.included).length,
       excludedCount: sources.filter((item) => !item.included).length, sourceDiagnostics,
     });
-    return { ...context, metadata, localContext, userContext, remoteModelContext, segments, sources,
+    return { ...context, metadata, localContext, userContext, remoteModelContext, segments, sources, offloadedRefs,
       included: sources.filter((item) => item.included), excluded: sources.filter((item) => !item.included), budget, diagnostics };
   }
 
@@ -757,6 +1042,8 @@ function createContextBuilder({
 
   return {
     buildContext, buildContextAsync, renderRemoteSystemContext, renderStructuredSynthesis, clearContextCache,
+    listOffloaded: (options) => offloader.listRefs(options),
+    resolveOffloaded: (ids, options) => offloader.resolveMany(ids, options),
     invalidateMemory, invalidatePermissions, invalidatePrivacy, invalidateProfile, invalidateProject, invalidateSession, invalidateStatic,
     cacheStats: () => cache.stats(), cacheInspection: () => cache.inspect(),
   };

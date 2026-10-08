@@ -1185,6 +1185,12 @@ function createNoonOrchestrator({
         contextTokensBefore: state.context.metadata?.tokensBefore || 0,
         contextTokensAfter: state.context.metadata?.tokensAfter || 0,
         contextTokensSaved: state.context.metadata?.tokensSaved || 0,
+        contextOffloadedCount: state.context.metadata?.offloadedCount || 0,
+        contextOffloadRefCount: state.context.metadata?.offloadRefCount || 0,
+        contextOffloadedApproximateTokens: state.context.metadata?.offloadedApproximateTokens || 0,
+        contextOffloadUnresolvableCount: state.context.metadata?.offloadUnresolvableCount || 0,
+        contextOffloadRetrievedCount: state.context.metadata?.retrievedOffloadCount || 0,
+        contextMandatoryBudgetOverageTokens: state.context.metadata?.mandatoryBudgetOverageTokens || 0,
         contextFingerprint: state.context.metadata?.contextFingerprint || null,
         contextSegments: Object.fromEntries(Object.entries(state.context.metadata?.cache || {}).map(
           ([segment, event]) => [segment, { hit: event.hit === true, fallback: event.fallback === true, ageMs: event.ageMs || 0, buildMs: event.buildMs || 0 }]

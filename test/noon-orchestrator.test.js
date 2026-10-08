@@ -21,7 +21,7 @@ function toolCall(name, args, callId = "call-1") {
   return { type: "function_call", name, call_id: callId, arguments: JSON.stringify(args) };
 }
 
-function createFixture({ responses = [], executeSkill, stream = false, maxRounds = 3, audit = null, intent = null, priorityEngine = null, observability = null, captureApprovalPreconditions, recheckApprovalPreconditions, recheckHardRules, recheckConnector, operationalSecurityPolicy = null, transactionalExecutionEngine = null, delegationEngine = null, normalizedIntent = null, selectModel = null, modelFallbacks = null, providerAdapters = null, providerConfiguration = () => true, reliabilityEngine = null, requestOverrides = {} } = {}) {
+function createFixture({ responses = [], executeSkill, stream = false, maxRounds = 3, audit = null, intent = null, priorityEngine = null, observability = null, contextMetadata = {}, captureApprovalPreconditions, recheckApprovalPreconditions, recheckHardRules, recheckConnector, operationalSecurityPolicy = null, transactionalExecutionEngine = null, delegationEngine = null, normalizedIntent = null, selectModel = null, modelFallbacks = null, providerAdapters = null, providerConfiguration = () => true, reliabilityEngine = null, requestOverrides = {} } = {}) {
   const queue = [...responses];
   const modelCalls = [];
   const contextCalls = [];
@@ -74,7 +74,7 @@ function createFixture({ responses = [], executeSkill, stream = false, maxRounds
       return {
         remoteModelContext: {},
         runtime: {},
-        metadata: { ruleIds: ["security.destructive_confirmation"], memoryIds: [], intent },
+        metadata: { ruleIds: ["security.destructive_confirmation"], memoryIds: [], intent, ...contextMetadata },
       };
     },
   };
@@ -217,6 +217,34 @@ test("propage le même execution ID dans toute l'observabilité", async () => {
   assert.ok(ids.length >= 4);
   assert.ok(ids.every((id) => id === result.executionId));
   assert.equal(calls[0].args[0].executionId, result.executionId);
+});
+
+test("projette uniquement les métriques sûres du Context Offloader", async () => {
+  const calls = [];
+  const observability = new Proxy({}, {
+    get(_target, method) {
+      return (...args) => calls.push({ method: String(method), args });
+    },
+  });
+  const fixture = createFixture({
+    responses: [response("Réponse tracée")],
+    observability,
+    contextMetadata: {
+      offloadedCount: 2,
+      offloadRefCount: 2,
+      offloadedApproximateTokens: 48,
+      offloadUnresolvableCount: 1,
+      retrievedOffloadCount: 1,
+    },
+  });
+  await fixture.orchestrator.run(fixture.request);
+  const metadata = calls.find((call) => call.method === "recordContext").args[1];
+  assert.equal(metadata.contextOffloadedCount, 2);
+  assert.equal(metadata.contextOffloadRefCount, 2);
+  assert.equal(metadata.contextOffloadedApproximateTokens, 48);
+  assert.equal(metadata.contextOffloadUnresolvableCount, 1);
+  assert.equal(metadata.contextOffloadRetrievedCount, 1);
+  assert.equal(Object.keys(metadata).some((key) => /content|sourceId|payload/i.test(key)), false);
 });
 
 test("outil de lecture : appel registry, réinjection puis réponse", async () => {

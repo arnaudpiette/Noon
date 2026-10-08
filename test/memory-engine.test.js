@@ -40,8 +40,9 @@ function createFixture({ privateMemories = [], structured = [], legacy = [], pro
         if (failingStructured) throw Object.assign(new Error("panne fictive"), { code: "SOURCE_DOWN" });
         return structured;
       },
+      getMemory(id) { return structured.find((item) => item.id === id) || null; },
     },
-    legacyStore: { relevant: () => legacy },
+    legacyStore: { relevant: () => legacy, load: () => ({ memories: legacy }) },
     projectProvider: () => projects,
     conversationProvider: () => conversation,
     debug,
@@ -199,4 +200,70 @@ test("distingue les Hard Rules canoniques des contraintes mémoire legacy", () =
   const result = engine.getRelevantContext({ query: "Prépare un e-mail", intent: "email" });
   assert.equal(result.relevantMemories.length, 0);
   assert.equal(result.hardRules.some((rule) => rule.id === "email.send_requires_explicit_permission"), true);
+});
+
+test("relit une source offloadée par son autorité sans registre de contenu parallèle", () => {
+  const engine = createFixture({
+    privateMemories: [privateItem({ id: "private-resolve", statement: "Préférence relue" })],
+    structured: [{
+      id: "structured-resolve", subject: "Décision", value: { choice: "A" },
+      status: "confirmed", confidence: 1, useAllowed: true,
+      metadata: { profileId: "arnaud", apiPolicy: "contextual" },
+    }],
+    projects: [{
+      id: "project-resolve", name: "Projet", objective: "Livrer", currentState: "Actif",
+      nextAction: "Tester", blockers: [], status: "in_progress",
+    }],
+    conversation: [{ id: "message-resolve", role: "user", content: "Message relu" }],
+  });
+  assert.equal(engine.canResolveContextSource("private_memory"), true);
+  assert.equal(engine.resolveContextSource({
+    sourceType: "private_memory", sourceId: "private-resolve", subjectScope: "arnaud",
+  }).content, "Préférence relue");
+  assert.deepEqual(engine.resolveContextSource({
+    sourceType: "structured_memory", sourceId: "structured-resolve", subjectScope: "arnaud",
+  }).content, { choice: "A" });
+  assert.equal(engine.resolveContextSource({
+    sourceType: "conversation_memory", sourceId: "message-resolve", conversationId: "conversation-a",
+  }, {
+    access: "remote",
+    authorizationContext: { conversationId: "conversation-a", includeConversation: true },
+  }).content, "Message relu");
+  assert.equal(engine.resolveContextSource({
+    sourceType: "private_memory", sourceId: "private-resolve", subjectScope: "alexandra",
+  }).authorized, false);
+});
+
+test("la relecture offload revérifie la politique mémoire actuelle", () => {
+  const item = privateItem({
+    id: "private-confirm", statement: "Préférence protégée",
+    apiPolicy: "confirm_each_use",
+  });
+  const engine = createFixture({ privateMemories: [item] });
+  const ref = {
+    sourceType: "private_memory",
+    sourceId: item.id,
+    subjectScope: "arnaud",
+    profileScope: "arnaud",
+  };
+  const denied = engine.resolveContextSource(ref, {
+    access: "remote",
+    authorizationContext: {
+      query: "Préférence protégée",
+      profileScope: "arnaud",
+      confirmedMemoryIds: [],
+    },
+  });
+  assert.equal(denied.authorized, true);
+  assert.equal(denied.allowedForRemoteModel, false);
+
+  const allowed = engine.resolveContextSource(ref, {
+    access: "remote",
+    authorizationContext: {
+      query: "Préférence protégée",
+      profileScope: "arnaud",
+      confirmedMemoryIds: [item.id],
+    },
+  });
+  assert.equal(allowed.allowedForRemoteModel, true);
 });
