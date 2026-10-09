@@ -371,3 +371,135 @@ test(
     );
   }
 );
+
+test(
+  "la projection Decision reste absente sans demande explicite",
+  () => {
+    const result =
+      attachAgentEvaluation(
+        {
+          executionId:
+            "exec-no-decision",
+          status: "completed",
+          toolCalls: [
+            {
+              callId: "call-1",
+              status: "succeeded",
+            },
+          ],
+        },
+        {
+          engine: engine(),
+        }
+      );
+
+    assert.equal(
+      result.metadata
+        .decisionEvidence,
+      undefined
+    );
+
+    assert.equal(
+      result.metadata
+        .agentEvaluation
+        .verdict,
+      "PASS"
+    );
+  }
+);
+
+test(
+  "une demande explicite projette les preuves sans modifier le verdict Evaluation",
+  () => {
+    const result =
+      attachAgentEvaluation(
+        {
+          executionId:
+            "exec-decision",
+          status: "completed",
+          toolCalls: [
+            {
+              callId: "call-1",
+              status: "succeeded",
+              rawContent:
+                "SECRET TOOL CONTENT",
+            },
+          ],
+        },
+        {
+          engine: engine(),
+
+          decisionEvidenceContext:
+            ({
+              executionId,
+              verdict,
+            }) => {
+              assert.equal(
+                executionId,
+                "exec-decision"
+              );
+
+              assert.equal(
+                verdict,
+                "PASS"
+              );
+
+              return {
+                optionId:
+                  "option-execution",
+                criterionId:
+                  "execution-result",
+                observedAt:
+                  "2026-10-09T12:00:00.000Z",
+                freshnessRequirement:
+                  "CURRENT",
+                localOnly: true,
+                allowedForRemoteModel:
+                  false,
+                scope: {
+                  profileScope:
+                    "owner",
+                  workspaceId:
+                    "w1",
+                  projectId: null,
+                  purpose:
+                    "LOCAL_ANALYSIS",
+                },
+              };
+            },
+        }
+      );
+
+    assert.equal(
+      result.metadata
+        .agentEvaluation
+        .verdict,
+      "PASS"
+    );
+
+    assert.equal(
+      result.metadata
+        .decisionEvidence
+        .evidence.length,
+      1
+    );
+
+    assert.equal(
+      result.metadata
+        .decisionEvidence
+        .attestedEvidenceIds
+        .length,
+      1
+    );
+
+    assert.equal(
+      JSON.stringify(
+        result.metadata
+          .decisionEvidence
+      ).includes(
+        "SECRET TOOL CONTENT"
+      ),
+      false
+    );
+  }
+);

@@ -1,5 +1,11 @@
 "use strict";
 
+const {
+  projectAgentEvaluationEvidence,
+} = require(
+  "../decision/agent-evaluation-evidence-adapter"
+);
+
 function clean(value, max = 120) {
   return String(value ?? "")
     .replace(/[\0\r\n]/g, " ")
@@ -263,6 +269,9 @@ function attachAgentEvaluation(
   {
     engine,
     observability = null,
+    decisionEvidenceContext = null,
+    decisionEvidenceAdapter =
+      projectAgentEvaluationEvidence,
   }
 ) {
   if (!shouldEvaluate(result)) {
@@ -319,6 +328,49 @@ function attachAgentEvaluation(
     );
   } catch {}
 
+  let decisionEvidence = null;
+
+  if (decisionEvidenceContext) {
+    if (
+      typeof decisionEvidenceAdapter !==
+      "function"
+    ) {
+      throw new TypeError(
+        "DecisionEvidenceAdapter valide requis."
+      );
+    }
+
+    const safeEvaluationContext = {
+      executionId:
+        evaluation.executionId,
+      evaluationPolicyVersion:
+        evaluation
+          .evaluationPolicyVersion,
+      verdict:
+        evaluation.verdict,
+      confidence:
+        evaluation.confidence,
+    };
+
+    const resolvedContext =
+      typeof decisionEvidenceContext ===
+      "function"
+        ? decisionEvidenceContext(
+            safeEvaluationContext
+          )
+        : decisionEvidenceContext;
+
+    if (resolvedContext) {
+      decisionEvidence =
+        decisionEvidenceAdapter({
+          evaluation,
+          evidence,
+          context:
+            resolvedContext,
+        });
+    }
+  }
+
   return {
     ...result,
 
@@ -326,6 +378,12 @@ function attachAgentEvaluation(
       ...(result.metadata || {}),
       agentEvaluation:
         evaluation,
+
+      ...(decisionEvidence
+        ? {
+            decisionEvidence,
+          }
+        : {}),
     },
   };
 }
@@ -334,6 +392,9 @@ function createAgentEvaluationRuntime({
   orchestrator,
   engine,
   observability = null,
+  decisionEvidenceContext = null,
+  decisionEvidenceAdapter =
+    projectAgentEvaluationEvidence,
 } = {}) {
   if (
     !orchestrator ||
@@ -357,6 +418,16 @@ function createAgentEvaluationRuntime({
     );
   }
 
+  if (
+    decisionEvidenceContext &&
+    typeof decisionEvidenceAdapter !==
+      "function"
+  ) {
+    throw new TypeError(
+      "DecisionEvidenceAdapter valide requis."
+    );
+  }
+
   async function run(input) {
     const result =
       await orchestrator.run(input);
@@ -366,6 +437,8 @@ function createAgentEvaluationRuntime({
       {
         engine,
         observability,
+        decisionEvidenceContext,
+        decisionEvidenceAdapter,
       }
     );
   }
@@ -379,6 +452,8 @@ function createAgentEvaluationRuntime({
       {
         engine,
         observability,
+        decisionEvidenceContext,
+        decisionEvidenceAdapter,
       }
     );
   }
