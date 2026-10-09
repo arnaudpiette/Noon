@@ -14,6 +14,18 @@ const TRANSITIONS = Object.freeze({
 });
 function clone(value) { return value == null ? value : structuredClone(value); }
 function redactTelemetry(metadata = {}) { return Object.fromEntries(Object.entries(metadata).filter(([key]) => !/title|description|outcome|strategy|content|constraint/i.test(key))); }
+function normalizeDecisionRecordId(value) {
+  if (value == null) return null;
+  if (typeof value !== "string") throw new GoalError("DECISION_RECORD_ID_INVALID", "La référence Decision doit être une chaîne.");
+  const normalized = value.trim();
+  if (!normalized) return null;
+  if (normalized.length > 160) throw new GoalError("DECISION_RECORD_ID_INVALID", "La référence Decision dépasse 160 caractères.");
+  return normalized;
+}
+function normalizeDecisionRefs(raw = {}) {
+  const decisionRecordId = normalizeDecisionRecordId(raw.decisionRecordId);
+  return [...new Set([...(decisionRecordId ? [decisionRecordId] : []), ...(raw.decisionRefs || []).map(String)])].slice(0, 30);
+}
 
 function createGoalStrategyEngine({
   registry = createGoalRegistry(), projectProvider = () => [], workspaceProvider = () => [],
@@ -63,9 +75,9 @@ function createGoalStrategyEngine({
   function setSuccessCriteria(goalId, criteria, { userConfirmed = false } = {}) { if (!userConfirmed) throw new GoalError("GOAL_CRITERIA_CONFIRMATION_REQUIRED", "Les critères doivent être confirmés."); return updateGoal(goalId, { successCriteria: criteria.map(normalizeCriterion) }, { userConfirmed: true }); }
   function versionStrategy(goalId, raw = {}, { userConfirmed = false } = {}) {
     if (!userConfirmed) throw new GoalError("STRATEGY_CONFIRMATION_REQUIRED", "La stratégie doit être confirmée.");
-    registry.get(goalId); const prior = registry.strategyHistory(goalId); const version = prior.length + 1;
+    const decisionRefs = normalizeDecisionRefs(raw); registry.get(goalId); const prior = registry.strategyHistory(goalId); const version = prior.length + 1;
     if (prior.length) { const active = prior.at(-1); if (active.status === "ACTIVE") registry.putStrategy({ ...active, strategyId: id("strategy-history"), status: "SUPERSEDED", supersededAt: now().toISOString() }); }
-    const strategy = Object.freeze({ strategyId: id("strategy"), goalId, title: clean(raw.title, 300), description: clean(raw.description, 2000), principles: (raw.principles || []).map((item) => clean(item, 500)).filter(Boolean).slice(0, 20), chosenApproach: clean(raw.chosenApproach, 2000), alternativesRejected: clone(raw.alternativesRejected || []).slice(0, 20), decisionRefs: [...new Set((raw.decisionRefs || []).map(String))].slice(0, 30), assumptions: clone(raw.assumptions || []).slice(0, 30), constraints: clone(raw.constraints || []).slice(0, 30), risks: clone(raw.risks || []).slice(0, 30), reviewAt: raw.reviewAt || null, version, status: "ACTIVE", createdAt: now().toISOString() });
+    const strategy = Object.freeze({ strategyId: id("strategy"), goalId, title: clean(raw.title, 300), description: clean(raw.description, 2000), principles: (raw.principles || []).map((item) => clean(item, 500)).filter(Boolean).slice(0, 20), chosenApproach: clean(raw.chosenApproach, 2000), alternativesRejected: clone(raw.alternativesRejected || []).slice(0, 20), decisionRefs, assumptions: clone(raw.assumptions || []).slice(0, 30), constraints: clone(raw.constraints || []).slice(0, 30), risks: clone(raw.risks || []).slice(0, 30), reviewAt: raw.reviewAt || null, version, status: "ACTIVE", createdAt: now().toISOString() });
     registry.putStrategy(strategy); updateGoal(goalId, { strategyRef: strategy.strategyId }, { userConfirmed: true }); emit("strategy_version_created", { goalId, strategyId: strategy.strategyId, version }); return strategy;
   }
   function relation(fromGoalId, toGoalId, type, { userConfirmed = false } = {}) {
@@ -88,7 +100,13 @@ function createGoalStrategyEngine({
   function roadmap(goalId) { const goal = registry.get(goalId); return { goalId, outcome: goal.outcomeDefinition, milestones: goal.milestones.map((item) => ({ milestoneId: item.milestoneId, title: item.title, status: item.status, targetDate: item.targetDate })), derived: true, executionAuthority: false }; }
   function decisionCriterion(goalId) {
     const goal = registry.get(goalId);
-    return { criterionId: `goal-alignment:${goalId}`, type: "STRATEGIC_FIT", label: `Alignement avec ${goal.title}`, source: "project", hardConstraint: false, goalId };
+    return Object.freeze({ criterionId: `goal-alignment:${goalId}`, label: `Alignement avec ${goal.title}`, type: "STRATEGIC_FIT", importance: "HIGH", direction: "MAXIMIZE", requiredEvidence: "VERIFIED", range: null });
+  }
+  function decisionConstraints(goalId) {
+    registry.get(goalId);
+    // Goal ne stocke actuellement que du texte, une force et des evidenceRefs :
+    // aucun opérateur, critère ni expected V2 ne peut être inféré sans fabriquer une Hard Rule.
+    return Object.freeze([]);
   }
   function planningContext(scope = {}) {
     const goals = registry.list(scope).filter((goal) => goal.status === "ACTIVE");
@@ -107,7 +125,7 @@ function createGoalStrategyEngine({
     });
   }
   function health() { return { status: "ok", featureMode, goalCount: registry.list().length, candidateCount: registry.listCandidates().length, executionAuthority: false, priorityAuthority: false, planningAuthority: false }; }
-  return { addMilestone, assessProgress, briefContext, confirmCandidate, createGoal, decisionCriterion, evaluateAlignment, health, planningContext, proposeGoal, registry, relation, relevantGoals, reviewGoal, roadmap, setSuccessCriteria, transition, updateGoal, updateMilestone, versionStrategy };
+  return { addMilestone, assessProgress, briefContext, confirmCandidate, createGoal, decisionConstraints, decisionCriterion, evaluateAlignment, health, planningContext, proposeGoal, registry, relation, relevantGoals, reviewGoal, roadmap, setSuccessCriteria, transition, updateGoal, updateMilestone, versionStrategy };
 }
 
 module.exports = { TRANSITIONS, createGoalStrategyEngine };

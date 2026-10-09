@@ -4,6 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createGoalRegistry, createGoalStrategyEngine, GoalError } = require("../services/goals");
 const { createDecisionSupportEngine } = require("../services/decision/decision-support-engine");
+const { normalizeDecisionRequestV2 } = require("../services/decision/decision-schema");
 
 function fixture(options = {}) {
   const events = [];
@@ -18,6 +19,15 @@ function fixture(options = {}) {
 }
 function goal(engine, overrides = {}) {
   return engine.createGoal({ title: "Terminer la formation web", outcomeDefinition: "Obtenir la validation complète de la formation", category: "LEARNING", linkedProjectIds: ["project-qwenta"], linkedWorkspaceIds: ["workspace-learning"], ...overrides });
+}
+function goalDecisionRequest(goalRecord, criterion, overrides = {}) {
+  const scope = { profileScope: goalRecord.profileScope, workspaceId: goalRecord.linkedWorkspaceIds[0] || null, projectId: goalRecord.linkedProjectIds[0] || null, purpose: "LOCAL_ANALYSIS" };
+  const localOnly = goalRecord.sensitivity === "LOCAL_ONLY";
+  return { schemaVersion: 2, decisionId: "decision-goal-v2", question: "Quelle option sert le mieux cet objectif ?", decisionType: "COMPARE", evaluationAt: "2026-10-09T12:00:00.000Z", scope,
+    options: [{ optionId: "a", label: "Option alignée", source: "USER_PROVIDED", assumptions: [], values: { [criterion.criterionId]: "EXCELLENT" } }, { optionId: "b", label: "Option secondaire", source: "USER_PROVIDED", assumptions: [], values: { [criterion.criterionId]: "GOOD" } }], criteria: [criterion], constraints: [],
+    evidence: ["a", "b"].map((optionId, index) => ({ evidenceId: `goal-evidence-${optionId}`, claimId: `goal-claim-${optionId}`, optionId, criterionId: criterion.criterionId, stance: "SUPPORTS", value: index === 0 ? "EXCELLENT" : "GOOD", kind: "HUMAN_CONFIRMATION", authority: "HUMAN", verificationStatus: "VERIFIED", critical: false,
+      provenance: { producer: "goal-test", sourceType: "confirmed-goal-link", method: "user-confirmation", rootEvidenceId: null }, scope, observedAt: "2026-10-09T11:00:00.000Z", validUntil: "2026-10-10T11:00:00.000Z", freshnessRequirement: "CURRENT", claimFingerprint: `sha256:goal-${optionId}`, independenceKey: `goal-root-${optionId}`, derivedFromEvidenceIds: [], localOnly, allowedForRemoteModel: !localOnly, untrustedContent: false })),
+    verificationProposals: [], recommendationRequested: true, outputMode: "BALANCED", contextVersion: "goal-v2-test", ...overrides };
 }
 
 test("crée un objectif explicite distinct d'un projet et conserve les IDs canoniques", () => {
@@ -98,6 +108,27 @@ test("la stratégie est versionnée sans devenir HardRule ni plan calendrier", (
   assert.equal(second.hardRuleId, undefined); assert.equal(second.calendarEvents, undefined);
 });
 
+test("une référence Decision V2 exige confirmation, puis est conservée et bornée", () => {
+  const { engine } = fixture(); const created = goal(engine); const criterion = engine.decisionCriterion(created.goalId);
+  const request = goalDecisionRequest(created, criterion); const decision = createDecisionSupportEngine().compare(request, { attestedEvidenceIds: request.evidence.map((item) => item.evidenceId) });
+  assert.equal(decision.verdict, "DECIDED"); assert.equal(decision.recommendationIsAction, false); assert.equal(decision.actionAuthorized, false); assert.equal(decision.verificationAuthorized, false);
+  assert.throws(() => engine.versionStrategy(created.goalId, { title: "Choix sans confirmation", decisionResult: decision, decisionRecordId: "decision-record-v2" }), /confirmée/);
+  assert.equal(engine.registry.strategyHistory(created.goalId).length, 0); assert.equal(engine.registry.get(created.goalId).status, "ACTIVE");
+  const decisionRefs = ["decision-record-v2", ...Array.from({ length: 35 }, (_, index) => `legacy-${index}`)];
+  const strategy = engine.versionStrategy(created.goalId, { title: "Choix confirmé", decisionRecordId: "decision-record-v2", decisionRefs }, { userConfirmed: true });
+  assert.equal(strategy.decisionRefs[0], "decision-record-v2"); assert.equal(strategy.decisionRefs.filter((item) => item === "decision-record-v2").length, 1); assert.equal(strategy.decisionRefs.length, 30);
+});
+
+test("decisionRecordId invalide ne crée ni ne remplace une stratégie", () => {
+  const { engine } = fixture(); const created = goal(engine);
+  const existing = engine.versionStrategy(created.goalId, { title: "Stratégie existante", decisionRefs: ["legacy-ref"] }, { userConfirmed: true });
+  assert.throws(() => engine.versionStrategy(created.goalId, { title: "Référence invalide", decisionRecordId: 42 }, { userConfirmed: true }), (error) => error.code === "DECISION_RECORD_ID_INVALID");
+  assert.throws(() => engine.versionStrategy(created.goalId, { title: "Référence trop longue", decisionRecordId: "x".repeat(161) }, { userConfirmed: true }), (error) => error.code === "DECISION_RECORD_ID_INVALID");
+  assert.equal(engine.registry.strategyHistory(created.goalId).length, 1); assert.equal(engine.registry.get(created.goalId).strategyRef, existing.strategyId);
+  const blank = engine.versionStrategy(created.goalId, { title: "Référence vide", decisionRecordId: "   ", decisionRefs: ["legacy-ref"] }, { userConfirmed: true });
+  assert.deepEqual(blank.decisionRefs, ["legacy-ref"]);
+});
+
 test("les dépendances cycliques sont refusées et les conflits ne sont pas auto-résolus", () => {
   const { engine } = fixture(); const a = goal(engine); const b = engine.createGoal({ title: "Lancer une activité", outcomeDefinition: "Signer un premier client", category: "BUSINESS" });
   engine.relation(a.goalId, b.goalId, "DEPENDS_ON", { userConfirmed: true });
@@ -118,11 +149,18 @@ test("un alignement inconnu reste UNKNOWN et un multi-goal reste explicite", () 
 });
 
 test("local_only, workspace et profil restent isolés du contexte distant", () => {
-  const { engine } = fixture(); goal(engine, { sensitivity: "LOCAL_ONLY" });
+  const { engine } = fixture(); const localGoal = goal(engine, { sensitivity: "LOCAL_ONLY" });
   engine.createGoal({ title: "Objectif autre profil", outcomeDefinition: "Résultat réservé à un autre profil", profileScope: "alexandra", linkedWorkspaceIds: [] });
   assert.equal(engine.relevantGoals({ query: "formation", profileScope: "arnaud", remote: true }).length, 0);
   assert.equal(engine.relevantGoals({ query: "formation", profileScope: "arnaud", remote: false }).length, 1);
   assert.equal(engine.relevantGoals({ query: "autre profil", profileScope: "arnaud", remote: false }).length, 0);
+  const request = normalizeDecisionRequestV2(goalDecisionRequest(localGoal, engine.decisionCriterion(localGoal.goalId)));
+  assert.equal(request.scope.profileScope, "arnaud"); assert.equal(request.scope.workspaceId, "workspace-learning"); assert.equal(request.evidence.every((item) => item.localOnly && item.allowedForRemoteModel === false), true);
+  const remote = createDecisionSupportEngine().compare(request, { attestedEvidenceIds: request.evidence.map((item) => item.evidenceId), remote: true });
+  assert.notEqual(remote.verdict, "DECIDED"); assert.equal(remote.evidenceSummary.eligible, 0);
+  const outsideScope = structuredClone(request); outsideScope.evidence = outsideScope.evidence.map((item) => ({ ...item, scope: { ...item.scope, workspaceId: "other-workspace" } }));
+  const outside = createDecisionSupportEngine().compare(outsideScope, { attestedEvidenceIds: outsideScope.evidence.map((item) => item.evidenceId) });
+  assert.notEqual(outside.verdict, "DECIDED"); assert.equal(outside.evidenceSummary.eligible, 0); assert.ok(outside.unknowns.some((item) => item.reasonCode === "EVIDENCE_SCOPE_MISMATCH"));
 });
 
 test("le GoalEngine n'accorde aucune autorité d'action, calendrier, email ou fichier", () => {
@@ -139,14 +177,18 @@ test("Priority et Planning ne reçoivent qu'un signal stratégique et aucune pro
   assert.equal(planning.ownsCalendarSlots, false); assert.equal(planning.ownsPriorities, false); assert.equal(planning.candidateAllocations[0].estimatedMinutes, null);
 });
 
-test("DecisionSupport reçoit un critère d'alignement non exécutoire", () => {
+test("Goal produit un critère V2 strict et Decision V2 reste consultatif", () => {
   const { engine } = fixture(); const created = goal(engine); const criterion = engine.decisionCriterion(created.goalId);
-  assert.equal(criterion.type, "STRATEGIC_FIT"); assert.match(criterion.criterionId, /^goal-alignment:/); assert.equal(criterion.hardConstraint, false); assert.equal(criterion.action, undefined);
-  const decision = createDecisionSupportEngine().compare({ question: "Quel projet ?", options: [
-    { label: "Qwenta", values: { [criterion.criterionId]: "EXCELLENT" } },
-    { label: "Expérience", values: { [criterion.criterionId]: "NEUTRAL" } },
-  ], explicitCriteria: [criterion] });
-  assert.equal(createDecisionSupportEngine().health().executionAuthority, false); assert.equal(decision.evaluations[0].criterionId, criterion.criterionId); assert.equal(decision.actionAuthorized, false);
+  assert.deepEqual(Object.keys(criterion).sort(), ["criterionId", "direction", "importance", "label", "range", "requiredEvidence", "type"]);
+  assert.equal(criterion.type, "STRATEGIC_FIT"); assert.equal(criterion.direction, "MAXIMIZE"); assert.equal(criterion.importance, "HIGH"); assert.equal(criterion.requiredEvidence, "VERIFIED"); assert.equal(criterion.range, null);
+  const direct = engine.evaluateAlignment({ projectId: "project-qwenta" }); assert.equal(direct.alignments[0].alignment, "DIRECT");
+  const request = normalizeDecisionRequestV2(goalDecisionRequest(created, criterion)); const decision = createDecisionSupportEngine().compare(request, { attestedEvidenceIds: [] });
+  assert.equal(decision.schemaVersion, 2); assert.notEqual(decision.verdict, "DECIDED"); assert.equal(decision.evidenceSummary.eligible, 0); assert.ok(decision.unknowns.some((item) => item.reasonCode === "EVIDENCE_NOT_ATTESTED")); assert.equal(createDecisionSupportEngine().health().executionAuthority, false); assert.equal(decision.actionAuthorized, false); assert.equal(decision.verificationAuthorized, false);
+});
+
+test("les contraintes Goal textuelles ne deviennent jamais des Hard Rules V2", () => {
+  const { engine } = fixture(); const created = goal(engine, { constraints: [{ description: "Rester sous le budget", strength: "HARD", evidenceRefs: ["budget-note"] }] });
+  assert.deepEqual(engine.decisionConstraints(created.goalId), []);
 });
 
 test("Daily Brief reste compact et Weekly Review expose la dernière revue", () => {
