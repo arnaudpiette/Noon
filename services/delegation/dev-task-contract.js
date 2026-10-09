@@ -48,6 +48,7 @@ function createDevTaskContract(input = {}) {
     requiredQuality: QUALITY_LEVELS.includes(String(input.requiredQuality).toUpperCase()) ? String(input.requiredQuality).toUpperCase() : "NORMAL",
     workspace: String(input.workspace || input.workspaceId).slice(0, 160),
     workspaceId: String(input.workspaceId).slice(0, 160),
+    sessionId: input.sessionId ? String(input.sessionId).slice(0, 200) : null,
     repositoryRoot,
     branch: input.branch ? String(input.branch).slice(0, 200) : null,
     allowedPaths: Object.freeze(allowedPaths),

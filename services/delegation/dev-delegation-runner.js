@@ -89,7 +89,24 @@ function createDevDelegationRunner({ specialistAgent, workspaceEngine = null, pr
       if (!["ALLOW", "ALLOW_WITH_CONSTRAINTS"].includes(decision.outcome)) { controllers.delete(contract.taskId); return { taskId: contract.taskId, status: "FAILED", finalVerdict: "FAIL", failureCategory: "PERMISSION_DENIED" }; }
     }
     const baseline = [];
-    for (const command of commands) baseline.push(await validationExecutor(command, contract.repositoryRoot, Math.min(contract.maxDuration, 120_000)));
+    for (const command of commands) baseline.push(await validationExecutor(
+      command,
+      contract.repositoryRoot,
+      Math.min(
+        contract.maxDuration,
+        120_000
+      ),
+      controller.signal,
+      {
+        taskId: contract.taskId,
+        workspaceId:
+          contract.workspaceId,
+        sessionId:
+          contract.sessionId,
+        permissions:
+          contract.permissions,
+      }
+    ));
     const agentStarted = now();
     const rawAgentResult = controller.signal.aborted
       ? { taskId: contract.taskId, agent: specialistAgent.id, status: "CANCELLED", summary: "Mission annulée.", failureCategory: "CANCELLED" }
@@ -104,7 +121,24 @@ function createDevDelegationRunner({ specialistAgent, workspaceEngine = null, pr
     if (preflight.snapshot.head !== postSnapshot.head) review.issues.push({ code: "GIT_LOCAL_MUTATION" });
     review.valid = review.issues.length === 0;
     const postStarted = now(); const validations = [];
-    if (!["CANCELLED", "TIMEOUT"].includes(agentResult.status)) for (const command of [...commands, "git diff --check"].filter((item, index, all) => all.indexOf(item) === index)) validations.push(await validationExecutor(command, contract.repositoryRoot, Math.min(contract.maxDuration, 120_000)));
+    if (!["CANCELLED", "TIMEOUT"].includes(agentResult.status)) for (const command of [...commands, "git diff --check"].filter((item, index, all) => all.indexOf(item) === index)) validations.push(await validationExecutor(
+      command,
+      contract.repositoryRoot,
+      Math.min(
+        contract.maxDuration,
+        120_000
+      ),
+      controller.signal,
+      {
+        taskId: contract.taskId,
+        workspaceId:
+          contract.workspaceId,
+        sessionId:
+          contract.sessionId,
+        permissions:
+          contract.permissions,
+      }
+    ));
     const postValidationDuration = now() - postStarted;
     let failureCategory = agentResult.failureCategory;
     if (!preserved || review.issues.some((item) => ["OUT_OF_SCOPE_CHANGE", "GIT_LOCAL_MUTATION"].includes(item.code))) failureCategory = "OUT_OF_SCOPE_CHANGE";

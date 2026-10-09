@@ -12,6 +12,10 @@ const {
   sanitizedTerminalEnvironment,
 } = require("../services/dev/workspace-terminal-service");
 
+const {
+  createSandboxExecutionContractV1,
+} = require("../services/security/dev-process-runner");
+
 function fakeChild(pid = 4242) {
   const child = new EventEmitter();
 
@@ -33,6 +37,7 @@ function fakeChild(pid = 4242) {
 function fixture(context, {
   mode = "read-write",
   now = () => Date.now(),
+  serviceOptions = {},
 } = {}) {
   const root = fs.mkdtempSync(
     path.join(os.tmpdir(), "noon-terminal-root-")
@@ -114,6 +119,7 @@ function fixture(context, {
       GOOGLE_CLIENT_SECRET: "private-google-secret",
       GITHUB_TOKEN: "ghp_private-token-value",
     },
+    ...serviceOptions,
   });
 
   return {
@@ -391,7 +397,7 @@ test("un terminal NOON refuse une commande provenant de USER", (context) => {
   assert.equal(data.spawnCalls.length, 0);
 });
 
-test("un terminal NOON accepte une commande explicitement NOON", (context) => {
+test("un terminal NOON accepte une commande explicitement NOON", async (context) => {
   const data = fixture(context);
 
   const { session, terminal } =
@@ -410,14 +416,24 @@ test("un terminal NOON accepte une commande explicitement NOON", (context) => {
   assert.equal(data.spawnCalls.length, 1);
 
   assert.equal(
+    path.isAbsolute(
+      data.spawnCalls[0].executable
+    ),
+    true
+  );
+
+  assert.match(
     data.spawnCalls[0].executable,
-    "git"
+    /(?:^|\/)git$/
   );
 
   assert.deepEqual(
     data.spawnCalls[0].args,
     ["diff", "--check"]
   );
+
+  data.children[0].emit("close", 0, null);
+  await new Promise((resolve) => setImmediate(resolve));
 });
 
 test("les sorties sont redacted avant stockage public", (context) => {
@@ -524,7 +540,7 @@ test("la fermeture d’un terminal tue uniquement son process", (context) => {
   assert.equal(secondChild.killed, false);
 });
 
-test("une validation Noon annulée par l’utilisateur ne devient jamais UNRESOLVED", (context) => {
+test("une validation Noon annulée par l’utilisateur ne devient jamais UNRESOLVED", async (context) => {
   const data = fixture(context);
   const session = data.service.createSession({ workspaceId: "workspace-test" });
   const failedTerminal = data.service.createTerminal({ sessionId: session.id });
@@ -544,9 +560,233 @@ test("une validation Noon annulée par l’utilisateur ne devient jamais UNRESOL
   const child = data.children[1];
   data.service.closeTerminal({ sessionId: session.id, terminalId: terminal.id, reason: "USER_CANCELLED" });
   child.emit("close", null, "SIGTERM");
+  await new Promise((resolve) => setImmediate(resolve));
   const current = data.service.getSession(session.id);
   assert.equal(current.problems.status, "CANCELLED");
   assert.equal(current.lastValidationState.status, "CANCELLED");
+});
+
+
+test(
+  "un terminal NOON annulé après absence de onSpawn synchrone ne peut jamais lancer plus tard",
+  async (context) => {
+    let lateSpawnCount = 0;
+    let receivedSignal = null;
+    let releaseAsyncGate = null;
+
+    const gate =
+      new Promise(
+        (resolve) => {
+          releaseAsyncGate = resolve;
+        }
+      );
+
+    const data =
+      fixture(
+        context,
+        {
+          serviceOptions: {
+            createSandboxRunner() {
+              return {
+                async run(
+                  _contract,
+                  options = {}
+                ) {
+                  receivedSignal =
+                    options.signal ||
+                    null;
+
+                  await gate;
+
+                  if (
+                    receivedSignal?.aborted
+                  ) {
+                    return {
+                      status:
+                        "CANCELLED",
+                      exitCode: null,
+                      signal:
+                        "SIGTERM",
+                      reasonCode:
+                        "CANCELLED_BEFORE_SPAWN",
+                      cleanupConfirmed:
+                        true,
+                    };
+                  }
+
+                  lateSpawnCount += 1;
+
+                  options.onSpawn?.({
+                    pid: 9999,
+                  });
+
+                  return {
+                    status: "PASS",
+                    exitCode: 0,
+                    signal: null,
+                    cleanupConfirmed:
+                      true,
+                  };
+                },
+              };
+            },
+          },
+        }
+      );
+
+    const {
+      session,
+      terminal,
+    } =
+      createSessionAndTerminal(
+        data,
+        {
+          owner: "NOON",
+        }
+      );
+
+    assert.throws(
+      () =>
+        data.service.runCommand({
+          sessionId:
+            session.id,
+
+          terminalId:
+            terminal.id,
+
+          origin:
+            "NOON",
+
+          command:
+            "npm test",
+        })
+    );
+
+    assert.ok(
+      receivedSignal,
+      "le Terminal doit transmettre un AbortSignal au runner"
+    );
+
+    assert.equal(
+      receivedSignal.aborted,
+      true,
+      "le refus synchrone doit annuler immédiatement le runner"
+    );
+
+    releaseAsyncGate();
+
+    await new Promise(
+      (resolve) =>
+        setImmediate(resolve)
+    );
+
+    assert.equal(
+      lateSpawnCount,
+      0,
+      "aucun spawn ne doit devenir possible après le refus synchrone"
+    );
+  }
+);
+
+test("un terminal NOON refuse un état démarré sans onSpawn synchrone", (context) => {
+  const data = fixture(context, {
+    serviceOptions: {
+      createSandboxRunner() {
+        return {
+          run() {
+            return Promise.resolve({ status: "PASS" });
+          },
+        };
+      },
+    },
+  });
+  const { session, terminal } = createSessionAndTerminal(data, { owner: "NOON" });
+
+  assert.throws(
+    () => data.service.runCommand({
+      sessionId: session.id,
+      terminalId: terminal.id,
+      origin: "NOON",
+      command: "npm test",
+    }),
+    (error) => error.code === "SANDBOX_TERMINAL_SYNC_START_REQUIRED"
+  );
+
+  const current = data.service.getSession(session.id);
+  assert.equal(current.terminalSessions[0].running, false);
+  assert.equal(current.problems.status, "EMPTY");
+});
+
+test("une annulation NOON conserve CANCELLED et expose cleanup non confirmé", async (context) => {
+  const data = fixture(context, {
+    serviceOptions: {
+      createSandboxContract(input, options) {
+        return createSandboxExecutionContractV1({
+          ...input,
+          limits: {
+            wallTimeMs: 50,
+            terminateGraceMs: 5,
+            stdoutBytes: 128,
+            stderrBytes: 128,
+          },
+        }, options);
+      },
+    },
+  });
+  const { session, terminal } = createSessionAndTerminal(data, { owner: "NOON" });
+
+  data.service.runCommand({
+    sessionId: session.id,
+    terminalId: terminal.id,
+    origin: "NOON",
+    command: "npm test",
+  });
+
+  data.service.closeTerminal({
+    sessionId: session.id,
+    terminalId: terminal.id,
+    reason: "USER_CANCELLED",
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  const current = data.service.getSession(session.id);
+  assert.equal(current.problems.status, "CANCELLED");
+  assert.equal(current.lastValidationState.status, "CANCELLED");
+  assert.equal(current.lastValidationState.cleanupStatus, "CLEANUP_UNCONFIRMED");
+  assert.equal(current.terminalSessions[0].cleanupStatus, "CLEANUP_UNCONFIRMED");
+});
+
+test("un résultat NOON tardif ne remplace pas Problems ni validation USER plus récente", async (context) => {
+  const data = fixture(context);
+  const session = data.service.createSession({ workspaceId: "workspace-test" });
+  const noon = data.service.createTerminal({ sessionId: session.id, owner: "NOON" });
+
+  data.service.runCommand({
+    sessionId: session.id,
+    terminalId: noon.id,
+    origin: "NOON",
+    command: "npm test",
+  });
+
+  const user = data.service.createTerminal({ sessionId: session.id, owner: "USER" });
+  data.service.runCommand({
+    sessionId: session.id,
+    terminalId: user.id,
+    origin: "USER",
+    command: "npm test",
+  });
+  data.children[1].stderr.emit("data", "test at test/a.test.js:1:1\nAssertionError [ERR_ASSERTION]: current user failure");
+  data.children[1].emit("close", 1, null);
+
+  data.children[0].emit("close", 0, null);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const current = data.service.getSession(session.id);
+  assert.equal(current.problems.command, "npm test");
+  assert.ok(current.problems.counts.error > 0);
+  assert.equal(current.lastValidationState.origin, "USER");
+  assert.equal(current.lastValidationState.status, "FAIL");
 });
 
 test("la fermeture d’une session ferme tous ses terminaux", (context) => {

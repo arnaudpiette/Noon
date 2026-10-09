@@ -20,6 +20,11 @@ const {
   createDevGitDiffService,
 } = require("./dev-git-diff-service");
 
+const {
+  createDevProcessRunner,
+  createSandboxExecutionContractV1,
+} = require("../security/dev-process-runner");
+
 const TERMINAL_STATUSES = Object.freeze([
   "IDLE",
   "RUNNING",
@@ -131,6 +136,8 @@ function createDevWorkspaceTerminalService({
   now = () => Date.now(),
   spawnProcess = spawn,
   environment = process.env,
+  createSandboxRunner = createDevProcessRunner,
+  createSandboxContract = createSandboxExecutionContractV1,
 } = {}) {
   if (!workspaceEngine?.context) {
     throw new TypeError("WorkspaceEngine requis.");
@@ -403,14 +410,23 @@ function createDevWorkspaceTerminalService({
       id: terminal.id,
       title: terminal.title,
       owner: terminal.owner,
-      pid: terminal.child?.pid || null,
+      pid:
+        terminal.child?.pid ||
+        terminal.runner?.pid ||
+        null,
       cwd: terminal.cwd,
       status: terminal.status,
       createdAt: terminal.createdAt,
       lastActivityAt: terminal.lastActivityAt,
       exitCode: terminal.exitCode,
       signal: terminal.signal,
-      running: Boolean(terminal.child),
+      running: Boolean(
+        terminal.child ||
+        terminal.runner
+      ),
+      cleanupStatus:
+        terminal.cleanupStatus ||
+        null,
     };
   }
 
@@ -462,7 +478,13 @@ function createDevWorkspaceTerminalService({
   function refreshExecutionState(session) {
     session.executionState = [
       ...session.terminals.values(),
-    ].some((terminal) => Boolean(terminal.child))
+    ].some(
+      (terminal) =>
+        Boolean(
+          terminal.child ||
+          terminal.runner
+        )
+    )
       ? "RUNNING"
       : "READY";
   }
@@ -557,6 +579,8 @@ function createDevWorkspaceTerminalService({
       signal: null,
       cancelReason: null,
       child: null,
+      runner: null,
+      cleanupStatus: null,
       output: [],
       outputCursor: 0,
     };
@@ -893,6 +917,223 @@ function createDevWorkspaceTerminalService({
     return { applied: true, status: session.problems.status };
   }
 
+  function startNoonSandboxValidation({
+    session,
+    terminal,
+    command,
+    commandDecision,
+    policyDecision,
+  }) {
+    const startedAt = now();
+    const outputStartCursor = terminal.outputCursor;
+    const problemRunId = crypto.randomUUID();
+    const controller = new AbortController();
+    let started = false;
+    let record = null;
+
+    const startState = (pid) => {
+      if (started) return;
+      started = true;
+      record = {
+        controller,
+        pid: Number.isInteger(pid) ? pid : null,
+      };
+      terminal.runner = record;
+      terminal.cleanupStatus = null;
+      terminal.status = "RUNNING";
+      terminal.exitCode = null;
+      terminal.signal = null;
+      append(terminal, "input", `$ ${command}`);
+      session.activeProblemsRunId = problemRunId;
+      session.problems = {
+        status: "RUNNING",
+        source: inferDevProblemSource(command),
+        command,
+        terminalId: terminal.id,
+        exitCode: null,
+        counts: { total: 0, error: 0, warning: 0, info: 0 },
+        truncated: false,
+        problems: [],
+        updatedAt: iso(),
+        origin: terminal.owner,
+      };
+      refreshExecutionState(session);
+    };
+
+    const complete = (result) => {
+      if (!record || terminal.runner !== record) return;
+      terminal.runner = null;
+      if (terminal.status !== "CLOSED") terminal.status = "EXITED";
+      terminal.exitCode = Number.isInteger(result.exitCode) ? result.exitCode : null;
+      terminal.signal = result.signal || null;
+      terminal.cleanupStatus = result.status === "CLEANUP_UNCONFIRMED"
+        ? "CLEANUP_UNCONFIRMED"
+        : result.cleanupConfirmed === true
+          ? "CONFIRMED"
+          : "UNCONFIRMED";
+      terminal.lastActivityAt = iso();
+
+      const currentProblemsRun =
+        session.activeProblemsRunId === problemRunId;
+
+      if (currentProblemsRun) {
+        const parsedProblems = parseDevProblems({
+          command,
+          repositoryRoot: session.repositoryRoot,
+          exitCode: terminal.exitCode,
+          output: terminal.output.filter((event) => event.sequence > outputStartCursor),
+        });
+        parsedProblems.truncated = parsedProblems.truncated === true || result.outputTruncated === true;
+        if (terminal.cancelReason === "USER_CANCELLED") {
+          parsedProblems.status = "CANCELLED";
+        } else if (
+          result.status === "CLEANUP_UNCONFIRMED" ||
+          result.status !== "PASS" ||
+          result.cleanupConfirmed !== true
+        ) {
+          if (parsedProblems.status === "EMPTY") parsedProblems.status = "UNRESOLVED";
+        }
+        session.problems = {
+          ...parsedProblems,
+          terminalId: terminal.id,
+          updatedAt: iso(),
+          origin: terminal.owner,
+        };
+        session.activeProblemsRunId = null;
+      }
+
+      if (currentProblemsRun) {
+        session.lastValidationState = {
+          origin: terminal.owner,
+          completedAt: iso(),
+          nativeUiClaimedAt: null,
+          command,
+          classification: commandDecision.classification,
+          reasonCode: result.reasonCode || commandDecision.reasonCode,
+          exitCode: terminal.exitCode,
+          signal: terminal.signal,
+          durationMs: result.durationMs,
+          status: terminal.cancelReason === "USER_CANCELLED"
+            ? "CANCELLED"
+            : result.status === "PASS"
+              ? "PASS"
+              : "FAIL",
+          cleanupStatus: terminal.cleanupStatus,
+        };
+      }
+      refreshExecutionState(session);
+      emit("dev_terminal_exited", {
+        workspaceId: session.workspaceId,
+        terminalId: terminal.id,
+        owner: terminal.owner,
+        classification: commandDecision.classification,
+        exitCode: terminal.exitCode,
+        signal: terminal.signal,
+        durationMs: result.durationMs,
+        cleanupStatus: terminal.cleanupStatus,
+      });
+    };
+
+    let runner;
+    let contract;
+    let pending;
+
+    try {
+      contract = createSandboxContract({
+        executionId: `terminal-validation-${crypto.randomUUID()}`,
+        workspaceId: session.workspaceId,
+        workspaceSessionId: session.id,
+        canonicalWorkspaceRoot: session.repositoryRoot,
+        command,
+        authority: {
+          policyDecisionId: clean(policyDecision?.decisionId, 180) || null,
+          policyVersion: clean(policyDecision?.policyVersion, 180) || null,
+          actionFingerprint: clean(policyDecision?.actionFingerprint, 256) || null,
+          budgetDecisionId: null,
+          approvalId: null,
+        },
+      }, {
+        now,
+        environment,
+      });
+
+      runner = createSandboxRunner({
+        spawnProcess,
+        now,
+        environment,
+        resolveContext() {
+          const current = requireSession(session.id);
+          const { root } = rootFor(current.workspaceId, current.repositoryRoot);
+          if (
+            current !== session ||
+            root.path !== session.repositoryRoot
+          ) {
+            throw Object.assign(new Error("Contexte terminal obsolète."), {
+              code: "SANDBOX_CONTEXT_STALE",
+            });
+          }
+          return {
+            workspaceId: current.workspaceId,
+            workspaceSessionId: current.id,
+            canonicalWorkspaceRoot: root.path,
+          };
+        },
+        revalidate() {
+          policyFor(requireSession(session.id), commandDecision.classification);
+          return { allowed: true };
+        },
+      });
+
+      pending = runner.run(contract, {
+        signal: controller.signal,
+        onSpawn({ pid }) {
+          startState(pid);
+        },
+        onOutput({ type, text }) {
+          if (record && terminal.runner === record) append(terminal, type, text);
+        },
+      });
+    } catch (error) {
+      throw new DevWorkspaceError(
+        clean(error?.code, 120) || "SANDBOX_TERMINAL_START_FAILED",
+        "Impossible de démarrer la validation Sandbox."
+      );
+    }
+
+    if (!started || !record) {
+      controller.abort();
+      Promise.resolve(pending).catch(() => {});
+      throw new DevWorkspaceError(
+        "SANDBOX_TERMINAL_SYNC_START_REQUIRED",
+        "La validation Sandbox n'a pas confirmé son lancement immédiat."
+      );
+    }
+
+    record.promise = pending;
+    Promise.resolve(pending).then(
+      complete,
+      (error) => complete({
+        status: "FAIL",
+        reasonCode: clean(error?.code, 120) || "SANDBOX_EXECUTION_FAILED",
+        exitCode: null,
+        signal: null,
+        durationMs: Math.max(0, now() - startedAt),
+        outputTruncated: false,
+        cleanupConfirmed: false,
+      })
+    );
+
+    return {
+      terminal: publicTerminal(terminal),
+      classification: commandDecision.classification,
+      reasonCode: commandDecision.reasonCode,
+      execution: {
+        executable: commandDecision.execution[0],
+        args: [...commandDecision.execution[1]],
+      },
+    };
+  }
+
   function runCommand(input = {}) {
     const session = requireSession(
       input.sessionId
@@ -952,10 +1193,23 @@ function createDevWorkspaceTerminalService({
       );
     }
 
-    policyFor(
+    const policyDecision = policyFor(
       session,
       commandDecision.classification
     );
+
+    if (
+      terminal.owner === "NOON" &&
+      commandDecision.classification === "SAFE_READ"
+    ) {
+      return startNoonSandboxValidation({
+        session,
+        terminal,
+        command,
+        commandDecision,
+        policyDecision,
+      });
+    }
 
     const [
       executable,
@@ -1083,12 +1337,11 @@ function createDevWorkspaceTerminalService({
       terminal.lastActivityAt =
         iso();
 
-      if (
-        commandDecision.classification ===
-          "SAFE_READ" &&
-        session.activeProblemsRunId ===
-          problemRunId
-      ) {
+      const currentProblemsRun =
+        commandDecision.classification === "SAFE_READ" &&
+        session.activeProblemsRunId === problemRunId;
+
+      if (currentProblemsRun) {
         const commandOutput =
           terminal.output.filter(
             (event) =>
@@ -1126,41 +1379,46 @@ function createDevWorkspaceTerminalService({
           null;
       }
 
-      session.lastValidationState = {
-        origin: terminal.owner,
-        completedAt: iso(),
-        nativeUiClaimedAt: null,
+      if (
+        commandDecision.classification !== "SAFE_READ" ||
+        currentProblemsRun
+      ) {
+        session.lastValidationState = {
+          origin: terminal.owner,
+          completedAt: iso(),
+          nativeUiClaimedAt: null,
 
-        command:
-          commandDecision.classification ===
-          "SAFE_READ"
-            ? command
-            : null,
+          command:
+            commandDecision.classification ===
+            "SAFE_READ"
+              ? command
+              : null,
 
-        classification:
-          commandDecision.classification,
+          classification:
+            commandDecision.classification,
 
-        reasonCode:
-          commandDecision.reasonCode,
+          reasonCode:
+            commandDecision.reasonCode,
 
-        exitCode:
-          terminal.exitCode,
+          exitCode:
+            terminal.exitCode,
 
-        signal:
-          terminal.signal,
+          signal:
+            terminal.signal,
 
-        durationMs:
-          now() - startedAt,
+          durationMs:
+            now() - startedAt,
 
-        status:
-          terminal.cancelReason === "USER_CANCELLED"
-            ? "CANCELLED"
-            : error
-            ? "FAILED"
-            : terminal.exitCode === 0
-              ? "PASS"
-              : "FAIL",
-      };
+          status:
+            terminal.cancelReason === "USER_CANCELLED"
+              ? "CANCELLED"
+              : error
+              ? "FAILED"
+              : terminal.exitCode === 0
+                ? "PASS"
+                : "FAIL",
+        };
+      }
 
       refreshExecutionState(session);
 
@@ -1292,12 +1550,23 @@ function createDevWorkspaceTerminalService({
     const child =
       terminal.child;
 
+    const runner =
+      terminal.runner;
+
     terminal.status = "CLOSED";
     terminal.cancelReason = input.reason === "USER_CANCELLED" ? "USER_CANCELLED" : null;
-    terminal.child = null;
+    if (runner) {
+      terminal.cleanupStatus = "PENDING";
+    } else {
+      terminal.child = null;
+    }
     terminal.lastActivityAt = iso();
 
-    if (
+    if (runner) {
+      try {
+        runner.controller.abort();
+      } catch {}
+    } else if (
       child &&
       !child.killed
     ) {
@@ -1965,15 +2234,18 @@ function createDevWorkspaceTerminalService({
       const child =
         terminal.child;
 
-      terminal.status =
-        "CLOSED";
+      terminal.status = "CLOSED";
 
-      terminal.child = null;
-
-      if (
+      if (terminal.runner) {
+        terminal.cleanupStatus = "PENDING";
+        try {
+          terminal.runner.controller.abort();
+        } catch {}
+      } else if (
         child &&
         !child.killed
       ) {
+        terminal.child = null;
         try {
           child.kill("SIGTERM");
         } catch {}

@@ -636,7 +636,16 @@ function createNativeDevImplementationEngine({
                   contract.maxDuration,
                   120_000
                 ),
-                signal
+                signal,
+                {
+                  taskId,
+                  workspaceId:
+                    contract.workspaceId,
+                  sessionId:
+                    contract.sessionId,
+                  permissions:
+                    contract.permissions,
+                }
               ),
         }
       );

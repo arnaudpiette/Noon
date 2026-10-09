@@ -161,6 +161,7 @@ const { createNativeDevCoordinator } = require("./services/dev/native-dev-coordi
 const { createNativeDevOrchestrator } = require("./services/dev/native-dev-orchestrator");
 const { createNativeDevOrchestratorFacade } = require("./services/dev/native-dev-orchestrator-facade");
 const { createNativeDevUiExecutionService } = require("./services/dev/native-dev-ui-execution-service");
+const { createSandboxDevValidationExecutor } = require("./services/security/dev-validation-runner");
 const { createDevWorkspaceTerminalService } = require("./services/dev/workspace-terminal-service");
 const { createDevWorkspaceAgentExecutionLoop } = require("./services/dev/workspace-agent-execution-loop");
 const { createDevTaskJournal } = require("./services/dev/dev-task-journal");
@@ -1405,6 +1406,18 @@ const operationalSecurityPolicy = createOperationalSecurityPolicy({
   observability: (event, metadata) => toolAuditLog.append(event, metadata),
 });
 
+const sandboxDevValidationExecutor =
+  createSandboxDevValidationExecutor({
+    workspaceEngine,
+    operationalSecurityPolicy,
+    observability:
+      (event, metadata) =>
+        toolAuditLog.append(
+          `dev.sandbox.${event}`,
+          metadata
+        ),
+  });
+
 const devWorkspaceTerminalService = createDevWorkspaceTerminalService({
   workspaceEngine,
   operationalSecurityPolicy,
@@ -1504,6 +1517,8 @@ const nativeDevB3Orchestrator = createNativeDevOrchestrator({
   skillRegistry,
   reasoner: nativeDevReasoner,
   journal: nativeDevJournal,
+  validationRunner:
+    sandboxDevValidationExecutor,
   qualityEscalationMode: (input) => featureFlags.evaluate("dev.quality-escalation", {
     workspaceId: input.workspaceId,
     sessionId: input.sessionId,
@@ -1616,6 +1631,8 @@ const devDelegationRunner = createDevDelegationRunner({
   specialistAgent: codexSpecialistAgent,
   workspaceEngine,
   operationalSecurityPolicy,
+  validationExecutor:
+    sandboxDevValidationExecutor,
   observability: (event, metadata) => toolAuditLog.append(`delegation.${event}`, metadata),
 });
 // Le benchmark possède déjà son propre gate B2 et son snapshot canonique. Son
