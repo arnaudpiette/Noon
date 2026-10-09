@@ -44,4 +44,94 @@ function evaluateOption(option, criteria, evidenceById = new Map()) {
     evaluations, blockers, comparisonIndex: knownWeight ? Math.round(weighted / knownWeight) : null, evidenceCoverage: evaluations.length ? evaluations.filter((item) => item.evidenceStatus === "EVIDENCE").length / evaluations.length : 0 };
 }
 
-module.exports = { ASSESSMENTS, WEIGHTS, assessmentFor, evaluateOption, meetsConstraint };
+function meetsConstraintV2(value, constraint = {}) {
+  return meetsConstraint(value, {
+    operator: constraint.operator,
+    value: constraint.expected,
+  });
+}
+
+function evaluateOptionV2(
+  option,
+  criteria,
+  eligibleEvidence = []
+) {
+  const evaluations = [];
+  let weighted = 0;
+  let knownWeight = 0;
+
+  for (const criterion of criteria) {
+    const evidence = eligibleEvidence
+      .filter(
+        (item) =>
+          item.optionId === option.optionId &&
+          item.criterionId === criterion.criterionId
+      )
+      .sort((a, b) =>
+        a.evidenceId.localeCompare(b.evidenceId)
+      );
+
+    const observed = evidence.find(
+      (item) =>
+        item.value !== undefined &&
+        item.value !== null
+    );
+
+    const rawValue =
+      option.values?.[criterion.criterionId];
+
+    const value =
+      observed?.value !== undefined &&
+      observed?.value !== null
+        ? observed.value
+        : rawValue;
+
+    const assessed = assessmentFor(
+      value,
+      criterion
+    );
+
+    const weight =
+      WEIGHTS[criterion.importance] || 2;
+
+    if (assessed.assessment !== "UNKNOWN") {
+      weighted +=
+        ASSESSMENTS[assessed.assessment] *
+        weight;
+      knownWeight += weight;
+    }
+
+    evaluations.push({
+      optionId: option.optionId,
+      criterionId: criterion.criterionId,
+      ...assessed,
+      evidenceIds: evidence.map(
+        (item) => item.evidenceId
+      ),
+      evidenceRootCount: evidence.length,
+      hasEligibleEvidence:
+        evidence.length > 0,
+    });
+  }
+
+  const supportScore = knownWeight
+    ? Number(
+        (weighted / knownWeight).toFixed(6)
+      )
+    : null;
+
+  const evidenceCoverage = criteria.length
+    ? evaluations.filter(
+        (item) => item.hasEligibleEvidence
+      ).length / criteria.length
+    : 0;
+
+  return {
+    optionId: option.optionId,
+    supportScore,
+    evidenceCoverage,
+    evaluations,
+  };
+}
+
+module.exports = { ASSESSMENTS, WEIGHTS, assessmentFor, evaluateOption, evaluateOptionV2, meetsConstraint, meetsConstraintV2 };
