@@ -23,3 +23,20 @@ Les contraintes dures sont évaluées en code et rendent une option `INFEASIBLE`
 - `decision.history`: `OFF` tant que la persistance durable et l'interface de validation ne sont pas activées.
 
 Le premier périmètre est `COMPARE`. Les types `CHOOSE`, `RANK`, `TRADEOFF`, `GO_NO_GO`, `WHAT_IF` et `REVIEW_DECISION` partagent le contrat mais ne déclenchent aucune automatisation.
+
+## Portfolio Capacity — wiring V2 shadow
+
+`PortfolioCapacityEngine.decisionRequest()` est le premier consommateur du contrat strict `schemaVersion: 2`.
+
+Le wiring reste limité au mode local et read-only :
+
+- l'état courant devient une option `CURRENT_STATE` ;
+- au moins une alternative explicite est requise, afin que Decision Support reçoive toujours au moins deux options ;
+- le snapshot projette uniquement des observations structurées de charge temporelle, marge de capacité et signal d'échéance ;
+- ces observations sont `SYSTEM_OBSERVATION` / `SYSTEM` / `VERIFIED` et sont attestées séparément via `attestedEvidenceIds` ;
+- une marge de capacité inconnue reste `null` et produit une contrainte `UNKNOWN`, jamais un faux zéro ;
+- le nombre de clusters d'échéance est une observation factuelle, pas une preuve automatique de surcharge ;
+- aucune vérification n'est exécutée par ce wiring ;
+- `recommendationIsAction`, `actionAuthorized` et `verificationAuthorized` restent toujours `false`.
+
+Le wiring Portfolio ne modifie ni Goal, ni Planning, ni Calendar, ni projet. `DECIDED` reste un verdict intellectuel et ne constitue jamais une permission d'exécution.

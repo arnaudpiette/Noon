@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createCapacityService, createPortfolioCapacityEngine, normalizeDemand, normalizePortfolioItem } = require("../services/portfolio");
+const { createDecisionSupportEngine } = require("../services/decision/decision-support-engine");
 
 const at = () => new Date("2026-08-31T08:00:00.000Z");
 function capacity(overrides = {}) {
@@ -109,10 +110,416 @@ test("les what-if de scope et deadline modifient seulement la copie", () => {
   const scenario = e.simulate({ baseSnapshot: base, changes: [{ type: "REDUCE_DEMAND", itemRef: "a", expectedEstimate: 500 }, { type: "MOVE_DEADLINE", itemRef: "a", deadline: "2026-09-10" }] });
   assert.equal(scenario.demandDeltaMinutes, 500); assert.equal(base.items[0].deadline, "2026-09-03T00:00:00.000Z");
 });
-test("la demande d'arbitrage exige DecisionSupport et n'autorise aucune action", () => {
-  const e = engine(); const base = e.createSnapshot({ workspaceRef: "w1", capacity: capacity(), items: [item("a", 1000)] });
-  const result = e.decisionRequest(base, [{ optionId: "reduce", label: "Réduire le scope" }]);
-  assert.equal(result.requiresDecisionSupport, true); assert.equal(result.actionAuthorized, false);
+test("la demande d'arbitrage construit un contrat V2 avec état courant sans autorité d'action", () => {
+  const e = engine();
+  const base = e.createSnapshot({
+    workspaceRef: "w1",
+    capacity: capacity(),
+    items: [item("a", 1000)],
+  });
+
+  const result = e.decisionRequest(
+    base,
+    [
+      {
+        optionId: "reduce",
+        label: "Réduire le scope",
+      },
+    ]
+  );
+
+  assert.equal(
+    result.requiresDecisionSupport,
+    true
+  );
+  assert.equal(
+    result.actionAuthorized,
+    false
+  );
+  assert.equal(
+    result.verificationAuthorized,
+    false
+  );
+  assert.equal(
+    result.request.schemaVersion,
+    2
+  );
+  assert.equal(
+    result.request.decisionType,
+    "COMPARE"
+  );
+  assert.equal(
+    result.request.outputMode,
+    "BALANCED"
+  );
+  assert.equal(
+    result.request.options.length,
+    2
+  );
+  assert.equal(
+    result.request.options[0].source,
+    "CURRENT_STATE"
+  );
+  assert.deepEqual(
+    result.request.criteria.map(
+      (criterion) =>
+        criterion.type
+    ),
+    ["TIME", "TIME", "RISK"]
+  );
+});
+
+test("Portfolio wiring V2 atteste seulement les preuves structurées du snapshot", () => {
+  let captured = null;
+
+  const decision =
+    createDecisionSupportEngine();
+
+  const e =
+    createPortfolioCapacityEngine({
+      capacityService:
+        createCapacityService({
+          now: at,
+        }),
+      now: at,
+      decisionSupportEngine: {
+        compare(request, options) {
+          captured = {
+            request:
+              structuredClone(request),
+            options:
+              structuredClone(options),
+          };
+
+          return decision.compare(
+            request,
+            options
+          );
+        },
+      },
+    });
+
+  const base = e.createSnapshot({
+    workspaceRef: "w1",
+    capacity: capacity(),
+    items: [item("a", 1000)],
+  });
+
+  const result = e.decisionRequest(
+    base,
+    [
+      {
+        optionId: "reduce",
+        label: "Réduire le scope",
+      },
+    ]
+  );
+
+  assert.equal(
+    captured.request.schemaVersion,
+    2
+  );
+
+  assert.equal(
+    captured.request.evidence.length,
+    3
+  );
+
+  assert.ok(
+    captured.request.evidence.every(
+      (evidence) =>
+        evidence.kind ===
+          "SYSTEM_OBSERVATION" &&
+        evidence.authority ===
+          "SYSTEM" &&
+        evidence.verificationStatus ===
+          "VERIFIED" &&
+        evidence.localOnly === true &&
+        evidence.allowedForRemoteModel ===
+          false
+    )
+  );
+
+  assert.deepEqual(
+    captured.options
+      .attestedEvidenceIds
+      .slice()
+      .sort(),
+    captured.request.evidence
+      .map(
+        (evidence) =>
+          evidence.evidenceId
+      )
+      .sort()
+  );
+
+  assert.equal(
+    result.schemaVersion,
+    2
+  );
+  assert.equal(
+    result.recommendationIsAction,
+    false
+  );
+  assert.equal(
+    result.actionAuthorized,
+    false
+  );
+  assert.equal(
+    result.verificationAuthorized,
+    false
+  );
+});
+
+test("Portfolio wiring V2 conserve une capacité inconnue en UNKNOWN et jamais zéro", () => {
+  let captured = null;
+
+  const decision =
+    createDecisionSupportEngine();
+
+  const e =
+    createPortfolioCapacityEngine({
+      capacityService:
+        createCapacityService({
+          now: at,
+        }),
+      now: at,
+      decisionSupportEngine: {
+        compare(request, options) {
+          captured =
+            structuredClone(request);
+
+          return decision.compare(
+            request,
+            options
+          );
+        },
+      },
+    });
+
+  const base = e.createSnapshot({
+    workspaceRef: "w1",
+    capacity: capacity(),
+    items: [
+      item("a", null),
+    ],
+  });
+
+  const result = e.decisionRequest(
+    base,
+    [
+      {
+        optionId: "estimate",
+        label: "Estimer avant d'arbitrer",
+      },
+    ]
+  );
+
+  const currentOption =
+    captured.options.find(
+      (option) =>
+        option.source ===
+        "CURRENT_STATE"
+    );
+
+  const gapEvidence =
+    captured.evidence.find(
+      (evidence) =>
+        evidence.criterionId ===
+        "portfolio-capacity-gap"
+    );
+
+  assert.equal(
+    gapEvidence.value,
+    null
+  );
+
+  const constraint =
+    result.constraints.find(
+      (entry) =>
+        entry.optionId ===
+          currentOption.optionId &&
+        entry.constraintId ===
+          "portfolio-capacity-nonnegative"
+    );
+
+  assert.equal(
+    constraint.status,
+    "UNKNOWN"
+  );
+
+  assert.notEqual(
+    gapEvidence.value,
+    0
+  );
+
+  assert.notEqual(
+    result.verdict,
+    "DECIDED"
+  );
+});
+
+test("Portfolio wiring V2 évalue la marge connue sans transformer DECIDED en autorisation", () => {
+  let captured = null;
+
+  const decision =
+    createDecisionSupportEngine();
+
+  const e =
+    createPortfolioCapacityEngine({
+      capacityService:
+        createCapacityService({
+          now: at,
+        }),
+      now: at,
+      decisionSupportEngine: {
+        compare(request, options) {
+          captured =
+            structuredClone(request);
+
+          return decision.compare(
+            request,
+            options
+          );
+        },
+      },
+    });
+
+  const base = e.createSnapshot({
+    workspaceRef: "w1",
+    capacity: capacity(),
+    items: [item("a", 1000)],
+  });
+
+  const result = e.decisionRequest(
+    base,
+    [
+      {
+        optionId: "reduce",
+        label: "Réduire le scope",
+      },
+    ]
+  );
+
+  const currentOption =
+    captured.options.find(
+      (option) =>
+        option.source ===
+        "CURRENT_STATE"
+    );
+
+  const constraint =
+    result.constraints.find(
+      (entry) =>
+        entry.optionId ===
+          currentOption.optionId &&
+        entry.constraintId ===
+          "portfolio-capacity-nonnegative"
+    );
+
+  assert.equal(
+    constraint.status,
+    "SATISFIED"
+  );
+
+  assert.equal(
+    result.actionAuthorized,
+    false
+  );
+
+  assert.equal(
+    result.verificationAuthorized,
+    false
+  );
+});
+
+test("Portfolio wiring V2 refuse l'absence d'alternative avant tout appel DecisionSupport", () => {
+  let called = false;
+
+  const e =
+    createPortfolioCapacityEngine({
+      capacityService:
+        createCapacityService({
+          now: at,
+        }),
+      now: at,
+      decisionSupportEngine: {
+        compare() {
+          called = true;
+          throw new Error(
+            "ne doit pas être appelé"
+          );
+        },
+      },
+    });
+
+  const base = e.createSnapshot({
+    workspaceRef: "w1",
+    capacity: capacity(),
+    items: [item("a", 1000)],
+  });
+
+  assert.throws(
+    () =>
+      e.decisionRequest(
+        base,
+        []
+      ),
+    (error) =>
+      error.code ===
+      "PORTFOLIO_DECISION_OPTIONS_INSUFFICIENT"
+  );
+
+  assert.equal(called, false);
+});
+
+test("Portfolio wiring V2 ne mute ni le snapshot ni les alternatives", () => {
+  const e =
+    createPortfolioCapacityEngine({
+      capacityService:
+        createCapacityService({
+          now: at,
+        }),
+      now: at,
+      decisionSupportEngine:
+        createDecisionSupportEngine(),
+    });
+
+  const base = e.createSnapshot({
+    workspaceRef: "w1",
+    capacity: capacity(),
+    items: [item("a", 1000)],
+  });
+
+  const options = [
+    {
+      optionId: "reduce",
+      label: "Réduire le scope",
+      description:
+        "Option locale de test",
+    },
+  ];
+
+  const beforeBase =
+    structuredClone(base);
+
+  const beforeOptions =
+    structuredClone(options);
+
+  e.decisionRequest(
+    base,
+    options
+  );
+
+  assert.deepEqual(
+    base,
+    beforeBase
+  );
+
+  assert.deepEqual(
+    options,
+    beforeOptions
+  );
 });
 test("la projection devient plus grossière et moins confiante avec le temps", () => {
   const periods = Array.from({ length: 6 }, (_, index) => ({ label: `w${index}`, workspaceRef: "w1", capacity: capacity(), items: [item("a", 300)] }));

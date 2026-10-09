@@ -130,12 +130,340 @@ function createPortfolioCapacityEngine({ capacityService = createCapacityService
       state: snapshot.overloads[0].state, granularity: index > 3 ? "COARSE" : "DETAILED" }; });
   }
   function decisionRequest(snapshot, options = []) {
-    const request = { decisionId: id("portfolio_decision", [snapshot.portfolioSnapshotId, options]), decisionType: "PORTFOLIO_ARBITRATION",
-      workspaceId: snapshot.workspaceRef, profileScope: snapshot.profileScope, options, recommendationRequested: true, outputMode: "RECOMMEND",
-      explicitCriteria: [{ type: "STRATEGIC_FIT", label: "Alignement objectif", importance: "HIGH", source: "goal_strategy" },
-        { type: "DEADLINE_RISK", label: "Risque échéance", importance: "HIGH", source: "portfolio" },
-        { type: "REVERSIBILITY", label: "Réversibilité", importance: "MEDIUM", source: "portfolio" }], evidence: [], constraints: [] };
-    return decisionSupportEngine?.compare ? decisionSupportEngine.compare(request) : { request, requiresDecisionSupport: true, actionAuthorized: false };
+    if (!snapshot?.portfolioSnapshotId) {
+      throw new TypeError("PortfolioSnapshot requis.");
+    }
+
+    const alternatives =
+      Array.isArray(options)
+        ? options.slice(0, 19)
+        : [];
+
+    if (!alternatives.length) {
+      throw Object.assign(
+        new Error(
+          "Au moins une alternative est nécessaire pour comparer avec l'état courant."
+        ),
+        {
+          code: "PORTFOLIO_DECISION_OPTIONS_INSUFFICIENT",
+        }
+      );
+    }
+
+    const scope = {
+      profileScope: String(
+        snapshot.profileScope || "owner"
+      ),
+      workspaceId:
+        snapshot.workspaceRef ?? null,
+      projectId: null,
+      purpose: "LOCAL_ANALYSIS",
+    };
+
+    const criterionIds = Object.freeze({
+      timeDemand: "portfolio-time-demand",
+      capacityGap: "portfolio-capacity-gap",
+      deadlineRisk: "portfolio-deadline-risk",
+    });
+
+    const criteria = [
+      {
+        criterionId: criterionIds.timeDemand,
+        label: "Charge temporelle",
+        type: "TIME",
+        importance: "HIGH",
+        direction: "MINIMIZE",
+        requiredEvidence: "VERIFIED",
+        range: null,
+      },
+      {
+        criterionId: criterionIds.capacityGap,
+        label: "Marge de capacité",
+        type: "TIME",
+        importance: "CRITICAL",
+        direction: "MAXIMIZE",
+        requiredEvidence: "VERIFIED",
+        range: null,
+      },
+      {
+        criterionId: criterionIds.deadlineRisk,
+        label: "Risque échéance",
+        type: "RISK",
+        importance: "HIGH",
+        direction: "MINIMIZE",
+        requiredEvidence: "VERIFIED",
+        range: null,
+      },
+    ];
+
+    const scalar = (value) =>
+      value === null ||
+      ["string", "number", "boolean"].includes(
+        typeof value
+      );
+
+    const projectValues = (raw = {}) => {
+      const source =
+        raw &&
+        typeof raw === "object" &&
+        !Array.isArray(raw)
+          ? raw
+          : {};
+
+      return Object.fromEntries(
+        Object.values(criterionIds)
+          .filter(
+            (criterionId) =>
+              Object.hasOwn(source, criterionId) &&
+              scalar(source[criterionId])
+          )
+          .map((criterionId) => [
+            criterionId,
+            source[criterionId],
+          ])
+      );
+    };
+
+    const currentOptionId = id(
+      "portfolio_current",
+      snapshot.portfolioSnapshotId
+    );
+
+    const normalizedAlternatives =
+      alternatives.map((raw, index) => {
+        const candidate =
+          raw &&
+          typeof raw === "object" &&
+          !Array.isArray(raw)
+            ? raw
+            : {};
+
+        const label = String(
+          candidate.label ||
+          `Alternative ${index + 1}`
+        )
+          .trim()
+          .slice(0, 180);
+
+        const rawOptionId = String(
+          candidate.optionId || ""
+        ).trim();
+
+        const optionId =
+          rawOptionId &&
+          rawOptionId.length <= 160
+            ? rawOptionId
+            : id(
+                "portfolio_option",
+                [
+                  snapshot.portfolioSnapshotId,
+                  index,
+                  rawOptionId,
+                  label,
+                ]
+              );
+
+        const option = {
+          optionId,
+          label:
+            label ||
+            `Alternative ${index + 1}`,
+          source: "USER_PROVIDED",
+          assumptions: [],
+          values: projectValues(
+            candidate.values
+          ),
+        };
+
+        if (
+          candidate.description !== undefined
+        ) {
+          option.description = String(
+            candidate.description
+          ).slice(0, 1200);
+        }
+
+        return option;
+      });
+
+    const requestOptions = [
+      {
+        optionId: currentOptionId,
+        label: "État actuel",
+        source: "CURRENT_STATE",
+        assumptions: [],
+        values: {},
+      },
+      ...normalizedAlternatives,
+    ];
+
+    const overload =
+      snapshot.overloads?.[0] || {};
+
+    const evidenceFacts = [
+      {
+        suffix: "time-demand",
+        criterionId:
+          criterionIds.timeDemand,
+        value:
+          snapshot.expectedDemand ?? null,
+        critical: false,
+      },
+      {
+        suffix: "capacity-gap",
+        criterionId:
+          criterionIds.capacityGap,
+        value:
+          overload.expectedGap ?? null,
+        critical: true,
+      },
+      {
+        suffix: "deadline-risk",
+        criterionId:
+          criterionIds.deadlineRisk,
+        value:
+          Array.isArray(
+            snapshot.deadlineClusters
+          )
+            ? snapshot.deadlineClusters.length
+            : null,
+        critical: false,
+      },
+    ];
+
+    const evidence =
+      evidenceFacts.map((fact) => {
+        const evidenceId = id(
+          "portfolio_evidence",
+          [
+            snapshot.portfolioSnapshotId,
+            currentOptionId,
+            fact.suffix,
+          ]
+        );
+
+        return {
+          evidenceId,
+          claimId: id(
+            "portfolio_claim",
+            [
+              snapshot.portfolioSnapshotId,
+              fact.criterionId,
+            ]
+          ),
+          optionId: currentOptionId,
+          criterionId:
+            fact.criterionId,
+          stance: "SUPPORTS",
+          value: fact.value,
+          kind: "SYSTEM_OBSERVATION",
+          authority: "SYSTEM",
+          verificationStatus: "VERIFIED",
+          critical: fact.critical,
+          provenance: {
+            producer:
+              "portfolio-capacity-engine",
+            sourceType:
+              "portfolio_snapshot",
+            sourceRef:
+              snapshot.portfolioSnapshotId,
+            locatorRef: null,
+            method:
+              "deterministic_snapshot_projection",
+            rootEvidenceId: null,
+          },
+          scope,
+          observedAt:
+            snapshot.generatedAt,
+          validUntil:
+            snapshot.availableCapacity
+              ?.endAt ?? null,
+          freshnessRequirement:
+            "CURRENT",
+          claimFingerprint:
+            fingerprint({
+              snapshotId:
+                snapshot.portfolioSnapshotId,
+              criterionId:
+                fact.criterionId,
+              value: fact.value,
+            }),
+          independenceKey:
+            snapshot.portfolioSnapshotId,
+          derivedFromEvidenceIds: [],
+          localOnly: true,
+          allowedForRemoteModel: false,
+          untrustedContent: false,
+        };
+      });
+
+    const request = {
+      schemaVersion: 2,
+      decisionId: id(
+        "portfolio_decision",
+        [
+          snapshot.portfolioSnapshotId,
+          requestOptions.map(
+            (option) => option.optionId
+          ),
+        ]
+      ),
+      decisionType: "COMPARE",
+      evaluationAt:
+        snapshot.generatedAt,
+      scope,
+      options: requestOptions,
+      criteria,
+      constraints: [
+        {
+          constraintId:
+            "portfolio-capacity-nonnegative",
+          optionId: null,
+          criterionId:
+            criterionIds.capacityGap,
+          operator: "MIN",
+          expected: 0,
+          strength: "HARD",
+          evidenceRequirement:
+            "VERIFIED",
+        },
+      ],
+      evidence,
+      verificationProposals: [],
+      recommendationRequested: true,
+      outputMode: "BALANCED",
+      contextVersion:
+        fingerprint({
+          snapshotId:
+            snapshot.portfolioSnapshotId,
+          generatedAt:
+            snapshot.generatedAt,
+          overloadId:
+            overload.overloadId ?? null,
+        }).slice(0, 64),
+    };
+
+    const compareOptions = {
+      attestedEvidenceIds:
+        evidence.map(
+          (item) => item.evidenceId
+        ),
+    };
+
+    if (decisionSupportEngine?.compare) {
+      return decisionSupportEngine.compare(
+        request,
+        compareOptions
+      );
+    }
+
+    return {
+      request,
+      requiresDecisionSupport: true,
+      recommendationIsAction: false,
+      actionAuthorized: false,
+      verificationAuthorized: false,
+    };
   }
   function remoteSummary(snapshot) {
     const allowed = snapshot.items.filter((item) => !item.localOnly);
