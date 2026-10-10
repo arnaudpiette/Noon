@@ -1,5 +1,136 @@
 "use strict";
 
+const crypto = require("node:crypto");
+
+const {
+  isTrustedValidationSnapshot,
+} = require("./agents/native-review-validation-agent");
+
+const VALIDATION_SNAPSHOT_VERSION = "native-dev-validation-snapshot-v1";
+const TERMINAL_VALIDATION_KIND = "TERMINAL_REVIEW_VALIDATION";
+const BINDING_STATES = new Set(["LINKED", "UNLINKED"]);
+const SNAPSHOT_COVERAGE = new Set([
+  "GIT_VISIBLE_COMPLETE",
+  "GIT_VISIBLE_PARTIAL",
+  "UNAVAILABLE",
+]);
+const REASON_CODES = new Set([
+  "IDENTITY_MISMATCH",
+  "VALIDATION_UNOBSERVED",
+  "VALIDATION_INCOMPLETE",
+  "SNAPSHOT_UNAVAILABLE",
+  "SNAPSHOT_INCOMPLETE",
+  "REPOSITORY_DIVERGED",
+  "TERMINAL_INCOMPLETE",
+  "UNAVAILABLE",
+]);
+
+function digest(value) {
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify(value))
+    .digest("hex");
+}
+
+function opaqueRef(prefix, value) {
+  return `${prefix}_${digest(value).slice(0, 32)}`;
+}
+
+function text(value) {
+  return typeof value === "string" && value.trim()
+    ? value.trim()
+    : null;
+}
+
+function identityRefs(taskId, contract = {}) {
+  const normalizedTaskId = text(taskId);
+  const workspaceId = text(contract.workspaceId);
+  const sessionId = contract.sessionId == null ? null : text(contract.sessionId);
+
+  if (!normalizedTaskId || !workspaceId || (contract.sessionId != null && !sessionId)) {
+    return null;
+  }
+
+  return {
+    taskRef: opaqueRef("native_dev_task", {
+      taskId: normalizedTaskId,
+      workspaceId,
+      sessionId,
+    }),
+    workspaceRef: opaqueRef("native_dev_workspace", { workspaceId }),
+    sessionRef: sessionId
+      ? opaqueRef("native_dev_session", { workspaceId, sessionId })
+      : null,
+  };
+}
+
+function unavailableValidationSnapshot(refs = null, reasonCode = "UNAVAILABLE") {
+  return {
+    version: VALIDATION_SNAPSHOT_VERSION,
+    validationKind: TERMINAL_VALIDATION_KIND,
+    localOnly: true,
+    taskRef: refs?.taskRef || null,
+    workspaceRef: refs?.workspaceRef || null,
+    sessionRef: refs?.sessionRef || null,
+    bindingState: "UNLINKED",
+    reasonCode,
+    validationStatus: "UNKNOWN",
+    snapshotRef: null,
+    snapshotCoverage: "UNAVAILABLE",
+  };
+}
+
+function adaptValidationSnapshot(raw, { taskId, contract, finalVerdict }) {
+  const refs = identityRefs(taskId, contract);
+  if (!refs || !raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return unavailableValidationSnapshot(refs);
+  }
+  if (!isTrustedValidationSnapshot(raw)) {
+    return unavailableValidationSnapshot(refs);
+  }
+  if (raw.version !== VALIDATION_SNAPSHOT_VERSION
+    || raw.validationKind !== TERMINAL_VALIDATION_KIND
+    || raw.localOnly !== true
+    || raw.taskRef !== refs.taskRef
+    || raw.workspaceRef !== refs.workspaceRef
+    || raw.sessionRef !== refs.sessionRef) {
+    return unavailableValidationSnapshot(refs, "IDENTITY_MISMATCH");
+  }
+  if (!["PASS", "FAIL"].includes(raw.validationStatus)
+    || !BINDING_STATES.has(raw.bindingState)
+    || !SNAPSHOT_COVERAGE.has(raw.snapshotCoverage)
+    || (raw.reasonCode !== null && !REASON_CODES.has(raw.reasonCode))
+    || (raw.bindingState === "LINKED" && raw.reasonCode !== null)
+    || (raw.bindingState === "UNLINKED" && !REASON_CODES.has(raw.reasonCode))) {
+    return unavailableValidationSnapshot(refs);
+  }
+  if (finalVerdict === "CANCELLED" || finalVerdict === "TIMEOUT" || finalVerdict === "PARTIAL") {
+    return unavailableValidationSnapshot(refs, "TERMINAL_INCOMPLETE");
+  }
+  if (raw.bindingState === "LINKED"
+    && (raw.reasonCode !== null
+      || raw.snapshotCoverage !== "GIT_VISIBLE_COMPLETE"
+      || typeof raw.snapshotRef !== "string"
+      || !/^native_dev_snapshot_[a-f0-9]{32}$/.test(raw.snapshotRef))) {
+    return unavailableValidationSnapshot(refs);
+  }
+
+  return {
+    version: VALIDATION_SNAPSHOT_VERSION,
+    validationKind: TERMINAL_VALIDATION_KIND,
+    localOnly: true,
+    ...refs,
+    bindingState: raw.bindingState,
+    reasonCode: raw.reasonCode,
+    validationStatus: raw.validationStatus,
+    snapshotRef: typeof raw.snapshotRef === "string"
+      && /^native_dev_snapshot_[a-f0-9]{32}$/.test(raw.snapshotRef)
+      ? raw.snapshotRef
+      : null,
+    snapshotCoverage: raw.snapshotCoverage,
+  };
+}
+
 function numericSum(values = []) {
   const numbers =
     values.filter(
@@ -179,6 +310,16 @@ function adaptNativeDevResult(
         implementation.failureCategory ||
         "DEV_ORCHESTRATION_FAILURE";
 
+  const validationSnapshot =
+    adaptValidationSnapshot(
+      review.validationSnapshot,
+      {
+        taskId: task.taskId,
+        contract,
+        finalVerdict,
+      }
+    );
+
   const estimatedCost =
     numericSum(
       providerCalls.map(
@@ -282,6 +423,8 @@ function adaptNativeDevResult(
           "PASS",
         issues: [],
       },
+
+    validationSnapshot,
 
     codexUsed: false,
 

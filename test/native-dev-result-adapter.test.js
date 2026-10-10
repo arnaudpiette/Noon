@@ -338,3 +338,84 @@ test(
     );
   }
 );
+
+test(
+  "B3 Result Adapter ne fabrique pas de liaison si le snapshot est indisponible",
+  () => {
+    const result =
+      adaptNativeDevResult({
+        taskId: "task-without-snapshot",
+        finalVerdict: "PASS",
+        analysis: {
+          contract: {
+            workspaceId: "workspace-without-snapshot",
+            sessionId: "session-without-snapshot",
+          },
+        },
+        implementation: {
+          iterations: [],
+          providerCalls: [],
+        },
+        review: {
+          finalVerdict: "PASS",
+          diffReview: {
+            valid: true,
+            issues: [],
+          },
+        },
+      });
+
+    assert.equal(result.validationSnapshot.bindingState, "UNLINKED");
+    assert.equal(result.validationSnapshot.reasonCode, "UNAVAILABLE");
+    assert.equal(result.validationSnapshot.validationStatus, "UNKNOWN");
+    assert.equal(result.validationSnapshot.snapshotCoverage, "UNAVAILABLE");
+    assert.equal(result.validationSnapshot.snapshotRef, null);
+    assert.equal(result.validationSnapshot.validationKind, "TERMINAL_REVIEW_VALIDATION");
+    assert.equal(result.validationSnapshot.localOnly, true);
+    assert.equal(JSON.stringify(result.validationSnapshot).includes("workspace-without-snapshot"), false);
+    assert.equal(JSON.stringify(result.validationSnapshot).includes("session-without-snapshot"), false);
+  }
+);
+
+test(
+  "B3 Result Adapter refuse une liaison seulement déclarée",
+  () => {
+    const result =
+      adaptNativeDevResult({
+        taskId: "task-declared-link",
+        finalVerdict: "PASS",
+        analysis: {
+          contract: {
+            workspaceId: "workspace-declared-link",
+            sessionId: "session-declared-link",
+          },
+        },
+        implementation: {
+          iterations: [],
+          providerCalls: [],
+        },
+        review: {
+          validationSnapshot: {
+            version: "native-dev-validation-snapshot-v1",
+            validationKind: "TERMINAL_REVIEW_VALIDATION",
+            localOnly: true,
+            taskRef: "native_dev_task_0123456789abcdef0123456789abcdef",
+            workspaceRef: "native_dev_workspace_0123456789abcdef0123456789abcdef",
+            sessionRef: "native_dev_session_0123456789abcdef0123456789abcdef",
+            bindingState: "LINKED",
+            reasonCode: null,
+            validationStatus: "PASS",
+            snapshotRef: "native_dev_snapshot_0123456789abcdef0123456789abcdef",
+            snapshotCoverage: "GIT_VISIBLE_COMPLETE",
+            command: "PRIVATE_COMMAND",
+            output: "PRIVATE_OUTPUT",
+          },
+        },
+      });
+
+    assert.equal(result.validationSnapshot.bindingState, "UNLINKED");
+    assert.equal(result.validationSnapshot.reasonCode, "UNAVAILABLE");
+    assert.equal(result.validationSnapshot.snapshotRef, null);
+    assert.equal(JSON.stringify(result.validationSnapshot).includes("PRIVATE_"), false);
+  }
+);
