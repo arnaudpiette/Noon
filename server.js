@@ -137,6 +137,7 @@ const { createAuthorizedContextSources, SOURCE_STATUSES } = require("./services/
 const { inspectGitStatus } = require("./lib/git-status");
 const { createAmbientContextEngine } = require("./services/context/ambient-context-engine");
 const { createDecisionSupportEngine } = require("./services/decision/decision-support-engine");
+const { createDevDecisionConsumer } = require("./services/decision/dev-decision-consumer");
 const { createGoalStrategyEngine } = require("./services/goals/goal-strategy-engine");
 const { createGoalRegistry } = require("./services/goals/goal-registry");
 const { createCapacityService, createPortfolioCapacityEngine } = require("./services/portfolio");
@@ -1548,6 +1549,13 @@ const nativeDevB3Facade = createNativeDevOrchestratorFacade({
     sessionId: input.sessionId,
   }).mode,
 });
+
+const devDecisionConsumer =
+  createDevDecisionConsumer({
+    nativeDevFacade:
+      nativeDevB3Facade,
+    decisionSupportEngine,
+  });
 
 const nativeDevUiExecutionService = createNativeDevUiExecutionService({
   terminalService:
@@ -7961,7 +7969,42 @@ if (req.method === "POST" && req.url === "/api/decision/compare") {
   try {
     if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403 });
     const body = await readJsonBody(req, 256 * 1024);
-    const result = decisionSupportEngine.compare(body.decision || body, { remote: body.remote === true });
+
+    let result;
+
+    if (body.devEvidence !== undefined) {
+      if (
+        !body.decision ||
+        typeof body.decision !== "object" ||
+        Array.isArray(body.decision)
+      ) {
+        throw new TypeError(
+          "decision explicite requise avec devEvidence."
+        );
+      }
+
+      result =
+        devDecisionConsumer.compare({
+          decisionRequest:
+            body.decision,
+
+          devEvidence:
+            body.devEvidence,
+
+          remote:
+            body.remote === true,
+        });
+    } else {
+      result =
+        decisionSupportEngine.compare(
+          body.decision || body,
+          {
+            remote:
+              body.remote === true,
+          }
+        );
+    }
+
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     return res.end(JSON.stringify({ status: "ok", result }));
   } catch (error) {
