@@ -7,6 +7,10 @@ const {
   adaptNativeDevResult,
 } = require("./native-dev-result-adapter");
 
+const {
+  projectNativeDevEvidence,
+} = require("../decision/dev-evidence-adapter");
+
 function createNativeDevOrchestratorFacade({
   orchestrator,
   journal = null,
@@ -15,6 +19,8 @@ function createNativeDevOrchestratorFacade({
   now = () => Date.now(),
   createTaskId = () =>
     `dev-task-${crypto.randomUUID()}`,
+  decisionEvidenceAdapter =
+    projectNativeDevEvidence,
 } = {}) {
   if (
     typeof orchestrator?.runTask !==
@@ -26,6 +32,15 @@ function createNativeDevOrchestratorFacade({
   ) {
     throw new TypeError(
       "NativeDevOrchestrator requis."
+    );
+  }
+
+  if (
+    typeof decisionEvidenceAdapter !==
+      "function"
+  ) {
+    throw new TypeError(
+      "DevDecisionEvidenceAdapter valide requis."
     );
   }
 
@@ -172,6 +187,54 @@ function createNativeDevOrchestratorFacade({
     );
   }
 
+  function projectDecisionEvidence({
+    taskId,
+    mappings,
+    context,
+  } = {}) {
+    const id =
+      String(taskId ?? "")
+        .trim();
+
+    if (!id) {
+      throw new TypeError(
+        "taskId DEV requis pour la projection Decision."
+      );
+    }
+
+    /*
+     * Seul l'état canonique encore détenu par
+     * l'orchestrateur peut être projeté.
+     *
+     * Le journal persistant n'est volontairement
+     * pas utilisé ici : une ancienne enveloppe ne
+     * doit jamais retrouver rétroactivement une
+     * autorité d'attestation.
+     */
+    const task =
+      orchestrator.getTaskStatus(
+        id
+      );
+
+    if (!task) {
+      const error =
+        new Error(
+          "Preuve Native DEV canonique indisponible."
+        );
+
+      error.code =
+        "DEV_DECISION_EVIDENCE_UNAVAILABLE";
+
+      throw error;
+    }
+
+    return decisionEvidenceAdapter({
+      devResult: task,
+      mappings,
+      context,
+    });
+  }
+
   function cancelTask(
     taskId
   ) {
@@ -204,6 +267,7 @@ function createNativeDevOrchestratorFacade({
   return Object.freeze({
     runTask,
     getTaskStatus,
+    projectDecisionEvidence,
     cancelTask,
     recoverInterrupted,
   });

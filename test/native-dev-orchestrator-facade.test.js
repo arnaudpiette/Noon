@@ -467,3 +467,222 @@ test(
     );
   }
 );
+
+test(
+  "4.4D façade projette explicitement une tâche Native DEV sans la réexécuter",
+  () => {
+    const task =
+      completedTask(
+        "task-decision-evidence"
+      );
+
+    let runCalls = 0;
+    let adapterCalls = 0;
+    let received = null;
+
+    const mappings = [
+      {
+        source: "TERMINAL",
+        optionId: "option-a",
+        criterionId: "quality",
+      },
+    ];
+
+    const context = {
+      decisionRequest: {
+        schemaVersion: 2,
+      },
+    };
+
+    const projection =
+      Object.freeze({
+        adapterVersion:
+          "native-dev-evidence-v1",
+        sourceDevRef:
+          "native_dev_task_fixture",
+        evidence: Object.freeze([]),
+        attestedEvidenceIds:
+          Object.freeze([]),
+      });
+
+    const facade =
+      createNativeDevOrchestratorFacade({
+        orchestrator:
+          baseOrchestrator({
+            async runTask(input) {
+              runCalls += 1;
+
+              return completedTask(
+                input.taskId
+              );
+            },
+
+            getTaskStatus(taskId) {
+              return taskId ===
+                task.taskId
+                ? task
+                : null;
+            },
+          }),
+
+        decisionEvidenceAdapter(
+          input
+        ) {
+          adapterCalls += 1;
+          received = input;
+
+          return projection;
+        },
+      });
+
+    const result =
+      facade.projectDecisionEvidence({
+        taskId:
+          task.taskId,
+        mappings,
+        context,
+      });
+
+    assert.equal(
+      runCalls,
+      0
+    );
+
+    assert.equal(
+      adapterCalls,
+      1
+    );
+
+    assert.equal(
+      received.devResult,
+      task
+    );
+
+    assert.equal(
+      received.mappings,
+      mappings
+    );
+
+    assert.equal(
+      received.context,
+      context
+    );
+
+    assert.equal(
+      result,
+      projection
+    );
+  }
+);
+
+test(
+  "4.4D façade ne réatteste jamais une tâche disponible uniquement dans le journal",
+  () => {
+    let journalLoads = 0;
+    let adapterCalls = 0;
+
+    const facade =
+      createNativeDevOrchestratorFacade({
+        orchestrator:
+          baseOrchestrator({
+            getTaskStatus() {
+              return null;
+            },
+          }),
+
+        journal: {
+          load() {
+            journalLoads += 1;
+
+            return {
+              taskId:
+                "task-old",
+            };
+          },
+
+          interrupted() {
+            return [];
+          },
+        },
+
+        decisionEvidenceAdapter() {
+          adapterCalls += 1;
+
+          return {};
+        },
+      });
+
+    assert.throws(
+      () =>
+        facade.projectDecisionEvidence({
+          taskId:
+            "task-old",
+          mappings: [],
+          context: {},
+        }),
+      (error) =>
+        error?.code ===
+        "DEV_DECISION_EVIDENCE_UNAVAILABLE"
+    );
+
+    assert.equal(
+      journalLoads,
+      0
+    );
+
+    assert.equal(
+      adapterCalls,
+      0
+    );
+  }
+);
+
+test(
+  "4.4D runTask reste indépendant de Decision Evidence",
+  async () => {
+    let adapterCalls = 0;
+
+    const facade =
+      createNativeDevOrchestratorFacade({
+        orchestrator:
+          baseOrchestrator(),
+
+        featureMode:
+          () => "LIMITED",
+
+        decisionEvidenceAdapter() {
+          adapterCalls += 1;
+
+          throw new Error(
+            "ne doit pas être appelée"
+          );
+        },
+      });
+
+    const result =
+      await facade.runTask({
+        taskId:
+          "task-no-decision-side-effect",
+        objective:
+          "Corriger",
+      });
+
+    assert.equal(
+      result.status,
+      "PASS"
+    );
+
+    assert.equal(
+      adapterCalls,
+      0
+    );
+
+    assert.equal(
+      Object.hasOwn(
+        result,
+        "decisionEvidence"
+      ),
+      false
+    );
+  }
+);
