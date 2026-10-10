@@ -19,20 +19,80 @@ const {
 
 const VALIDATION_SNAPSHOT_VERSION = "native-dev-validation-snapshot-v1";
 const TERMINAL_VALIDATION_KIND = "TERMINAL_REVIEW_VALIDATION";
+const IMPLEMENTATION_VALIDATION_KIND = "IMPLEMENTATION_VALIDATION";
+const IMPLEMENTATION_STATUSES = new Set([
+  "PASS",
+  "FAIL",
+  "DENIED",
+  "TIMEOUT",
+  "CANCELLED",
+]);
 const trustedValidationSnapshots = new WeakSet();
+const provenanceKey = crypto.randomBytes(32);
+const SNAPSHOT_KEYS = new Set([
+  "version",
+  "validationKind",
+  "localOnly",
+  "taskRef",
+  "workspaceRef",
+  "sessionRef",
+  "bindingState",
+  "reasonCode",
+  "validationStatus",
+  "snapshotRef",
+  "snapshotCoverage",
+  "observationRef",
+  "validationOrdinal",
+  "provenanceTag",
+]);
+
+function signedPayload(value) {
+  try {
+    const keys = Object.keys(value);
+    if (keys.length > SNAPSHOT_KEYS.size
+      || keys.some((key) => !SNAPSHOT_KEYS.has(key))) {
+      return null;
+    }
+    const { provenanceTag: _ignored, ...payload } = value;
+    return JSON.stringify(payload);
+  } catch {
+    return null;
+  }
+}
+
+function provenanceTag(payload) {
+  return crypto.createHmac("sha256", provenanceKey)
+    .update(payload)
+    .digest("hex");
+}
 
 function trustedValidationSnapshot(value) {
-  const snapshot = Object.freeze(value);
+  const { provenanceTag: _ignored, ...payload } = value;
+  const snapshot = Object.freeze({
+    ...payload,
+    provenanceTag: provenanceTag(JSON.stringify(payload)),
+  });
   trustedValidationSnapshots.add(snapshot);
   return snapshot;
 }
 
 function isTrustedValidationSnapshot(value) {
-  return Boolean(
-    value
-      && typeof value === "object"
-      && trustedValidationSnapshots.has(value)
-  );
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  if (trustedValidationSnapshots.has(value)) {
+    return true;
+  }
+  if (typeof value.provenanceTag !== "string"
+    || !/^[a-f0-9]{64}$/.test(value.provenanceTag)) {
+    return false;
+  }
+  const payload = signedPayload(value);
+  return payload !== null
+    && crypto.timingSafeEqual(
+      Buffer.from(value.provenanceTag, "hex"),
+      Buffer.from(provenanceTag(payload), "hex")
+    );
 }
 
 function digest(value) {
@@ -220,6 +280,59 @@ function captureSnapshot(repositoryRoot) {
   } catch {
     return null;
   }
+}
+
+async function observeImplementationValidation({
+  contract,
+  input,
+  ordinal,
+  signal,
+  runValidation,
+}) {
+  const before = captureSnapshot(contract.repositoryRoot);
+  const validation = await runValidation();
+  const after = captureSnapshot(contract.repositoryRoot);
+  const terminalShape = terminalValidationSnapshot({
+    contract,
+    input,
+    validation,
+    before,
+    after,
+  });
+  const status = IMPLEMENTATION_STATUSES.has(validation?.status)
+    ? validation.status
+    : "UNKNOWN";
+  const interrupted = signal?.aborted === true
+    || ["TIMEOUT", "CANCELLED"].includes(status)
+    || ["TIMEOUT", "CANCELLED"].includes(validation?.failureCategory)
+    || ["TIMEOUT", "CANCELLED"].includes(validation?.reasonCode);
+  const incomplete = validation?.outputTruncated !== false
+    || validation?.cleanupConfirmed !== true;
+  const validOrdinal = Number.isInteger(ordinal)
+    && ordinal >= 1
+    && ordinal <= 360;
+  const reasonCode = terminalShape.reasonCode === "IDENTITY_MISMATCH"
+    ? "IDENTITY_MISMATCH"
+    : !validOrdinal || status === "UNKNOWN" || status === "DENIED"
+      ? "VALIDATION_UNOBSERVED"
+      : interrupted
+        ? "VALIDATION_INTERRUPTED"
+        : incomplete
+          ? "VALIDATION_INCOMPLETE"
+          : terminalShape.reasonCode;
+
+  return {
+    validation,
+    validationSnapshot: trustedValidationSnapshot({
+      ...terminalShape,
+      validationKind: IMPLEMENTATION_VALIDATION_KIND,
+      observationRef: `native_dev_validation_${crypto.randomUUID().replace(/-/g, "")}`,
+      validationOrdinal: validOrdinal ? ordinal : null,
+      validationStatus: status,
+      bindingState: reasonCode === null ? "LINKED" : "UNLINKED",
+      reasonCode,
+    }),
+  };
 }
 
 function createNativeReviewValidationAgent({
@@ -480,6 +593,16 @@ function createNativeReviewValidationAgent({
           ? implementation.validations
           : [];
 
+      const implementationValidationSnapshots =
+        Array.isArray(implementation.iterations)
+          ? implementation.iterations.flatMap((iteration) =>
+              Array.isArray(iteration?.validationSnapshots)
+                ? iteration.validationSnapshots.filter((snapshot) =>
+                    isTrustedValidationSnapshot(snapshot)
+                      && snapshot.validationKind === IMPLEMENTATION_VALIDATION_KIND)
+                : [])
+          : [];
+
       const unresolvedPreExistingFailure =
         baseline.some(
           (item) =>
@@ -521,6 +644,7 @@ function createNativeReviewValidationAgent({
         diffReview,
         diffCheck: terminalDiffCheck,
         validationSnapshot,
+        implementationValidationSnapshots,
       };
     },
   });
@@ -529,4 +653,5 @@ function createNativeReviewValidationAgent({
 module.exports = {
   createNativeReviewValidationAgent,
   isTrustedValidationSnapshot,
+  observeImplementationValidation,
 };

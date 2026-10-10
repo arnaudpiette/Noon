@@ -19,6 +19,10 @@ const {
 } = require("../delegation/repository-context-manifest");
 
 const {
+  observeImplementationValidation,
+} = require("./agents/native-review-validation-agent");
+
+const {
   contextManifestModeFromInput,
 } = require("./benchmark/context-manifest-experiment");
 
@@ -607,7 +611,8 @@ function createNativeDevImplementationEngine({
     taskId,
     command,
     iteration,
-    signal
+    signal,
+    observation = null
   ) {
     const step = {
       skillId:
@@ -620,6 +625,8 @@ function createNativeDevImplementationEngine({
       },
     };
 
+    let observedSnapshot = null;
+
     const result =
       await executeSkill(
         contract,
@@ -628,8 +635,8 @@ function createNativeDevImplementationEngine({
         "READ",
         {
           runValidation:
-            async () =>
-              validationRunner(
+            async () => {
+              const runValidation = () => validationRunner(
                 command,
                 contract.repositoryRoot,
                 Math.min(
@@ -646,7 +653,22 @@ function createNativeDevImplementationEngine({
                   permissions:
                     contract.permissions,
                 }
-              ),
+              );
+
+              if (observation?.enabled !== true) {
+                return runValidation();
+              }
+
+              const observed = await observeImplementationValidation({
+                contract,
+                input: observation.input,
+                ordinal: observation.ordinal,
+                signal,
+                runValidation,
+              });
+              observedSnapshot = observed.validationSnapshot;
+              return observed.validation;
+            },
         }
       );
 
@@ -655,6 +677,10 @@ function createNativeDevImplementationEngine({
       result,
       iteration
     );
+
+    if (observedSnapshot && typeof observation?.record === "function") {
+      observation.record(observedSnapshot);
+    }
 
     return result;
   }
@@ -1536,6 +1562,7 @@ function createNativeDevImplementationEngine({
     const touched =
       new Set();
     const providerCalls = [];
+    let validationOrdinal = 0;
 
     let priorFailure = null;
     let solved = false;
@@ -2031,6 +2058,7 @@ function createNativeDevImplementationEngine({
         ]);
 
       const validations = [];
+      const validationSnapshots = [];
 
       journal.transition(
         taskId,
@@ -2049,7 +2077,21 @@ function createNativeDevImplementationEngine({
             taskId,
             command,
             iteration,
-            activeSignal
+            activeSignal,
+            {
+              enabled: true,
+              input: {
+                taskId: input?.taskId === undefined ? taskId : input.taskId,
+                workspaceId: input?.workspaceId === undefined
+                  ? contract.workspaceId
+                  : input.workspaceId,
+                sessionId: input?.sessionId === undefined
+                  ? contract.sessionId
+                  : input.sessionId,
+              },
+              ordinal: ++validationOrdinal,
+              record: (snapshot) => validationSnapshots.push(snapshot),
+            }
           )
         );
       }
@@ -2059,6 +2101,7 @@ function createNativeDevImplementationEngine({
         changedFiles:
           changed,
         validations,
+        validationSnapshots,
       });
 
       const failed =

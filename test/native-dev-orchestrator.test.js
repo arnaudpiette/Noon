@@ -509,7 +509,9 @@ test(
       implementation: { iterations: [], providerCalls: [] },
       review: fixture.review,
     });
-    assert.deepEqual(adapted.validationSnapshot, binding);
+    const { provenanceTag, ...projectableBinding } = binding;
+    assert.match(provenanceTag, /^[a-f0-9]{64}$/);
+    assert.deepEqual(adapted.validationSnapshot, projectableBinding);
     const serialized = JSON.stringify(adapted.validationSnapshot);
     for (const raw of [
       fixture.root,

@@ -8,6 +8,8 @@ const {
 
 const VALIDATION_SNAPSHOT_VERSION = "native-dev-validation-snapshot-v1";
 const TERMINAL_VALIDATION_KIND = "TERMINAL_REVIEW_VALIDATION";
+const IMPLEMENTATION_VALIDATION_KIND = "IMPLEMENTATION_VALIDATION";
+const MAX_IMPLEMENTATION_VALIDATIONS = 360;
 const BINDING_STATES = new Set(["LINKED", "UNLINKED"]);
 const SNAPSHOT_COVERAGE = new Set([
   "GIT_VISIBLE_COMPLETE",
@@ -18,6 +20,7 @@ const REASON_CODES = new Set([
   "IDENTITY_MISMATCH",
   "VALIDATION_UNOBSERVED",
   "VALIDATION_INCOMPLETE",
+  "VALIDATION_INTERRUPTED",
   "SNAPSHOT_UNAVAILABLE",
   "SNAPSHOT_INCOMPLETE",
   "REPOSITORY_DIVERGED",
@@ -129,6 +132,87 @@ function adaptValidationSnapshot(raw, { taskId, contract, finalVerdict }) {
       : null,
     snapshotCoverage: raw.snapshotCoverage,
   };
+}
+
+function implementationSnapshotsFrom(iterations) {
+  if (!Array.isArray(iterations) || iterations.length > 10) {
+    return [];
+  }
+  if (iterations.some((item) =>
+    Array.isArray(item?.validationSnapshots)
+      && item.validationSnapshots.length > 36)) {
+    return [];
+  }
+  return iterations.flatMap((item) =>
+    Array.isArray(item?.validationSnapshots)
+      ? item.validationSnapshots
+      : []);
+}
+
+function adaptImplementationSnapshots(rawSnapshots, { taskId, contract, terminal }) {
+  const refs = identityRefs(taskId, contract);
+  if (!refs || !Array.isArray(rawSnapshots)
+    || rawSnapshots.length > MAX_IMPLEMENTATION_VALIDATIONS) {
+    return [];
+  }
+
+  const output = [];
+  const seenRefs = new Set();
+  let previousOrdinal = 0;
+
+  for (const raw of rawSnapshots) {
+    if (!isTrustedValidationSnapshot(raw)
+      || raw.version !== VALIDATION_SNAPSHOT_VERSION
+      || raw.validationKind !== IMPLEMENTATION_VALIDATION_KIND
+      || raw.localOnly !== true
+      || raw.taskRef !== refs.taskRef
+      || raw.workspaceRef !== refs.workspaceRef
+      || raw.sessionRef !== refs.sessionRef
+      || !/^native_dev_validation_[a-f0-9]{32}$/.test(raw.observationRef)
+      || seenRefs.has(raw.observationRef)
+      || !Number.isInteger(raw.validationOrdinal)
+      || raw.validationOrdinal <= previousOrdinal
+      || raw.validationOrdinal > MAX_IMPLEMENTATION_VALIDATIONS
+      || !["PASS", "FAIL", "DENIED", "TIMEOUT", "CANCELLED", "UNKNOWN"].includes(raw.validationStatus)
+      || !BINDING_STATES.has(raw.bindingState)
+      || !SNAPSHOT_COVERAGE.has(raw.snapshotCoverage)
+      || (raw.bindingState === "LINKED"
+        && (raw.reasonCode !== null
+          || !["PASS", "FAIL"].includes(raw.validationStatus)
+          || raw.snapshotCoverage !== "GIT_VISIBLE_COMPLETE"))
+      || (raw.bindingState === "UNLINKED" && !REASON_CODES.has(raw.reasonCode))
+      || (raw.snapshotRef !== null
+        && (typeof raw.snapshotRef !== "string"
+          || !/^native_dev_snapshot_[a-f0-9]{32}$/.test(raw.snapshotRef)))
+      || (raw.snapshotCoverage === "UNAVAILABLE" && raw.snapshotRef !== null)
+      || (raw.bindingState === "LINKED" && raw.snapshotRef === null)) {
+      return [];
+    }
+
+    seenRefs.add(raw.observationRef);
+    previousOrdinal = raw.validationOrdinal;
+    output.push({
+      version: VALIDATION_SNAPSHOT_VERSION,
+      validationKind: IMPLEMENTATION_VALIDATION_KIND,
+      localOnly: true,
+      ...refs,
+      observationRef: raw.observationRef,
+      validationOrdinal: raw.validationOrdinal,
+      bindingState: raw.bindingState,
+      reasonCode: raw.reasonCode,
+      validationStatus: raw.validationStatus,
+      snapshotRef: raw.snapshotRef,
+      snapshotCoverage: raw.snapshotCoverage,
+      terminalSnapshotMatch: raw.bindingState !== "LINKED"
+        || terminal.bindingState !== "LINKED"
+        ? "UNKNOWN"
+        : raw.snapshotRef === terminal.snapshotRef
+          ? "MATCH"
+          : "DIFFERENT",
+    });
+  }
+
+  return output;
 }
 
 function numericSum(values = []) {
@@ -320,6 +404,18 @@ function adaptNativeDevResult(
       }
     );
 
+  const implementationValidationSnapshots =
+    adaptImplementationSnapshots(
+      Array.isArray(review.implementationValidationSnapshots)
+        ? review.implementationValidationSnapshots
+        : implementationSnapshotsFrom(iterations),
+      {
+        taskId: task.taskId,
+        contract,
+        terminal: validationSnapshot,
+      }
+    );
+
   const estimatedCost =
     numericSum(
       providerCalls.map(
@@ -425,6 +521,8 @@ function adaptNativeDevResult(
       },
 
     validationSnapshot,
+
+    implementationValidationSnapshots,
 
     codexUsed: false,
 
