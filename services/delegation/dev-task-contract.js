@@ -61,6 +61,9 @@ function createDevTaskContract(input = {}) {
     maxIterations: Math.max(1, Math.min(10, Number(input.maxIterations) || 3)),
     maxDuration: Math.max(1_000, Math.min(30 * 60_000, Number(input.maxDuration) || 10 * 60_000)),
     maxEstimatedCost: Number.isFinite(Number(input.maxEstimatedCost)) ? Math.max(0, Number(input.maxEstimatedCost)) : null,
+    // Signal interne de réduction d'autonomie : il ne donne aucune permission.
+    // La route publique Native DEV ne le projette pas depuis le JSON client.
+    enforceTaskBudget: input.enforceTaskBudget === true,
     benchmark: input.benchmark?.id && Number.isFinite(Number(input.benchmark?.limitUsd)) ? Object.freeze({ id: String(input.benchmark.id).slice(0, 160), limitUsd: Math.max(0, Number(input.benchmark.limitUsd)) }) : null,
     localOnly: input.localOnly === true,
   });
