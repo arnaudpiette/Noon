@@ -3,6 +3,12 @@
 const crypto =
   require("node:crypto");
 
+const {
+  assertGoalDevRetryExecutionTemplate,
+} = require(
+  "./goal-dev-retry-execution-template"
+);
+
 const VERSION =
   "goal-dev-retry-chain-v1";
 
@@ -302,6 +308,7 @@ function createGoalDevRetryChain({
   chainId = null,
   goalRef,
   rootTaskId,
+  executionTemplate,
   limits,
   createdAt =
     new Date().toISOString(),
@@ -321,6 +328,15 @@ function createGoalDevRetryChain({
   const normalizedGoal =
     normalizeGoalRef(
       goalRef
+    );
+
+  assertGoalDevRetryExecutionTemplate(
+    executionTemplate
+  );
+
+  const normalizedTemplate =
+    structuredClone(
+      executionTemplate
     );
 
   const normalizedLimits =
@@ -357,6 +373,9 @@ function createGoalDevRetryChain({
       normalizedGoal,
 
     rootTaskId: root,
+
+    executionTemplate:
+      normalizedTemplate,
 
     state:
       STATES.OPEN,
@@ -857,6 +876,10 @@ function projectGoalDevRetryCandidate(
     rootTaskId:
       chain.rootTaskId,
 
+    executionTemplateFingerprint:
+      chain.executionTemplate
+        .fingerprint,
+
     parentTaskId:
       previous.taskId,
 
@@ -897,6 +920,10 @@ function appendGoalDevRetryCandidate(
   if (
     candidate?.chainId !==
       next.chainId ||
+    candidate
+      ?.executionTemplateFingerprint !==
+      next.executionTemplate
+        ?.fingerprint ||
     candidate?.candidateOnly !==
       true ||
     candidate?.retryAuthorized !==

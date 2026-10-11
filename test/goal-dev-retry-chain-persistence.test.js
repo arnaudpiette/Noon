@@ -28,6 +28,12 @@ const {
 );
 
 const {
+  createGoalDevRetryExecutionTemplate,
+} = require(
+  "../services/goals/goal-dev-retry-execution-template"
+);
+
+const {
   createGoalDevRetryChainStore,
 } = require(
   "../services/goals/goal-dev-retry-chain-store"
@@ -101,6 +107,37 @@ function createChain(
 
     rootTaskId:
       "task-root",
+
+    executionTemplate:
+      createGoalDevRetryExecutionTemplate({
+        objective:
+          "Corriger les validations du projet.",
+
+        requiredQuality:
+          "HIGH",
+
+        allowedPaths: [
+          "/repo/src",
+          "/repo/test",
+        ],
+
+        forbiddenPaths: [
+          "/repo/.env",
+        ],
+
+        constraints: [
+          "Préserver les changements existants",
+        ],
+
+        validationCommands: [
+          "npm test",
+        ],
+
+        maxIterations: 3,
+        maxDuration: 60_000,
+        maxEstimatedCost: 3,
+        localOnly: true,
+      }),
 
     limits: {
       maxRetries: 2,
@@ -875,6 +912,91 @@ test(
         1
       );
     }
+
+    current.database.close();
+
+    fs.rmSync(
+      fixture.directory,
+      {
+        recursive: true,
+        force: true,
+      }
+    );
+  }
+);
+
+test(
+  "4.6E le Retry Execution Template survit au restart et reste immuable",
+  () => {
+    const fixture =
+      tempDatabase();
+
+    let current =
+      open(
+        fixture.filePath
+      );
+
+    const created =
+      createChain(
+        current.store
+      );
+
+    const originalFingerprint =
+      created.chain
+        .executionTemplate
+        .fingerprint;
+
+    current.database.close();
+
+    current =
+      open(
+        fixture.filePath
+      );
+
+    const restored =
+      current.store.get(
+        "chain-persist-1"
+      );
+
+    assert.equal(
+      restored.chain
+        .executionTemplate
+        .fingerprint,
+      originalFingerprint
+    );
+
+    const tampered =
+      structuredClone(
+        restored.chain
+      );
+
+    tampered.executionTemplate =
+      createGoalDevRetryExecutionTemplate({
+        ...tampered
+          .executionTemplate
+          .request,
+
+        objective:
+          "Objectif changé après restart",
+      });
+
+    tampered.updatedAt =
+      "2026-10-11T08:00:01.000Z";
+
+    assert.throws(
+      () =>
+        current.repository.save(
+          tampered,
+          {
+            expectedRevision:
+              restored.revision,
+          }
+        ),
+      {
+        code:
+          "GOAL_DEV_RETRY_PERSISTENCE_IMMUTABLE_CHANGED",
+      }
+    );
 
     current.database.close();
 

@@ -1,5 +1,11 @@
 "use strict";
 
+const {
+  assertGoalDevRetryExecutionTemplate,
+} = require(
+  "../../goals/goal-dev-retry-execution-template"
+);
+
 const RECORD_TYPE =
   "GOAL_DEV_RETRY_CHAIN";
 
@@ -423,6 +429,10 @@ function assertChain(
     );
   }
 
+  assertGoalDevRetryExecutionTemplate(
+    chain.executionTemplate
+  );
+
   assertAuthority(
     chain
   );
@@ -445,6 +455,9 @@ function immutableProjection(
 
     rootTaskId:
       chain.rootTaskId,
+
+    executionTemplate:
+      chain.executionTemplate,
 
     createdAt:
       chain.createdAt,

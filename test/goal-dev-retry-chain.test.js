@@ -7,6 +7,12 @@ const test =
   require("node:test");
 
 const {
+  createGoalDevRetryExecutionTemplate,
+} = require(
+  "../services/goals/goal-dev-retry-execution-template"
+);
+
+const {
   appendGoalDevRetryCandidate,
   assessGoalDevRetry,
   createGoalDevRetryChain,
@@ -15,6 +21,42 @@ const {
 } = require(
   "../services/goals/goal-dev-retry-chain"
 );
+
+function retryTemplate(
+  overrides = {}
+) {
+  return createGoalDevRetryExecutionTemplate({
+    objective:
+      "Corriger les validations du projet.",
+
+    requiredQuality:
+      "HIGH",
+
+    allowedPaths: [
+      "/repo/src",
+      "/repo/test",
+    ],
+
+    forbiddenPaths: [
+      "/repo/.env",
+    ],
+
+    constraints: [
+      "Préserver les changements existants",
+    ],
+
+    validationCommands: [
+      "npm test",
+    ],
+
+    maxIterations: 3,
+    maxDuration: 60_000,
+    maxEstimatedCost: 3,
+    localOnly: true,
+
+    ...overrides,
+  });
+}
 
 function chain(
   overrides = {}
@@ -33,6 +75,9 @@ function chain(
 
     rootTaskId:
       "task-root",
+
+    executionTemplate:
+      retryTemplate(),
 
     limits: {
       maxRetries: 2,
@@ -442,6 +487,9 @@ test(
         rootTaskId:
           "task-1",
 
+        executionTemplate:
+          retryTemplate(),
+
         limits: {
           maxRetries: 1,
           maxDuration:
@@ -683,6 +731,158 @@ test(
     assert.equal(
       assessment.reasonCode,
       "GOAL_DEV_RETRY_NOT_CANDIDATE"
+    );
+  }
+);
+
+test(
+  "4.6E Retry Candidate reste lié au fingerprint immuable de la tâche initiale",
+  () => {
+    const initial =
+      retryTemplate();
+
+    let value =
+      createGoalDevRetryChain({
+        chainId:
+          "chain-binding",
+
+        goalRef: {
+          goalId:
+            "goal-binding",
+          workspaceId:
+            "workspace-1",
+        },
+
+        rootTaskId:
+          "task-binding-root",
+
+        executionTemplate:
+          initial,
+
+        limits: {
+          maxRetries: 1,
+          maxDuration:
+            60_000,
+          maxEstimatedCost:
+            10,
+        },
+
+        createdAt:
+          "2026-10-11T08:00:00.000Z",
+      });
+
+    value =
+      recordGoalDevRetryAttempt(
+        value,
+        {
+          taskId:
+            "task-binding-root",
+
+          finalVerdict:
+            "FAIL",
+
+          continuationState:
+            "RETRY_CANDIDATE",
+
+          estimatedCost: 1,
+
+          recordedAt:
+            "2026-10-11T08:00:10.000Z",
+        }
+      );
+
+    const candidate =
+      projectGoalDevRetryCandidate(
+        value,
+        {
+          now:
+            "2026-10-11T08:00:20.000Z",
+
+          taskId:
+            "task-binding-retry",
+        }
+      );
+
+    assert.equal(
+      candidate
+        .executionTemplateFingerprint,
+      initial.fingerprint
+    );
+
+    assert.equal(
+      candidate.retryAuthorized,
+      false
+    );
+
+    assert.equal(
+      candidate.executionAuthorized,
+      false
+    );
+  }
+);
+
+test(
+  "4.6E un Retry Candidate lié à un autre template est refusé",
+  () => {
+    let value =
+      chain();
+
+    value =
+      recordGoalDevRetryAttempt(
+        value,
+        {
+          taskId:
+            "task-root",
+
+          finalVerdict:
+            "FAIL",
+
+          continuationState:
+            "RETRY_CANDIDATE",
+
+          estimatedCost:
+            0.5,
+
+          recordedAt:
+            "2026-10-11T08:00:10.000Z",
+        }
+      );
+
+    const candidate =
+      structuredClone(
+        projectGoalDevRetryCandidate(
+          value,
+          {
+            now:
+              "2026-10-11T08:00:20.000Z",
+
+            taskId:
+              "task-retry-binding",
+          }
+        )
+      );
+
+    candidate
+      .executionTemplateFingerprint =
+      retryTemplate({
+        objective:
+          "Objectif injecté",
+      }).fingerprint;
+
+    assert.throws(
+      () =>
+        appendGoalDevRetryCandidate(
+          value,
+          candidate,
+          {
+            updatedAt:
+              "2026-10-11T08:00:20.000Z",
+          }
+        ),
+      {
+        code:
+          "GOAL_DEV_RETRY_CANDIDATE_INVALID",
+      }
     );
   }
 );
