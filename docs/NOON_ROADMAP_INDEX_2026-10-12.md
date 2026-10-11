@@ -25,6 +25,7 @@ Cette publication reproduit les **425 lignes de la roadmap consolidée**, répar
 8. [V3, visions V4/V5 et arbitrages — sections 12–14](roadmap/07_v3_v5_priorites.md)
 9. [Validation utilisateur et gouvernance — sections 15–16](roadmap/08_validation_gouvernance.md)
 10. [Références et synthèse — section 17](roadmap/09_references.md)
+11. **[P0-A : voix GPT-Live full duplex, délégation asynchrone et critères d'acceptation](roadmap/10_voice_full_duplex_gpt_live.md)**
 
 ## Règles de mise à jour
 
