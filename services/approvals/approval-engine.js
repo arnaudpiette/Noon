@@ -278,14 +278,44 @@ function createApprovalEngine({
     return true;
   }
 
+  function assertExactAction(record, exactAction) {
+    if (!exactAction) return;
+    const args = normalizeArgs(exactAction.normalizedArgs ?? exactAction.payload ?? {});
+    const fingerprint = actionFingerprint({
+      skillName: String(exactAction.skillName || exactAction.provider),
+      operation: String(exactAction.operation || exactAction.action),
+      normalizedArgs: args,
+      target: exactAction.target == null ? null : String(exactAction.target).slice(0, 500),
+    });
+    if (!safeEqual(record.argsFingerprint, fingerprint)) {
+      throw new ApprovalError("APPROVAL_ACTION_CHANGED", "L’action a changé et exige une nouvelle approbation.");
+    }
+  }
+
   async function resumeApprovedAction({
     approvalId, resumeToken, decision, exactAction = null,
     recheckHardRules, recheckPermission, recheckConnector, recheckPreconditions,
     execute,
   } = {}) {
-    if (inFlight.has(approvalId)) return inFlight.get(approvalId);
+    const id = String(approvalId);
+    if (inFlight.has(id)) {
+      const record = actions.get(id);
+      if (!record) throw new ApprovalError("APPROVAL_NOT_FOUND", "Approbation absente ou indisponible après redémarrage.");
+      if (record.status === "consumed") throw new ApprovalError("APPROVAL_CONSUMED", "Cette action a déjà été exécutée.");
+      // Ne pas expirer la reprise déjà lancée : vérifier seulement cette invocation.
+      if (record.status === "expired" || Date.parse(record.expiresAt) <= now()) {
+        throw new ApprovalError("approval_expired", "Cette approbation a expiré.");
+      }
+      if (record.status !== "approved") throw new ApprovalError("APPROVAL_INVALID", "Cette approbation n’est plus active.");
+      if (!safeEqual(record.resumeTokenHash, tokenHash(resumeToken))) throw new ApprovalError("APPROVAL_TOKEN_INVALID", "Jeton de reprise invalide.");
+      assertExactAction(record, exactAction);
+      // Les hooks et l'exécuteur ne sont pas prouvés équivalents : aucun partage.
+      throw new ApprovalError("APPROVAL_IN_FLIGHT", "Cette approbation est déjà en cours.");
+    }
+    const flight = Symbol("approval_in_flight");
+    inFlight.set(id, flight);
     const operation = (async () => {
-      const record = getRecord(approvalId);
+      const record = getRecord(id);
       if (record.status === "expired") throw new ApprovalError("approval_expired", "Cette approbation a expiré.");
       if (record.status === "consumed") throw new ApprovalError("APPROVAL_CONSUMED", "Cette action a déjà été exécutée.");
       if (record.status !== "pending") throw new ApprovalError("APPROVAL_INVALID", "Cette approbation n’est plus active.");
@@ -294,16 +324,7 @@ function createApprovalEngine({
         rejectApproval(record.id);
         return { status: "rejected", approval: publicApproval(record), result: null };
       }
-      if (exactAction) {
-        const args = normalizeArgs(exactAction.normalizedArgs ?? exactAction.payload ?? {});
-        const fingerprint = actionFingerprint({
-          skillName: String(exactAction.skillName || exactAction.provider),
-          operation: String(exactAction.operation || exactAction.action),
-          normalizedArgs: args,
-          target: exactAction.target == null ? null : String(exactAction.target).slice(0, 500),
-        });
-        if (!safeEqual(record.argsFingerprint, fingerprint)) throw new ApprovalError("APPROVAL_ACTION_CHANGED", "L’action a changé et exige une nouvelle approbation.");
-      }
+      assertExactAction(record, exactAction);
       record.status = "approved";
       record.decidedAt = new Date(now()).toISOString();
       save(record);
@@ -341,9 +362,10 @@ function createApprovalEngine({
         throw error;
       }
     })();
-    inFlight.set(approvalId, operation);
     try { return await operation; }
-    finally { inFlight.delete(approvalId); }
+    finally {
+      if (inFlight.get(id) === flight) inFlight.delete(id);
+    }
   }
 
   function listPending({ executionId = null } = {}) {

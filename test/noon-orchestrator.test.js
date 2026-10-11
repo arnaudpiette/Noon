@@ -21,7 +21,13 @@ function toolCall(name, args, callId = "call-1") {
   return { type: "function_call", name, call_id: callId, arguments: JSON.stringify(args) };
 }
 
-function createFixture({ responses = [], executeSkill, stream = false, maxRounds = 3, audit = null, intent = null, priorityEngine = null, observability = null, contextMetadata = {}, captureApprovalPreconditions, recheckApprovalPreconditions, recheckHardRules, recheckConnector, operationalSecurityPolicy = null, transactionalExecutionEngine = null, delegationEngine = null, normalizedIntent = null, selectModel = null, modelFallbacks = null, providerAdapters = null, providerConfiguration = () => true, reliabilityEngine = null, requestOverrides = {} } = {}) {
+function barrier() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+function createFixture({ responses = [], executeSkill, stream = false, maxRounds = 3, audit = null, intent = null, priorityEngine = null, observability = null, contextMetadata = {}, captureApprovalPreconditions, recheckApprovalPreconditions, recheckHardRules, recheckConnector, operationalSecurityPolicy = null, transactionalExecutionEngine = null, delegationEngine = null, normalizedIntent = null, selectModel = null, modelFallbacks = null, providerAdapters = null, providerConfiguration = () => true, reliabilityEngine = null, requestOverrides = {}, approvalManager = new ApprovalManager(), now = () => Date.now() } = {}) {
   const queue = [...responses];
   const modelCalls = [];
   const contextCalls = [];
@@ -89,7 +95,7 @@ function createFixture({ responses = [], executeSkill, stream = false, maxRounds
     providerPrivacyPolicy,
     skillRegistry,
     priorityEngine,
-    approvalManager: new ApprovalManager(),
+    approvalManager,
     getTools: () => [{ type: "function", name: "read_file" }],
     buildSkillContext: () => ({ allowedRoots: ["/tmp"], explicitOrder: true }),
     audit,
@@ -104,6 +110,7 @@ function createFixture({ responses = [], executeSkill, stream = false, maxRounds
     transactionalExecutionEngine,
     delegationEngine,
     reliabilityEngine,
+    now,
   });
   const request = {
     query: "Question fictive",
@@ -435,6 +442,8 @@ test("une approbation acceptée reprend exactement l'action", async () => {
 
 test("deux reprises simultanées ne déclenchent qu'une exécution externe", async () => {
   let executions = 0;
+  const entered = barrier();
+  const release = barrier();
   const fixture = createFixture({
     responses: [
       response("", [toolCall("send_email", { to: "a@example.test", content: "X" })]),
@@ -443,17 +452,208 @@ test("deux reprises simultanées ne déclenchent qu'une exécution externe", asy
     async executeSkill(_name, _args, context) {
       if (!context.confirmed) throw Object.assign(new Error("Confirmation requise"), { code: "CONFIRMATION_REQUIRED" });
       executions += 1;
-      await new Promise((resolve) => setImmediate(resolve));
+      entered.resolve();
+      await release.promise;
       return { sent: true };
     },
   });
   const pending = await fixture.orchestrator.run(fixture.request);
-  const request = { executionId: pending.executionId, approvalId: pending.approval.id, approved: true };
-  const [first, second] = await Promise.all([fixture.orchestrator.resume(request), fixture.orchestrator.resume(request)]);
-  assert.equal(first.text, "E-mail envoyé");
-  assert.equal(second.text, "E-mail envoyé");
+  const request = {
+    executionId: pending.executionId, approvalId: pending.approval.id,
+    resumeToken: pending.approval.resumeToken, approved: true,
+  };
+  const first = fixture.orchestrator.resume(request);
+  await entered.promise;
+  try {
+    await assert.rejects(() => fixture.orchestrator.resume(request), { code: "APPROVAL_IN_FLIGHT" });
+    assert.deepEqual(fixture.orchestrator.pendingExecutions(), [pending.executionId]);
+  } finally {
+    release.resolve();
+  }
+  assert.equal((await first).text, "E-mail envoyé");
   assert.equal(executions, 1);
   assert.equal(fixture.modelCalls.length, 2);
+  await assert.rejects(() => fixture.orchestrator.resume(request), { code: "approval_required" });
+  assert.equal(executions, 1);
+});
+
+test("un token invalide ou un reject concurrent ne partage ni ne perturbe la reprise valide", async () => {
+  let executions = 0;
+  const auditEvents = [];
+  const entered = barrier();
+  const release = barrier();
+  const fixture = createFixture({
+    audit: (event, metadata) => auditEvents.push({ event, metadata }),
+    responses: [
+      response("", [toolCall("send_email", { to: "a@example.test", content: "X" })]),
+      response("E-mail envoyé"),
+    ],
+    async executeSkill(_name, _args, context) {
+      if (!context.confirmed) throw Object.assign(new Error("Confirmation requise"), { code: "CONFIRMATION_REQUIRED" });
+      executions += 1;
+      entered.resolve();
+      await release.promise;
+      return { sent: true };
+    },
+  });
+  const pending = await fixture.orchestrator.run(fixture.request);
+  const request = {
+    executionId: pending.executionId, approvalId: pending.approval.id,
+    resumeToken: pending.approval.resumeToken, decision: "approve",
+  };
+  const wrongToken = "token-prive-ne-jamais-afficher";
+  for (const resumeToken of [wrongToken, ""]) {
+    await assert.rejects(
+      () => fixture.orchestrator.resume({ ...request, resumeToken }),
+      { code: "APPROVAL_TOKEN_INVALID" },
+    );
+  }
+  assert.deepEqual(fixture.orchestrator.pendingExecutions(), [pending.executionId]);
+  const first = fixture.orchestrator.resume(request);
+  await entered.promise;
+  try {
+    for (const resumeToken of [wrongToken, ""]) {
+      await assert.rejects(
+        () => fixture.orchestrator.resume({ ...request, resumeToken }),
+        (error) => error.code === "APPROVAL_TOKEN_INVALID"
+          && !error.message.includes(wrongToken)
+          && !error.message.includes(request.resumeToken),
+      );
+    }
+    await assert.rejects(
+      () => fixture.orchestrator.resume({ ...request, decision: "reject" }),
+      { code: "APPROVAL_IN_FLIGHT" },
+    );
+    await assert.rejects(
+      () => fixture.orchestrator.resume({ ...request, executionId: "autre-execution" }),
+      { code: "approval_required" },
+    );
+    assert.deepEqual(fixture.orchestrator.pendingExecutions(), [pending.executionId]);
+  } finally {
+    release.resolve();
+  }
+  const result = await first;
+  assert.equal(result.text, "E-mail envoyé");
+  assert.equal(executions, 1);
+  assert.equal(fixture.modelCalls.length, 2);
+  assert.equal(JSON.stringify(result).includes(request.resumeToken), false);
+  assert.equal(JSON.stringify(result).includes(wrongToken), false);
+  assert.equal(JSON.stringify(auditEvents).includes(request.resumeToken), false);
+  assert.equal(JSON.stringify(auditEvents).includes(wrongToken), false);
+  await assert.rejects(() => fixture.orchestrator.resume({ ...request, resumeToken: wrongToken }), { code: "approval_required" });
+  await assert.rejects(() => fixture.orchestrator.resume(request), { code: "approval_required" });
+  assert.equal(executions, 1);
+});
+
+test("les erreurs de hook et d'exécution ne laissent aucun résultat de reprise en cache", async () => {
+  for (const phase of ["hook", "execution", "execution_code_collision"]) {
+    const entered = barrier();
+    const release = barrier();
+    let executions = 0;
+    const fixture = createFixture({
+      responses: [response("", [toolCall("send_email", { to: "a@example.test", content: "X" })])],
+      recheckHardRules: phase === "hook" ? async () => {
+        entered.resolve();
+        await release.promise;
+        throw Object.assign(new Error("Hook simulé"), { code: "HOOK_TEST_FAILURE" });
+      } : undefined,
+      async executeSkill(_name, _args, context) {
+        if (!context.confirmed) throw Object.assign(new Error("Confirmation requise"), { code: "CONFIRMATION_REQUIRED" });
+        executions += 1;
+        entered.resolve();
+        await release.promise;
+        throw Object.assign(new Error("Exécution simulée"), {
+          code: phase === "execution_code_collision" ? "APPROVAL_IN_FLIGHT" : "EXECUTION_TEST_FAILURE",
+        });
+      },
+    });
+    const pending = await fixture.orchestrator.run(fixture.request);
+    const request = {
+      executionId: pending.executionId, approvalId: pending.approval.id,
+      resumeToken: pending.approval.resumeToken, decision: "approve",
+    };
+    const first = fixture.orchestrator.resume(request);
+    await entered.promise;
+    try {
+      await assert.rejects(() => fixture.orchestrator.resume(request), { code: "APPROVAL_IN_FLIGHT" });
+    } finally {
+      release.resolve();
+    }
+    await assert.rejects(first, {
+      code: phase === "hook" ? "HOOK_TEST_FAILURE"
+        : phase === "execution_code_collision" ? "APPROVAL_IN_FLIGHT" : "EXECUTION_TEST_FAILURE",
+    });
+    await assert.rejects(() => fixture.orchestrator.resume(request), { code: "approval_required" });
+    assert.equal(executions, phase === "hook" ? 0 : 1);
+  }
+});
+
+test("un reject tardif ne retire pas la proposition spécialiste déjà en cours", async () => {
+  let currentTime = 1_000;
+  const entered = barrier();
+  const release = barrier();
+  let executions = 0;
+  const fixture = createFixture({
+    now: () => currentTime,
+    approvalManager: new ApprovalManager({ now: () => currentTime, ttlMs: 50 }),
+    operationalSecurityPolicy: securityPolicy(),
+    delegationEngine: { async run() {
+      return {
+        status: "COMPLETED", reasonCodes: [], results: [],
+        toolRequests: [{
+          authority: "UNTRUSTED_PROPOSAL", toolRequestId: "proposal-1",
+          skillId: "send_email", operation: "send_email", purpose: "Envoi simulé",
+          requestedInputs: { to: "a@example.test", content: "X" },
+        }],
+      };
+    } },
+    async executeSkill(_name, _args, context) {
+      assert.equal(context.confirmed, true);
+      executions += 1;
+      entered.resolve();
+      await release.promise;
+      return { sent: true };
+    },
+  });
+  fixture.request.delegationFeatureMode = "ON";
+  const pending = await fixture.orchestrator.run(fixture.request);
+  assert.equal(pending.type, "specialist_proposal");
+  const request = {
+    executionId: pending.executionId, approvalId: pending.approval.id,
+    resumeToken: pending.approval.resumeToken, decision: "approve",
+  };
+  const first = fixture.orchestrator.resume(request);
+  await entered.promise;
+  currentTime += 51;
+  try {
+    await assert.rejects(
+      () => fixture.orchestrator.resume({ ...request, decision: "reject" }),
+      { code: "approval_expired" },
+    );
+    await assert.rejects(
+      () => fixture.orchestrator.resume(request),
+      { code: "approval_expired" },
+    );
+    await assert.rejects(
+      () => fixture.orchestrator.resume({ ...request, decision: "reject" }),
+      { code: "approval_expired" },
+    );
+  } finally {
+    release.resolve();
+  }
+  assert.equal((await first).specialistProposal.status, "executed");
+  assert.equal(executions, 1);
+  await assert.rejects(() => fixture.orchestrator.resume(request), { code: "approval_required" });
+
+  const expired = await fixture.orchestrator.run(fixture.request);
+  assert.equal(expired.type, "specialist_proposal");
+  currentTime += 51;
+  await assert.rejects(() => fixture.orchestrator.resume({
+    executionId: expired.executionId, approvalId: expired.approval.id,
+    resumeToken: expired.approval.resumeToken, decision: "reject",
+  }), { code: "approval_expired" });
+  assert.equal(executions, 1);
+  assert.deepEqual(fixture.orchestrator.pendingExecutions(), []);
 });
 
 test("l'Orchestrator bloque la reprise si une Hard Rule critique change", async () => {

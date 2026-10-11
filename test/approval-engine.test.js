@@ -18,24 +18,205 @@ function email(overrides = {}) {
   };
 }
 
+function barrier() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
 test("prépare puis exécute exactement un e-mail une seule fois", async () => {
   const engine = createApprovalEngine();
   const approval = engine.prepareAction(email());
   let sends = 0;
+  const entered = barrier();
+  const release = barrier();
   const request = {
     approvalId: approval.id, resumeToken: approval.resumeToken, decision: "approve",
     exactAction: email(),
     recheckHardRules: () => true, recheckPermission: () => true,
     recheckConnector: () => true, recheckPreconditions: () => ({}),
-    execute: async () => { sends += 1; return { sent: true }; },
+    execute: async () => {
+      sends += 1;
+      entered.resolve();
+      await release.promise;
+      return { sent: true };
+    },
   };
-  const [first, duplicate] = await Promise.all([
-    engine.resumeApprovedAction(request), engine.resumeApprovedAction(request),
-  ]);
-  assert.equal(first.status, "consumed");
-  assert.equal(duplicate.status, "consumed");
+  const first = engine.resumeApprovedAction(request);
+  await entered.promise;
+  await assert.rejects(() => engine.resumeApprovedAction(request), { code: "APPROVAL_IN_FLIGHT" });
+  release.resolve();
+  const result = await first;
+  assert.equal(result.status, "consumed");
   assert.equal(sends, 1);
   await assert.rejects(() => engine.resumeApprovedAction(request), { code: "APPROVAL_CONSUMED" });
+});
+
+test("une reprise concurrente ne partage jamais le résultat avec un token, une décision ou une action divergents", async () => {
+  const engine = createApprovalEngine();
+  const approval = engine.prepareAction(email());
+  const entered = barrier();
+  const release = barrier();
+  let sends = 0;
+  const request = {
+    approvalId: approval.id, resumeToken: approval.resumeToken, decision: "approve",
+    exactAction: email(),
+    execute: async () => {
+      sends += 1;
+      entered.resolve();
+      await release.promise;
+      return { sent: true };
+    },
+  };
+  const first = engine.resumeApprovedAction(request);
+  await entered.promise;
+
+  const invalidToken = "token-prive-ne-jamais-afficher";
+  await assert.rejects(
+    () => engine.resumeApprovedAction({ ...request, resumeToken: invalidToken, decision: "reject" }),
+    (error) => error.code === "APPROVAL_TOKEN_INVALID"
+      && !error.message.includes(invalidToken)
+      && !error.message.includes(approval.resumeToken),
+  );
+  await assert.rejects(
+    () => engine.resumeApprovedAction({ ...request, decision: "reject" }),
+    (error) => error.code === "APPROVAL_IN_FLIGHT"
+      && !error.message.includes(approval.resumeToken),
+  );
+  await assert.rejects(
+    () => engine.resumeApprovedAction({
+      ...request,
+      exactAction: email({ normalizedArgs: { ...email().normalizedArgs, subject: "Autre sujet" } }),
+    }),
+    { code: "APPROVAL_ACTION_CHANGED" },
+  );
+  assert.equal(engine.get(approval.id).status, "approved");
+  assert.equal(JSON.stringify(engine.get(approval.id)).includes(approval.resumeToken), false);
+  release.resolve();
+  const result = await first;
+  assert.equal(result.status, "consumed");
+  assert.equal(sends, 1);
+  assert.equal(JSON.stringify(result).includes(approval.resumeToken), false);
+  assert.equal(JSON.stringify(result).includes(invalidToken), false);
+});
+
+test("le verrou précède les callbacks synchrones et leur reprise réentrante ne peut pas l'effacer", async () => {
+  let engine;
+  let approval;
+  let reentrant;
+  const entered = barrier();
+  const release = barrier();
+  let executions = 0;
+  const auditLog = {
+    append(event) {
+      if (event === "approval.approved") {
+        reentrant = engine.resumeApprovedAction({
+          approvalId: approval.id,
+          resumeToken: approval.resumeToken,
+          decision: "approve",
+          exactAction: email(),
+          execute: () => { executions += 1; },
+        });
+      }
+    },
+  };
+  engine = createApprovalEngine({ auditLog });
+  approval = engine.prepareAction(email());
+  const request = {
+    approvalId: approval.id,
+    resumeToken: approval.resumeToken,
+    decision: "approve",
+    exactAction: email(),
+    execute: async () => {
+      executions += 1;
+      entered.resolve();
+      await release.promise;
+      return { sent: true };
+    },
+  };
+
+  const first = engine.resumeApprovedAction(request);
+  await entered.promise;
+  try {
+    await assert.rejects(reentrant, { code: "APPROVAL_IN_FLIGHT" });
+    await assert.rejects(
+      () => engine.resumeApprovedAction({ ...request, approvalId: { toString: () => approval.id } }),
+      { code: "APPROVAL_IN_FLIGHT" },
+    );
+  } finally {
+    release.resolve();
+    assert.equal((await first).status, "consumed");
+  }
+  assert.equal(executions, 1);
+  for (const invalidId of ["", null, undefined]) {
+    await assert.rejects(
+      () => engine.resumeApprovedAction({ ...request, approvalId: invalidId }),
+      { code: "APPROVAL_NOT_FOUND" },
+    );
+  }
+});
+
+test("une reprise concurrente expirée ne rejoint pas l'opération déjà lancée", async () => {
+  let now = 1_000;
+  const engine = createApprovalEngine({ now: () => now, ttlMs: 50 });
+  const approval = engine.prepareAction(email());
+  const entered = barrier();
+  const release = barrier();
+  const request = {
+    approvalId: approval.id, resumeToken: approval.resumeToken, decision: "approve",
+    exactAction: email(),
+    execute: async () => {
+      entered.resolve();
+      await release.promise;
+      return { sent: true };
+    },
+  };
+  const first = engine.resumeApprovedAction(request);
+  await entered.promise;
+  now += 51;
+  await assert.rejects(() => engine.resumeApprovedAction(request), { code: "approval_expired" });
+  release.resolve();
+  assert.equal((await first).status, "consumed");
+});
+
+test("une revalidation stale et les erreurs de hook ou d'exécution libèrent le verrou concurrent", async () => {
+  for (const phase of ["stale", "hook", "execution"]) {
+    const engine = createApprovalEngine();
+    const approval = engine.prepareAction(email({ preconditions: { revision: 1 } }));
+    const entered = barrier();
+    const release = barrier();
+    let executions = 0;
+    const request = {
+      approvalId: approval.id, resumeToken: approval.resumeToken, decision: "approve",
+      exactAction: email(),
+      recheckHardRules: phase === "hook" ? async () => {
+        entered.resolve();
+        await release.promise;
+        throw Object.assign(new Error("Hook simulé"), { code: "HOOK_TEST_FAILURE" });
+      } : () => true,
+      recheckPreconditions: phase === "stale" ? async () => {
+        entered.resolve();
+        await release.promise;
+        return { revision: 2 };
+      } : () => ({ revision: 1 }),
+      execute: async () => {
+        executions += 1;
+        entered.resolve();
+        await release.promise;
+        throw Object.assign(new Error("Échec simulé"), { code: "EXECUTION_TEST_FAILURE" });
+      },
+    };
+    const first = engine.resumeApprovedAction(request);
+    await entered.promise;
+    await assert.rejects(() => engine.resumeApprovedAction(request), { code: "APPROVAL_IN_FLIGHT" });
+    release.resolve();
+    await assert.rejects(first, {
+      code: phase === "stale" ? "approval_stale"
+        : phase === "hook" ? "HOOK_TEST_FAILURE" : "EXECUTION_TEST_FAILURE",
+    });
+    assert.equal(executions, phase === "execution" ? 1 : 0);
+    await assert.rejects(() => engine.resumeApprovedAction(request), { code: "APPROVAL_INVALID" });
+  }
 });
 
 test("un sujet d'e-mail modifié invalide l'approbation", async () => {

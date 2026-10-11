@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("crypto");
+const { ApprovalError } = require("../approvals/approval-engine");
 const { assertModelProviderAdapter } = require("../models/model-provider-adapter");
 const { getModelDefinition } = require("../models/model-registry");
 const { classifyFailureCategory } = require("../models/routing-metadata");
@@ -168,12 +169,15 @@ function createNoonOrchestrator({
   if (typeof getTools !== "function") throw new TypeError("Sélecteur d'outils requis.");
 
   const pending = new Map();
-  const resumeOperations = new Map();
-  const resumeResults = new Map();
 
-  function cleanupPending(exceptExecutionId = null) {
+  function isNonConsumingResumeRejection(error) {
+    return error instanceof ApprovalError
+      && ["APPROVAL_IN_FLIGHT", "APPROVAL_TOKEN_INVALID", "APPROVAL_ACTION_CHANGED", "approval_expired"].includes(error.code);
+  }
+
+  function cleanupPending(exceptWorkflowKey = null) {
     for (const [id, workflow] of pending) {
-      if (id !== exceptExecutionId && Date.parse(workflow.expiresAt || 0) <= now()) {
+      if (id !== exceptWorkflowKey && Date.parse(workflow.expiresAt || 0) <= now()) {
         try { approvalManager?.get(workflow.approvalId); } catch {}
         observability?.recordApproval(workflow.state.executionId, {
           approvalId: workflow.approvalId, status: "expired", waitMs: 0,
@@ -1376,10 +1380,10 @@ function createNoonOrchestrator({
   }
 
   async function resumeWorkflow({ executionId: id, approvalId, approved, decision, resumeToken = null }) {
-    cleanupPending(String(id));
     const workflowKey = pending.has(String(id))
       ? String(id)
       : [...pending.entries()].find(([, candidate]) => candidate.state.executionId === String(id) && candidate.approvalId === approvalId)?.[0];
+    cleanupPending(workflowKey);
     const workflow = workflowKey ? pending.get(workflowKey) : null;
     if (!workflow || workflow.approvalId !== approvalId) {
       throw new OrchestratorError("approval_required", "Workflow d'approbation absent ou expiré.");
@@ -1389,15 +1393,15 @@ function createNoonOrchestrator({
     if (workflow.type === "specialist_proposal") {
       const { state, proposal, policyDecision } = workflow;
       const approvalWaitMs = Math.max(0, now() - (workflow.approvalStartedAt || now()));
-      state.metrics.approvalWaitMs += approvalWaitMs;
-      const normalizedDecision = decision || (approved ? "approve" : "reject");
+      const normalizedDecision = decision ?? (approved ? "approve" : "reject");
 
       if (normalizedDecision !== "approve") {
         await approvalManager.resumeApprovedAction({
           approvalId,
-          resumeToken: resumeToken || workflow.resumeToken,
+          resumeToken: resumeToken ?? workflow.resumeToken,
           decision: "reject",
         });
+        state.metrics.approvalWaitMs += approvalWaitMs;
         pending.delete(workflowKey);
 
         trace("specialist_proposal_rejected", state, {
@@ -1424,7 +1428,7 @@ function createNoonOrchestrator({
         const proposalArgs = proposal.requestedInputs && typeof proposal.requestedInputs === "object" ? proposal.requestedInputs : {};
         const resumed = await approvalManager.resumeApprovedAction({
           approvalId,
-          resumeToken: resumeToken || workflow.resumeToken,
+          resumeToken: resumeToken ?? workflow.resumeToken,
           decision: "approve",
           exactAction: {
             skillName: proposal.skillId,
@@ -1458,6 +1462,7 @@ function createNoonOrchestrator({
             }
           ),
         });
+        state.metrics.approvalWaitMs += approvalWaitMs;
 
         // Marquer la proposition comme approuvée dans le contexte
         state.proposalResults = state.proposalResults || [];
@@ -1509,6 +1514,8 @@ function createNoonOrchestrator({
           policyDecision,
         });
       } catch (error) {
+        if (isNonConsumingResumeRejection(error)) throw error;
+        state.metrics.approvalWaitMs += approvalWaitMs;
         pending.delete(workflowKey);
         const status = error.code === "approval_expired" ? "expired"
           : error.code === "approval_stale" ? "stale" : "failed";
@@ -1531,14 +1538,14 @@ function createNoonOrchestrator({
     // Gérer les outils normaux
     const { state, toolCall, args, exactInput, preconditions } = workflow;
     const approvalWaitMs = Math.max(0, now() - (workflow.approvalStartedAt || now()));
-    state.metrics.approvalWaitMs += approvalWaitMs;
-    const normalizedDecision = decision || (approved ? "approve" : "reject");
+    const normalizedDecision = decision ?? (approved ? "approve" : "reject");
     if (normalizedDecision !== "approve") {
       await approvalManager.resumeApprovedAction({
         approvalId,
-        resumeToken: resumeToken || workflow.resumeToken,
+        resumeToken: resumeToken ?? workflow.resumeToken,
         decision: "reject",
       });
+      state.metrics.approvalWaitMs += approvalWaitMs;
       pending.delete(String(id));
       state.input.push(toolOutput(toolCall, { error: "Action refusée par l'utilisateur.", type: "permission_error" }));
       trace("approval_rejected", state, { approvalId, tool: toolCall.name });
@@ -1552,7 +1559,7 @@ function createNoonOrchestrator({
     try {
       resumed = await approvalManager.resumeApprovedAction({
         approvalId,
-        resumeToken: resumeToken || workflow.resumeToken,
+        resumeToken: resumeToken ?? workflow.resumeToken,
         decision: "approve",
         exactAction: {
           skillName: toolCall.name,
@@ -1574,6 +1581,8 @@ function createNoonOrchestrator({
         execute: () => executeTool(state, toolCall, args, true, { approvalId, preconditions }),
       });
     } catch (error) {
+      if (isNonConsumingResumeRejection(error)) throw error;
+      state.metrics.approvalWaitMs += approvalWaitMs;
       pending.delete(String(id));
       const status = error.code === "approval_expired" ? "expired"
         : error.code === "approval_stale" ? "stale" : "failed";
@@ -1584,6 +1593,7 @@ function createNoonOrchestrator({
       trace(`approval_${status}`, state, { approvalId, tool: toolCall.name, code: error.code });
       throw error;
     }
+    state.metrics.approvalWaitMs += approvalWaitMs;
     pending.delete(String(id));
     const result = resumed.result;
     state.input.push(toolOutput(toolCall, result));
@@ -1599,17 +1609,7 @@ function createNoonOrchestrator({
   }
 
   async function resume(input = {}) {
-    const key = String(input.approvalId || "");
-    if (resumeResults.has(key)) return resumeResults.get(key);
-    if (resumeOperations.has(key)) return resumeOperations.get(key);
-    const operation = resumeWorkflow(input).then((result) => {
-      resumeResults.set(key, result);
-      if (resumeResults.size > 100) resumeResults.delete(resumeResults.keys().next().value);
-      return result;
-    });
-    resumeOperations.set(key, operation);
-    try { return await operation; }
-    finally { resumeOperations.delete(key); }
+    return resumeWorkflow(input);
   }
 
   return {
