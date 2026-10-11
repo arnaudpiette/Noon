@@ -139,6 +139,7 @@ const { createAmbientContextEngine } = require("./services/context/ambient-conte
 const { createDecisionSupportEngine } = require("./services/decision/decision-support-engine");
 const { createDevDecisionConsumer } = require("./services/decision/dev-decision-consumer");
 const { createGoalStrategyEngine } = require("./services/goals/goal-strategy-engine");
+const { createGoalDevExecutionService } = require("./services/goals/goal-dev-execution-service");
 const { createGoalRegistry } = require("./services/goals/goal-registry");
 const { createCapacityService, createPortfolioCapacityEngine } = require("./services/portfolio");
 const { createNoonOrchestrator } = require("./services/orchestration/noon-orchestrator");
@@ -1549,6 +1550,24 @@ const nativeDevB3Facade = createNativeDevOrchestratorFacade({
     sessionId: input.sessionId,
   }).mode,
 });
+
+const goalDevExecutionService =
+  createGoalDevExecutionService({
+    goalStrategyEngine,
+    nativeDevFacade:
+      nativeDevB3Facade,
+    workspaceEngine,
+    projectRuleResolver:
+      devProjectRuleResolver,
+    budgetService:
+      devCostBudgetService,
+    observability:
+      (event, metadata) =>
+        toolAuditLog.append(
+          `goals.dev.${event}`,
+          metadata
+        ),
+  });
 
 const devDecisionConsumer =
   createDevDecisionConsumer({
@@ -7956,6 +7975,25 @@ if (req.method === "POST" && req.url.startsWith("/api/goals/")) {
     else if (action === "strategy") result = goalStrategyEngine.versionStrategy(body.goalId, body.strategy || {}, { userConfirmed: body.userConfirmed === true });
     else if (action === "review") result = goalStrategyEngine.reviewGoal(body.goalId, body.review || {});
     else if (action === "alignment") result = goalStrategyEngine.evaluateAlignment(body.subject || {}, body.scope || {}, body.evidence || []);
+    else if (action === "dev-run") {
+      if (body.userConfirmed !== true) {
+        throw Object.assign(
+          new Error("Le lancement DEV depuis Goal requiert une confirmation explicite."),
+          {
+            statusCode: 400,
+            code: "GOAL_DEV_EXECUTION_CONFIRMATION_REQUIRED",
+          }
+        );
+      }
+
+      result =
+        await goalDevExecutionService.run({
+          goalId:
+            body.goalId,
+          request:
+            body.devTask || {},
+        });
+    }
     else throw Object.assign(new Error("Action Goal inconnue."), { statusCode: 404 });
     res.writeHead(action === "create" ? 201 : 200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     return res.end(JSON.stringify({ status: "ok", result }));
