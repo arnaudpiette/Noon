@@ -1,6 +1,10 @@
 "use strict";
 
 const crypto = require("crypto");
+const {
+  SKILL_NAME: GOAL_DEV_RETRY_SKILL,
+  OPERATION: GOAL_DEV_RETRY_OPERATION,
+} = require("../goals/goal-dev-retry-permit-service");
 
 const BLOCKED_ACTIONS = new Set([
   "git_push_force", "git_reset_hard", "delete_remote_branch", "rewrite_history",
@@ -38,6 +42,14 @@ function normalizeArgs(value, depth = 0) {
       .map((key) => [key, normalizeArgs(value[key], depth + 1)]));
   }
   throw new ApprovalError("APPROVAL_ARGS_INVALID", "Arguments incompatibles avec une approbation sûre.");
+}
+
+function deepFreeze(value) {
+  if (value && typeof value === "object") {
+    for (const child of Object.values(value)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
 }
 
 function payloadHash({ provider, action, target, payload }) {
@@ -227,6 +239,36 @@ function createApprovalEngine({
     return record;
   }
 
+  // Surface serveur bornée au permit Retry : une lecture n'approuve ni ne consomme.
+  // Le token authentifie cette lecture locale, mais seul resumeApprovedAction autorise la reprise.
+  function getPreparedGoalDevRetryExactAction({ approvalId, resumeToken } = {}) {
+    if (typeof approvalId !== "string" || !/^approval_[0-9a-f-]{36}$/.test(approvalId)) {
+      throw new ApprovalError("APPROVAL_NOT_FOUND", "Approbation absente ou indisponible après redémarrage.");
+    }
+    const record = actions.get(approvalId);
+    if (!record) throw new ApprovalError("APPROVAL_NOT_FOUND", "Approbation absente ou indisponible après redémarrage.");
+    if (typeof resumeToken !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(resumeToken)
+      || !safeEqual(record.resumeTokenHash, tokenHash(resumeToken))) {
+      throw new ApprovalError("APPROVAL_TOKEN_INVALID", "Jeton de reprise invalide.");
+    }
+    if (record.status === "expired" || Date.parse(record.expiresAt) <= now()) {
+      throw new ApprovalError("approval_expired", "Cette approbation a expiré.");
+    }
+    if (record.status === "consumed") throw new ApprovalError("APPROVAL_CONSUMED", "Cette action a déjà été exécutée.");
+    if (record.status !== "pending" || inFlight.has(approvalId)) {
+      throw new ApprovalError("APPROVAL_INVALID", "Cette approbation n’est plus active.");
+    }
+    if (record.skillName !== GOAL_DEV_RETRY_SKILL || record.operation !== GOAL_DEV_RETRY_OPERATION) {
+      throw new ApprovalError("APPROVAL_ACTION_CHANGED", "Cette approbation ne concerne pas le retry DEV.");
+    }
+    return deepFreeze({
+      skillName: record.skillName,
+      operation: record.operation,
+      target: record.target,
+      normalizedArgs: normalizeArgs(record.normalizedArgs),
+    });
+  }
+
   function confirm(id) {
     const record = getRecord(id);
     if (record.status === "expired") throw new ApprovalError("approval_expired", "Autorisation expirée.");
@@ -384,7 +426,8 @@ function createApprovalEngine({
 
   return {
     prepareAction, requestApproval, confirm, consumeApproval, rejectApproval,
-    resumeApprovedAction, listPending, activeApprovalId, cancel,
+    resumeApprovedAction, getPreparedGoalDevRetryExactAction,
+    listPending, activeApprovalId, cancel,
     get: (id) => publicApproval(getRecord(id)),
     cleanup: () => repository?.cleanup(new Date(now() - retentionMs).toISOString()) || 0,
     storageAvailable: () => storageAvailable,

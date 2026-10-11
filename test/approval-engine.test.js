@@ -6,6 +6,10 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const { createApprovalEngine } = require("../services/approvals/approval-engine");
+const {
+  SKILL_NAME: GOAL_DEV_RETRY_SKILL,
+  OPERATION: GOAL_DEV_RETRY_OPERATION,
+} = require("../services/goals/goal-dev-retry-permit-service");
 const { createPersonalDatabase } = require("../services/persistence/database");
 const { createApprovalRepository } = require("../services/persistence/repositories/approval-repository");
 
@@ -23,6 +27,185 @@ function barrier() {
   const promise = new Promise((done) => { resolve = done; });
   return { promise, resolve };
 }
+
+function goalDevRetryAction(overrides = {}) {
+  return {
+    skillName: GOAL_DEV_RETRY_SKILL,
+    operation: GOAL_DEV_RETRY_OPERATION,
+    target: "task-retry-1",
+    normalizedArgs: {
+      version: "goal-dev-retry-permit-binding-v1",
+      chainId: "chain-1",
+      chainRevision: 2,
+      taskId: "task-retry-1",
+      metadata: { revisions: [1, 2] },
+    },
+    preconditions: { chainRevision: 2 },
+    ...overrides,
+  };
+}
+
+test("la lecture interne restitue une copie profondément immuable du binding Retry canonique sans l'autoriser", () => {
+  const events = [];
+  const engine = createApprovalEngine({ auditLog: { append: (event) => events.push(event) } });
+  const input = goalDevRetryAction();
+  const approval = engine.prepareAction(input);
+  const eventsBeforeRead = [...events];
+  const exactAction = engine.getPreparedGoalDevRetryExactAction({
+    approvalId: approval.id, resumeToken: approval.resumeToken,
+  });
+
+  assert.deepEqual(exactAction, {
+    skillName: GOAL_DEV_RETRY_SKILL,
+    operation: GOAL_DEV_RETRY_OPERATION,
+    target: input.target,
+    normalizedArgs: input.normalizedArgs,
+  });
+  assert.notStrictEqual(exactAction.normalizedArgs, input.normalizedArgs);
+  assert.equal(Object.isFrozen(exactAction), true);
+  assert.equal(Object.isFrozen(exactAction.normalizedArgs.metadata.revisions), true);
+  assert.throws(() => { exactAction.normalizedArgs.metadata.revisions[0] = 99; }, TypeError);
+  assert.throws(() => { exactAction.target = "other-task"; }, TypeError);
+  input.normalizedArgs.metadata.revisions[0] = 99;
+  const reread = engine.getPreparedGoalDevRetryExactAction({
+    approvalId: approval.id, resumeToken: approval.resumeToken,
+  });
+  assert.equal(reread.normalizedArgs.metadata.revisions[0], 1);
+  assert.equal(engine.get(approval.id).status, "pending");
+  assert.deepEqual(events, eventsBeforeRead);
+  for (const projection of [approval, engine.get(approval.id), ...engine.listPending()]) {
+    assert.equal("normalizedArgs" in projection, false);
+    assert.equal(JSON.stringify(projection).includes("chain-1"), false);
+  }
+  assert.equal("resumeToken" in exactAction, false);
+  assert.equal("retryAuthorized" in exactAction, false);
+  assert.equal("executionAuthorized" in exactAction, false);
+});
+
+test("la lecture interne refuse les identités, tokens et types d'action incorrects", () => {
+  const engine = createApprovalEngine();
+  const retry = engine.prepareAction(goalDevRetryAction());
+  const read = (approvalId, resumeToken) => engine.getPreparedGoalDevRetryExactAction({ approvalId, resumeToken });
+  for (const invalidId of [null, undefined, "", {}, "approval_not-a-uuid"]) {
+    assert.throws(() => read(invalidId, retry.resumeToken), { code: "APPROVAL_NOT_FOUND" });
+  }
+  assert.throws(() => read("approval_00000000-0000-4000-8000-000000000000", retry.resumeToken), { code: "APPROVAL_NOT_FOUND" });
+  for (const invalidToken of [null, "", {}, "token-prive-ne-jamais-afficher"]) {
+    assert.throws(() => read(retry.id, invalidToken), (error) =>
+      error.code === "APPROVAL_TOKEN_INVALID"
+      && !error.message.includes(retry.resumeToken)
+      && !error.message.includes("token-prive-ne-jamais-afficher"));
+  }
+  for (const action of [
+    email(),
+    goalDevRetryAction({ skillName: "another.skill" }),
+    goalDevRetryAction({ operation: "another_operation" }),
+  ]) {
+    const approval = engine.prepareAction(action);
+    assert.throws(() => read(approval.id, approval.resumeToken), { code: "APPROVAL_ACTION_CHANGED" });
+  }
+  assert.equal(engine.get(retry.id).status, "pending");
+});
+
+test("un binding lu ne contourne ni token, action exacte, stale, expiration ou consommation", async () => {
+  let now = 1_000;
+  const engine = createApprovalEngine({ now: () => now, ttlMs: 50 });
+  const approval = engine.prepareAction(goalDevRetryAction());
+  const exactAction = engine.getPreparedGoalDevRetryExactAction({
+    approvalId: approval.id, resumeToken: approval.resumeToken,
+  });
+  const request = {
+    approvalId: approval.id, resumeToken: approval.resumeToken, decision: "approve", exactAction,
+    recheckHardRules: () => true, recheckPermission: () => true,
+    recheckConnector: () => true, recheckPreconditions: () => ({ chainRevision: 2 }),
+    execute: () => ({ retried: true }),
+  };
+  await assert.rejects(() => engine.resumeApprovedAction({ ...request, resumeToken: "wrong" }), { code: "APPROVAL_TOKEN_INVALID" });
+  await assert.rejects(() => engine.resumeApprovedAction({
+    ...request, exactAction: { ...exactAction, target: "other-task" },
+  }), { code: "APPROVAL_ACTION_CHANGED" });
+  assert.equal(engine.get(approval.id).status, "pending");
+  await assert.rejects(() => engine.resumeApprovedAction({
+    ...request, recheckPreconditions: () => ({ chainRevision: 3 }),
+  }), { code: "approval_stale" });
+  await assert.rejects(() => engine.resumeApprovedAction(request), { code: "APPROVAL_INVALID" });
+
+  const expiring = engine.prepareAction(goalDevRetryAction());
+  const expiringAction = engine.getPreparedGoalDevRetryExactAction({
+    approvalId: expiring.id, resumeToken: expiring.resumeToken,
+  });
+  now += 51;
+  await assert.rejects(() => engine.resumeApprovedAction({
+    ...request, approvalId: expiring.id, resumeToken: expiring.resumeToken, exactAction: expiringAction,
+  }), { code: "approval_expired" });
+  assert.throws(() => engine.getPreparedGoalDevRetryExactAction({
+    approvalId: expiring.id, resumeToken: "wrong",
+  }), { code: "APPROVAL_TOKEN_INVALID" });
+  assert.throws(() => engine.getPreparedGoalDevRetryExactAction({
+    approvalId: expiring.id, resumeToken: expiring.resumeToken,
+  }), { code: "approval_expired" });
+
+  const consumed = engine.prepareAction(goalDevRetryAction());
+  const consumedAction = engine.getPreparedGoalDevRetryExactAction({
+    approvalId: consumed.id, resumeToken: consumed.resumeToken,
+  });
+  let executions = 0;
+  const consumeRequest = {
+    ...request, approvalId: consumed.id, resumeToken: consumed.resumeToken,
+    exactAction: consumedAction, execute: () => { executions += 1; return { retried: true }; },
+  };
+  assert.equal((await engine.resumeApprovedAction(consumeRequest)).status, "consumed");
+  await assert.rejects(() => engine.resumeApprovedAction(consumeRequest), { code: "APPROVAL_CONSUMED" });
+  assert.throws(() => engine.getPreparedGoalDevRetryExactAction({
+    approvalId: consumed.id, resumeToken: "wrong",
+  }), { code: "APPROVAL_TOKEN_INVALID" });
+  assert.throws(() => engine.getPreparedGoalDevRetryExactAction({
+    approvalId: consumed.id, resumeToken: consumed.resumeToken,
+  }), { code: "APPROVAL_CONSUMED" });
+  assert.equal(executions, 1);
+});
+
+test("une annulation après lecture et une reprise concurrente ne réutilisent pas le binding comme permission", async () => {
+  const engine = createApprovalEngine();
+  const cancelled = engine.prepareAction(goalDevRetryAction());
+  const staleRead = engine.getPreparedGoalDevRetryExactAction({
+    approvalId: cancelled.id, resumeToken: cancelled.resumeToken,
+  });
+  assert.equal(engine.cancel(cancelled.id), true);
+  await assert.rejects(() => engine.resumeApprovedAction({
+    approvalId: cancelled.id, resumeToken: cancelled.resumeToken, decision: "approve",
+    exactAction: staleRead, execute: () => { throw new Error("must not execute"); },
+  }), { code: "APPROVAL_INVALID" });
+
+  const approval = engine.prepareAction(goalDevRetryAction());
+  const exactAction = engine.getPreparedGoalDevRetryExactAction({
+    approvalId: approval.id, resumeToken: approval.resumeToken,
+  });
+  const entered = barrier();
+  const release = barrier();
+  let executions = 0;
+  const request = {
+    approvalId: approval.id, resumeToken: approval.resumeToken, decision: "approve", exactAction,
+    execute: async () => {
+      executions += 1;
+      entered.resolve();
+      await release.promise;
+      return { retried: true };
+    },
+  };
+  const first = engine.resumeApprovedAction(request);
+  await entered.promise;
+  try {
+    await assert.rejects(() => engine.resumeApprovedAction(request), { code: "APPROVAL_IN_FLIGHT" });
+    assert.throws(() => engine.getPreparedGoalDevRetryExactAction({
+      approvalId: approval.id, resumeToken: approval.resumeToken,
+    }), { code: "APPROVAL_INVALID" });
+  } finally {
+    release.resolve();
+  }
+  assert.equal((await first).status, "consumed");
+  assert.equal(executions, 1);
+});
 
 test("prépare puis exécute exactement un e-mail une seule fois", async () => {
   const engine = createApprovalEngine();
