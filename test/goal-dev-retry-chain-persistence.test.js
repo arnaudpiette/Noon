@@ -151,6 +151,43 @@ function createChain(
   });
 }
 
+function readyCandidate(
+  store,
+  taskId = "task-retry-1"
+) {
+  createChain(store);
+
+  const recorded =
+    store.recordAttempt(
+      "chain-persist-1",
+      {
+        taskId: "task-root",
+        finalVerdict: "FAIL",
+        continuationState:
+          "RETRY_CANDIDATE",
+        estimatedCost: 0.5,
+        recordedAt:
+          "2026-10-11T08:00:10.000Z",
+      }
+    );
+
+  const candidate =
+    store.projectCandidate(
+      "chain-persist-1",
+      {
+        now:
+          "2026-10-11T08:00:20.000Z",
+        taskId,
+      }
+    );
+
+  return {
+    candidate,
+    expectedRevision:
+      recorded.revision,
+  };
+}
+
 test(
   "4.6C la chaîne et ses compteurs survivent à une réouverture SQLite",
   () => {
@@ -224,6 +261,9 @@ test(
           "chain-persist-1",
           candidate,
           {
+            expectedRevision:
+              recorded.revision,
+
             updatedAt:
               "2026-10-11T08:00:20.000Z",
           }
@@ -1009,3 +1049,196 @@ test(
     );
   }
 );
+
+test("appendCandidate impose une révision sûre et refuse stale sans fallback ni rejeu idempotent", (t) => {
+  const fixture = tempDatabase();
+  const current = open(fixture.filePath);
+  t.after(() => {
+    current.database.close();
+    fs.rmSync(fixture.directory, { recursive: true, force: true });
+  });
+
+  const { candidate, expectedRevision } = readyCandidate(current.store);
+  const before = current.store.get("chain-persist-1");
+  assert.equal(expectedRevision, 2);
+  assert.equal(current.store.assess("chain-persist-1", {
+    now: "2026-10-11T08:00:20.000Z",
+  }).eligible, true);
+
+  for (const invalid of [undefined, null, 0, -1, "2", 2.5, NaN, Infinity,
+    Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER + 1, { valueOf: () => 2 }]) {
+    assert.throws(() => current.store.appendCandidate("chain-persist-1", candidate, {
+      expectedRevision: invalid, updatedAt: "2026-10-11T08:00:20.000Z",
+    }), { code: "GOAL_DEV_RETRY_PERSISTENCE_REVISION_REQUIRED" });
+  }
+  assert.deepEqual(current.store.get("chain-persist-1"), before);
+  assert.equal(current.store.history("chain-persist-1").length, 2);
+
+  assert.throws(() => current.store.appendCandidate("chain-persist-1", candidate, {
+    expectedRevision: 1, updatedAt: "2026-10-11T08:00:20.000Z",
+  }), { code: "GOAL_DEV_RETRY_PERSISTENCE_CONFLICT" });
+  assert.deepEqual(current.store.get("chain-persist-1"), before);
+
+  const appended = current.store.appendCandidate("chain-persist-1", candidate, {
+    expectedRevision, updatedAt: "2026-10-11T08:00:20.000Z",
+  });
+  assert.equal(appended.revision, 3);
+  assert.equal(appended.created, true);
+  assert.equal(appended.chain.attempts[1].taskId, candidate.taskId);
+  assert.throws(() => current.store.appendCandidate("chain-persist-1", candidate, {
+    expectedRevision, updatedAt: "2026-10-11T08:00:20.000Z",
+  }), { code: "GOAL_DEV_RETRY_PERSISTENCE_CONFLICT" });
+  assert.equal(current.store.history("chain-persist-1").length, 3);
+
+  const recorded = current.store.recordAttempt("chain-persist-1", {
+    taskId: candidate.taskId, finalVerdict: "FAIL",
+    continuationState: "RETRY_CANDIDATE", estimatedCost: 0.5,
+    recordedAt: "2026-10-11T08:00:30.000Z",
+  });
+  assert.equal(recorded.revision, 4);
+  assert.equal(current.store.assess("chain-persist-1", {
+    now: "2026-10-11T08:00:40.000Z",
+  }).eligible, true);
+});
+
+test("appendCandidate conserve les refus du candidat invalide et de la chaîne fermée", (t) => {
+  const fixture = tempDatabase();
+  const current = open(fixture.filePath);
+  t.after(() => {
+    current.database.close();
+    fs.rmSync(fixture.directory, { recursive: true, force: true });
+  });
+
+  const { candidate, expectedRevision } = readyCandidate(current.store);
+  const invalid = structuredClone(candidate);
+  invalid.executionTemplateFingerprint = "wrong";
+  assert.throws(() => current.store.appendCandidate("chain-persist-1", invalid, {
+    expectedRevision, updatedAt: "2026-10-11T08:00:20.000Z",
+  }), { code: "GOAL_DEV_RETRY_CANDIDATE_INVALID" });
+  assert.equal(current.store.get("chain-persist-1").revision, expectedRevision);
+
+  const stoppedFixture = tempDatabase();
+  const stoppedStore = open(stoppedFixture.filePath);
+  t.after(() => {
+    stoppedStore.database.close();
+    fs.rmSync(stoppedFixture.directory, { recursive: true, force: true });
+  });
+  createChain(stoppedStore.store);
+  const stopped = stoppedStore.store.recordAttempt("chain-persist-1", {
+    taskId: "task-root", finalVerdict: "FAIL", continuationState: "STOP",
+    estimatedCost: 0.5, recordedAt: "2026-10-11T08:00:10.000Z",
+  });
+  assert.equal(stopped.revision, 2);
+  assert.throws(() => stoppedStore.store.appendCandidate("chain-persist-1", candidate, {
+    expectedRevision: stopped.revision, updatedAt: "2026-10-11T08:00:20.000Z",
+  }), { code: "GOAL_DEV_RETRY_NOT_ELIGIBLE" });
+  assert.deepEqual(stoppedStore.store.get("chain-persist-1"), {
+    revision: stopped.revision,
+    chain: stopped.chain,
+  });
+  assert.equal(stoppedStore.store.history("chain-persist-1").length, 2);
+});
+
+test("un updatedAt antidaté ne contourne pas l'éligibilité à l'heure du store", (t) => {
+  const fixture = tempDatabase();
+  let observedAt = "2026-10-11T08:00:20.000Z";
+  const current = open(fixture.filePath, () => observedAt);
+  t.after(() => {
+    current.database.close();
+    fs.rmSync(fixture.directory, { recursive: true, force: true });
+  });
+  const { candidate, expectedRevision } = readyCandidate(current.store);
+  observedAt = "2026-10-11T08:02:00.000Z";
+
+  assert.throws(() => current.store.appendCandidate("chain-persist-1", candidate, {
+    expectedRevision, updatedAt: "2026-10-11T08:00:20.000Z",
+  }), { code: "GOAL_DEV_RETRY_NOT_ELIGIBLE" });
+  assert.equal(current.store.get("chain-persist-1").revision, expectedRevision);
+  assert.equal(current.store.history("chain-persist-1").length, 2);
+});
+
+test("appendCandidate transmet la révision approuvée au CAS malgré une mutation entre lecture et save", (t) => {
+  const fixture = tempDatabase();
+  const current = open(fixture.filePath);
+  t.after(() => {
+    current.database.close();
+    fs.rmSync(fixture.directory, { recursive: true, force: true });
+  });
+  if (current.database.kind !== "sqlite") {
+    t.skip("CAS atomique vérifié uniquement sur SQLite");
+    return;
+  }
+
+  const { candidate, expectedRevision } = readyCandidate(current.store);
+  let saveCalls = 0;
+  const interposed = createGoalDevRetryChainStore({
+    repository: {
+      latest: (chainId) => current.repository.latest(chainId),
+      save(next, options) {
+        saveCalls += 1;
+        assert.equal(options.expectedRevision, expectedRevision);
+        const changed = structuredClone(current.repository.latest("chain-persist-1").chain);
+        changed.updatedAt = "2026-10-11T08:00:15.000Z";
+        current.repository.save(changed, { expectedRevision });
+        return current.repository.save(next, options);
+      },
+    },
+    now: () => "2026-10-11T08:00:20.000Z",
+  });
+
+  assert.throws(() => interposed.appendCandidate("chain-persist-1", candidate, {
+    expectedRevision, updatedAt: "2026-10-11T08:00:20.000Z",
+  }), { code: "GOAL_DEV_RETRY_PERSISTENCE_CONFLICT" });
+  assert.equal(saveCalls, 1);
+  assert.equal(current.store.get("chain-persist-1").revision, 3);
+  assert.equal(current.store.get("chain-persist-1").chain.attempts.length, 1);
+  assert.equal(current.store.get("chain-persist-1").chain.updatedAt, "2026-10-11T08:00:15.000Z");
+});
+
+test("deux stores SQLite sur la même chaîne ne peuvent gagner le même append", (t) => {
+  const fixture = tempDatabase();
+  const first = open(fixture.filePath);
+  const second = open(fixture.filePath);
+  t.after(() => {
+    second.database.close();
+    first.database.close();
+    fs.rmSync(fixture.directory, { recursive: true, force: true });
+  });
+  if (first.database.kind !== "sqlite" || second.database.kind !== "sqlite") {
+    t.skip("Concurrence sur stockage SQLite uniquement");
+    return;
+  }
+
+  const { candidate, expectedRevision } = readyCandidate(first.store);
+  let secondSaveCalls = 0;
+  let readBarrierReached = false;
+  let winner;
+  const staleSecondStore = createGoalDevRetryChainStore({
+    repository: {
+      latest(chainId) {
+        const snapshot = second.repository.latest(chainId);
+        assert.equal(snapshot.revision, expectedRevision);
+        readBarrierReached = true;
+        winner = first.store.appendCandidate("chain-persist-1", candidate, {
+          expectedRevision, updatedAt: "2026-10-11T08:00:20.000Z",
+        });
+        return snapshot;
+      },
+      save(next, options) {
+        secondSaveCalls += 1;
+        assert.equal(options.expectedRevision, expectedRevision);
+        return second.repository.save(next, options);
+      },
+    },
+    now: () => "2026-10-11T08:00:20.000Z",
+  });
+
+  assert.throws(() => staleSecondStore.appendCandidate("chain-persist-1", candidate, {
+    expectedRevision, updatedAt: "2026-10-11T08:00:20.000Z",
+  }), { code: "GOAL_DEV_RETRY_PERSISTENCE_CONFLICT" });
+  assert.equal(readBarrierReached, true);
+  assert.equal(winner.revision, 3);
+  assert.equal(secondSaveCalls, 1);
+  assert.deepEqual(first.store.get("chain-persist-1"), second.store.get("chain-persist-1"));
+  assert.equal(first.store.history("chain-persist-1").length, 3);
+});

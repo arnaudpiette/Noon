@@ -175,8 +175,55 @@ function createGoalDevRetryChainStore({
     candidate,
     input = {}
   ) {
+    const expectedRevision =
+      input.expectedRevision;
+
+    if (
+      !Number.isSafeInteger(
+        expectedRevision
+      ) ||
+      expectedRevision < 1 ||
+      expectedRevision >=
+        Number.MAX_SAFE_INTEGER
+    ) {
+      throw failure(
+        "GOAL_DEV_RETRY_PERSISTENCE_REVISION_REQUIRED",
+        "expectedRevision valide requis."
+      );
+    }
+
     const current =
       required(chainId);
+
+    if (
+      current.revision !==
+      expectedRevision
+    ) {
+      throw failure(
+        "GOAL_DEV_RETRY_PERSISTENCE_CONFLICT",
+        "Retry Chain modifiée concurremment."
+      );
+    }
+
+    const observedAt =
+      now();
+
+    const updatedAt =
+      input.updatedAt ||
+      observedAt;
+
+    const assessment =
+      assessGoalDevRetry(
+        current.chain,
+        { now: observedAt }
+      );
+
+    if (!assessment.eligible) {
+      throw failure(
+        "GOAL_DEV_RETRY_NOT_ELIGIBLE",
+        assessment.reasonCode
+      );
+    }
 
     const next =
       appendGoalDevRetryCandidate(
@@ -184,8 +231,7 @@ function createGoalDevRetryChainStore({
         candidate,
         {
           updatedAt:
-            input.updatedAt ||
-            now(),
+            updatedAt,
         }
       );
 
@@ -193,7 +239,7 @@ function createGoalDevRetryChainStore({
       next,
       {
         expectedRevision:
-          current.revision,
+          expectedRevision,
       }
     );
   }
