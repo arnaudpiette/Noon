@@ -140,6 +140,7 @@ const { createDecisionSupportEngine } = require("./services/decision/decision-su
 const { createDevDecisionConsumer } = require("./services/decision/dev-decision-consumer");
 const { createGoalStrategyEngine } = require("./services/goals/goal-strategy-engine");
 const { createGoalDevExecutionService } = require("./services/goals/goal-dev-execution-service");
+const { createGoalDevEvaluatedExecutionService } = require("./services/goals/goal-dev-evaluated-execution-service");
 const { createGoalRegistry } = require("./services/goals/goal-registry");
 const { createCapacityService, createPortfolioCapacityEngine } = require("./services/portfolio");
 const { createNoonOrchestrator } = require("./services/orchestration/noon-orchestrator");
@@ -1551,7 +1552,7 @@ const nativeDevB3Facade = createNativeDevOrchestratorFacade({
   }).mode,
 });
 
-const goalDevExecutionService =
+const goalDevExecutionCoreService =
   createGoalDevExecutionService({
     goalStrategyEngine,
     nativeDevFacade:
@@ -1565,6 +1566,34 @@ const goalDevExecutionService =
       (event, metadata) =>
         toolAuditLog.append(
           `goals.dev.${event}`,
+          metadata
+        ),
+  });
+
+/*
+ * 4.5D :
+ * AgentEvaluation est appliquée après
+ * l'unique exécution Native DEV 4.5C.
+ *
+ * Le provider est résolu uniquement
+ * au moment de la requête HTTP :
+ * agentEvaluationEngine est initialisé
+ * avant qu'une requête puisse atteindre
+ * ce service.
+ */
+const goalDevExecutionService =
+  createGoalDevEvaluatedExecutionService({
+    goalExecutionService:
+      goalDevExecutionCoreService,
+
+    evaluationEngineProvider:
+      () =>
+        agentEvaluationEngine,
+
+    observability:
+      (event, metadata) =>
+        toolAuditLog.append(
+          `goals.dev-evaluation.${event}`,
           metadata
         ),
   });
