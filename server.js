@@ -142,6 +142,13 @@ const { createGoalStrategyEngine } = require("./services/goals/goal-strategy-eng
 const { createGoalDevExecutionService } = require("./services/goals/goal-dev-execution-service");
 const { createGoalDevEvaluatedExecutionService } = require("./services/goals/goal-dev-evaluated-execution-service");
 const { createGoalDevRetryRuntime } = require("./services/goals/goal-dev-retry-runtime");
+const {
+  goalDevRetryHttpStatus,
+  normalizeGoalDevRetryPrepareRequest,
+  normalizeGoalDevRetryResumeRequest,
+  projectGoalDevRetryPermitResponse,
+  projectGoalDevRetryResumeResponse,
+} = require("./services/goals/goal-dev-retry-http-contract");
 const { createGoalRegistry } = require("./services/goals/goal-registry");
 const { createCapacityService, createPortfolioCapacityEngine } = require("./services/portfolio");
 const { createNoonOrchestrator } = require("./services/orchestration/noon-orchestrator");
@@ -8039,6 +8046,162 @@ if (req.method === "GET" && req.url.startsWith("/api/goals")) {
   } catch (error) {
     res.writeHead(400, { "Content-Type": "application/json" });
     return res.end(JSON.stringify({ status: "error", code: error.code || null, message: error.message }));
+  }
+}
+
+function sendGoalDevRetryError(
+  res,
+  error
+) {
+  res.writeHead(
+    goalDevRetryHttpStatus(
+      error
+    ),
+    {
+      "Content-Type":
+        "application/json",
+      "Cache-Control":
+        "no-store",
+    }
+  );
+
+  return res.end(
+    JSON.stringify({
+      status: "error",
+
+      code:
+        error?.code ||
+        "GOAL_DEV_RETRY_API_FAILURE",
+
+      message:
+        error?.message ||
+        "Erreur Retry DEV.",
+    })
+  );
+}
+
+/*
+ * 4.6K — surface HTTP minimale du Retry Runtime.
+ *
+ * Le renderer ne peut fournir que :
+ * - chainId à la préparation ;
+ * - approvalId + resumeToken + décision explicite à la reprise.
+ *
+ * Aucun taskId, workspace, projet, chemin, permission ou template
+ * provenant du client n'est accepté par ce contrat.
+ */
+if (
+  requestPath ===
+    "/api/goals/dev-retry/prepare" &&
+  req.method === "POST"
+) {
+  try {
+    requireTrustedDevUi(req);
+
+    const body =
+      await readJsonBody(
+        req,
+        8 * 1024
+      );
+
+    const input =
+      normalizeGoalDevRetryPrepareRequest(
+        body
+      );
+
+    const permit =
+      await goalDevRetryRuntime
+        .permitService
+        .prepare(
+          input
+        );
+
+    const retry =
+      projectGoalDevRetryPermitResponse(
+        permit
+      );
+
+    res.writeHead(
+      202,
+      {
+        "Content-Type":
+          "application/json",
+        "Cache-Control":
+          "no-store",
+      }
+    );
+
+    return res.end(
+      JSON.stringify({
+        status: "ok",
+        retry,
+      })
+    );
+  } catch (error) {
+    return sendGoalDevRetryError(
+      res,
+      error
+    );
+  }
+}
+
+if (
+  requestPath ===
+    "/api/goals/dev-retry/resume" &&
+  req.method === "POST"
+) {
+  try {
+    requireTrustedDevUi(req);
+
+    const body =
+      await readJsonBody(
+        req,
+        8 * 1024
+      );
+
+    /*
+     * decision est obligatoire au niveau HTTP.
+     * L'API ne doit jamais hériter du défaut
+     * "approve" du service interne.
+     */
+    const input =
+      normalizeGoalDevRetryResumeRequest(
+        body
+      );
+
+    const resumed =
+      await goalDevRetryRuntime
+        .approvedRetryService
+        .resume(
+          input
+        );
+
+    const retry =
+      projectGoalDevRetryResumeResponse(
+        resumed
+      );
+
+    res.writeHead(
+      200,
+      {
+        "Content-Type":
+          "application/json",
+        "Cache-Control":
+          "no-store",
+      }
+    );
+
+    return res.end(
+      JSON.stringify({
+        status: "ok",
+        retry,
+      })
+    );
+  } catch (error) {
+    return sendGoalDevRetryError(
+      res,
+      error
+    );
   }
 }
 
