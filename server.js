@@ -141,6 +141,7 @@ const { createDevDecisionConsumer } = require("./services/decision/dev-decision-
 const { createGoalStrategyEngine } = require("./services/goals/goal-strategy-engine");
 const { createGoalDevExecutionService } = require("./services/goals/goal-dev-execution-service");
 const { createGoalDevEvaluatedExecutionService } = require("./services/goals/goal-dev-evaluated-execution-service");
+const { createGoalDevRetryRuntime } = require("./services/goals/goal-dev-retry-runtime");
 const { createGoalRegistry } = require("./services/goals/goal-registry");
 const { createCapacityService, createPortfolioCapacityEngine } = require("./services/portfolio");
 const { createNoonOrchestrator } = require("./services/orchestration/noon-orchestrator");
@@ -1597,6 +1598,58 @@ const goalDevExecutionService =
           metadata
         ),
   });
+
+/*
+ * 4.6J — Retry Runtime wiring.
+ *
+ * Une seule chaîne d'autorité :
+ * - base personnelle canonique ;
+ * - ApprovalEngine serveur existant ;
+ * - workspace/projet résolus côté serveur ;
+ * - OperationalSecurityPolicy + InterventionPermissionEngine existants ;
+ * - Goal DEV évalué existant, donc un seul passage Native DEV.
+ *
+ * Aucune route HTTP/UI n'est ajoutée dans cette tranche.
+ */
+const goalDevRetryRuntime =
+  createGoalDevRetryRuntime({
+    database:
+      personalDatabase,
+
+    approvalEngine:
+      approvalManager,
+
+    operationalSecurityPolicy,
+
+    interventionPermissionEngine,
+
+    goalDevExecutionService,
+
+    workspaceEngine,
+
+    projectProvider:
+      () =>
+        getValidRegisteredProjects(),
+
+    profileScopeProvider:
+      () => "arnaud",
+
+    observability:
+      (event, metadata) =>
+        toolAuditLog.append(
+          `goals.dev-retry.${event}`,
+          metadata
+        ),
+  });
+
+toolAuditLog.append(
+  "goals.dev-retry.runtime_composed",
+  {
+    persistence:
+      goalDevRetryRuntime
+        .persistenceCapabilities(),
+  }
+);
 
 const devDecisionConsumer =
   createDevDecisionConsumer({
