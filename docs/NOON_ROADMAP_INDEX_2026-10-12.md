@@ -1,8 +1,8 @@
 # NOON — Roadmap intégrale depuis la création
 
-**Édition : 12 octobre 2026 — historique V1, V2, V3, perspectives V4/V5.**
+**Édition initiale : 12 octobre 2026 — avenant Google OAuth agentique du 13 octobre 2026.**
 
-Cette publication reproduit les **425 lignes de la roadmap consolidée**, réparties en chapitres Markdown pour faciliter la lecture et les mises à jour. Elle réunit les décisions des conversations « Projet Noon #2 », « Terminal 03 » et des audits produit. Elle documente une **vision et des états rapportés**, pas une certification du runtime Mac ni une autorisation de modifier l'application.
+L'édition initiale reproduit les **425 lignes de la roadmap consolidée**, réparties en chapitres Markdown pour faciliter la lecture et les mises à jour. Elle réunit les décisions des conversations « Projet Noon #2 », « Terminal 03 » et des audits produit. Elle documente une **vision et des états rapportés**, pas une certification du runtime Mac ni une autorisation de modifier l'application.
 
 ## Priorités actuelles
 
@@ -11,6 +11,7 @@ Cette publication reproduit les **425 lignes de la roadmap consolidée**, répar
 - **P1 — Figma V2 :** lecture des frames/styles/assets, analyse visuelle, comparaison Figma ↔ Preview et validation sur un cas métier réel.
 - **P2 — SelfDev V1 :** diagnostic, patchs isolés, tests et revue explicite avant toute intégration.
 - **Parallèle :** vrai compagnon **iPhone**, conversations et jobs synchronisés avec le Mac, appairage sécurisé et notifications ; mémoire et données privées restent protégées.
+- **V2 planifié après sécurisation :** Google Agentic OAuth & MCP Access — audit, clients standard/agentique séparés, broker central, pilote MCP lecture seule ; ne change pas les P0/P1/P2.
 - **Transverse :** Daily Brief à 7 h, anticipation, proactivité non intrusive, sécurité, sauvegardes, voix et qualité d'usage au quotidien.
 
 ## Lire la roadmap complète (dans l'ordre)
@@ -26,6 +27,7 @@ Cette publication reproduit les **425 lignes de la roadmap consolidée**, répar
 9. [Validation utilisateur et gouvernance — sections 15–16](roadmap/08_validation_gouvernance.md)
 10. [Références et synthèse — section 17](roadmap/09_references.md)
 11. **[P0-A : voix GPT-Live full duplex, délégation asynchrone et critères d'acceptation](roadmap/10_voice_full_duplex_gpt_live.md)**
+12. **[Google Agentic OAuth & MCP Access — avenant V2 du 13/10/2026](roadmap/11_google_agentic_oauth_mcp_access.md)**
 
 ## Règles de mise à jour
 
