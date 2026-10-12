@@ -590,6 +590,35 @@ function assertForward(
       );
     }
 
+    const allowedExecutionBoundaryTransition =
+      before.state ===
+        "PLANNED" &&
+      after.state ===
+        "PLANNED" &&
+      before.executionBoundary ===
+        "PREPARED" &&
+      after.executionBoundary ===
+        "MAY_HAVE_STARTED" &&
+      before.executionUncertainAt == null &&
+      typeof after.executionUncertainAt ===
+        "string" &&
+      before.executionUncertaintyReasonCode ==
+        null &&
+      after.executionUncertaintyReasonCode ===
+        "EXECUTION_MAY_HAVE_STARTED" &&
+      same(
+        {
+          ...before,
+          executionBoundary:
+            after.executionBoundary,
+          executionUncertainAt:
+            after.executionUncertainAt,
+          executionUncertaintyReasonCode:
+            after.executionUncertaintyReasonCode,
+        },
+        after
+      );
+
     if (
       before.state ===
         "PLANNED" &&
@@ -598,7 +627,8 @@ function assertForward(
       !same(
         before,
         after
-      )
+      ) &&
+      !allowedExecutionBoundaryTransition
     ) {
       throw failure(
         "GOAL_DEV_RETRY_PERSISTENCE_PLANNED_MUTATED",

@@ -24,6 +24,14 @@ const ATTEMPT_STATES =
     RECORDED: "RECORDED",
   });
 
+
+const EXECUTION_BOUNDARY_STATES =
+  Object.freeze({
+    PREPARED: "PREPARED",
+    MAY_HAVE_STARTED:
+      "MAY_HAVE_STARTED",
+  });
+
 const CONTINUATIONS =
   new Set([
     "STOP",
@@ -405,6 +413,11 @@ function createGoalDevRetryChain({
         state:
           ATTEMPT_STATES.PLANNED,
 
+        executionBoundary:
+          EXECUTION_BOUNDARY_STATES.PREPARED,
+
+        executionUncertainAt: null,
+        executionUncertaintyReasonCode: null,
         finalVerdict: null,
         failureCategory: null,
         continuationState:
@@ -906,6 +919,129 @@ function projectGoalDevRetryCandidate(
   });
 }
 
+function markGoalDevRetryExecutionUncertain(
+  chain,
+  {
+    taskId,
+    attemptIndex,
+    uncertainAt =
+      new Date().toISOString(),
+  } = {}
+) {
+  const next =
+    clone(chain);
+
+  if (
+    next.state !==
+    STATES.OPEN
+  ) {
+    fail(
+      "GOAL_DEV_RETRY_CHAIN_CLOSED",
+      "Retry Chain fermée."
+    );
+  }
+
+  const normalizedTaskId =
+    String(taskId || "")
+      .trim();
+
+  if (!normalizedTaskId) {
+    fail(
+      "GOAL_DEV_RETRY_TASK_ID_REQUIRED",
+      "taskId retry requis."
+    );
+  }
+
+  if (
+    !Number.isSafeInteger(
+      attemptIndex
+    ) ||
+    attemptIndex < 1
+  ) {
+    fail(
+      "GOAL_DEV_RETRY_ATTEMPT_INDEX_INVALID",
+      "attemptIndex retry invalide."
+    );
+  }
+
+  const latest =
+    next.attempts[
+      next.attempts.length - 1
+    ];
+
+  if (
+    !latest ||
+    latest.taskId !==
+      normalizedTaskId ||
+    latest.attemptIndex !==
+      attemptIndex
+  ) {
+    fail(
+      "GOAL_DEV_RETRY_ATTEMPT_IDENTITY_MISMATCH",
+      "Identité de tentative Retry divergente."
+    );
+  }
+
+  if (
+    latest.state !==
+    ATTEMPT_STATES.PLANNED
+  ) {
+    fail(
+      "GOAL_DEV_RETRY_ATTEMPT_NOT_PLANNED",
+      "Seule une tentative PLANNED peut franchir la frontière d'exécution."
+    );
+  }
+
+  if (
+    latest.executionBoundary ===
+    EXECUTION_BOUNDARY_STATES
+      .MAY_HAVE_STARTED
+  ) {
+    fail(
+      "GOAL_DEV_RETRY_EXECUTION_ALREADY_UNCERTAIN",
+      "La tentative porte déjà une issue d'exécution incertaine."
+    );
+  }
+
+  if (
+    latest.executionBoundary != null &&
+    latest.executionBoundary !==
+      EXECUTION_BOUNDARY_STATES
+        .PREPARED
+  ) {
+    fail(
+      "GOAL_DEV_RETRY_EXECUTION_BOUNDARY_INVALID",
+      "Frontière d'exécution Retry invalide."
+    );
+  }
+
+  const at =
+    timestamp(
+      uncertainAt
+    );
+
+  latest.executionBoundary =
+    EXECUTION_BOUNDARY_STATES
+      .MAY_HAVE_STARTED;
+
+  latest.executionUncertainAt =
+    at;
+
+  latest.executionUncertaintyReasonCode =
+    "EXECUTION_MAY_HAVE_STARTED";
+
+  /*
+   * Aucun coût n'est inventé.
+   *
+   * null reste null.
+   * L'accounting RECORDED reste inchangé.
+   */
+  next.updatedAt =
+    at;
+
+  return deepFreeze(next);
+}
+
 function appendGoalDevRetryCandidate(
   chain,
   candidate,
@@ -973,6 +1109,11 @@ function appendGoalDevRetryCandidate(
     state:
       ATTEMPT_STATES.PLANNED,
 
+    executionBoundary:
+      EXECUTION_BOUNDARY_STATES.PREPARED,
+
+    executionUncertainAt: null,
+    executionUncertaintyReasonCode: null,
     finalVerdict: null,
     failureCategory: null,
     continuationState: null,
@@ -992,10 +1133,12 @@ function appendGoalDevRetryCandidate(
 
 module.exports = {
   ATTEMPT_STATES,
+  EXECUTION_BOUNDARY_STATES,
   HARD_LIMITS,
   STATES,
   VERSION,
   appendGoalDevRetryCandidate,
+  markGoalDevRetryExecutionUncertain,
   assessGoalDevRetry,
   createGoalDevRetryChain,
   projectGoalDevRetryCandidate,

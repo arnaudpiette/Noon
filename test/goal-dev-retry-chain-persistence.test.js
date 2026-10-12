@@ -1242,3 +1242,605 @@ test("deux stores SQLite sur la même chaîne ne peuvent gagner le même append"
   assert.deepEqual(first.store.get("chain-persist-1"), second.store.get("chain-persist-1"));
   assert.equal(first.store.history("chain-persist-1").length, 3);
 });
+
+
+test(
+  "4.6H durable execution uncertainty : PREPARED devient MAY_HAVE_STARTED sans inventer un coût",
+  (t) => {
+    const fixture =
+      tempDatabase();
+
+    let current =
+      open(
+        fixture.filePath
+      );
+
+    t.after(() => {
+      try {
+        current.database.close();
+      } catch {}
+
+      fs.rmSync(
+        fixture.directory,
+        {
+          recursive: true,
+          force: true,
+        }
+      );
+    });
+
+    const {
+      candidate,
+      expectedRevision,
+    } =
+      readyCandidate(
+        current.store
+      );
+
+    const appended =
+      current.store
+        .appendCandidate(
+          "chain-persist-1",
+          candidate,
+          {
+            expectedRevision,
+
+            updatedAt:
+              "2026-10-11T08:00:20.000Z",
+          }
+        );
+
+    const accountingBefore =
+      structuredClone(
+        appended.chain
+          .accounting
+      );
+
+    const uncertain =
+      current.store
+        .markExecutionUncertain(
+          "chain-persist-1",
+          {
+            expectedRevision:
+              appended.revision,
+
+            taskId:
+              candidate.taskId,
+
+            attemptIndex:
+              candidate.attemptIndex,
+
+            uncertainAt:
+              "2026-10-11T08:00:21.000Z",
+          }
+        );
+
+    assert.equal(
+      uncertain.revision,
+      appended.revision + 1
+    );
+
+    const latest =
+      uncertain.chain
+        .attempts[
+          uncertain.chain
+            .attempts.length - 1
+        ];
+
+    assert.equal(
+      latest.state,
+      "PLANNED"
+    );
+
+    assert.equal(
+      latest.executionBoundary,
+      "MAY_HAVE_STARTED"
+    );
+
+    assert.equal(
+      latest.executionUncertainAt,
+      "2026-10-11T08:00:21.000Z"
+    );
+
+    assert.equal(
+      latest.executionUncertaintyReasonCode,
+      "EXECUTION_MAY_HAVE_STARTED"
+    );
+
+    assert.equal(
+      latest.actualCost,
+      null
+    );
+
+    assert.equal(
+      latest.accountedCost,
+      null
+    );
+
+    assert.deepEqual(
+      uncertain.chain
+        .accounting,
+      accountingBefore
+    );
+
+    assert.equal(
+      current.store
+        .assess(
+          "chain-persist-1",
+          {
+            now:
+              "2026-10-11T08:00:22.000Z",
+          }
+        )
+        .eligible,
+      false
+    );
+
+    assert.throws(
+      () =>
+        current.store
+          .projectCandidate(
+            "chain-persist-1",
+            {
+              now:
+                "2026-10-11T08:00:22.000Z",
+
+              taskId:
+                "task-never-replayed",
+            }
+          ),
+      {
+        code:
+          "GOAL_DEV_RETRY_NOT_ELIGIBLE",
+      }
+    );
+
+    assert.equal(
+      current.store
+        .history(
+          "chain-persist-1"
+        )
+        .length,
+      4
+    );
+
+    current.database.close();
+
+    current =
+      open(
+        fixture.filePath
+      );
+
+    const restored =
+      current.store
+        .get(
+          "chain-persist-1"
+        );
+
+    const restoredLatest =
+      restored.chain
+        .attempts[
+          restored.chain
+            .attempts.length - 1
+        ];
+
+    assert.equal(
+      restoredLatest
+        .executionBoundary,
+      "MAY_HAVE_STARTED"
+    );
+
+    assert.equal(
+      restoredLatest
+        .executionUncertainAt,
+      "2026-10-11T08:00:21.000Z"
+    );
+
+    assert.equal(
+      restoredLatest
+        .actualCost,
+      null
+    );
+
+    /*
+     * Un vrai résultat terminal peut ensuite
+     * être enregistré normalement.
+     *
+     * Zéro observé reste zéro.
+     */
+    const recorded =
+      current.store
+        .recordAttempt(
+          "chain-persist-1",
+          {
+            taskId:
+              candidate.taskId,
+
+            finalVerdict:
+              "FAIL",
+
+            continuationState:
+              "STOP",
+
+            estimatedCost: 0,
+            actualCost: 0,
+
+            recordedAt:
+              "2026-10-11T08:00:23.000Z",
+          }
+        );
+
+    const recordedLatest =
+      recorded.chain
+        .attempts[
+          recorded.chain
+            .attempts.length - 1
+        ];
+
+    assert.equal(
+      recordedLatest.state,
+      "RECORDED"
+    );
+
+    assert.equal(
+      recordedLatest.actualCost,
+      0
+    );
+
+    assert.equal(
+      recordedLatest.accountedCost,
+      0
+    );
+  }
+);
+
+test(
+  "4.6H markExecutionUncertain impose identité et expectedRevision sans fallback",
+  (t) => {
+    const fixture =
+      tempDatabase();
+
+    const current =
+      open(
+        fixture.filePath
+      );
+
+    t.after(() => {
+      current.database.close();
+
+      fs.rmSync(
+        fixture.directory,
+        {
+          recursive: true,
+          force: true,
+        }
+      );
+    });
+
+    const {
+      candidate,
+      expectedRevision,
+    } =
+      readyCandidate(
+        current.store
+      );
+
+    const appended =
+      current.store
+        .appendCandidate(
+          "chain-persist-1",
+          candidate,
+          {
+            expectedRevision,
+
+            updatedAt:
+              "2026-10-11T08:00:20.000Z",
+          }
+        );
+
+    const before =
+      current.store
+        .get(
+          "chain-persist-1"
+        );
+
+    for (
+      const invalid of [
+        undefined,
+        null,
+        0,
+        -1,
+        "3",
+        3.5,
+        NaN,
+        Infinity,
+        Number.MAX_SAFE_INTEGER,
+        Number.MAX_SAFE_INTEGER + 1,
+      ]
+    ) {
+      assert.throws(
+        () =>
+          current.store
+            .markExecutionUncertain(
+              "chain-persist-1",
+              {
+                expectedRevision:
+                  invalid,
+
+                taskId:
+                  candidate.taskId,
+
+                attemptIndex:
+                  candidate.attemptIndex,
+
+                uncertainAt:
+                  "2026-10-11T08:00:21.000Z",
+              }
+            ),
+        {
+          code:
+            "GOAL_DEV_RETRY_PERSISTENCE_REVISION_REQUIRED",
+        }
+      );
+    }
+
+    assert.deepEqual(
+      current.store
+        .get(
+          "chain-persist-1"
+        ),
+      before
+    );
+
+    assert.throws(
+      () =>
+        current.store
+          .markExecutionUncertain(
+            "chain-persist-1",
+            {
+              expectedRevision:
+                appended.revision,
+
+              taskId:
+                "wrong-task",
+
+              attemptIndex:
+                candidate.attemptIndex,
+
+              uncertainAt:
+                "2026-10-11T08:00:21.000Z",
+            }
+          ),
+      {
+        code:
+          "GOAL_DEV_RETRY_ATTEMPT_IDENTITY_MISMATCH",
+      }
+    );
+
+    assert.throws(
+      () =>
+        current.store
+          .markExecutionUncertain(
+            "chain-persist-1",
+            {
+              expectedRevision:
+                appended.revision,
+
+              taskId:
+                candidate.taskId,
+
+              attemptIndex:
+                candidate.attemptIndex + 1,
+
+              uncertainAt:
+                "2026-10-11T08:00:21.000Z",
+            }
+          ),
+      {
+        code:
+          "GOAL_DEV_RETRY_ATTEMPT_IDENTITY_MISMATCH",
+      }
+    );
+
+    const uncertain =
+      current.store
+        .markExecutionUncertain(
+          "chain-persist-1",
+          {
+            expectedRevision:
+              appended.revision,
+
+            taskId:
+              candidate.taskId,
+
+            attemptIndex:
+              candidate.attemptIndex,
+
+            uncertainAt:
+              "2026-10-11T08:00:21.000Z",
+          }
+        );
+
+    /*
+     * La même révision ne peut plus muter.
+     */
+    assert.throws(
+      () =>
+        current.store
+          .markExecutionUncertain(
+            "chain-persist-1",
+            {
+              expectedRevision:
+                appended.revision,
+
+              taskId:
+                candidate.taskId,
+
+              attemptIndex:
+                candidate.attemptIndex,
+
+              uncertainAt:
+                "2026-10-11T08:00:22.000Z",
+            }
+          ),
+      {
+        code:
+          "GOAL_DEV_RETRY_PERSISTENCE_CONFLICT",
+      }
+    );
+
+    /*
+     * Même avec la nouvelle révision,
+     * le double marquage est refusé fermé.
+     */
+    assert.throws(
+      () =>
+        current.store
+          .markExecutionUncertain(
+            "chain-persist-1",
+            {
+              expectedRevision:
+                uncertain.revision,
+
+              taskId:
+                candidate.taskId,
+
+              attemptIndex:
+                candidate.attemptIndex,
+
+              uncertainAt:
+                "2026-10-11T08:00:22.000Z",
+            }
+          ),
+      {
+        code:
+          "GOAL_DEV_RETRY_EXECUTION_ALREADY_UNCERTAIN",
+      }
+    );
+  }
+);
+
+test(
+  "4.6H SQLite CAS empêche deux writers de franchir la même frontière",
+  (t) => {
+    const fixture =
+      tempDatabase();
+
+    const first =
+      open(
+        fixture.filePath
+      );
+
+    const second =
+      open(
+        fixture.filePath
+      );
+
+    t.after(() => {
+      second.database.close();
+      first.database.close();
+
+      fs.rmSync(
+        fixture.directory,
+        {
+          recursive: true,
+          force: true,
+        }
+      );
+    });
+
+    if (
+      first.database.kind !==
+        "sqlite" ||
+      second.database.kind !==
+        "sqlite"
+    ) {
+      t.skip(
+        "CAS atomique vérifié uniquement sur SQLite"
+      );
+
+      return;
+    }
+
+    const {
+      candidate,
+      expectedRevision,
+    } =
+      readyCandidate(
+        first.store
+      );
+
+    const appended =
+      first.store
+        .appendCandidate(
+          "chain-persist-1",
+          candidate,
+          {
+            expectedRevision,
+
+            updatedAt:
+              "2026-10-11T08:00:20.000Z",
+          }
+        );
+
+    const firstWinner =
+      first.store
+        .markExecutionUncertain(
+          "chain-persist-1",
+          {
+            expectedRevision:
+              appended.revision,
+
+            taskId:
+              candidate.taskId,
+
+            attemptIndex:
+              candidate.attemptIndex,
+
+            uncertainAt:
+              "2026-10-11T08:00:21.000Z",
+          }
+        );
+
+    assert.equal(
+      firstWinner.revision,
+      appended.revision + 1
+    );
+
+    assert.throws(
+      () =>
+        second.store
+          .markExecutionUncertain(
+            "chain-persist-1",
+            {
+              expectedRevision:
+                appended.revision,
+
+              taskId:
+                candidate.taskId,
+
+              attemptIndex:
+                candidate.attemptIndex,
+
+              uncertainAt:
+                "2026-10-11T08:00:21.000Z",
+            }
+          ),
+      {
+        code:
+          "GOAL_DEV_RETRY_PERSISTENCE_CONFLICT",
+      }
+    );
+
+    assert.deepEqual(
+      first.store
+        .get(
+          "chain-persist-1"
+        ),
+      second.store
+        .get(
+          "chain-persist-1"
+        )
+    );
+  }
+);

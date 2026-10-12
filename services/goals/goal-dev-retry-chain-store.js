@@ -4,6 +4,7 @@ const {
   appendGoalDevRetryCandidate,
   assessGoalDevRetry,
   createGoalDevRetryChain,
+  markGoalDevRetryExecutionUncertain,
   projectGoalDevRetryCandidate,
   recordGoalDevRetryAttempt,
 } = require(
@@ -123,6 +124,69 @@ function createGoalDevRetryChainStore({
       {
         expectedRevision:
           current.revision,
+      }
+    );
+  }
+
+  function markExecutionUncertain(
+    chainId,
+    input = {}
+  ) {
+    const expectedRevision =
+      input.expectedRevision;
+
+    if (
+      !Number.isSafeInteger(
+        expectedRevision
+      ) ||
+      expectedRevision < 1 ||
+      expectedRevision >=
+        Number.MAX_SAFE_INTEGER
+    ) {
+      throw failure(
+        "GOAL_DEV_RETRY_PERSISTENCE_REVISION_REQUIRED",
+        "expectedRevision valide requis."
+      );
+    }
+
+    const current =
+      required(chainId);
+
+    if (
+      current.revision !==
+      expectedRevision
+    ) {
+      throw failure(
+        "GOAL_DEV_RETRY_PERSISTENCE_CONFLICT",
+        "Retry Chain modifiée concurremment."
+      );
+    }
+
+    const next =
+      markGoalDevRetryExecutionUncertain(
+        current.chain,
+        {
+          taskId:
+            input.taskId,
+
+          attemptIndex:
+            input.attemptIndex,
+
+          uncertainAt:
+            input.uncertainAt ||
+            now(),
+        }
+      );
+
+    /*
+     * Aucun retry automatique sur conflit.
+     * La révision approuvée est transmise
+     * inchangée au repository canonique.
+     */
+    return repository.save(
+      next,
+      {
+        expectedRevision,
       }
     );
   }
@@ -250,6 +314,7 @@ function createGoalDevRetryChainStore({
     create,
     get,
     history,
+    markExecutionUncertain,
     projectCandidate,
     recordAttempt,
   });
