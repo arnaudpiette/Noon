@@ -11,6 +11,12 @@ const {
   "./goal-dev-retry-chain"
 );
 
+const {
+  describeGoalDevRetryChainRepository,
+} = require(
+  "../persistence/repositories/goal-dev-retry-chain-repository"
+);
+
 function failure(
   code,
   message
@@ -104,8 +110,35 @@ function createGoalDevRetryChainStore({
     chainId,
     input = {}
   ) {
+    const expectedRevision =
+      input.expectedRevision;
+
+    if (
+      !Number.isSafeInteger(
+        expectedRevision
+      ) ||
+      expectedRevision < 1 ||
+      expectedRevision >=
+        Number.MAX_SAFE_INTEGER
+    ) {
+      throw failure(
+        "GOAL_DEV_RETRY_PERSISTENCE_REVISION_REQUIRED",
+        "expectedRevision valide requis."
+      );
+    }
+
     const current =
       required(chainId);
+
+    if (
+      current.revision !==
+      expectedRevision
+    ) {
+      throw failure(
+        "GOAL_DEV_RETRY_PERSISTENCE_CONFLICT",
+        "Retry Chain modifiée concurremment."
+      );
+    }
 
     const next =
       recordGoalDevRetryAttempt(
@@ -123,8 +156,14 @@ function createGoalDevRetryChainStore({
       next,
       {
         expectedRevision:
-          current.revision,
+          expectedRevision,
       }
+    );
+  }
+
+  function persistenceCapabilities() {
+    return describeGoalDevRetryChainRepository(
+      repository
     );
   }
 
@@ -315,6 +354,7 @@ function createGoalDevRetryChainStore({
     get,
     history,
     markExecutionUncertain,
+    persistenceCapabilities,
     projectCandidate,
     recordAttempt,
   });

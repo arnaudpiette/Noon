@@ -6,11 +6,46 @@ const {
   "../../goals/goal-dev-retry-execution-template"
 );
 
+const {
+  loadSqlite,
+} = require(
+  "../database"
+);
+
 const RECORD_TYPE =
   "GOAL_DEV_RETRY_CHAIN";
 
 const CHAIN_VERSION =
   "goal-dev-retry-chain-v1";
+
+const repositoryCapabilities =
+  new WeakMap();
+
+const UNKNOWN_CAPABILITIES =
+  Object.freeze({
+    backend: "UNKNOWN",
+    atomicRevisionCas: false,
+  });
+
+const SQLITE_CAPABILITIES =
+  Object.freeze({
+    backend: "SQLITE",
+    atomicRevisionCas: true,
+  });
+
+const JSON_CAPABILITIES =
+  Object.freeze({
+    backend: "JSON_FALLBACK",
+    atomicRevisionCas: false,
+  });
+
+function describeGoalDevRetryChainRepository(
+  repository
+) {
+  return repositoryCapabilities.get(
+    repository
+  ) || UNKNOWN_CAPABILITIES;
+}
 
 function failure(
   code,
@@ -1136,14 +1171,40 @@ function createGoalDevRetryChainRepository(
     );
   }
 
-  return wrapper.kind ===
-    "sqlite"
+  const sqlite =
+    wrapper.kind === "sqlite";
+
+  const DatabaseSync =
+    sqlite
+      ? loadSqlite()?.DatabaseSync
+      : null;
+
+  if (
+    sqlite &&
+    (!DatabaseSync ||
+      !(wrapper.database instanceof DatabaseSync))
+  ) {
+    throw new TypeError(
+      "Backend SQLite Retry Chain valide requis."
+    );
+  }
+
+  const repository = sqlite
     ? createSqliteRepository(
         wrapper
       )
     : createFallbackRepository(
         wrapper
       );
+
+  repositoryCapabilities.set(
+    repository,
+    sqlite
+      ? SQLITE_CAPABILITIES
+      : JSON_CAPABILITIES
+  );
+
+  return repository;
 }
 
 module.exports = {
@@ -1152,4 +1213,5 @@ module.exports = {
   assertChain,
   assertForward,
   createGoalDevRetryChainRepository,
+  describeGoalDevRetryChainRepository,
 };
