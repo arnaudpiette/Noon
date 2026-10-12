@@ -19,7 +19,8 @@
 ## 16 — Règles de gouvernance et d’intégration aux autres conversations
 
 - **Source de vérité technique** : dépôt **local réel** + tests/évaluations de la tranche active, avant GitHub distant et anciens comptes rendus. **Source de vérité des priorités** : dernières décisions explicites de l’utilisateur.
-- « Terminal 03 » pilote l’exécution technique, le découpage des tranches et les résultats Git ; « Projet Noon #2 » suit la vision transversale ; **ce document est la référence produit commune**.
+- « Terminal 03 » couvre l’exécution technique historique ; « Projet NOON #Terminal 04 » suit l’exécution et les résultats Git actuels ; « Projet NOON #2 » conserve la vision transversale ; **cette roadmap est la référence produit commune**.
+- Décision du 13/10/2026 commune aux deux conversations : [Google Agentic OAuth & MCP Access](11_google_agentic_oauth_mcp_access.md) est **planifié, non implémenté** et ne dépasse pas la priorité Sandbox / Permission Engine. La documentation seule n'autorise aucune intégration dans Noon.
 - Lire `AGENTS.md`, statut Git et la documentation canonique avant Codex ; conserver les gros blocs de commandes compatibles dans le terminal (`&&` quand approprié) sans regrouper opérations destructives.
 - Si une fonctionnalité existe déjà (ProactiveEngine, PriorityEngine, ApprovalEngine, ArtifactEngine, etc.), **étendre ou raccorder ce module** avant d’en créer un second.
 - Ne jamais détruire des artefacts non suivis ni présumer que la branche distante reflète trois commits locaux d’avance.
