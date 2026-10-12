@@ -77,6 +77,39 @@ function identifier(
   return normalized;
 }
 
+function expectedBranch(
+  value
+) {
+  if (
+    value === undefined ||
+    value === null
+  ) {
+    return null;
+  }
+
+  if (
+    typeof value !== "string"
+  ) {
+    fail(
+      "GOAL_DEV_BRANCH_INVALID",
+      "Branche DEV attendue invalide."
+    );
+  }
+
+  if (
+    !value.trim() ||
+    value !== value.trim() ||
+    value.length > 200
+  ) {
+    fail(
+      "GOAL_DEV_BRANCH_INVALID",
+      "Branche DEV attendue invalide."
+    );
+  }
+
+  return value;
+}
+
 function positiveInteger(
   value,
   label,
@@ -260,6 +293,7 @@ function projectGoalDevExecution({
       "workspaceId",
       "projectId",
       "repositoryRoot",
+      "branch",
       "objective",
       "allowedPaths",
       "forbiddenPaths",
@@ -308,6 +342,11 @@ function projectGoalDevExecution({
     identifier(
       request.repositoryRoot,
       "repositoryRoot"
+    );
+
+  const branch =
+    expectedBranch(
+      request.branch
     );
 
   const objective =
@@ -586,6 +625,9 @@ function projectGoalDevExecution({
 
     workspaceId,
     repositoryRoot,
+    ...(branch === null
+      ? {}
+      : { branch }),
     objective,
 
     allowedPaths:

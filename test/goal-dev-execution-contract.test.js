@@ -2,6 +2,15 @@
 
 const assert =
   require("node:assert/strict");
+const fs =
+  require("node:fs");
+const os =
+  require("node:os");
+const path =
+  require("node:path");
+const {
+  execFileSync,
+} = require("node:child_process");
 
 const test =
   require("node:test");
@@ -10,6 +19,21 @@ const {
   projectGoalDevExecution,
 } = require(
   "../services/goals/goal-dev-execution-contract"
+);
+const {
+  createGoalDevExecutionService,
+} = require(
+  "../services/goals/goal-dev-execution-service"
+);
+const {
+  createDevTaskContract,
+} = require(
+  "../services/delegation/dev-task-contract"
+);
+const {
+  repositoryPreflight,
+} = require(
+  "../services/delegation/repository-preflight"
 );
 
 function goal(
@@ -458,6 +482,276 @@ test(
     assert.deepEqual(
       sourceRequest,
       beforeRequest
+    );
+  }
+);
+
+test(
+  "Goal DEV conserve une branche attendue sans modifier ses autorités",
+  () => {
+    const sourceRequest =
+      request({
+        branch:
+          "v2/multi-provider",
+      });
+
+    const before =
+      structuredClone(
+        sourceRequest
+      );
+
+    const projected =
+      projectGoalDevExecution({
+        goal: goal(),
+        request: sourceRequest,
+      });
+
+    const historical =
+      projectGoalDevExecution({
+        goal: goal(),
+        request: request(),
+      });
+
+    assert.equal(
+      projected.devInput.branch,
+      "v2/multi-provider"
+    );
+
+    assert.deepEqual(
+      {
+        ...projected.devInput,
+        branch: undefined,
+      },
+      {
+        ...historical.devInput,
+        branch: undefined,
+      }
+    );
+
+    assert.deepEqual(
+      projected.capabilities,
+      historical.capabilities
+    );
+
+    assert.deepEqual(
+      sourceRequest,
+      before
+    );
+  }
+);
+
+test(
+  "Goal DEV conserve la forme historique sans branche",
+  () => {
+    const historical =
+      projectGoalDevExecution({
+        goal: goal(),
+        request: request(),
+      });
+
+    const explicitNull =
+      projectGoalDevExecution({
+        goal: goal(),
+        request:
+          request({
+            branch: null,
+          }),
+      });
+
+    assert.equal(
+      Object.hasOwn(
+        historical.devInput,
+        "branch"
+      ),
+      false
+    );
+
+    assert.deepEqual(
+      explicitNull.devInput,
+      historical.devInput
+    );
+  }
+);
+
+test(
+  "Goal DEV refuse une branche invalide au lieu de la coercer ou tronquer",
+  () => {
+    for (
+      const branch of [
+        "",
+        "   ",
+        " main ",
+        "main\n",
+        "a".repeat(201),
+        0,
+        42,
+        false,
+        true,
+        {},
+        [],
+      ]
+    ) {
+      assert.throws(
+        () =>
+          projectGoalDevExecution({
+            goal: goal(),
+            request:
+              request({ branch }),
+          }),
+        {
+          code:
+            "GOAL_DEV_BRANCH_INVALID",
+        }
+      );
+    }
+  }
+);
+
+test(
+  "Goal DEV transmet la branche au contrat et au préflight Native canoniques",
+  async (t) => {
+    const root =
+      fs.mkdtempSync(
+        path.join(
+          os.tmpdir(),
+          "noon-goal-branch-"
+        )
+      );
+
+    t.after(() =>
+      fs.rmSync(root, {
+        recursive: true,
+        force: true,
+      })
+    );
+
+    execFileSync(
+      "git",
+      [
+        "init",
+        "-q",
+        "-b",
+        "main",
+        root,
+      ]
+    );
+
+    assert.equal(
+      createDevTaskContract({
+        taskId: "task-null-branch",
+        workspaceAuthorized:
+          true,
+        workspaceId:
+          "workspace-noon",
+        workspaceRoots: [root],
+        repositoryRoot: root,
+        objective:
+          "Fixture sans branche",
+        branch: null,
+      }).branch,
+      null
+    );
+
+    const received = [];
+    const service =
+      createGoalDevExecutionService({
+        goalStrategyEngine: {
+          registry: {
+            get() {
+              return goal();
+            },
+          },
+        },
+        workspaceEngine: {
+          context() {
+            return {
+              workspace: {
+                profileScope:
+                  "arnaud",
+              },
+              projects: [
+                {
+                  id:
+                    "project-noon",
+                },
+              ],
+            };
+          },
+        },
+        projectRuleResolver: {
+          resolve() {
+            return {
+              applied: [],
+            };
+          },
+        },
+        nativeDevFacade: {
+          async runTask(input) {
+            received.push(input);
+
+            const contract =
+              createDevTaskContract({
+                ...input,
+                workspaceAuthorized:
+                  true,
+                workspaceRoots: [
+                  root,
+                ],
+              });
+
+            assert.equal(
+              contract.branch,
+              input.branch
+            );
+
+            repositoryPreflight(
+              contract
+            );
+
+            return {
+              taskId:
+                input.taskId,
+              finalVerdict:
+                "PASS",
+            };
+          },
+        },
+      });
+
+    const input =
+      request({
+        repositoryRoot: root,
+        branch: "main",
+      });
+
+    await service.run({
+      goalId: "goal-1",
+      request: input,
+    });
+
+    assert.equal(
+      received[0].branch,
+      "main"
+    );
+
+    await assert.rejects(
+      service.run({
+        goalId: "goal-1",
+        request:
+          request({
+            repositoryRoot: root,
+            branch: "other",
+          }),
+      }),
+      {
+        code:
+          "STALE_PRECONDITION",
+      }
+    );
+
+    assert.equal(
+      received[1].branch,
+      "other"
     );
   }
 );
