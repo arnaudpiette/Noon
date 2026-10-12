@@ -128,6 +128,42 @@ function finiteCost(
   return value;
 }
 
+function optionalBoolean(
+  source,
+  key,
+  label
+) {
+  if (
+    !Object.hasOwn(
+      source,
+      key
+    )
+  ) {
+    if (
+      key in source
+    ) {
+      fail(
+        "GOAL_MODE_CONTRACT_INVALID",
+        `${label} doit être un champ propre.`
+      );
+    }
+
+    return false;
+  }
+
+  if (
+    typeof source[key] !==
+      "boolean"
+  ) {
+    fail(
+      "GOAL_MODE_CONTRACT_INVALID",
+      `${label} invalide.`
+    );
+  }
+
+  return source[key];
+}
+
 function deepFreeze(
   value
 ) {
@@ -382,16 +418,25 @@ function normalizeCapabilityCeilings(
   const normalized =
     Object.freeze({
       network:
-        source.network ===
-          true,
+        optionalBoolean(
+          source,
+          "network",
+          "request.capabilityCeilings.network"
+        ),
 
       gitWrite:
-        source.gitWrite ===
-          true,
+        optionalBoolean(
+          source,
+          "gitWrite",
+          "request.capabilityCeilings.gitWrite"
+        ),
 
       destructiveActions:
-        source.destructiveActions ===
-          true,
+        optionalBoolean(
+          source,
+          "destructiveActions",
+          "request.capabilityCeilings.destructiveActions"
+        ),
     });
 
   if (
@@ -537,8 +582,11 @@ function createGoalModeRunContract({
     ).toISOString();
 
   const localOnly =
-    source.localOnly ===
-      true ||
+    optionalBoolean(
+      source,
+      "localOnly",
+      "request.localOnly"
+    ) ||
     normalizedGoal
       .sensitivity ===
       "LOCAL_ONLY";
@@ -1070,8 +1118,11 @@ function assessGoalModeCapabilityCeiling({
     CAPABILITY_CEILING_KEYS
       .filter(
         (key) =>
-          requested[key] ===
-            true
+          optionalBoolean(
+            requested,
+            key,
+            `requestedCapabilities.${key}`
+          )
       );
 
   const denied =

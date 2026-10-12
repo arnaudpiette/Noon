@@ -607,6 +607,34 @@ function assertGoalModeRunState(
     );
   }
 
+  if (
+    !state.usage ||
+    typeof state.usage !==
+      "object" ||
+    Array.isArray(
+      state.usage
+    ) ||
+    [
+      "steps",
+      "retries",
+      "providerCalls",
+      "estimatedCost",
+    ].some(
+      (key) =>
+        !Object.hasOwn(
+          state.usage,
+          key
+        ) ||
+        state.usage[key] ==
+          null
+    )
+  ) {
+    fail(
+      "GOAL_MODE_RUN_USAGE_INVALID",
+      "L'accounting Goal Run doit être complet."
+    );
+  }
+
   const usage =
     normalizeUsage(
       state.usage

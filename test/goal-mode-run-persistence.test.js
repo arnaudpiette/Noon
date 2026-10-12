@@ -187,6 +187,16 @@ test(
         "READY"
       );
 
+      assert.deepEqual(
+        created.state.usage,
+        {
+          steps: 0,
+          retries: 0,
+          providerCalls: 0,
+          estimatedCost: 0,
+        }
+      );
+
       const running =
         store.transition(
           created.state.runId,
@@ -217,6 +227,7 @@ test(
 
             usageDelta: {
               steps: 1,
+              retries: 1,
               providerCalls: 1,
               estimatedCost: 0.2,
             },
@@ -235,10 +246,104 @@ test(
         consumed.state.usage,
         {
           steps: 1,
-          retries: 0,
+          retries: 1,
           providerCalls: 1,
           estimatedCost: 0.2,
         }
+      );
+
+      for (
+        const key of [
+          "steps",
+          "retries",
+          "providerCalls",
+          "estimatedCost",
+        ]
+      ) {
+        const incomplete =
+          structuredClone(
+            consumed.state
+          );
+
+        delete incomplete.usage[key];
+
+        incomplete.updatedAt =
+          "2026-10-12T12:00:03.000Z";
+
+        assert.throws(
+          () =>
+            repository.save(
+              incomplete,
+              {
+                expectedRevision:
+                  consumed.revision,
+              }
+            ),
+          {
+            code:
+              "GOAL_MODE_RUN_USAGE_INVALID",
+          }
+        );
+
+        const reduced =
+          structuredClone(
+            consumed.state
+          );
+
+        reduced.usage[key] =
+          key ===
+            "estimatedCost"
+            ? 0.1
+            : 0;
+
+        reduced.updatedAt =
+          "2026-10-12T12:00:03.000Z";
+
+        assert.throws(
+          () =>
+            repository.save(
+              reduced,
+              {
+                expectedRevision:
+                  consumed.revision,
+              }
+            ),
+          {
+            code:
+              "GOAL_MODE_RUN_USAGE_REWIND",
+          }
+        );
+      }
+
+      assert.throws(
+        () =>
+          repository.save(
+            consumed.state,
+            {
+              expectedRevision:
+                running.revision,
+            }
+          ),
+        {
+          code:
+            "GOAL_MODE_RUN_PERSISTENCE_CONFLICT",
+        }
+      );
+
+      const unchanged =
+        store.get(
+          created.state.runId
+        );
+
+      assert.equal(
+        unchanged.revision,
+        consumed.revision
+      );
+
+      assert.equal(
+        unchanged.state.usage
+          .estimatedCost,
+        0.2
       );
 
       const history =

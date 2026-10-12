@@ -531,6 +531,129 @@ test(
 );
 
 test(
+  "5.0A refuse les drapeaux local_only et plafonds mal typés",
+  () => {
+    for (
+      const localOnly of [
+        "true",
+        1,
+        null,
+        undefined,
+        {},
+      ]
+    ) {
+      assert.throws(
+        () =>
+          contract({
+            request: {
+              localOnly,
+            },
+          }),
+        {
+          code:
+            "GOAL_MODE_CONTRACT_INVALID",
+        }
+      );
+    }
+
+    for (
+      const key of [
+        "network",
+        "gitWrite",
+        "destructiveActions",
+      ]
+    ) {
+      for (
+        const invalid of [
+          "true",
+          1,
+          null,
+          undefined,
+          {},
+        ]
+      ) {
+        assert.throws(
+          () =>
+            contract({
+              request: {
+                capabilityCeilings: {
+                  [key]:
+                    invalid,
+                },
+              },
+            }),
+          {
+            code:
+              "GOAL_MODE_CONTRACT_INVALID",
+          }
+        );
+      }
+    }
+
+    const inherited =
+      Object.assign(
+        Object.create({
+          localOnly: true,
+        }),
+        request()
+      );
+
+    delete inherited.localOnly;
+
+    assert.throws(
+      () =>
+        createGoalModeRunContract({
+          goal: goal(),
+          request:
+            inherited,
+        }),
+      {
+        code:
+          "GOAL_MODE_CONTRACT_INVALID",
+      }
+    );
+
+    assert.throws(
+      () =>
+        contract({
+          request: {
+            capabilityCeilings:
+              Object.create({
+                network: true,
+              }),
+          },
+        }),
+      {
+        code:
+          "GOAL_MODE_CONTRACT_INVALID",
+      }
+    );
+
+    const validLocalOnly =
+      contract({
+        request: {
+          localOnly: true,
+          capabilityCeilings: {
+            network: false,
+          },
+        },
+      });
+
+    assert.equal(
+      validLocalOnly.localOnly,
+      true
+    );
+
+    assert.equal(
+      validLocalOnly
+        .capabilityCeilings
+        .network,
+      false
+    );
+  }
+);
+
+test(
   "5.0A budget GLOBAL autorise seulement une projection dans ses limites",
   () => {
     const value =
@@ -808,6 +931,88 @@ test(
     assert.equal(
       git.executionAuthorized,
       false
+    );
+  }
+);
+
+test(
+  "5.0A refuse une demande de capacité mal typée au lieu de conclure sans autorisation",
+  () => {
+    const value =
+      contract();
+
+    for (
+      const key of [
+        "network",
+        "gitWrite",
+        "destructiveActions",
+      ]
+    ) {
+      for (
+        const invalid of [
+          "true",
+          1,
+          null,
+          undefined,
+          {},
+        ]
+      ) {
+        assert.throws(
+          () =>
+            assessGoalModeCapabilityCeiling({
+              contract:
+                value,
+
+              requestedCapabilities: {
+                [key]:
+                  invalid,
+              },
+            }),
+          {
+            code:
+              "GOAL_MODE_CONTRACT_INVALID",
+          }
+        );
+      }
+    }
+
+    const absent =
+      assessGoalModeCapabilityCeiling({
+        contract: value,
+        requestedCapabilities: {},
+      });
+
+    const explicitFalse =
+      assessGoalModeCapabilityCeiling({
+        contract: value,
+        requestedCapabilities: {
+          network: false,
+        },
+      });
+
+    assert.equal(
+      absent.decision,
+      "NO_AUTHORIZATION_REQUIRED"
+    );
+
+    assert.equal(
+      explicitFalse.decision,
+      absent.decision
+    );
+
+    assert.throws(
+      () =>
+        assessGoalModeCapabilityCeiling({
+          contract: value,
+          requestedCapabilities:
+            Object.create({
+              network: true,
+            }),
+        }),
+      {
+        code:
+          "GOAL_MODE_CONTRACT_INVALID",
+      }
     );
   }
 );

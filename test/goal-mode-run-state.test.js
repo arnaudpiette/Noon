@@ -9,6 +9,7 @@ const test =
 const {
   applyGoalModeUsage,
   assertGoalModeRunForward,
+  assertGoalModeRunState,
   createGoalModeRunState,
   transitionGoalModeRun,
 } = require(
@@ -470,5 +471,120 @@ test(
           "GOAL_MODE_RUN_IMMUTABLE_CHANGED",
       }
     );
+  }
+);
+
+test(
+  "5.0B refuse un accounting persisté absent ou incomplet",
+  () => {
+    const ready =
+      createGoalModeRunState({
+        contract:
+          contract(),
+      });
+
+    const running =
+      transitionGoalModeRun(
+        ready,
+        "RUNNING",
+        {
+          transitionedAt:
+            "2026-10-12T12:00:01.000Z",
+        }
+      );
+
+    const used =
+      applyGoalModeUsage(
+        running,
+        {
+          currentGoalVersion:
+            3,
+
+          usageDelta: {
+            steps: 1,
+            estimatedCost: 0.5,
+          },
+
+          updatedAt:
+            "2026-10-12T12:00:02.000Z",
+        }
+      );
+
+    const absent =
+      structuredClone(
+        used
+      );
+
+    delete absent.usage;
+
+    assert.throws(
+      () =>
+        assertGoalModeRunState(
+          absent
+        ),
+      {
+        code:
+          "GOAL_MODE_RUN_USAGE_INVALID",
+      }
+    );
+
+    for (
+      const key of [
+        "steps",
+        "retries",
+        "providerCalls",
+        "estimatedCost",
+      ]
+    ) {
+      for (
+        const invalid of [
+          undefined,
+          null,
+        ]
+      ) {
+        const incomplete =
+          structuredClone(
+            used
+          );
+
+        if (
+          invalid ===
+            undefined
+        ) {
+          delete incomplete
+            .usage[key];
+        } else {
+          incomplete
+            .usage[key] =
+            invalid;
+        }
+
+        incomplete.updatedAt =
+          "2026-10-12T12:00:03.000Z";
+
+        assert.throws(
+          () =>
+            assertGoalModeRunState(
+              incomplete
+            ),
+          {
+            code:
+              "GOAL_MODE_RUN_USAGE_INVALID",
+          }
+        );
+
+        assert.throws(
+          () =>
+            assertGoalModeRunForward(
+              used,
+              incomplete
+            ),
+          {
+            code:
+              "GOAL_MODE_RUN_USAGE_INVALID",
+          }
+        );
+      }
+    }
   }
 );
