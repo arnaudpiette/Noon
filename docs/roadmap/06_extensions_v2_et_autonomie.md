@@ -26,6 +26,12 @@
 - **Documents bureautiques** : rendu Word/Excel/PowerPoint/PDF de qualité, previews, versionnage, références, styles réutilisables ; l’Artifact Engine existe déjà.
 - **Intégrations** : Gmail/Calendar/Drive/Contacts/Notes/Rappels/GitHub/Figma et services futurs selon un registre de permissions central, sans duplication de propriétaire.
 
+### V2-Google Agentic OAuth & MCP Access (avenant du 13/10/2026)
+- Google distingue **client OAuth standard** (interaction directe) et **client OAuth déclaré agentique** (agents, outils, MCP) ; certains endpoints Workspace MCP exigent le second sans lui donner de privilèges supplémentaires.
+- **Planifié, non implémenté** : audit OAuth Gmail/Calendar/Drive, séparation par workflow, Google Access Broker raccordé aux permissions existantes, pilote MCP officiel **lecture seule**, conservation des API REST actuelles.
+- Daily Brief, Goal Mode et agents internes passeront par le broker, sans accès direct aux tokens ni droits élargis. **Sandbox et Intervention/Permission Engine d'abord.**
+- Voir la [spécification complète et les tests d'acceptation](11_google_agentic_oauth_mcp_access.md).
+
 ## 11 — Autonomie, raisonnement, décision et supervision (moteurs transverses)
 
 **Reasoning Orchestrator / Task Engine** : comprendre un problème, le décomposer, séquencer le travail et coordonner les modèles/outils ; utiliser l’unique orchestrateur canonique et les services existants.
