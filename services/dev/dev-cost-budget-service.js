@@ -80,6 +80,58 @@ function createDevCostBudgetService({ filePath = null, config = () => ({}), enfo
     const view = snapshot(taskId, taskLimitOverride);
     return [view.task.remaining, view.daily.remaining, view.monthly.remaining].filter((item) => item !== null).reduce((minimum, item) => Math.min(minimum, item), Number.POSITIVE_INFINITY);
   }
+  function taskProviderCalls(
+    taskId
+  ) {
+    const id =
+      String(
+        taskId || ""
+      );
+
+    if (!id) {
+      return 0;
+    }
+
+    return state.entries
+      .filter(
+        (entry) =>
+          entry.taskId === id &&
+          entry.status !==
+            "RELEASED"
+      )
+      .length;
+  }
+
+  function providerCallLimit(
+    value
+  ) {
+    if (
+      value === undefined ||
+      value === null
+    ) {
+      return null;
+    }
+
+    if (
+      !Number.isSafeInteger(
+        value
+      ) ||
+      value < 0
+    ) {
+      throw Object.assign(
+        new Error(
+          "La limite d'appels provider DEV est invalide."
+        ),
+        {
+          code:
+            "TASK_PROVIDER_CALL_LIMIT_INVALID",
+        }
+      );
+    }
+
+    return value;
+  }
+
   function benchmarkSpent(benchmarkId) {
     return state.entries.filter((entry) => entry.benchmarkId === String(benchmarkId)).reduce((sum, entry) => sum + effective(entry) + (entry.status === "RESERVED" ? entry.estimatedCost : 0), 0);
   }
@@ -90,6 +142,33 @@ function createDevCostBudgetService({ filePath = null, config = () => ({}), enfo
     const taskId = String(input.taskId || ""); const reservationId = String(input.reservationId || `dev-cost-${crypto.randomUUID()}`);
     const existing = state.entries.find((entry) => entry.reservationId === reservationId);
     if (existing) return structuredClone(existing);
+
+    const maxProviderCalls =
+      providerCallLimit(
+        input.maxProviderCalls
+      );
+
+    if (
+      maxProviderCalls !== null &&
+      taskProviderCalls(
+        taskId
+      ) >= maxProviderCalls
+    ) {
+      throw Object.assign(
+        new Error(
+          "Le nombre maximal d'appels provider DEV est atteint."
+        ),
+        {
+          code:
+            "TASK_PROVIDER_CALL_LIMIT_EXCEEDED",
+          maxProviderCalls,
+          providerCalls:
+            taskProviderCalls(
+              taskId
+            ),
+        }
+      );
+    }
     const view = snapshot(taskId, input.taskLimit);
     if (input.enforce === true && view.enabled) {
       const checks = [["TASK_BUDGET_EXCEEDED", view.task], ["DAILY_BUDGET_EXCEEDED", view.daily], ["MONTHLY_BUDGET_EXCEEDED", view.monthly]];
@@ -123,7 +202,20 @@ function createDevCostBudgetService({ filePath = null, config = () => ({}), enfo
     if (recovered.length) persist(); return recovered;
   }
   function entries() { return structuredClone(state.entries); }
-  return { benchmarkSpent, currency: CURRENCY, effectiveRemaining, entries, markUnknown, policy, reconcile, recoverStale, release, reserve, snapshot };
+  return {
+    benchmarkSpent,
+    currency: CURRENCY,
+    effectiveRemaining,
+    entries,
+    markUnknown,
+    policy,
+    reconcile,
+    recoverStale,
+    release,
+    reserve,
+    snapshot,
+    taskProviderCalls,
+  };
 }
 
 module.exports = { CURRENCY, TIME_ZONE, WARNING_LEVELS, createDevCostBudgetService, periodParts };

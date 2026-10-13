@@ -420,7 +420,6 @@ function projectGoalDevExecution({
   const unsupportedLimits =
     [
       "maxSteps",
-      "maxProviderCalls",
       "maxShellCommands",
     ].filter(
       (key) =>
@@ -482,6 +481,27 @@ function projectGoalDevExecution({
     duration(
       limits.maxDuration
     );
+
+  const maxProviderCalls =
+    limits.maxProviderCalls ==
+      null
+      ? null
+      : limits.maxProviderCalls;
+
+  if (
+    maxProviderCalls !== null &&
+    (
+      !Number.isSafeInteger(
+        maxProviderCalls
+      ) ||
+      maxProviderCalls < 0
+    )
+  ) {
+    fail(
+      "GOAL_DEV_LIMIT_INVALID",
+      "maxProviderCalls invalide."
+    );
+  }
 
   const requestedCost =
     cost(
@@ -669,6 +689,7 @@ function projectGoalDevExecution({
     maxIterations,
     maxDuration,
     maxEstimatedCost,
+    maxProviderCalls,
 
     /*
      * Interne uniquement.
@@ -710,6 +731,7 @@ function projectGoalDevExecution({
         maxIterations - 1,
       maxDuration,
       maxEstimatedCost,
+      maxProviderCalls,
       budgetRemaining,
 
       unsupported:

@@ -374,7 +374,6 @@ test(
     for (
       const key of [
         "maxSteps",
-        "maxProviderCalls",
         "maxShellCommands",
       ]
     ) {
@@ -395,6 +394,65 @@ test(
         {
           code:
             "GOAL_DEV_LIMIT_UNSUPPORTED",
+        }
+      );
+    }
+  }
+);
+
+
+test(
+  "5.0D-4A Goal DEV propage maxProviderCalls comme limite imposable",
+  () => {
+    const projected =
+      projectGoalDevExecution({
+        goal: goal(),
+        request:
+          request({
+            limits: {
+              ...request().limits,
+              maxProviderCalls: 2,
+            },
+          }),
+      });
+
+    assert.equal(
+      projected.limits.maxProviderCalls,
+      2
+    );
+
+    assert.equal(
+      projected.devInput.maxProviderCalls,
+      2
+    );
+
+    assert.equal(
+      projected.capabilities.executionAuthority,
+      false
+    );
+
+    for (
+      const invalid of [
+        -1,
+        1.5,
+        "2",
+        Number.MAX_SAFE_INTEGER + 1,
+      ]
+    ) {
+      assert.throws(
+        () =>
+          projectGoalDevExecution({
+            goal: goal(),
+            request:
+              request({
+                limits: {
+                  ...request().limits,
+                  maxProviderCalls: invalid,
+                },
+              }),
+          }),
+        {
+          code: "GOAL_DEV_LIMIT_INVALID",
         }
       );
     }

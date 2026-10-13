@@ -41,6 +41,27 @@ function createDevTaskContract(input = {}) {
   if (permissions.some((item) => !DEV_PERMISSIONS.includes(item))) throw new DevTaskContractError("PERMISSION_DENIED", "Permission DEV inconnue.");
   if (permissions.includes("GIT_REMOTE")) throw new DevTaskContractError("PERMISSION_DENIED", "Les mutations Git distantes sont interdites en V2.5.");
   if (allowedPaths.some((item) => PRIVATE_NAMES.test(path.relative(repositoryRoot, item)))) throw new DevTaskContractError("PERMISSION_DENIED", "Un chemin privé ne peut pas être délégué.");
+  const maxProviderCalls =
+    input.maxProviderCalls ==
+      null
+      ? null
+      : input.maxProviderCalls;
+
+  if (
+    maxProviderCalls !== null &&
+    (
+      !Number.isSafeInteger(
+        maxProviderCalls
+      ) ||
+      maxProviderCalls < 0
+    )
+  ) {
+    throw new DevTaskContractError(
+      "TASK_PROVIDER_CALL_LIMIT_INVALID",
+      "La limite d'appels provider DEV est invalide."
+    );
+  }
+
   return Object.freeze({
     taskId: String(input.taskId || `dev-task-${crypto.randomUUID()}`),
     objective: String(input.objective || "").trim().slice(0, 8000),
@@ -61,6 +82,7 @@ function createDevTaskContract(input = {}) {
     maxIterations: Math.max(1, Math.min(10, Number(input.maxIterations) || 3)),
     maxDuration: Math.max(1_000, Math.min(30 * 60_000, Number(input.maxDuration) || 10 * 60_000)),
     maxEstimatedCost: Number.isFinite(Number(input.maxEstimatedCost)) ? Math.max(0, Number(input.maxEstimatedCost)) : null,
+    maxProviderCalls,
     // Signal interne de réduction d'autonomie : il ne donne aucune permission.
     // La route publique Native DEV ne le projette pas depuis le JSON client.
     enforceTaskBudget: input.enforceTaskBudget === true,

@@ -93,3 +93,102 @@ test("le snapshot expose honnêtement l'enforcement effectif de l'appelant", () 
   assert.equal(service.snapshot("a", null, true).enforcement, true);
   assert.equal(service.snapshot("a", null, false).enforcement, false);
 });
+
+test("5.0D-4A maxProviderCalls bloque le N+1e appel et compte UNKNOWN conservativement", () => {
+  const { service } = fixture();
+
+  const first = service.reserve({
+    reservationId: "call-1",
+    taskId: "task-quota",
+    estimatedCost: 0.1,
+    maxProviderCalls: 1,
+    enforce: true,
+  });
+
+  assert.equal(service.taskProviderCalls("task-quota"), 1);
+
+  assert.equal(
+    service.reserve({
+      reservationId: "call-1",
+      taskId: "task-quota",
+      estimatedCost: 0.1,
+      maxProviderCalls: 1,
+      enforce: true,
+    }).reservationId,
+    first.reservationId
+  );
+
+  service.markUnknown("call-1", "OUTCOME_UNCERTAIN");
+  assert.equal(service.taskProviderCalls("task-quota"), 1);
+
+  assert.throws(
+    () =>
+      service.reserve({
+        reservationId: "call-2",
+        taskId: "task-quota",
+        estimatedCost: 0.1,
+        maxProviderCalls: 1,
+        enforce: true,
+      }),
+    {
+      code: "TASK_PROVIDER_CALL_LIMIT_EXCEEDED",
+    }
+  );
+});
+
+test("5.0D-4A une réservation RELEASED ne consomme pas la quota provider", () => {
+  const { service } = fixture();
+
+  service.reserve({
+    reservationId: "released-1",
+    taskId: "task-release",
+    estimatedCost: 0.1,
+    maxProviderCalls: 1,
+    enforce: true,
+  });
+
+  service.release("released-1");
+  assert.equal(service.taskProviderCalls("task-release"), 0);
+
+  assert.doesNotThrow(
+    () =>
+      service.reserve({
+        reservationId: "released-2",
+        taskId: "task-release",
+        estimatedCost: 0.1,
+        maxProviderCalls: 1,
+        enforce: true,
+      })
+  );
+});
+
+test("5.0D-4A refuse une quota provider invalide avant toute nouvelle réservation", () => {
+  const { service } = fixture();
+
+  for (
+    const invalid of [
+      -1,
+      1.5,
+      "2",
+      Number.MAX_SAFE_INTEGER + 1,
+    ]
+  ) {
+    assert.throws(
+      () =>
+        service.reserve({
+          taskId: "task-invalid-quota",
+          estimatedCost: 0.1,
+          maxProviderCalls: invalid,
+          enforce: true,
+        }),
+      {
+        code: "TASK_PROVIDER_CALL_LIMIT_INVALID",
+      }
+    );
+  }
+
+  assert.equal(
+    service.taskProviderCalls("task-invalid-quota"),
+    0
+  );
+});

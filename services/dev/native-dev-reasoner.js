@@ -22,7 +22,7 @@ const DEV_REASONING_SCHEMA = Object.freeze({
 
 function createNativeDevStructuredExecutor({ featureFlags, budgetService, selectModelRoute, estimateCost, authorizePrivacy, providerAdapter, trackUsage } = {}) {
   if (!featureFlags?.evaluate || !budgetService?.snapshot || typeof selectModelRoute !== "function" || typeof estimateCost !== "function" || typeof authorizePrivacy !== "function" || typeof providerAdapter?.execute !== "function") throw new TypeError("Dépendances structurées DEV requises.");
-  return async function executeStructured({ taskDomain, requiredQuality, maxEstimatedCost, enforceTaskBudget = false, schema, schemaName, system, payload, signal }) {
+  return async function executeStructured({ taskDomain, requiredQuality, maxEstimatedCost, maxProviderCalls = null, enforceTaskBudget = false, schema, schemaName, system, payload, signal }) {
     const context = { workspaceId: payload.workspaceId || null, sessionId: payload.taskId || null };
     const autoRouting = featureFlags.evaluate("dev.auto-routing", context).enabled;
     const budgetEnforcement = featureFlags.evaluate("dev.budget-enforcement", context).enabled;
@@ -45,7 +45,7 @@ function createNativeDevStructuredExecutor({ featureFlags, budgetService, select
     const estimatedCost = routeCost.status === "available" ? routeCost.total : null;
     // Privacy précède toute réservation et tout appel fournisseur ; un refus lève ici.
     const privacyDecisionToken = authorizePrivacy([{ source: "native_dev_task", classification: "PRIVATE", content: payload }]);
-    const reservation = budgetService.reserve({ taskId: payload.taskId, callId: `${payload.taskId}:${payload.phase}`, provider: route.provider || "openai", model: route.model, estimatedCost, taskLimit: maxEstimatedCost, benchmarkId: payload.benchmark?.id || null, benchmarkLimit: payload.benchmark?.limitUsd ?? null, enforce: effectiveBudgetEnforcement });
+    const reservation = budgetService.reserve({ taskId: payload.taskId, callId: `${payload.taskId}:${payload.phase}`, provider: route.provider || "openai", model: route.model, estimatedCost, taskLimit: maxEstimatedCost, maxProviderCalls, benchmarkId: payload.benchmark?.id || null, benchmarkLimit: payload.benchmark?.limitUsd ?? null, enforce: effectiveBudgetEnforcement });
     try {
       const response = await providerAdapter.execute({
         model: route.model, store: false, reasoning: { effort: route.effort },
@@ -108,6 +108,7 @@ function createNativeDevReasoner({ executeStructured = null, ...dependencies } =
     };
     const response = await executor({
       taskDomain: "DEV", requiredQuality: input.contract?.requiredQuality || "NORMAL", maxEstimatedCost: input.contract?.maxEstimatedCost ?? null,
+      maxProviderCalls: input.contract?.maxProviderCalls ?? null,
       enforceTaskBudget: input.contract?.enforceTaskBudget === true,
       schema: DEV_REASONING_SCHEMA, schemaName: "native_dev_step", signal: input.signal,
       system: [
