@@ -22,6 +22,23 @@ const STATUSES =
     "CANCELLED",
   ]);
 
+const PLANNING_STATUSES = Object.freeze([
+  "PREPARED",
+  "MAY_HAVE_STARTED",
+  "RECONCILED",
+  "UNKNOWN",
+]);
+
+const PLANNING_UNKNOWN_REASONS = Object.freeze([
+  "OUTCOME_UNCERTAIN",
+  "USAGE_INCOMPLETE",
+  "TIMEOUT",
+  "CANCELLED",
+  "PERSISTENCE_UNCERTAIN",
+]);
+
+const MAX_PLANNING_RESERVATIONS = 1000;
+
 const TERMINAL_STATUSES =
   new Set([
     "SUCCEEDED",
@@ -270,6 +287,101 @@ function integer(
   return value;
 }
 
+function planningReservations(state) {
+  return state.planningReservations === undefined
+    ? []
+    : state.planningReservations;
+}
+
+function exactPlanningKeys(value, keys, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+      Object.getPrototypeOf(value) !== Object.prototype ||
+      Reflect.ownKeys(value).length !== keys.length ||
+      Reflect.ownKeys(value).some((key) => typeof key !== "string" || !keys.includes(key))) {
+    fail("GOAL_MODE_PLANNING_INVALID", `${label} invalide.`);
+  }
+  return value;
+}
+
+const PLANNING_BINDING_KEYS = Object.freeze([
+  "runId", "runRevision", "goalId", "goalVersion",
+  "targetKind", "targetId", "targetFingerprint",
+]);
+
+const PLANNING_RECORD_KEYS = Object.freeze([
+  "reservationId", "binding", "status", "reservedProviderCalls",
+  "reservedCost", "reservedAt", "mayHaveStartedAt", "closedAt",
+  "observedProviderCalls", "observedCost", "unknownReasonCode",
+]);
+
+function assertPlanningBinding(binding, state) {
+  exactPlanningKeys(binding, PLANNING_BINDING_KEYS, "binding");
+  if (binding.runId !== state.runId ||
+      binding.goalId !== state.contract.goalRef.goalId ||
+      binding.goalVersion !== state.contract.goalRef.goalVersion ||
+      !Number.isSafeInteger(binding.runRevision) || binding.runRevision < 1 ||
+      !["MILESTONE", "SUCCESS_CRITERION"].includes(binding.targetKind) ||
+      !/^sha256:[a-f0-9]{64}$/.test(binding.targetFingerprint)) {
+    fail("GOAL_MODE_PLANNING_BINDING_INVALID", "Binding de planning incohérent.");
+  }
+  requiredString(binding.targetId, "binding.targetId");
+}
+
+function assertPlanningRecord(record, state) {
+  exactPlanningKeys(record, PLANNING_RECORD_KEYS, "planningReservation");
+  requiredString(record.reservationId, "reservationId");
+  assertPlanningBinding(record.binding, state);
+  if (!PLANNING_STATUSES.includes(record.status) ||
+      !Number.isSafeInteger(record.reservedProviderCalls) ||
+      record.reservedProviderCalls < 1 ||
+      typeof record.reservedCost !== "number" ||
+      !Number.isFinite(record.reservedCost) || record.reservedCost < 0) {
+    fail("GOAL_MODE_PLANNING_INVALID", "Réservation de planning invalide.");
+  }
+  const reservedAt = iso(record.reservedAt, "reservedAt");
+  const startedAt = record.mayHaveStartedAt === null ? null : iso(record.mayHaveStartedAt, "mayHaveStartedAt");
+  const closedAt = record.closedAt === null ? null : iso(record.closedAt, "closedAt");
+  if (Date.parse(reservedAt) < Date.parse(state.createdAt) ||
+      Date.parse(reservedAt) > Date.parse(state.updatedAt) ||
+      (startedAt && Date.parse(startedAt) < Date.parse(reservedAt)) ||
+      (closedAt && Date.parse(closedAt) < Date.parse(startedAt || reservedAt)) ||
+      (closedAt && Date.parse(closedAt) > Date.parse(state.updatedAt))) {
+    fail("GOAL_MODE_PLANNING_TIME_INVALID", "Horodatage de planning incohérent.");
+  }
+  const observedCalls = record.observedProviderCalls;
+  const observedCost = record.observedCost;
+  if ((observedCalls !== null && (!Number.isSafeInteger(observedCalls) || observedCalls < 0)) ||
+      (observedCost !== null && (typeof observedCost !== "number" || !Number.isFinite(observedCost) || observedCost < 0))) {
+    fail("GOAL_MODE_PLANNING_USAGE_INVALID", "Usage de planning invalide.");
+  }
+  if (record.status === "PREPARED" &&
+      (startedAt !== null || closedAt !== null || observedCalls !== null || observedCost !== null || record.unknownReasonCode !== null) ||
+      record.status === "MAY_HAVE_STARTED" &&
+      (startedAt === null || closedAt !== null || observedCalls !== null || observedCost !== null || record.unknownReasonCode !== null) ||
+      record.status === "RECONCILED" &&
+      (startedAt === null || closedAt === null || observedCalls === null || observedCalls < 1 ||
+       observedCost === null || record.unknownReasonCode !== null) ||
+      record.status === "UNKNOWN" &&
+      (closedAt === null || !PLANNING_UNKNOWN_REASONS.includes(record.unknownReasonCode))) {
+    fail("GOAL_MODE_PLANNING_STATE_INVALID", "État de planning incohérent.");
+  }
+}
+
+function planningExposure(state) {
+  const reservations = planningReservations(state);
+  if (reservations.some((item) => item.status === "UNKNOWN")) {
+    fail("GOAL_MODE_PLANNING_UNKNOWN_BLOCKED", "Issue de planning incertaine.");
+  }
+  if (reservations.some((item) => item.status === "RECONCILED" &&
+      (item.observedProviderCalls > item.reservedProviderCalls ||
+       item.observedCost > item.reservedCost))) {
+    fail("GOAL_MODE_PLANNING_RESERVATION_EXCEEDED", "Réservation de planning dépassée.");
+  }
+  if (reservations.some((item) => ["PREPARED", "MAY_HAVE_STARTED"].includes(item.status))) {
+    fail("GOAL_MODE_PLANNING_IN_FLIGHT", "Réservation de planning non résolue.");
+  }
+}
+
 function assertContract(
   contract
 ) {
@@ -365,29 +477,6 @@ function normalizeUsage(
   });
 }
 
-function assertUsageWithinContract(
-  usage,
-  contract
-) {
-  if (
-    usage.steps >
-      contract.limits.maxSteps ||
-    usage.retries >
-      contract.limits.maxRetries ||
-    usage.providerCalls >
-      contract.limits
-        .maxProviderCalls ||
-    usage.estimatedCost >
-      contract.limits
-        .maxEstimatedCost
-  ) {
-    fail(
-      "GOAL_MODE_RUN_USAGE_EXCEEDS_CONTRACT",
-      "L'accounting Goal Run dépasse le contrat."
-    );
-  }
-}
-
 function createGoalModeRunState({
   contract,
   createdAt = null,
@@ -435,6 +524,9 @@ function createGoalModeRunState({
       null,
 
     usage,
+
+    planningReservations:
+      Object.freeze([]),
 
     /*
      * 5.0B ne stocke encore aucun approval,
@@ -640,10 +732,39 @@ function assertGoalModeRunState(
       state.usage
     );
 
-  assertUsageWithinContract(
-    usage,
-    state.contract
-  );
+  const reservations = planningReservations(state);
+  if (!Array.isArray(reservations) || reservations.length > MAX_PLANNING_RESERVATIONS) {
+    fail("GOAL_MODE_PLANNING_INVALID", "Historique de planning invalide ou hors borne.");
+  }
+  const seen = new Set();
+  let observedCalls = 0;
+  let observedCost = 0;
+  let callOverage = 0;
+  let costOverage = 0;
+  for (const reservation of reservations) {
+    assertPlanningRecord(reservation, state);
+    if (seen.has(reservation.reservationId)) {
+      fail("GOAL_MODE_PLANNING_DUPLICATE", "Réservation de planning dupliquée.");
+    }
+    seen.add(reservation.reservationId);
+    if (reservation.status === "RECONCILED") {
+      observedCalls += reservation.observedProviderCalls;
+      observedCost += reservation.observedCost;
+      callOverage += Math.max(0, reservation.observedProviderCalls - reservation.reservedProviderCalls);
+      costOverage += Math.max(0, reservation.observedCost - reservation.reservedCost);
+    }
+  }
+  if (!Number.isSafeInteger(observedCalls) || !Number.isFinite(observedCost) ||
+      !Number.isSafeInteger(callOverage) || !Number.isFinite(costOverage) ||
+      observedCalls > usage.providerCalls || observedCost > usage.estimatedCost ||
+      usage.providerCalls > state.contract.limits.maxProviderCalls + callOverage ||
+      usage.estimatedCost > state.contract.limits.maxEstimatedCost + costOverage) {
+    fail("GOAL_MODE_RUN_USAGE_EXCEEDS_CONTRACT", "Accounting Goal Run incohérent avec le planning.");
+  }
+  if (usage.steps > state.contract.limits.maxSteps ||
+      usage.retries > state.contract.limits.maxRetries) {
+    fail("GOAL_MODE_RUN_USAGE_EXCEEDS_CONTRACT", "L'accounting Goal Run dépasse le contrat.");
+  }
 
   return true;
 }
@@ -816,6 +937,8 @@ function applyGoalModeUsage(
       usageDelta
     );
 
+  planningExposure(state);
+
   const assessment =
     assessGoalModeBudget({
       contract:
@@ -850,10 +973,7 @@ function applyGoalModeUsage(
   const next =
     clone(state);
 
-  next.usage =
-    clone(
-      assessment.projected
-    );
+  next.usage = clone(assessment.projected);
 
   next.updatedAt =
     at;
@@ -865,6 +985,165 @@ function applyGoalModeUsage(
   return deepFreeze(
     next
   );
+}
+
+function reserveGoalModePlanning(state, {
+  reservationId, binding, reservedProviderCalls, reservedCost, reservedAt,
+} = {}) {
+  assertGoalModeRunState(state);
+  if (state.status !== "RUNNING") {
+    fail("GOAL_MODE_RUN_NOT_RUNNING", "Un planning exige un run RUNNING.");
+  }
+  planningExposure(state);
+  const records = planningReservations(state);
+  if (records.length >= MAX_PLANNING_RESERVATIONS) {
+    fail("GOAL_MODE_PLANNING_LIMIT", "Historique de planning hors borne.");
+  }
+  requiredString(reservationId, "reservationId");
+  if (records.some((item) => item.reservationId === reservationId)) {
+    fail("GOAL_MODE_PLANNING_DUPLICATE", "Réservation de planning dupliquée.");
+  }
+  assertPlanningBinding(binding, state);
+  if (!Number.isSafeInteger(reservedProviderCalls) || reservedProviderCalls < 1 ||
+      typeof reservedCost !== "number" || !Number.isFinite(reservedCost) || reservedCost < 0) {
+    fail("GOAL_MODE_PLANNING_USAGE_INVALID", "Plafond de planning invalide.");
+  }
+  const at = iso(reservedAt, "reservedAt");
+  if (Date.parse(at) < Date.parse(state.updatedAt)) {
+    fail("GOAL_MODE_RUN_TIME_REWIND", "Réservation antérieure au run.");
+  }
+  const budget = assessGoalModeBudget({
+    contract: state.contract,
+    currentUsage: state.usage,
+    proposedUsage: {
+      steps: 0, retries: 0,
+      providerCalls: reservedProviderCalls,
+      estimatedCost: reservedCost,
+    },
+    currentGoalVersion: binding.goalVersion,
+    now: () => new Date(at),
+  });
+  if (budget.allowed !== true) {
+    fail("GOAL_MODE_PLANNING_BUDGET_BLOCKED", budget.reasonCode);
+  }
+  const next = clone(state);
+  next.planningReservations = [...records, {
+    reservationId,
+    binding: clone(binding),
+    status: "PREPARED",
+    reservedProviderCalls,
+    reservedCost,
+    reservedAt: at,
+    mayHaveStartedAt: null,
+    closedAt: null,
+    observedProviderCalls: null,
+    observedCost: null,
+    unknownReasonCode: null,
+  }];
+  next.updatedAt = at;
+  assertGoalModeRunState(next);
+  return deepFreeze(next);
+}
+
+function openPlanningRecord(state, reservationId, statuses) {
+  assertGoalModeRunState(state);
+  requiredString(reservationId, "reservationId");
+  const records = planningReservations(state);
+  const record = records[records.length - 1];
+  if (!record || record.reservationId !== reservationId) {
+    fail("GOAL_MODE_PLANNING_NOT_FOUND", "Réservation courante introuvable.");
+  }
+  if (!statuses.includes(record.status)) {
+    fail("GOAL_MODE_PLANNING_TRANSITION_INVALID", "Transition de planning interdite.");
+  }
+  return record;
+}
+
+function planningTimestamp(state, value) {
+  const at = iso(value, "planningAt");
+  if (Date.parse(at) < Date.parse(state.updatedAt)) {
+    fail("GOAL_MODE_RUN_TIME_REWIND", "Planning antérieur au run.");
+  }
+  return at;
+}
+
+function markGoalModePlanningMayHaveStarted(state, {
+  reservationId, markedAt,
+} = {}) {
+  openPlanningRecord(state, reservationId, ["PREPARED"]);
+  if (state.status !== "RUNNING") {
+    fail("GOAL_MODE_RUN_NOT_RUNNING", "Le départ du planning exige un run RUNNING.");
+  }
+  const at = planningTimestamp(state, markedAt);
+  const atBudget = assessGoalModeBudget({
+    contract: state.contract,
+    currentUsage: state.usage,
+    proposedUsage: { steps: 0, retries: 0, providerCalls: 0, estimatedCost: 0 },
+    currentGoalVersion: state.contract.goalRef.goalVersion,
+    now: () => new Date(at),
+  });
+  if (atBudget.allowed !== true) {
+    fail("GOAL_MODE_PLANNING_BUDGET_BLOCKED", atBudget.reasonCode);
+  }
+  const next = clone(state);
+  const record = next.planningReservations.at(-1);
+  record.status = "MAY_HAVE_STARTED";
+  record.mayHaveStartedAt = at;
+  next.updatedAt = at;
+  assertGoalModeRunState(next);
+  return deepFreeze(next);
+}
+
+function reconcileGoalModePlanning(state, {
+  reservationId, observedProviderCalls, observedCost,
+  observationComplete, reconciledAt,
+} = {}) {
+  openPlanningRecord(state, reservationId, ["MAY_HAVE_STARTED"]);
+  if (observationComplete !== true ||
+      !Number.isSafeInteger(observedProviderCalls) || observedProviderCalls < 1 ||
+      typeof observedCost !== "number" || !Number.isFinite(observedCost) || observedCost < 0) {
+    fail("GOAL_MODE_PLANNING_USAGE_INCOMPLETE", "Observation terminale complète requise.");
+  }
+  const at = planningTimestamp(state, reconciledAt);
+  const next = clone(state);
+  const record = next.planningReservations.at(-1);
+  record.status = "RECONCILED";
+  record.closedAt = at;
+  record.observedProviderCalls = observedProviderCalls;
+  record.observedCost = observedCost;
+  const calls = state.usage.providerCalls + observedProviderCalls;
+  const cost = state.usage.estimatedCost + observedCost;
+  if (!Number.isSafeInteger(calls) || !Number.isFinite(cost)) {
+    fail("GOAL_MODE_PLANNING_USAGE_INVALID", "Usage observé hors borne numérique.");
+  }
+  next.usage.providerCalls = calls;
+  next.usage.estimatedCost = cost;
+  next.updatedAt = at;
+  assertGoalModeRunState(next);
+  return deepFreeze(next);
+}
+
+function markGoalModePlanningUnknown(state, {
+  reservationId, observedProviderCalls = null, observedCost = null,
+  reasonCode = "OUTCOME_UNCERTAIN", markedAt,
+} = {}) {
+  openPlanningRecord(state, reservationId, ["PREPARED", "MAY_HAVE_STARTED"]);
+  if (!PLANNING_UNKNOWN_REASONS.includes(reasonCode) ||
+      (observedProviderCalls !== null && (!Number.isSafeInteger(observedProviderCalls) || observedProviderCalls < 0)) ||
+      (observedCost !== null && (typeof observedCost !== "number" || !Number.isFinite(observedCost) || observedCost < 0))) {
+    fail("GOAL_MODE_PLANNING_USAGE_INVALID", "Observation incertaine invalide.");
+  }
+  const at = planningTimestamp(state, markedAt);
+  const next = clone(state);
+  const record = next.planningReservations.at(-1);
+  record.status = "UNKNOWN";
+  record.closedAt = at;
+  record.observedProviderCalls = observedProviderCalls;
+  record.observedCost = observedCost;
+  record.unknownReasonCode = reasonCode;
+  next.updatedAt = at;
+  assertGoalModeRunState(next);
+  return deepFreeze(next);
 }
 
 function immutableProjection(
@@ -890,7 +1169,8 @@ function immutableProjection(
 
 function assertGoalModeRunForward(
   previous,
-  next
+  next,
+  { currentRevision = null } = {}
 ) {
   assertGoalModeRunState(
     previous
@@ -959,6 +1239,93 @@ function assertGoalModeRunForward(
       next.usage
     );
 
+  const oldReservations = planningReservations(previous);
+  const newReservations = planningReservations(next);
+  const planningChanged = !same(oldReservations, newReservations);
+
+  if (planningChanged) {
+    if (statusChanged || previous.status !== next.status ||
+        previous.reasonCode !== next.reasonCode ||
+        previous.startedAt !== next.startedAt ||
+        previous.completedAt !== next.completedAt ||
+        newReservations.length < oldReservations.length ||
+        newReservations.length > oldReservations.length + 1 ||
+        oldReservations.some((record, index) =>
+          (newReservations.length > oldReservations.length || index < oldReservations.length - 1) &&
+          !same(record, newReservations[index]))) {
+      fail("GOAL_MODE_PLANNING_HISTORY_MUTATED", "Historique de planning modifié.");
+    }
+    if (newReservations.length === oldReservations.length + 1) {
+      const added = newReservations.at(-1);
+      planningExposure(previous);
+      if (previous.status !== "RUNNING" || usageChanged ||
+          oldReservations.some((record) => record.status !== "RECONCILED") ||
+          added.status !== "PREPARED" ||
+          (currentRevision !== null && added.binding.runRevision !== currentRevision)) {
+        fail("GOAL_MODE_PLANNING_TRANSITION_INVALID", "Ajout de réservation invalide.");
+      }
+      const admission = assessGoalModeBudget({
+        contract: previous.contract,
+        currentUsage: previous.usage,
+        proposedUsage: {
+          steps: 0, retries: 0,
+          providerCalls: added.reservedProviderCalls,
+          estimatedCost: added.reservedCost,
+        },
+        currentGoalVersion: added.binding.goalVersion,
+        now: () => new Date(added.reservedAt),
+      });
+      if (admission.allowed !== true) {
+        fail("GOAL_MODE_PLANNING_BUDGET_BLOCKED", admission.reasonCode);
+      }
+    } else {
+      const oldRecord = oldReservations.at(-1);
+      const newRecord = newReservations.at(-1);
+      const immutableKeys = [
+        "reservationId", "binding", "reservedProviderCalls", "reservedCost", "reservedAt",
+      ];
+      const permitted = oldRecord?.status === "PREPARED"
+        ? ["MAY_HAVE_STARTED", "UNKNOWN"]
+        : oldRecord?.status === "MAY_HAVE_STARTED"
+          ? ["RECONCILED", "UNKNOWN"]
+          : [];
+      if (!oldRecord || !newRecord || !permitted.includes(newRecord.status) ||
+          immutableKeys.some((key) => !same(oldRecord[key], newRecord[key])) ||
+          (oldRecord.status === "PREPARED" && newRecord.status === "UNKNOWN" &&
+           newRecord.mayHaveStartedAt !== null) ||
+          (oldRecord.status === "MAY_HAVE_STARTED" &&
+           oldRecord.mayHaveStartedAt !== newRecord.mayHaveStartedAt)) {
+        fail("GOAL_MODE_PLANNING_TRANSITION_INVALID", "Transition de réservation invalide.");
+      }
+      if (newRecord.status === "MAY_HAVE_STARTED") {
+        if (previous.status !== "RUNNING" ||
+            (currentRevision !== null && currentRevision !== oldRecord.binding.runRevision + 1)) {
+          fail("GOAL_MODE_PLANNING_TRANSITION_INVALID", "Départ sur snapshot stale interdit.");
+        }
+        const dispatch = assessGoalModeBudget({
+          contract: previous.contract,
+          currentUsage: previous.usage,
+          proposedUsage: { steps: 0, retries: 0, providerCalls: 0, estimatedCost: 0 },
+          currentGoalVersion: oldRecord.binding.goalVersion,
+          now: () => new Date(newRecord.mayHaveStartedAt),
+        });
+        if (dispatch.allowed !== true) {
+          fail("GOAL_MODE_PLANNING_BUDGET_BLOCKED", dispatch.reasonCode);
+        }
+      }
+      if (newRecord.status === "RECONCILED") {
+        if (next.usage.steps !== previous.usage.steps ||
+            next.usage.retries !== previous.usage.retries ||
+            next.usage.providerCalls !== previous.usage.providerCalls + newRecord.observedProviderCalls ||
+            next.usage.estimatedCost !== previous.usage.estimatedCost + newRecord.observedCost) {
+          fail("GOAL_MODE_PLANNING_ACCOUNTING_INVALID", "Usage observé non comptabilisé exactement une fois.");
+        }
+      } else if (usageChanged) {
+        fail("GOAL_MODE_PLANNING_ACCOUNTING_INVALID", "Une issue incertaine n'invente aucun coût.");
+      }
+    }
+  }
+
   if (
     statusChanged
   ) {
@@ -975,17 +1342,31 @@ function assertGoalModeRunForward(
       );
     }
 
-    if (
-      usageChanged
-    ) {
+    if (usageChanged || planningChanged) {
       fail(
         "GOAL_MODE_RUN_ATOMIC_MUTATION_MIXED",
         "Une révision de transition ne peut aussi modifier l'accounting."
       );
     }
-  } else if (
-    usageChanged
-  ) {
+  } else if (planningChanged) {
+    // La transition de planning est vérifiée ci-dessus, même avec usage nul.
+  } else if (usageChanged) {
+    planningExposure(previous);
+    const assessment = assessGoalModeBudget({
+      contract: previous.contract,
+      currentUsage: previous.usage,
+      proposedUsage: {
+        steps: next.usage.steps - previous.usage.steps,
+        retries: next.usage.retries - previous.usage.retries,
+        providerCalls: next.usage.providerCalls - previous.usage.providerCalls,
+        estimatedCost: next.usage.estimatedCost - previous.usage.estimatedCost,
+      },
+      currentGoalVersion: previous.contract.goalRef.goalVersion,
+      now: () => new Date(next.updatedAt),
+    });
+    if (assessment.allowed !== true) {
+      fail("GOAL_MODE_RUN_BUDGET_BLOCKED", assessment.reasonCode);
+    }
     if (
       previous.status !==
         "RUNNING" ||
@@ -1046,6 +1427,8 @@ function assertGoalModeRunForward(
 }
 
 module.exports = {
+  PLANNING_STATUSES,
+  PLANNING_UNKNOWN_REASONS,
   STATUSES,
   TERMINAL_STATUSES,
   TRANSITIONS,
@@ -1054,5 +1437,9 @@ module.exports = {
   assertGoalModeRunForward,
   assertGoalModeRunState,
   createGoalModeRunState,
+  markGoalModePlanningMayHaveStarted,
+  markGoalModePlanningUnknown,
+  reconcileGoalModePlanning,
+  reserveGoalModePlanning,
   transitionGoalModeRun,
 };

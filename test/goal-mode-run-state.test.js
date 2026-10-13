@@ -11,10 +11,164 @@ const {
   assertGoalModeRunForward,
   assertGoalModeRunState,
   createGoalModeRunState,
+  markGoalModePlanningMayHaveStarted,
+  markGoalModePlanningUnknown,
+  reconcileGoalModePlanning,
+  reserveGoalModePlanning,
   transitionGoalModeRun,
 } = require(
   "../services/goals/goal-mode-run-state"
 );
+
+function planningBinding() {
+  return {
+    runId: "goal-run-50b",
+    runRevision: 2,
+    goalId: "goal-50b",
+    goalVersion: 3,
+    targetKind: "MILESTONE",
+    targetId: "milestone-1",
+    targetFingerprint: `sha256:${"a".repeat(64)}`,
+  };
+}
+
+function runningForPlanning() {
+  return transitionGoalModeRun(createGoalModeRunState({ contract: contract() }), "RUNNING", {
+    transitionedAt: "2026-10-12T12:00:01.000Z",
+  });
+}
+
+test("5.0D-0 réserve sans dépense puis compte une observation terminale zéro explicite", () => {
+  const running = runningForPlanning();
+  const prepared = reserveGoalModePlanning(running, {
+    reservationId: "planning-1",
+    binding: planningBinding(),
+    reservedProviderCalls: 1,
+    reservedCost: 0.4,
+    reservedAt: "2026-10-12T12:00:02.000Z",
+  });
+  assert.deepEqual(prepared.usage, running.usage);
+  assert.equal(prepared.planningReservations[0].status, "PREPARED");
+  assert.equal(Object.isFrozen(prepared.planningReservations[0]), true);
+  assertGoalModeRunForward(running, prepared, { currentRevision: 2 });
+  assert.throws(() => reserveGoalModePlanning(prepared, {
+    reservationId: "planning-2", binding: planningBinding(),
+    reservedProviderCalls: 1, reservedCost: 0.1,
+    reservedAt: "2026-10-12T12:00:02.000Z",
+  }), { code: "GOAL_MODE_PLANNING_IN_FLIGHT" });
+  const started = markGoalModePlanningMayHaveStarted(prepared, {
+    reservationId: "planning-1", markedAt: "2026-10-12T12:00:03.000Z",
+  });
+  assertGoalModeRunForward(prepared, started);
+  const terminal = reconcileGoalModePlanning(started, {
+    reservationId: "planning-1", observedProviderCalls: 1,
+    observedCost: 0, observationComplete: true,
+    reconciledAt: "2026-10-12T12:00:04.000Z",
+  });
+  assert.deepEqual(terminal.usage, {
+    steps: 0, retries: 0, providerCalls: 1, estimatedCost: 0,
+  });
+  assertGoalModeRunForward(started, terminal);
+  assert.throws(() => reconcileGoalModePlanning(terminal, {
+    reservationId: "planning-1", observedProviderCalls: 1,
+    observedCost: 0, observationComplete: true,
+    reconciledAt: "2026-10-12T12:00:05.000Z",
+  }), { code: "GOAL_MODE_PLANNING_TRANSITION_INVALID" });
+});
+
+test("5.0D-0 refuse usage absent et conserve une observation partielle UNKNOWN", () => {
+  const prepared = reserveGoalModePlanning(runningForPlanning(), {
+    reservationId: "planning-1", binding: planningBinding(),
+    reservedProviderCalls: 1, reservedCost: 0.4,
+    reservedAt: "2026-10-12T12:00:02.000Z",
+  });
+  const started = markGoalModePlanningMayHaveStarted(prepared, {
+    reservationId: "planning-1", markedAt: "2026-10-12T12:00:03.000Z",
+  });
+  for (const input of [
+    { observedProviderCalls: 1 },
+    { observedCost: 0 },
+    { observedProviderCalls: null, observedCost: 0 },
+    { observedProviderCalls: 0, observedCost: 0 },
+  ]) {
+    assert.throws(() => reconcileGoalModePlanning(started, {
+      reservationId: "planning-1", observationComplete: true,
+      reconciledAt: "2026-10-12T12:00:04.000Z", ...input,
+    }), { code: "GOAL_MODE_PLANNING_USAGE_INCOMPLETE" });
+  }
+  const unknown = markGoalModePlanningUnknown(started, {
+    reservationId: "planning-1", observedProviderCalls: 1,
+    reasonCode: "USAGE_INCOMPLETE", markedAt: "2026-10-12T12:00:04.000Z",
+  });
+  assert.equal(unknown.planningReservations[0].observedProviderCalls, 1);
+  assert.equal(unknown.planningReservations[0].observedCost, null);
+  assert.deepEqual(unknown.usage, started.usage);
+  assertGoalModeRunForward(started, unknown);
+  assert.throws(() => applyGoalModeUsage(unknown, {
+    currentGoalVersion: 3, usageDelta: { steps: 1 },
+    updatedAt: "2026-10-12T12:00:05.000Z",
+  }), { code: "GOAL_MODE_PLANNING_UNKNOWN_BLOCKED" });
+  assert.throws(() => markGoalModePlanningMayHaveStarted(unknown, {
+    reservationId: "planning-1", markedAt: "2026-10-12T12:00:05.000Z",
+  }), { code: "GOAL_MODE_PLANNING_TRANSITION_INVALID" });
+});
+
+test("5.0D-0 conserve le dépassement observé et interdit mutation d'une tentative historique", () => {
+  const prepared = reserveGoalModePlanning(runningForPlanning(), {
+    reservationId: "planning-1", binding: planningBinding(),
+    reservedProviderCalls: 1, reservedCost: 0.2,
+    reservedAt: "2026-10-12T12:00:02.000Z",
+  });
+  const started = markGoalModePlanningMayHaveStarted(prepared, {
+    reservationId: "planning-1", markedAt: "2026-10-12T12:00:03.000Z",
+  });
+  const terminal = reconcileGoalModePlanning(started, {
+    reservationId: "planning-1", observedProviderCalls: 5,
+    observedCost: 3, observationComplete: true,
+    reconciledAt: "2026-10-12T12:00:04.000Z",
+  });
+  assert.equal(terminal.usage.providerCalls, 5);
+  assert.equal(terminal.usage.estimatedCost, 3);
+  assertGoalModeRunState(terminal);
+  assertGoalModeRunForward(started, terminal);
+  assert.throws(() => reserveGoalModePlanning(terminal, {
+    reservationId: "planning-2", binding: planningBinding(),
+    reservedProviderCalls: 1, reservedCost: 0,
+    reservedAt: "2026-10-12T12:00:05.000Z",
+  }), { code: "GOAL_MODE_PLANNING_RESERVATION_EXCEEDED" });
+  const tampered = structuredClone(terminal);
+  tampered.planningReservations[0].reservedCost = 0.1;
+  tampered.updatedAt = "2026-10-12T12:00:05.000Z";
+  assert.throws(() => assertGoalModeRunForward(terminal, tampered), {
+    code: "GOAL_MODE_PLANNING_TRANSITION_INVALID",
+  });
+});
+
+test("5.0D-0 un dépassement de réservation bloque la suite même sous le plafond global", () => {
+  const prepared = reserveGoalModePlanning(runningForPlanning(), {
+    reservationId: "planning-1", binding: planningBinding(),
+    reservedProviderCalls: 1, reservedCost: 0.2,
+    reservedAt: "2026-10-12T12:00:02.000Z",
+  });
+  const started = markGoalModePlanningMayHaveStarted(prepared, {
+    reservationId: "planning-1", markedAt: "2026-10-12T12:00:03.000Z",
+  });
+  const terminal = reconcileGoalModePlanning(started, {
+    reservationId: "planning-1", observedProviderCalls: 1,
+    observedCost: 0.3, observationComplete: true,
+    reconciledAt: "2026-10-12T12:00:04.000Z",
+  });
+  assert.equal(terminal.usage.estimatedCost, 0.3);
+  assert.throws(() => reserveGoalModePlanning(terminal, {
+    reservationId: "planning-2", binding: planningBinding(),
+    reservedProviderCalls: 1, reservedCost: 0.1,
+    reservedAt: "2026-10-12T12:00:05.000Z",
+  }), { code: "GOAL_MODE_PLANNING_RESERVATION_EXCEEDED" });
+  assert.throws(() => applyGoalModeUsage(terminal, {
+    currentGoalVersion: 3, usageDelta: { steps: 1 },
+    updatedAt: "2026-10-12T12:00:05.000Z",
+  }), { code: "GOAL_MODE_PLANNING_RESERVATION_EXCEEDED" });
+});
 
 const {
   createGoalModeRunContract,

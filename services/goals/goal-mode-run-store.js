@@ -1,8 +1,14 @@
 "use strict";
 
+const crypto = require("node:crypto");
+
 const {
   applyGoalModeUsage,
   createGoalModeRunState,
+  markGoalModePlanningMayHaveStarted,
+  markGoalModePlanningUnknown,
+  reconcileGoalModePlanning,
+  reserveGoalModePlanning,
   transitionGoalModeRun,
 } = require(
   "./goal-mode-run-state"
@@ -26,6 +32,7 @@ function fail(
 
 function createGoalModeRunStore({
   repository,
+  planningIdFactory = () => `goal-planning-${crypto.randomUUID()}`,
   now =
     () =>
       new Date().toISOString(),
@@ -42,6 +49,10 @@ function createGoalModeRunStore({
     throw new TypeError(
       "GoalModeRunRepository valide requis."
     );
+  }
+
+  if (typeof planningIdFactory !== "function") {
+    throw new TypeError("planningIdFactory invalide.");
   }
 
   function required(
@@ -220,12 +231,80 @@ function createGoalModeRunStore({
     );
   }
 
+  function planningCurrent(runId, input) {
+    if (typeof runId !== "string" || !runId.trim() || runId !== runId.trim() || runId.length > 200) {
+      fail("GOAL_MODE_PLANNING_BINDING_INVALID", "runId de planning invalide.");
+    }
+    const revision = expectedRevision(input?.expectedRevision);
+    const capabilities = persistenceCapabilities();
+    if (capabilities.backend !== "SQLITE" || capabilities.atomicRevisionCas !== true) {
+      fail("GOAL_MODE_PLANNING_ATOMIC_BACKEND_REQUIRED", "Backend atomique requis pour le planning.");
+    }
+    const current = required(runId);
+    if (current.revision !== revision) {
+      fail("GOAL_MODE_RUN_PERSISTENCE_CONFLICT", "Goal Run modifié concurremment.");
+    }
+    return current;
+  }
+
+  function reservePlanning(runId, input = {}) {
+    const current = planningCurrent(runId, input);
+    if (input?.binding?.runRevision !== current.revision) {
+      fail("GOAL_MODE_PLANNING_BINDING_INVALID", "Révision de cible incohérente.");
+    }
+    const next = reserveGoalModePlanning(current.state, {
+      reservationId: planningIdFactory(),
+      binding: input.binding,
+      reservedProviderCalls: input.reservedProviderCalls,
+      reservedCost: input.reservedCost,
+      reservedAt: now(),
+    });
+    return repository.save(next, { expectedRevision: current.revision });
+  }
+
+  function markPlanningMayHaveStarted(runId, input = {}) {
+    const current = planningCurrent(runId, input);
+    const next = markGoalModePlanningMayHaveStarted(current.state, {
+      reservationId: input.reservationId,
+      markedAt: now(),
+    });
+    return repository.save(next, { expectedRevision: current.revision });
+  }
+
+  function reconcilePlanning(runId, input = {}) {
+    const current = planningCurrent(runId, input);
+    const next = reconcileGoalModePlanning(current.state, {
+      reservationId: input.reservationId,
+      observedProviderCalls: input.observedProviderCalls,
+      observedCost: input.observedCost,
+      observationComplete: input.observationComplete,
+      reconciledAt: now(),
+    });
+    return repository.save(next, { expectedRevision: current.revision });
+  }
+
+  function markPlanningUnknown(runId, input = {}) {
+    const current = planningCurrent(runId, input);
+    const next = markGoalModePlanningUnknown(current.state, {
+      reservationId: input.reservationId,
+      observedProviderCalls: input.observedProviderCalls,
+      observedCost: input.observedCost,
+      reasonCode: input.reasonCode,
+      markedAt: now(),
+    });
+    return repository.save(next, { expectedRevision: current.revision });
+  }
+
   return Object.freeze({
     consume,
     create,
     get,
     history,
+    markPlanningMayHaveStarted,
+    markPlanningUnknown,
     persistenceCapabilities,
+    reconcilePlanning,
+    reservePlanning,
     transition,
   });
 }

@@ -242,10 +242,11 @@ function createSqliteRepository(
     );
 
     if (
-      !Number.isInteger(
+      !Number.isSafeInteger(
         expectedRevision
       ) ||
-      expectedRevision < 0
+      expectedRevision < 0 ||
+      expectedRevision >= Number.MAX_SAFE_INTEGER
     ) {
       fail(
         "GOAL_MODE_RUN_REVISION_REQUIRED",
@@ -302,10 +303,9 @@ function createSqliteRepository(
       }
 
       if (current) {
-        assertGoalModeRunForward(
-          current.state,
-          state
-        );
+        assertGoalModeRunForward(current.state, state, {
+          currentRevision,
+        });
       } else if (
         expectedRevision !== 0
       ) {
@@ -464,10 +464,11 @@ function createFallbackRepository(
     );
 
     if (
-      !Number.isInteger(
+      !Number.isSafeInteger(
         expectedRevision
       ) ||
-      expectedRevision < 0
+      expectedRevision < 0 ||
+      expectedRevision >= Number.MAX_SAFE_INTEGER
     ) {
       fail(
         "GOAL_MODE_RUN_REVISION_REQUIRED",
@@ -520,10 +521,9 @@ function createFallbackRepository(
     }
 
     if (current) {
-      assertGoalModeRunForward(
-        current.state,
-        runState
-      );
+      assertGoalModeRunForward(current.state, runState, {
+        currentRevision,
+      });
     } else if (
       expectedRevision !== 0
     ) {
