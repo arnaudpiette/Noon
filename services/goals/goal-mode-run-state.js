@@ -1,5 +1,7 @@
 "use strict";
 
+const crypto = require("node:crypto");
+
 const {
   VERSION: CONTRACT_VERSION,
   assessGoalModeBudget,
@@ -38,6 +40,14 @@ const PLANNING_UNKNOWN_REASONS = Object.freeze([
 ]);
 
 const MAX_PLANNING_RESERVATIONS = 1000;
+const MAX_EXECUTION_RESERVATIONS = 1000;
+const EXECUTION_STATUSES = Object.freeze([
+  "PREPARED", "MAY_HAVE_STARTED", "RECONCILED", "UNKNOWN",
+]);
+const EXECUTION_UNKNOWN_REASONS = Object.freeze([
+  "OUTCOME_UNCERTAIN", "USAGE_INCOMPLETE", "TIMEOUT",
+  "CANCELLED", "PERSISTENCE_UNCERTAIN",
+]);
 
 const TERMINAL_STATUSES =
   new Set([
@@ -293,12 +303,187 @@ function planningReservations(state) {
     : state.planningReservations;
 }
 
-function exactPlanningKeys(value, keys, label) {
+function executionReservations(state) {
+  return state.executionReservations === undefined
+    ? []
+    : state.executionReservations;
+}
+
+function executionReservationId(binding) {
+  const digest = crypto.createHash("sha256")
+    .update(JSON.stringify([
+      binding.runId, binding.stepId, binding.taskId,
+      binding.proposalFingerprint,
+    ]))
+    .digest("hex");
+  return `goal-dev-execution-${digest}`;
+}
+
+const EXECUTION_BINDING_KEYS = Object.freeze([
+  "runId", "runRevision", "goalId", "goalVersion", "stepId",
+  "proposalFingerprint", "taskId", "targetKind", "targetId",
+  "targetFingerprint",
+]);
+
+const EXECUTION_RECORD_KEYS = Object.freeze([
+  "reservationId", "binding", "status", "reservedSteps", "reservedRetries",
+  "reservedProviderCalls", "reservedCost", "reservedAt", "mayHaveStartedAt",
+  "closedAt", "observedSteps", "observedRetries", "observedProviderCalls",
+  "observedActualCost", "accountedCost", "accountingUnit", "unknownReasonCode",
+]);
+
+function executionIso(value, label) {
+  if (typeof value !== "string") {
+    fail("GOAL_MODE_EXECUTION_TIME_INVALID", `${label} invalide.`);
+  }
+  const normalized = iso(value, label);
+  if (normalized !== value) {
+    fail("GOAL_MODE_EXECUTION_TIME_INVALID", `${label} invalide.`);
+  }
+  return normalized;
+}
+
+function assertExecutionBinding(binding, state) {
+  exactPlanningKeys(binding, EXECUTION_BINDING_KEYS, "executionBinding", "GOAL_MODE_EXECUTION_BINDING_INVALID");
+  if (binding.runId !== state.runId ||
+      binding.goalId !== state.contract.goalRef.goalId ||
+      binding.goalVersion !== state.contract.goalRef.goalVersion ||
+      !Number.isSafeInteger(binding.runRevision) || binding.runRevision < 1 ||
+      !["MILESTONE", "SUCCESS_CRITERION"].includes(binding.targetKind) ||
+      !/^sha256:[a-f0-9]{64}$/.test(binding.proposalFingerprint) ||
+      !/^sha256:[a-f0-9]{64}$/.test(binding.targetFingerprint)) {
+    fail("GOAL_MODE_EXECUTION_BINDING_INVALID", "Binding DEV incohérent.");
+  }
+  requiredString(binding.stepId, "binding.stepId");
+  requiredString(binding.taskId, "binding.taskId");
+  requiredString(binding.targetId, "binding.targetId");
+}
+
+function assertExecutionRecord(record, state) {
+  exactPlanningKeys(record, EXECUTION_RECORD_KEYS, "executionReservation", "GOAL_MODE_EXECUTION_INVALID");
+  assertExecutionBinding(record.binding, state);
+  if (record.reservationId !== executionReservationId(record.binding) ||
+      !EXECUTION_STATUSES.includes(record.status) ||
+      record.reservedSteps !== 1 || record.reservedRetries !== 0 ||
+      !Number.isSafeInteger(record.reservedProviderCalls) ||
+      record.reservedProviderCalls < 1 ||
+      typeof record.reservedCost !== "number" ||
+      !Number.isFinite(record.reservedCost) || record.reservedCost <= 0) {
+    fail("GOAL_MODE_EXECUTION_INVALID", "Réservation DEV invalide.");
+  }
+  const reservedAt = executionIso(record.reservedAt, "reservedAt");
+  const startedAt = record.mayHaveStartedAt === null
+    ? null : executionIso(record.mayHaveStartedAt, "mayHaveStartedAt");
+  const closedAt = record.closedAt === null
+    ? null : executionIso(record.closedAt, "closedAt");
+  if (Date.parse(reservedAt) < Date.parse(state.createdAt) ||
+      Date.parse(reservedAt) > Date.parse(state.updatedAt) ||
+      (startedAt && Date.parse(startedAt) < Date.parse(reservedAt)) ||
+      (startedAt && Date.parse(startedAt) > Date.parse(state.updatedAt)) ||
+      (closedAt && Date.parse(closedAt) < Date.parse(startedAt || reservedAt)) ||
+      (closedAt && Date.parse(closedAt) > Date.parse(state.updatedAt))) {
+    fail("GOAL_MODE_EXECUTION_TIME_INVALID", "Horodatage DEV incohérent.");
+  }
+  for (const key of ["observedSteps", "observedRetries", "observedProviderCalls"]) {
+    if (record[key] !== null && (!Number.isSafeInteger(record[key]) ||
+        record[key] < 0 || (key === "observedSteps" && record[key] > 1))) {
+      fail("GOAL_MODE_EXECUTION_USAGE_INVALID", `${key} invalide.`);
+    }
+  }
+  for (const key of ["observedActualCost", "accountedCost"]) {
+    if (record[key] !== null && (typeof record[key] !== "number" ||
+        !Number.isFinite(record[key]) || record[key] < 0)) {
+      fail("GOAL_MODE_EXECUTION_USAGE_INVALID", `${key} invalide.`);
+    }
+  }
+  if (record.accountingUnit !== null && record.accountingUnit !== "USD") {
+    fail("GOAL_MODE_EXECUTION_USAGE_INVALID", "Unité d'accounting invalide.");
+  }
+  if ((record.observedActualCost !== null || record.accountedCost !== null) &&
+      record.accountingUnit !== "USD") {
+    fail("GOAL_MODE_EXECUTION_USAGE_INVALID", "Coût observé sans unité d'accounting.");
+  }
+  const unobserved = ["observedSteps", "observedRetries", "observedProviderCalls",
+    "observedActualCost", "accountedCost", "accountingUnit"]
+    .every((key) => record[key] === null);
+  if ((record.status === "PREPARED" &&
+       (startedAt !== null || closedAt !== null || !unobserved || record.unknownReasonCode !== null)) ||
+      (record.status === "MAY_HAVE_STARTED" &&
+       (startedAt === null || closedAt !== null || !unobserved || record.unknownReasonCode !== null)) ||
+      (record.status === "RECONCILED" &&
+       (startedAt === null || closedAt === null || record.observedSteps !== 1 ||
+        record.observedRetries === null || record.observedProviderCalls === null ||
+        record.accountedCost === null || record.accountingUnit !== "USD" ||
+        (record.observedActualCost !== null &&
+         record.observedActualCost !== record.accountedCost) ||
+        record.unknownReasonCode !== null)) ||
+      (record.status === "UNKNOWN" &&
+       (closedAt === null || !EXECUTION_UNKNOWN_REASONS.includes(record.unknownReasonCode)))) {
+    fail("GOAL_MODE_EXECUTION_STATE_INVALID", "État de réservation DEV incohérent.");
+  }
+}
+
+function executionExposure(state) {
+  const reservations = executionReservations(state);
+  if (reservations.some((item) => item.status === "UNKNOWN")) {
+    fail("GOAL_MODE_EXECUTION_UNKNOWN_BLOCKED", "Issue DEV incertaine.");
+  }
+  if (reservations.some((item) => item.status === "RECONCILED" &&
+      (item.observedSteps > item.reservedSteps ||
+       item.observedRetries > item.reservedRetries ||
+       item.observedProviderCalls > item.reservedProviderCalls ||
+       item.accountedCost > item.reservedCost))) {
+    fail("GOAL_MODE_EXECUTION_RESERVATION_EXCEEDED", "Réservation DEV dépassée.");
+  }
+  if (reservations.some((item) => ["PREPARED", "MAY_HAVE_STARTED"].includes(item.status))) {
+    fail("GOAL_MODE_EXECUTION_IN_FLIGHT", "Réservation DEV non résolue.");
+  }
+}
+
+function assertLegacyConsumeAvailable(state, delta) {
+  planningExposure(state);
+  executionExposure(state);
+  if (executionReservations(state).length > 0 ||
+      (planningReservations(state).length > 0 &&
+       (delta.providerCalls !== 0 || delta.estimatedCost !== 0))) {
+    fail("GOAL_MODE_RUN_LEGACY_CONSUME_UNAVAILABLE", "Accounting réservé indisponible via consume.");
+  }
+}
+
+function assertReservationAccountingOwned(state) {
+  // Une consommation historique sans identité d'opération ne peut être
+  // réattribuée a posteriori à une réservation planning ou DEV.
+  const records = [
+    ...planningReservations(state).filter((item) => item.status === "RECONCILED")
+      .map((item) => ({ revision: item.binding.runRevision, usage: {
+        steps: 0, retries: 0,
+        providerCalls: item.observedProviderCalls,
+        estimatedCost: item.observedCost,
+      } })),
+    ...executionReservations(state).filter((item) => item.status === "RECONCILED")
+      .map((item) => ({ revision: item.binding.runRevision, usage: {
+        steps: item.observedSteps, retries: item.observedRetries,
+        providerCalls: item.observedProviderCalls,
+        estimatedCost: item.accountedCost,
+      } })),
+  ].sort((left, right) => left.revision - right.revision);
+  const accounted = { steps: 0, retries: 0, providerCalls: 0, estimatedCost: 0 };
+  for (const record of records) {
+    for (const key of Object.keys(accounted)) {
+      accounted[key] += record.usage[key];
+    }
+  }
+  if (!same(accounted, state.usage)) {
+    fail("GOAL_MODE_RUN_UNATTRIBUTED_USAGE", "Accounting historique non attribuable à une réservation.");
+  }
+}
+
+function exactPlanningKeys(value, keys, label, code = "GOAL_MODE_PLANNING_INVALID") {
   if (!value || typeof value !== "object" || Array.isArray(value) ||
       Object.getPrototypeOf(value) !== Object.prototype ||
       Reflect.ownKeys(value).length !== keys.length ||
       Reflect.ownKeys(value).some((key) => typeof key !== "string" || !keys.includes(key))) {
-    fail("GOAL_MODE_PLANNING_INVALID", `${label} invalide.`);
+    fail(code, `${label} invalide.`);
   }
   return value;
 }
@@ -738,7 +923,6 @@ function assertGoalModeRunState(
   }
   const seen = new Set();
   let observedCalls = 0;
-  let observedCost = 0;
   let callOverage = 0;
   let costOverage = 0;
   for (const reservation of reservations) {
@@ -749,10 +933,62 @@ function assertGoalModeRunState(
     seen.add(reservation.reservationId);
     if (reservation.status === "RECONCILED") {
       observedCalls += reservation.observedProviderCalls;
-      observedCost += reservation.observedCost;
       callOverage += Math.max(0, reservation.observedProviderCalls - reservation.reservedProviderCalls);
       costOverage += Math.max(0, reservation.observedCost - reservation.reservedCost);
     }
+  }
+  const executions = executionReservations(state);
+  if (!Array.isArray(executions) || executions.length > MAX_EXECUTION_RESERVATIONS) {
+    fail("GOAL_MODE_EXECUTION_INVALID", "Historique DEV invalide ou hors borne.");
+  }
+  const seenExecutions = new Set();
+  const seenExecutionSteps = new Set();
+  const seenExecutionTasks = new Set();
+  let observedSteps = 0;
+  let observedRetries = 0;
+  let stepOverage = 0;
+  let retryOverage = 0;
+  for (const reservation of executions) {
+    assertExecutionRecord(reservation, state);
+    if (seenExecutions.has(reservation.reservationId) ||
+        seenExecutionSteps.has(reservation.binding.stepId) ||
+        seenExecutionTasks.has(reservation.binding.taskId)) {
+      fail("GOAL_MODE_EXECUTION_DUPLICATE", "Réservation DEV dupliquée.");
+    }
+    seenExecutions.add(reservation.reservationId);
+    seenExecutionSteps.add(reservation.binding.stepId);
+    seenExecutionTasks.add(reservation.binding.taskId);
+    if (reservation.status === "RECONCILED") {
+      observedSteps += reservation.observedSteps;
+      observedRetries += reservation.observedRetries;
+      observedCalls += reservation.observedProviderCalls;
+      stepOverage += Math.max(0, reservation.observedSteps - reservation.reservedSteps);
+      retryOverage += Math.max(0, reservation.observedRetries - reservation.reservedRetries);
+      callOverage += Math.max(0, reservation.observedProviderCalls - reservation.reservedProviderCalls);
+      costOverage += Math.max(0, reservation.accountedCost - reservation.reservedCost);
+    }
+  }
+  // Additionner dans l'ordre des réservations (donc des réconciliations),
+  // comme usage.estimatedCost. Regrouper planning puis DEV change l'arrondi
+  // IEEE-754 et peut rejeter un accounting pourtant persisté correctement.
+  let observedCost = 0;
+  const reconciledCosts = [
+    ...reservations.filter((item) => item.status === "RECONCILED")
+      .map((item) => ({ revision: item.binding.runRevision, cost: item.observedCost })),
+    ...executions.filter((item) => item.status === "RECONCILED")
+      .map((item) => ({ revision: item.binding.runRevision, cost: item.accountedCost })),
+  ].sort((left, right) => left.revision - right.revision);
+  for (const item of reconciledCosts) {
+    observedCost += item.cost;
+  }
+  if (!Number.isSafeInteger(observedSteps) || !Number.isSafeInteger(observedRetries) ||
+      !Number.isSafeInteger(stepOverage) || !Number.isSafeInteger(retryOverage) ||
+      observedSteps > usage.steps || observedRetries > usage.retries ||
+      usage.steps > state.contract.limits.maxSteps + stepOverage ||
+      usage.retries > state.contract.limits.maxRetries + retryOverage ||
+      (reservations.some((item) => ["PREPARED", "MAY_HAVE_STARTED", "UNKNOWN"].includes(item.status)) &&
+       executions.some((item) => ["PREPARED", "MAY_HAVE_STARTED", "UNKNOWN"].includes(item.status)))) {
+    fail("GOAL_MODE_RUN_USAGE_EXCEEDS_CONTRACT", "Accounting ou exclusivité DEV incohérent.");
   }
   if (!Number.isSafeInteger(observedCalls) || !Number.isFinite(observedCost) ||
       !Number.isSafeInteger(callOverage) || !Number.isFinite(costOverage) ||
@@ -761,11 +997,6 @@ function assertGoalModeRunState(
       usage.estimatedCost > state.contract.limits.maxEstimatedCost + costOverage) {
     fail("GOAL_MODE_RUN_USAGE_EXCEEDS_CONTRACT", "Accounting Goal Run incohérent avec le planning.");
   }
-  if (usage.steps > state.contract.limits.maxSteps ||
-      usage.retries > state.contract.limits.maxRetries) {
-    fail("GOAL_MODE_RUN_USAGE_EXCEEDS_CONTRACT", "L'accounting Goal Run dépasse le contrat.");
-  }
-
   return true;
 }
 
@@ -937,7 +1168,7 @@ function applyGoalModeUsage(
       usageDelta
     );
 
-  planningExposure(state);
+  assertLegacyConsumeAvailable(state, delta);
 
   const assessment =
     assessGoalModeBudget({
@@ -995,6 +1226,8 @@ function reserveGoalModePlanning(state, {
     fail("GOAL_MODE_RUN_NOT_RUNNING", "Un planning exige un run RUNNING.");
   }
   planningExposure(state);
+  executionExposure(state);
+  assertReservationAccountingOwned(state);
   const records = planningReservations(state);
   if (records.length >= MAX_PLANNING_RESERVATIONS) {
     fail("GOAL_MODE_PLANNING_LIMIT", "Historique de planning hors borne.");
@@ -1146,6 +1379,169 @@ function markGoalModePlanningUnknown(state, {
   return deepFreeze(next);
 }
 
+function executionTimestamp(state, value) {
+  const at = executionIso(value, "executionAt");
+  if (Date.parse(at) < Date.parse(state.updatedAt)) {
+    fail("GOAL_MODE_RUN_TIME_REWIND", "Réservation DEV antérieure au run.");
+  }
+  return at;
+}
+
+function openExecutionRecord(state, reservationId, statuses) {
+  assertGoalModeRunState(state);
+  requiredString(reservationId, "reservationId");
+  const record = executionReservations(state).at(-1);
+  if (!record || record.reservationId !== reservationId) {
+    fail("GOAL_MODE_EXECUTION_NOT_FOUND", "Réservation DEV courante introuvable.");
+  }
+  if (!statuses.includes(record.status)) {
+    fail("GOAL_MODE_EXECUTION_TRANSITION_INVALID", "Transition DEV interdite.");
+  }
+  return record;
+}
+
+function reserveGoalModeExecution(state, {
+  binding, reservedProviderCalls, reservedCost, reservedAt,
+} = {}) {
+  assertGoalModeRunState(state);
+  if (state.status !== "RUNNING") {
+    fail("GOAL_MODE_RUN_NOT_RUNNING", "Une réservation DEV exige RUNNING.");
+  }
+  planningExposure(state);
+  executionExposure(state);
+  assertReservationAccountingOwned(state);
+  const records = executionReservations(state);
+  if (records.length >= MAX_EXECUTION_RESERVATIONS) {
+    fail("GOAL_MODE_EXECUTION_LIMIT", "Historique DEV hors borne.");
+  }
+  assertExecutionBinding(binding, state);
+  const reservationId = executionReservationId(binding);
+  if (records.some((item) => item.reservationId === reservationId)) {
+    fail("GOAL_MODE_EXECUTION_DUPLICATE", "Réservation DEV déjà présente.");
+  }
+  if (!Number.isSafeInteger(reservedProviderCalls) || reservedProviderCalls < 1 ||
+      typeof reservedCost !== "number" || !Number.isFinite(reservedCost) || reservedCost <= 0) {
+    fail("GOAL_MODE_EXECUTION_INVALID", "Plafond de réservation DEV invalide.");
+  }
+  const at = executionTimestamp(state, reservedAt);
+  const budget = assessGoalModeBudget({
+    contract: state.contract,
+    currentUsage: state.usage,
+    proposedUsage: {
+      steps: 1, retries: 0,
+      providerCalls: reservedProviderCalls,
+      estimatedCost: reservedCost,
+    },
+    currentGoalVersion: binding.goalVersion,
+    now: () => new Date(at),
+  });
+  if (budget.allowed !== true) {
+    fail("GOAL_MODE_EXECUTION_BUDGET_BLOCKED", budget.reasonCode);
+  }
+  const next = clone(state);
+  next.executionReservations = [...records, {
+    reservationId, binding: clone(binding), status: "PREPARED",
+    reservedSteps: 1, reservedRetries: 0,
+    reservedProviderCalls, reservedCost,
+    reservedAt: at, mayHaveStartedAt: null, closedAt: null,
+    observedSteps: null, observedRetries: null, observedProviderCalls: null,
+    observedActualCost: null, accountedCost: null, accountingUnit: null,
+    unknownReasonCode: null,
+  }];
+  next.updatedAt = at;
+  assertGoalModeRunState(next);
+  return deepFreeze(next);
+}
+
+function markGoalModeExecutionMayHaveStarted(state, {
+  reservationId, markedAt,
+} = {}) {
+  openExecutionRecord(state, reservationId, ["PREPARED"]);
+  if (state.status !== "RUNNING") {
+    fail("GOAL_MODE_RUN_NOT_RUNNING", "La frontière DEV exige RUNNING.");
+  }
+  const at = executionTimestamp(state, markedAt);
+  const budget = assessGoalModeBudget({
+    contract: state.contract, currentUsage: state.usage,
+    proposedUsage: { steps: 0, retries: 0, providerCalls: 0, estimatedCost: 0 },
+    currentGoalVersion: state.contract.goalRef.goalVersion,
+    now: () => new Date(at),
+  });
+  if (budget.allowed !== true) {
+    fail("GOAL_MODE_EXECUTION_BUDGET_BLOCKED", budget.reasonCode);
+  }
+  const next = clone(state);
+  const record = next.executionReservations.at(-1);
+  record.status = "MAY_HAVE_STARTED";
+  record.mayHaveStartedAt = at;
+  next.updatedAt = at;
+  assertGoalModeRunState(next);
+  return deepFreeze(next);
+}
+
+function reconcileGoalModeExecution(state, {
+  reservationId, observedSteps, observedRetries, observedProviderCalls,
+  observedActualCost, accountedCost, accountingUnit, observationComplete,
+  reconciledAt,
+} = {}) {
+  openExecutionRecord(state, reservationId, ["MAY_HAVE_STARTED"]);
+  if (observationComplete !== true || observedSteps !== 1 ||
+      !Number.isSafeInteger(observedRetries) || observedRetries < 0 ||
+      !Number.isSafeInteger(observedProviderCalls) || observedProviderCalls < 0 ||
+      typeof accountedCost !== "number" || !Number.isFinite(accountedCost) ||
+      accountedCost < 0 || accountingUnit !== "USD" ||
+      (observedActualCost !== null &&
+       (typeof observedActualCost !== "number" ||
+        !Number.isFinite(observedActualCost) || observedActualCost !== accountedCost))) {
+    fail("GOAL_MODE_EXECUTION_USAGE_INCOMPLETE", "Observation terminale DEV complète requise.");
+  }
+  const at = executionTimestamp(state, reconciledAt);
+  const next = clone(state);
+  const record = next.executionReservations.at(-1);
+  Object.assign(record, {
+    status: "RECONCILED", closedAt: at, observedSteps,
+    observedRetries, observedProviderCalls, observedActualCost,
+    accountedCost, accountingUnit,
+  });
+  const usage = {
+    steps: state.usage.steps + observedSteps,
+    retries: state.usage.retries + observedRetries,
+    providerCalls: state.usage.providerCalls + observedProviderCalls,
+    estimatedCost: state.usage.estimatedCost + accountedCost,
+  };
+  if (!Number.isSafeInteger(usage.steps) || !Number.isSafeInteger(usage.retries) ||
+      !Number.isSafeInteger(usage.providerCalls) || !Number.isFinite(usage.estimatedCost)) {
+    fail("GOAL_MODE_EXECUTION_USAGE_INVALID", "Accounting DEV hors borne numérique.");
+  }
+  next.usage = usage;
+  next.updatedAt = at;
+  assertGoalModeRunState(next);
+  return deepFreeze(next);
+}
+
+function markGoalModeExecutionUnknown(state, {
+  reservationId, reasonCode = "OUTCOME_UNCERTAIN", observedSteps = null,
+  observedRetries = null, observedProviderCalls = null,
+  observedActualCost = null, accountedCost = null, accountingUnit = null,
+  markedAt,
+} = {}) {
+  openExecutionRecord(state, reservationId, ["PREPARED", "MAY_HAVE_STARTED"]);
+  if (!EXECUTION_UNKNOWN_REASONS.includes(reasonCode)) {
+    fail("GOAL_MODE_EXECUTION_USAGE_INVALID", "Raison d'incertitude invalide.");
+  }
+  const at = executionTimestamp(state, markedAt);
+  const next = clone(state);
+  const record = next.executionReservations.at(-1);
+  Object.assign(record, {
+    status: "UNKNOWN", closedAt: at, observedSteps, observedRetries,
+    observedProviderCalls, observedActualCost, accountedCost,
+    accountingUnit, unknownReasonCode: reasonCode,
+  });
+  next.updatedAt = at;
+  assertGoalModeRunState(next);
+  return deepFreeze(next);
+}
+
 function immutableProjection(
   state
 ) {
@@ -1242,6 +1638,13 @@ function assertGoalModeRunForward(
   const oldReservations = planningReservations(previous);
   const newReservations = planningReservations(next);
   const planningChanged = !same(oldReservations, newReservations);
+  const oldExecutions = executionReservations(previous);
+  const newExecutions = executionReservations(next);
+  const executionChanged = !same(oldExecutions, newExecutions);
+
+  if (planningChanged && executionChanged) {
+    fail("GOAL_MODE_RUN_ATOMIC_MUTATION_MIXED", "Une révision ne peut modifier deux réservations.");
+  }
 
   if (planningChanged) {
     if (statusChanged || previous.status !== next.status ||
@@ -1258,6 +1661,8 @@ function assertGoalModeRunForward(
     if (newReservations.length === oldReservations.length + 1) {
       const added = newReservations.at(-1);
       planningExposure(previous);
+      executionExposure(previous);
+      assertReservationAccountingOwned(previous);
       if (previous.status !== "RUNNING" || usageChanged ||
           oldReservations.some((record) => record.status !== "RECONCILED") ||
           added.status !== "PREPARED" ||
@@ -1326,6 +1731,91 @@ function assertGoalModeRunForward(
     }
   }
 
+  if (executionChanged) {
+    if (statusChanged || previous.reasonCode !== next.reasonCode ||
+        previous.startedAt !== next.startedAt ||
+        previous.completedAt !== next.completedAt ||
+        newExecutions.length < oldExecutions.length ||
+        newExecutions.length > oldExecutions.length + 1 ||
+        oldExecutions.some((record, index) =>
+          (newExecutions.length > oldExecutions.length || index < oldExecutions.length - 1) &&
+          !same(record, newExecutions[index]))) {
+      fail("GOAL_MODE_EXECUTION_HISTORY_MUTATED", "Historique DEV modifié.");
+    }
+    if (newExecutions.length === oldExecutions.length + 1) {
+      const added = newExecutions.at(-1);
+      planningExposure(previous);
+      executionExposure(previous);
+      assertReservationAccountingOwned(previous);
+      if (previous.status !== "RUNNING" || usageChanged ||
+          oldExecutions.some((record) => record.status !== "RECONCILED") ||
+          added.status !== "PREPARED" ||
+          (currentRevision !== null && added.binding.runRevision !== currentRevision)) {
+        fail("GOAL_MODE_EXECUTION_TRANSITION_INVALID", "Ajout DEV invalide.");
+      }
+      const admission = assessGoalModeBudget({
+        contract: previous.contract,
+        currentUsage: previous.usage,
+        proposedUsage: {
+          steps: 1, retries: 0,
+          providerCalls: added.reservedProviderCalls,
+          estimatedCost: added.reservedCost,
+        },
+        currentGoalVersion: added.binding.goalVersion,
+        now: () => new Date(added.reservedAt),
+      });
+      if (admission.allowed !== true) {
+        fail("GOAL_MODE_EXECUTION_BUDGET_BLOCKED", admission.reasonCode);
+      }
+    } else {
+      const oldRecord = oldExecutions.at(-1);
+      const newRecord = newExecutions.at(-1);
+      const immutableKeys = [
+        "reservationId", "binding", "reservedSteps", "reservedRetries",
+        "reservedProviderCalls", "reservedCost", "reservedAt",
+      ];
+      const permitted = oldRecord?.status === "PREPARED"
+        ? ["MAY_HAVE_STARTED", "UNKNOWN"]
+        : oldRecord?.status === "MAY_HAVE_STARTED"
+          ? ["RECONCILED", "UNKNOWN"]
+          : [];
+      if (!oldRecord || !newRecord || !permitted.includes(newRecord.status) ||
+          immutableKeys.some((key) => !same(oldRecord[key], newRecord[key])) ||
+          (oldRecord.status === "PREPARED" && newRecord.mayHaveStartedAt !== null &&
+           newRecord.status === "UNKNOWN") ||
+          (oldRecord.status === "MAY_HAVE_STARTED" &&
+           oldRecord.mayHaveStartedAt !== newRecord.mayHaveStartedAt)) {
+        fail("GOAL_MODE_EXECUTION_TRANSITION_INVALID", "Transition DEV invalide.");
+      }
+      if (newRecord.status === "MAY_HAVE_STARTED") {
+        if (previous.status !== "RUNNING" ||
+            (currentRevision !== null &&
+             currentRevision !== oldRecord.binding.runRevision + 1)) {
+          fail("GOAL_MODE_EXECUTION_TRANSITION_INVALID", "Départ DEV sur snapshot stale interdit.");
+        }
+        const dispatch = assessGoalModeBudget({
+          contract: previous.contract, currentUsage: previous.usage,
+          proposedUsage: { steps: 0, retries: 0, providerCalls: 0, estimatedCost: 0 },
+          currentGoalVersion: oldRecord.binding.goalVersion,
+          now: () => new Date(newRecord.mayHaveStartedAt),
+        });
+        if (dispatch.allowed !== true) {
+          fail("GOAL_MODE_EXECUTION_BUDGET_BLOCKED", dispatch.reasonCode);
+        }
+      }
+      if (newRecord.status === "RECONCILED") {
+        if (next.usage.steps !== previous.usage.steps + newRecord.observedSteps ||
+            next.usage.retries !== previous.usage.retries + newRecord.observedRetries ||
+            next.usage.providerCalls !== previous.usage.providerCalls + newRecord.observedProviderCalls ||
+            next.usage.estimatedCost !== previous.usage.estimatedCost + newRecord.accountedCost) {
+          fail("GOAL_MODE_EXECUTION_ACCOUNTING_INVALID", "Usage DEV non comptabilisé exactement une fois.");
+        }
+      } else if (usageChanged) {
+        fail("GOAL_MODE_EXECUTION_ACCOUNTING_INVALID", "Une réservation non réconciliée ne consomme rien.");
+      }
+    }
+  }
+
   if (
     statusChanged
   ) {
@@ -1342,25 +1832,26 @@ function assertGoalModeRunForward(
       );
     }
 
-    if (usageChanged || planningChanged) {
+    if (usageChanged || planningChanged || executionChanged) {
       fail(
         "GOAL_MODE_RUN_ATOMIC_MUTATION_MIXED",
         "Une révision de transition ne peut aussi modifier l'accounting."
       );
     }
-  } else if (planningChanged) {
-    // La transition de planning est vérifiée ci-dessus, même avec usage nul.
+  } else if (planningChanged || executionChanged) {
+    // Les transitions de réservation sont vérifiées ci-dessus, même avec usage nul.
   } else if (usageChanged) {
-    planningExposure(previous);
+    const delta = {
+      steps: next.usage.steps - previous.usage.steps,
+      retries: next.usage.retries - previous.usage.retries,
+      providerCalls: next.usage.providerCalls - previous.usage.providerCalls,
+      estimatedCost: next.usage.estimatedCost - previous.usage.estimatedCost,
+    };
+    assertLegacyConsumeAvailable(previous, delta);
     const assessment = assessGoalModeBudget({
       contract: previous.contract,
       currentUsage: previous.usage,
-      proposedUsage: {
-        steps: next.usage.steps - previous.usage.steps,
-        retries: next.usage.retries - previous.usage.retries,
-        providerCalls: next.usage.providerCalls - previous.usage.providerCalls,
-        estimatedCost: next.usage.estimatedCost - previous.usage.estimatedCost,
-      },
+      proposedUsage: delta,
       currentGoalVersion: previous.contract.goalRef.goalVersion,
       now: () => new Date(next.updatedAt),
     });
@@ -1427,6 +1918,8 @@ function assertGoalModeRunForward(
 }
 
 module.exports = {
+  EXECUTION_STATUSES,
+  EXECUTION_UNKNOWN_REASONS,
   PLANNING_STATUSES,
   PLANNING_UNKNOWN_REASONS,
   STATUSES,
@@ -1437,9 +1930,13 @@ module.exports = {
   assertGoalModeRunForward,
   assertGoalModeRunState,
   createGoalModeRunState,
+  markGoalModeExecutionMayHaveStarted,
+  markGoalModeExecutionUnknown,
   markGoalModePlanningMayHaveStarted,
   markGoalModePlanningUnknown,
   reconcileGoalModePlanning,
+  reconcileGoalModeExecution,
+  reserveGoalModeExecution,
   reserveGoalModePlanning,
   transitionGoalModeRun,
 };

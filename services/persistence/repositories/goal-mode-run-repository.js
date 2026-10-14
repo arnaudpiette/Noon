@@ -3,6 +3,7 @@
 const {
   assertGoalModeRunForward,
   assertGoalModeRunState,
+  createGoalModeRunState,
 } = require(
   "../../goals/goal-mode-run-state"
 );
@@ -117,6 +118,24 @@ function same(
     JSON.stringify(
       canonical(right)
     );
+}
+
+function assertInitialGoalModeRunState(state) {
+  // Un premier save n'a pas d'état précédent pour assertGoalModeRunForward.
+  // Il ne peut donc créer que l'état admis neuf, avec les champs optionnels
+  // historiques absents ou vides.
+  const initial = createGoalModeRunState({ contract: state.contract });
+  const candidate = clone(state);
+  if (candidate.planningReservations === undefined) {
+    candidate.planningReservations = [];
+  }
+  if (Array.isArray(candidate.executionReservations) &&
+      candidate.executionReservations.length === 0) {
+    delete candidate.executionReservations;
+  }
+  if (!same(candidate, initial)) {
+    fail("GOAL_MODE_RUN_INITIAL_STATE_INVALID", "État initial Goal Run non canonique.");
+  }
 }
 
 function parseRow(
@@ -306,13 +325,14 @@ function createSqliteRepository(
         assertGoalModeRunForward(current.state, state, {
           currentRevision,
         });
-      } else if (
-        expectedRevision !== 0
-      ) {
-        fail(
-          "GOAL_MODE_RUN_PERSISTENCE_CONFLICT",
-          "Révision initiale Goal Run invalide."
-        );
+      } else {
+        if (expectedRevision !== 0) {
+          fail(
+            "GOAL_MODE_RUN_PERSISTENCE_CONFLICT",
+            "Révision initiale Goal Run invalide."
+          );
+        }
+        assertInitialGoalModeRunState(state);
       }
 
       const revision =
@@ -524,13 +544,14 @@ function createFallbackRepository(
       assertGoalModeRunForward(current.state, runState, {
         currentRevision,
       });
-    } else if (
-      expectedRevision !== 0
-    ) {
-      fail(
-        "GOAL_MODE_RUN_PERSISTENCE_CONFLICT",
-        "Révision initiale Goal Run invalide."
-      );
+    } else {
+      if (expectedRevision !== 0) {
+        fail(
+          "GOAL_MODE_RUN_PERSISTENCE_CONFLICT",
+          "Révision initiale Goal Run invalide."
+        );
+      }
+      assertInitialGoalModeRunState(runState);
     }
 
     const revision =
