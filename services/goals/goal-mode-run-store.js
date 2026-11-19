@@ -39,6 +39,48 @@ function fail(
   );
 }
 
+function exactProjectionCopy(projection) {
+  const visiting = new WeakSet();
+  const copies = new WeakMap();
+  let count = 0;
+  function copy(value, depth = 0) {
+    if (value === null || value === undefined || typeof value === "string" ||
+        typeof value === "boolean" ||
+        (typeof value === "number" && Number.isFinite(value))) return value;
+    if (typeof value !== "object" || depth > 40 || visiting.has(value)) {
+      fail("GOAL_MODE_EXECUTION_PROJECTION_INVALID", "Projection DEV non bornée.");
+    }
+    if (copies.has(value)) return copies.get(value);
+    if (++count > 10_000 || (Array.isArray(value) && value.length > 10_000) ||
+        (!Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype &&
+         Object.getPrototypeOf(value) !== null)) {
+      fail("GOAL_MODE_EXECUTION_PROJECTION_INVALID", "Projection DEV non structurée.");
+    }
+    const result = Array.isArray(value)
+      ? new Array(value.length)
+      : Object.create(Object.getPrototypeOf(value));
+    copies.set(value, result);
+    visiting.add(value);
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key !== "string" || ["__proto__", "constructor", "prototype"].includes(key)) {
+        fail("GOAL_MODE_EXECUTION_PROJECTION_INVALID", "Projection DEV non structurée.");
+      }
+      if (Array.isArray(value) && key === "length") continue;
+      const property = Object.getOwnPropertyDescriptor(value, key);
+      if (!property?.enumerable || !Object.hasOwn(property, "value")) {
+        fail("GOAL_MODE_EXECUTION_PROJECTION_INVALID", "Projection DEV non structurée.");
+      }
+      Object.defineProperty(result, key, {
+        value: copy(property.value, depth + 1), enumerable: true,
+        writable: false, configurable: false,
+      });
+    }
+    visiting.delete(value);
+    return Object.freeze(result);
+  }
+  return copy(projection);
+}
+
 function createGoalModeRunStore({
   repository,
   planningIdFactory = () => `goal-planning-${crypto.randomUUID()}`,
@@ -330,7 +372,7 @@ function createGoalModeRunStore({
     return current;
   }
 
-  function reserveExecution(runId, input = {}) {
+  function reserveExecutionInternal(runId, input, includeExactProjection) {
     const current = executionCurrent(runId, input);
     if (typeof input.stepId !== "string" || !input.stepId.trim() ||
         input.stepId !== input.stepId.trim() || input.stepId.length > 200) {
@@ -338,6 +380,16 @@ function createGoalModeRunStore({
     }
     if (!devProjectionService) {
       fail("GOAL_MODE_EXECUTION_PROJECTION_REQUIRED", "Projection DEV canonique requise.");
+    }
+    // Refus anticipé : une réservation non résolue bloque avant toute
+    // reprojection du contrat privé. L'état reste l'autorité au moment du save.
+    const pending = Array.isArray(current.state.executionReservations)
+      ? current.state.executionReservations : [];
+    if (pending.some((item) => item?.status === "UNKNOWN")) {
+      fail("GOAL_MODE_EXECUTION_UNKNOWN_BLOCKED", "Issue DEV incertaine.");
+    }
+    if (pending.some((item) => ["PREPARED", "MAY_HAVE_STARTED"].includes(item?.status))) {
+      fail("GOAL_MODE_EXECUTION_IN_FLIGHT", "Réservation DEV non résolue.");
     }
     // Reprojection interne : aucun binding fourni par l'appelant n'est utilisé.
     const projection = devProjectionService.project({ runId, stepId: input.stepId });
@@ -379,7 +431,30 @@ function createGoalModeRunStore({
       reservedCost: upper.estimatedCost,
       reservedAt: now(),
     });
-    return repository.save(next, { expectedRevision: current.revision });
+    // Préparer la copie avant l'écriture : un contrat non copiable ne laisse
+    // pas de réservation PREPARED sans remise possible. Ne la livrer qu'après CAS.
+    const exactProjection = includeExactProjection ? exactProjectionCopy(projection) : null;
+    const snapshot = repository.save(next, { expectedRevision: current.revision });
+    if (!includeExactProjection) return snapshot;
+    const saved = snapshot?.state?.executionReservations?.at(-1);
+    if (saved?.status !== "PREPARED" || saved?.binding?.runRevision !== current.revision ||
+        !Number.isSafeInteger(snapshot?.revision)) {
+      fail("GOAL_MODE_EXECUTION_PROJECTION_INVALID", "Réservation DEV remise incohérente.");
+    }
+    return Object.freeze({
+      snapshot,
+      exactProjection,
+      reservationId: saved.reservationId,
+      reservedRevision: snapshot.revision,
+    });
+  }
+
+  function reserveExecution(runId, input = {}) {
+    return reserveExecutionInternal(runId, input, false);
+  }
+
+  function reserveExecutionWithExactProjection(runId, input = {}) {
+    return reserveExecutionInternal(runId, input, true);
   }
 
   function markExecutionMayHaveStarted(runId, input = {}) {
@@ -482,6 +557,7 @@ function createGoalModeRunStore({
     reconcilePlanning,
     reconcileExecution,
     reserveExecution,
+    reserveExecutionWithExactProjection,
     reservePlanning,
     transition,
   });

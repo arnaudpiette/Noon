@@ -66,6 +66,8 @@ function fixture() {
   let upper = { steps: 1, retries: 0, providerCalls: 2, estimatedCost: 0.4 };
   let observed = null;
   let projectionCalls = 0;
+  let lastProjection = null;
+  let projectionError = false;
   let afterProjection = null;
   let storeA;
   const proposalFingerprint = `sha256:${"a".repeat(64)}`;
@@ -73,6 +75,9 @@ function fixture() {
   const projection = {
     project({ runId, stepId }) {
       projectionCalls += 1;
+      if (projectionError) throw Object.assign(new Error("Projection unavailable"), {
+        code: "SYNTHETIC_PROJECTION_FAILURE",
+      });
       const snapshot = storeA.get(runId);
       const result = {
         version: PROJECTION_VERSION,
@@ -93,9 +98,14 @@ function fixture() {
         authorization: { capabilitiesGranted: false },
         authority: { executionAuthorized: false, capabilitiesGranted: false },
         devContract: {
-          devInput: { objective: "SYNTHETIC_PRIVATE_OBJECTIVE" },
+          devInput: {
+            objective: "SYNTHETIC_PRIVATE_OBJECTIVE",
+            allowedPaths: ["/private/synthetic-repo"],
+            projectInstructions: ["SYNTHETIC_PRIVATE_INSTRUCTION"],
+          },
         },
       };
+      lastProjection = result;
       const callback = afterProjection;
       afterProjection = null;
       callback?.();
@@ -131,13 +141,15 @@ function fixture() {
     });
   };
   return {
-    file, repositoryA, repositoryB, storeA, storeB, running,
-    reserve, start,
+    file, sqlite: dbA.database, repositoryA, repositoryB, storeA, storeB, running,
+    reserve, start, projection,
     setTime(value) { clock = value; },
     setUpper(value) { upper = value; },
     setObservation(value) { observed = value; },
+    setProjectionError(value) { projectionError = value; },
     setAfterProjection(value) { afterProjection = value; },
     projectionCalls() { return projectionCalls; },
+    lastProjection() { return lastProjection; },
     close() {
       dbA.close(); dbB.close();
       fs.rmSync(directory, { recursive: true, force: true });
@@ -276,6 +288,300 @@ test("4C-0 PREPARED lie projection interne, révision et plafonds sans consommer
       expectedRevision: prepared.revision, currentGoalVersion: 2,
       usageDelta: { steps: 1 },
     }), { code: "GOAL_MODE_EXECUTION_IN_FLIGHT" });
+  } finally { f.close(); }
+});
+
+test("4C-1A remet après CAS la projection exacte, détachée et sans autorité", () => {
+  const f = fixture();
+  try {
+    const result = f.storeA.reserveExecutionWithExactProjection(f.running.state.runId, {
+      expectedRevision: f.running.revision, stepId: "step-execution",
+      projection: { runRef: { goalId: "forged" } },
+      devContract: { devInput: { objective: "FORGED_OBJECTIVE" } },
+      binding: { taskId: "forged-task" },
+    });
+    const { snapshot, exactProjection } = result;
+    const original = f.lastProjection();
+    const saved = record(snapshot);
+    assert.equal(f.projectionCalls(), 1);
+    assert.equal(snapshot.revision, f.running.revision + 1);
+    assert.equal(saved.status, "PREPARED");
+    assert.deepEqual(exactProjection, original);
+    assert.notStrictEqual(exactProjection, original);
+    assert.notStrictEqual(exactProjection.devContract, original.devContract);
+    assert.notStrictEqual(exactProjection.devContract.devInput.allowedPaths,
+      original.devContract.devInput.allowedPaths);
+    assert.notStrictEqual(exactProjection, snapshot.state);
+    assert.equal(saved.binding.runId, exactProjection.runRef.runId);
+    assert.equal(saved.binding.runRevision, exactProjection.runRef.runRevision);
+    assert.equal(saved.binding.goalId, exactProjection.runRef.goalId);
+    assert.equal(saved.binding.goalVersion, exactProjection.runRef.goalVersion);
+    assert.equal(saved.binding.stepId, exactProjection.stepRef.stepId);
+    assert.equal(saved.binding.proposalFingerprint, exactProjection.stepRef.proposalFingerprint);
+    assert.equal(saved.binding.taskId, exactProjection.taskRef.taskId);
+    assert.equal(saved.binding.targetKind, exactProjection.stepRef.targetKind);
+    assert.equal(saved.binding.targetId, exactProjection.stepRef.targetId);
+    assert.equal(saved.binding.targetFingerprint, exactProjection.stepRef.targetFingerprint);
+    assert.equal(saved.reservedProviderCalls, exactProjection.accounting.stepUpperBound.providerCalls);
+    assert.equal(saved.reservedCost, exactProjection.accounting.stepUpperBound.estimatedCost);
+    assert.equal(exactProjection.authority.executionAuthorized, false);
+    assert.equal(exactProjection.authority.capabilitiesGranted, false);
+    assert.deepEqual(Object.keys(result).sort(),
+      ["exactProjection", "reservationId", "reservedRevision", "snapshot"]);
+    assert.equal(result.reservationId, saved.reservationId);
+    assert.equal(result.reservedRevision, snapshot.revision);
+    assert.equal(result.reservedRevision, f.repositoryB.latest(f.running.state.runId).revision);
+    assert.equal(Object.hasOwn(result, "executionAuthorized"), false);
+    assert.equal(Object.hasOwn(result, "actionAuthorized"), false);
+    assert.equal(Object.hasOwn(result, "approvalGranted"), false);
+    assert.equal(Object.isFrozen(result), true);
+    for (const nested of [exactProjection, exactProjection.runRef,
+      exactProjection.accounting, exactProjection.accounting.stepUpperBound,
+      exactProjection.devContract, exactProjection.devContract.devInput,
+      exactProjection.devContract.devInput.allowedPaths,
+      exactProjection.devContract.devInput.projectInstructions]) {
+      assert.equal(Object.isFrozen(nested), true);
+    }
+    assert.throws(() => { exactProjection.runRef.goalId = "forged"; }, TypeError);
+    assert.throws(() => exactProjection.devContract.devInput.allowedPaths.push("/outside"), TypeError);
+    assert.throws(() => {
+      exactProjection.devContract.devInput.projectInstructions[0] = "forged";
+    }, TypeError);
+    original.runRef.goalId = "changed-after-save";
+    original.devContract.devInput.allowedPaths.push("/outside");
+    original.devContract.devInput.projectInstructions[0] = "changed-after-save";
+    assert.equal(exactProjection.runRef.goalId, "goal-execution");
+    assert.deepEqual(exactProjection.devContract.devInput.allowedPaths,
+      ["/private/synthetic-repo"]);
+    assert.deepEqual(exactProjection.devContract.devInput.projectInstructions,
+      ["SYNTHETIC_PRIVATE_INSTRUCTION"]);
+    const persisted = f.repositoryB.latest(f.running.state.runId);
+    assert.equal(record(persisted).status, "PREPARED");
+    assert.deepEqual(persisted.state.usage, f.running.state.usage);
+    assert.equal(JSON.stringify(snapshot.state).includes("SYNTHETIC_PRIVATE_OBJECTIVE"), false);
+    assert.equal(JSON.stringify(persisted.state).includes("SYNTHETIC_PRIVATE_INSTRUCTION"), false);
+    assert.equal(JSON.stringify(persisted.state).includes("FORGED_OBJECTIVE"), false);
+    assert.equal(JSON.stringify(persisted.state).includes("repositoryRoot"), false);
+  } finally { f.close(); }
+});
+
+test("4C-1A refus de projection ou copie invalide ne crée aucune réservation", () => {
+  const f = fixture();
+  try {
+    f.setProjectionError(true);
+    assert.throws(() => f.storeA.reserveExecutionWithExactProjection(f.running.state.runId, {
+      expectedRevision: f.running.revision, stepId: "step-execution",
+    }), { code: "SYNTHETIC_PROJECTION_FAILURE" });
+    assert.equal(f.repositoryB.latest(f.running.state.runId).revision, f.running.revision);
+    f.setProjectionError(false);
+    f.setAfterProjection(() => {
+      f.lastProjection().devContract.devInput.projectInstructions = new Map([["unsafe", "mutable"]]);
+    });
+    assert.throws(() => f.storeA.reserveExecutionWithExactProjection(f.running.state.runId, {
+      expectedRevision: f.running.revision, stepId: "step-execution",
+    }), { code: "GOAL_MODE_EXECUTION_PROJECTION_INVALID" });
+    f.setAfterProjection(() => {
+      f.lastProjection().devContract[Symbol("hidden-contract")] = "not-copyable";
+    });
+    assert.throws(() => f.storeA.reserveExecutionWithExactProjection(f.running.state.runId, {
+      expectedRevision: f.running.revision, stepId: "step-execution",
+    }), { code: "GOAL_MODE_EXECUTION_PROJECTION_INVALID" });
+    f.setAfterProjection(() => {
+      f.lastProjection().devContract.devInput.projectInstructions = new Array(10_001);
+    });
+    assert.throws(() => f.storeA.reserveExecutionWithExactProjection(f.running.state.runId, {
+      expectedRevision: f.running.revision, stepId: "step-execution",
+    }), { code: "GOAL_MODE_EXECUTION_PROJECTION_INVALID" });
+    assert.equal(f.repositoryB.latest(f.running.state.runId).revision, f.running.revision);
+    assert.equal(f.repositoryB.latest(f.running.state.runId).state.executionReservations, undefined);
+  } finally { f.close(); }
+});
+
+test("4C-1A perdant du CAS et erreur SQLite ne reçoivent aucun handoff", () => {
+  const f = fixture();
+  try {
+    let handoff = null;
+    f.setAfterProjection(() => {
+      f.storeB.transition(f.running.state.runId, "PAUSED", {
+        expectedRevision: f.running.revision,
+        transitionedAt: "2026-10-13T12:00:02.000Z",
+      });
+    });
+    assert.throws(() => {
+      handoff = f.storeA.reserveExecutionWithExactProjection(f.running.state.runId, {
+        expectedRevision: f.running.revision, stepId: "step-execution",
+      });
+    }, { code: "GOAL_MODE_RUN_PERSISTENCE_CONFLICT" });
+    assert.equal(handoff, null);
+    assert.equal(f.projectionCalls(), 1);
+    assert.equal(f.repositoryB.latest(f.running.state.runId).state.executionReservations, undefined);
+  } finally { f.close(); }
+
+  const failing = fixture();
+  try {
+    failing.sqlite.exec(`CREATE TRIGGER reject_goal_mode_reservation
+      BEFORE INSERT ON goal_strategy_records
+      WHEN NEW.record_type = 'GOAL_MODE_RUN_STATE' AND NEW.sequence = 3
+      BEGIN SELECT RAISE(ABORT, 'SYNTHETIC_SAVE_FAILURE'); END`);
+    let handoff = null;
+    assert.throws(() => {
+      handoff = failing.storeA.reserveExecutionWithExactProjection(failing.running.state.runId, {
+        expectedRevision: failing.running.revision, stepId: "step-execution",
+      });
+    }, /SYNTHETIC_SAVE_FAILURE/);
+    assert.equal(handoff, null);
+    assert.equal(failing.projectionCalls(), 1);
+    assert.equal(failing.repositoryB.latest(failing.running.state.runId).revision,
+      failing.running.revision);
+    assert.equal(failing.repositoryB.latest(failing.running.state.runId).state.executionReservations,
+      undefined);
+  } finally { failing.close(); }
+});
+
+test("4C-1A restart conserve PREPARED sans restaurer la projection privée", () => {
+  const f = fixture();
+  try {
+    const { snapshot, exactProjection } = f.storeA.reserveExecutionWithExactProjection(
+      f.running.state.runId, {
+        expectedRevision: f.running.revision, stepId: "step-execution",
+      }
+    );
+    assert.equal(exactProjection.devContract.devInput.objective, "SYNTHETIC_PRIVATE_OBJECTIVE");
+    const reopenedDatabase = createPersonalDatabase(f.file);
+    try {
+      const reopened = createGoalModeRunStore({
+        repository: createGoalModeRunRepository(reopenedDatabase),
+      });
+      const persisted = reopened.get(f.running.state.runId);
+      assert.equal(record(persisted).status, "PREPARED");
+      assert.equal(persisted.revision, snapshot.revision);
+      assert.equal(Object.hasOwn(persisted, "exactProjection"), false);
+      assert.equal(Object.hasOwn(record(persisted), "exactProjection"), false);
+      assert.equal(JSON.stringify(persisted).includes("SYNTHETIC_PRIVATE_OBJECTIVE"), false);
+      assert.throws(() => reopened.reserveExecutionWithExactProjection(f.running.state.runId, {
+        expectedRevision: persisted.revision, stepId: "step-execution",
+      }), { code: "GOAL_MODE_EXECUTION_PROJECTION_REQUIRED" });
+      assert.equal(reopened.get(f.running.state.runId).revision, snapshot.revision);
+      assert.deepEqual(reopened.get(f.running.state.runId).state.usage, f.running.state.usage);
+    } finally { reopenedDatabase.close(); }
+  } finally { f.close(); }
+});
+
+test("4C-1A reprise avec projection branchée refuse le rappel sans reprojeter", () => {
+  const f = fixture();
+  try {
+    const handoff = f.storeA.reserveExecutionWithExactProjection(f.running.state.runId, {
+      expectedRevision: f.running.revision, stepId: "step-execution",
+    });
+    assert.equal(f.projectionCalls(), 1);
+    // Crash simulé : le handoff en mémoire est perdu, seule la base subsiste.
+    const reopenedDatabase = createPersonalDatabase(f.file);
+    try {
+      const reopened = createGoalModeRunStore({
+        repository: createGoalModeRunRepository(reopenedDatabase),
+        now: () => "2026-10-14T12:00:00.000Z",
+        devProjectionService: f.projection,
+      });
+      const persisted = reopened.get(f.running.state.runId);
+      assert.equal(persisted.revision, handoff.reservedRevision);
+      assert.equal(record(persisted).reservationId, handoff.reservationId);
+      for (const stepId of ["step-execution", "step-other"]) {
+        assert.throws(() => reopened.reserveExecutionWithExactProjection(
+          f.running.state.runId, { expectedRevision: persisted.revision, stepId }
+        ), { code: "GOAL_MODE_EXECUTION_IN_FLIGHT" });
+        assert.throws(() => reopened.reserveExecution(
+          f.running.state.runId, { expectedRevision: persisted.revision, stepId }
+        ), { code: "GOAL_MODE_EXECUTION_IN_FLIGHT" });
+      }
+      assert.equal(f.projectionCalls(), 1);
+      assert.equal(reopened.get(f.running.state.runId).revision, persisted.revision);
+      assert.equal(reopened.get(f.running.state.runId).state.executionReservations.length, 1);
+    } finally { reopenedDatabase.close(); }
+  } finally { f.close(); }
+});
+
+test("4C-1A PREPARED orphelin après crash sort en UNKNOWN puis bloque toute réservation", () => {
+  const f = fixture();
+  try {
+    const handoff = f.storeA.reserveExecutionWithExactProjection(f.running.state.runId, {
+      expectedRevision: f.running.revision, stepId: "step-execution",
+    });
+    const reopenedDatabase = createPersonalDatabase(f.file);
+    try {
+      const reopened = createGoalModeRunStore({
+        repository: createGoalModeRunRepository(reopenedDatabase),
+        now: () => "2026-10-14T12:00:00.000Z",
+        devProjectionService: f.projection,
+      });
+      const unknown = reopened.markExecutionUnknown(f.running.state.runId, {
+        expectedRevision: handoff.reservedRevision,
+        reservationId: handoff.reservationId,
+      });
+      assert.equal(unknown.revision, handoff.reservedRevision + 1);
+      assert.equal(record(unknown).status, "UNKNOWN");
+      assert.equal(record(unknown).reservationId, handoff.reservationId);
+      assert.equal(record(unknown).observedProviderCalls, null);
+      assert.equal(record(unknown).accountedCost, null);
+      assert.equal(JSON.stringify(unknown.state).includes("SYNTHETIC_PRIVATE_OBJECTIVE"), false);
+      assert.throws(() => reopened.markExecutionUnknown(f.running.state.runId, {
+        expectedRevision: unknown.revision, reservationId: handoff.reservationId,
+      }), { code: "GOAL_MODE_EXECUTION_TRANSITION_INVALID" });
+      assert.throws(() => reopened.markExecutionMayHaveStarted(f.running.state.runId, {
+        expectedRevision: unknown.revision, reservationId: handoff.reservationId,
+      }), { code: "GOAL_MODE_EXECUTION_TRANSITION_INVALID" });
+      for (const store of [reopened, f.storeB]) {
+        for (const stepId of ["step-execution", "step-other"]) {
+          assert.throws(() => store.reserveExecutionWithExactProjection(
+            f.running.state.runId, { expectedRevision: unknown.revision, stepId }
+          ), { code: "GOAL_MODE_EXECUTION_UNKNOWN_BLOCKED" });
+          assert.throws(() => store.reserveExecution(
+            f.running.state.runId, { expectedRevision: unknown.revision, stepId }
+          ), { code: "GOAL_MODE_EXECUTION_UNKNOWN_BLOCKED" });
+        }
+      }
+      assert.equal(f.projectionCalls(), 1);
+      const latest = f.repositoryB.latest(f.running.state.runId);
+      assert.equal(latest.revision, unknown.revision);
+      assert.equal(latest.state.executionReservations.length, 1);
+      assert.equal(record(latest).status, "UNKNOWN");
+    } finally { reopenedDatabase.close(); }
+  } finally { f.close(); }
+});
+
+test("4C-1A deux appels concurrents sur la même révision : un seul handoff", () => {
+  const f = fixture();
+  try {
+    let inner = null;
+    let outer = null;
+    // B s'interpose pendant la projection de A, sur la même révision attendue.
+    f.setAfterProjection(() => {
+      inner = f.storeB.reserveExecutionWithExactProjection(f.running.state.runId, {
+        expectedRevision: f.running.revision, stepId: "step-execution",
+      });
+    });
+    assert.throws(() => {
+      outer = f.storeA.reserveExecutionWithExactProjection(f.running.state.runId, {
+        expectedRevision: f.running.revision, stepId: "step-execution",
+      });
+    }, { code: "GOAL_MODE_RUN_PERSISTENCE_CONFLICT" });
+    assert.equal(outer, null);
+    assert.ok(inner);
+    assert.equal(f.projectionCalls(), 2);
+    const latest = f.repositoryA.latest(f.running.state.runId);
+    assert.equal(latest.revision, f.running.revision + 1);
+    assert.equal(latest.revision, inner.reservedRevision);
+    assert.equal(latest.state.executionReservations.length, 1);
+    assert.equal(record(latest).reservationId, inner.reservationId);
+    assert.equal(record(latest).status, "PREPARED");
+    // Rejeu idempotent : révision périmée ou fraîche, aucun second handoff ni reprojection.
+    assert.throws(() => f.storeA.reserveExecutionWithExactProjection(f.running.state.runId, {
+      expectedRevision: f.running.revision, stepId: "step-execution",
+    }), { code: "GOAL_MODE_RUN_PERSISTENCE_CONFLICT" });
+    assert.throws(() => f.storeA.reserveExecutionWithExactProjection(f.running.state.runId, {
+      expectedRevision: inner.reservedRevision, stepId: "step-execution",
+    }), { code: "GOAL_MODE_EXECUTION_IN_FLIGHT" });
+    assert.equal(f.projectionCalls(), 2);
+    assert.equal(f.repositoryB.latest(f.running.state.runId).revision, inner.reservedRevision);
   } finally { f.close(); }
 });
 
