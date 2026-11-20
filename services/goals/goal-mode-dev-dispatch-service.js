@@ -13,6 +13,11 @@
  *   dispatcher. Jamais de replay ; MAY_HAVE_STARTED/UNKNOWN → réconciliation.
  * - renewApproval() est explicite, audité, réservé à une réservation encore
  *   PREPARED ; l'ancien jeton devient inutilisable.
+ * - 4C-1D : pauseRun/stopRun annulent les approbations en attente (une
+ *   réservation PREPARED ne peut plus démarrer après une transition) ;
+ *   releasePrepared, désactivé par défaut, passe par releaseExecution.
+ *   resumeRun ne réactive rien. cancelExecution demande l'arrêt d'une tâche
+ *   MAY_HAVE_STARTED sans changer son statut (réconciliation 4C-2).
  * - Aucune permission n'est accordée ici, aucune libération implicite.
  * - Le service n'est pas câblé au serveur : le dispatcher est injecté.
  */
@@ -34,6 +39,9 @@ const MIN_REMAINING_DURATION_MS = 1_000;
 // 4C-1C : approbation de 5 min, plafonnée par l'échéance du run moins 1 s.
 const APPROVAL_TTL_MS = 5 * 60_000;
 const APPROVAL_DEADLINE_MARGIN_MS = 1_000;
+// 4C-1D : statuts d'arrêt traités comme une pause (approbations annulées).
+const HALT_STATUSES = Object.freeze(["PAUSED", "BLOCKED", "CANCELLED"]);
+const RESUMABLE_STATUSES = Object.freeze(["PAUSED", "BLOCKED"]);
 const ALLOWED_DEV_PERMISSIONS = Object.freeze(["READ_WRITE_WORKSPACE", "TERMINAL_SAFE"]);
 const TARGET_MAX_ENTRIES = 5_000;
 const TARGET_MAX_BYTES = 64 * 1024 * 1024;
@@ -185,6 +193,7 @@ function createGoalModeDevDispatchService({
   observability = null,
 } = {}) {
   if (typeof runStore?.reserveExecutionWithExactProjection !== "function" ||
+      typeof runStore?.transition !== "function" ||
       typeof goalStrategyEngine?.registry?.get !== "function" ||
       typeof runStore?.markExecutionMayHaveStarted !== "function" ||
       typeof runStore?.get !== "function" ||
@@ -641,7 +650,216 @@ function createGoalModeDevDispatchService({
     }
   }
 
-  return Object.freeze({ prepare, renewApproval, resume });
+  function errorCode(error, fallback) {
+    return typeof error?.code === "string" ? error.code.slice(0, 100) : fallback;
+  }
+
+  // Pause / arrêt : la transition fait foi (CAS) ; les approbations en attente
+  // du run sont ensuite annulées. Même si une annulation échoue, aucune
+  // réservation PREPARED ne peut démarrer après la transition (règle d'état
+  // 4C-0 : départ uniquement à la révision qui suit la réservation).
+  function haltRun({ runId, expectedRevision, status, reasonCode = null, releasePrepared = false } = {}) {
+    if (!HALT_STATUSES.includes(status)) {
+      fail("GOAL_MODE_DEV_RUN_TRANSITION_INVALID", "Statut d'arrêt Goal Run invalide.");
+    }
+    if (typeof releasePrepared !== "boolean") {
+      fail("GOAL_MODE_DEV_RUN_TRANSITION_INVALID", "Option releasePrepared invalide.");
+    }
+    let snapshot = runStore.transition(runId, status, { expectedRevision, reasonCode });
+    const approvalsCancelled = [];
+    const approvalCancelFailures = [];
+    for (const internal of reservations.values()) {
+      if (internal.ticket.runId !== runId || !internal.approvalId) continue;
+      try {
+        if (approvalEngine.cancel(internal.approvalId) === true) {
+          approvalsCancelled.push(internal.approvalId);
+        }
+      } catch (error) {
+        approvalCancelFailures.push(Object.freeze({
+          approvalId: internal.approvalId,
+          code: errorCode(error, "APPROVAL_CANCEL_FAILED"),
+        }));
+      }
+    }
+    let release = null;
+    if (releasePrepared) {
+      // Libération explicite demandée au moment de l'arrêt : mêmes contrôles
+      // que releaseExecution (ledger à 0 + CAS). Un refus n'annule pas la
+      // pause mais est rapporté et audité, jamais silencieux.
+      const record = snapshot.state.executionReservations?.at(-1);
+      if (record?.status !== "PREPARED") {
+        release = { requested: true, reservationId: null, released: false,
+          code: "GOAL_MODE_DEV_NO_PREPARED_RESERVATION" };
+      } else if (typeof runStore.releaseExecution !== "function") {
+        release = { requested: true, reservationId: record.reservationId, released: false,
+          code: "GOAL_MODE_EXECUTION_RELEASE_UNAVAILABLE" };
+      } else {
+        try {
+          snapshot = runStore.releaseExecution(runId, {
+            expectedRevision: snapshot.revision, reservationId: record.reservationId,
+          });
+          release = { requested: true, reservationId: record.reservationId, released: true, code: null };
+        } catch (error) {
+          release = { requested: true, reservationId: record.reservationId, released: false,
+            code: errorCode(error, "GOAL_MODE_DEV_RELEASE_FAILED") };
+        }
+      }
+      release = Object.freeze(release);
+      emit("goal_mode_dev.release_on_halt", { runId, status, ...release });
+    }
+    emit("goal_mode_dev.run_halted", {
+      runId, status, revision: snapshot.revision,
+      approvalsCancelled: approvalsCancelled.length,
+      approvalCancelFailures: approvalCancelFailures.length,
+    });
+    return Object.freeze({
+      runId,
+      status,
+      revision: snapshot.revision,
+      approvalsCancelled: Object.freeze(approvalsCancelled),
+      approvalCancelFailures: Object.freeze(approvalCancelFailures),
+      release,
+    });
+  }
+
+  function pauseRun(input = {}) {
+    return haltRun({ ...input, status: "PAUSED" });
+  }
+
+  function stopRun(input = {}) {
+    if (!["BLOCKED", "CANCELLED"].includes(input.status)) {
+      fail("GOAL_MODE_DEV_RUN_TRANSITION_INVALID", "stopRun exige BLOCKED ou CANCELLED.");
+    }
+    return haltRun(input);
+  }
+
+  // Reprise : ne réactive aucune réservation ni approbation. Les réservations
+  // PREPARED d'avant l'arrêt sont signalées (libération explicite requise).
+  function resumeRun({ runId, expectedRevision, reasonCode = null } = {}) {
+    const current = runStore.get(runId);
+    if (!RESUMABLE_STATUSES.includes(current?.state?.status)) {
+      fail("GOAL_MODE_DEV_RUN_NOT_PAUSED", "Seul un Goal Run PAUSED ou BLOCKED peut reprendre.");
+    }
+    const snapshot = runStore.transition(runId, "RUNNING", { expectedRevision, reasonCode });
+    const records = snapshot.state.executionReservations || [];
+    const releaseRequired = records.filter((item) => item.status === "PREPARED")
+      .map((item) => item.reservationId);
+    const reconciliationRequired = records
+      .filter((item) => ["MAY_HAVE_STARTED", "UNKNOWN"].includes(item.status))
+      .map((item) => item.reservationId);
+    emit("goal_mode_dev.run_resumed", {
+      runId, revision: snapshot.revision,
+      releaseRequired: releaseRequired.length,
+      reconciliationRequired: reconciliationRequired.length,
+    });
+    return Object.freeze({
+      runId,
+      status: "RUNNING",
+      revision: snapshot.revision,
+      releaseRequired: Object.freeze(releaseRequired),
+      reconciliationRequired: Object.freeze(reconciliationRequired),
+    });
+  }
+
+  function reservationRecord(runId, reservationId) {
+    const snapshot = runStore.get(runId);
+    const record = snapshot?.state?.executionReservations
+      ?.find((item) => item.reservationId === reservationId);
+    if (!record) {
+      fail("GOAL_MODE_DEV_DISPATCH_RESERVATION_MISSING", "Réservation DEV introuvable.");
+    }
+    return { snapshot, record };
+  }
+
+  // Demande d'arrêt d'une tâche DEV engagée par CETTE instance. Action qui
+  // réduit l'effet : sans approbation, mais explicite et auditée. Le statut
+  // reste MAY_HAVE_STARTED : seule la réconciliation (4C-2) tranche l'issue.
+  function cancelExecution({ runId, reservationId } = {}) {
+    const internal = typeof reservationId === "string" ? reservations.get(reservationId) : null;
+    if (!internal || internal.ticket.runId !== runId) {
+      fail("GOAL_MODE_DEV_DISPATCH_TICKET_UNKNOWN", "Réservation DEV inconnue de ce processus.");
+    }
+    const { record } = reservationRecord(runId, reservationId);
+    if (record.status !== "MAY_HAVE_STARTED" || !attempted.has(reservationId)) {
+      fail("GOAL_MODE_DEV_CANCEL_UNAVAILABLE",
+        record.status === "PREPARED"
+          ? "Réservation non engagée : utiliser releaseExecution."
+          : "Aucune tâche DEV engagée à arrêter pour cette réservation.", { status: record.status });
+    }
+    if (internal.cancelRequested === true) {
+      return Object.freeze({
+        reservationId, cancelRequested: true, alreadyRequested: true,
+        reservationStatus: record.status, reconciliationRequired: true,
+      });
+    }
+    if (typeof dispatcher.cancelTask !== "function") {
+      fail("GOAL_MODE_DEV_CANCEL_UNAVAILABLE", "Arrêt Native DEV indisponible.");
+    }
+    let result;
+    try {
+      result = dispatcher.cancelTask(internal.ticket.taskId);
+    } catch (error) {
+      emit("goal_mode_dev.execution_cancel_failed", {
+        runId, reservationId, code: errorCode(error, "CANCEL_FAILED"),
+      });
+      fail("GOAL_MODE_DEV_CANCEL_FAILED", "Demande d'arrêt Native DEV en échec.", {
+        reservationId, causeCode: errorCode(error, null),
+      });
+    }
+    internal.cancelRequested = true;
+    emit("goal_mode_dev.execution_cancel_requested", {
+      runId, reservationId, cancelled: result?.cancelled === true,
+    });
+    return Object.freeze({
+      reservationId,
+      cancelRequested: true,
+      alreadyRequested: false,
+      nativeCancelled: result?.cancelled === true,
+      reservationStatus: record.status,
+      reconciliationRequired: true,
+    });
+  }
+
+  // Statut Goal Mode d'une réservation : projection minimale, sans consigne,
+  // chemin ni contenu de la tâche.
+  function executionStatus({ runId, reservationId } = {}) {
+    const { snapshot, record } = reservationRecord(runId, reservationId);
+    let native = null;
+    if (attempted.has(reservationId) && typeof dispatcher.getTaskStatus === "function") {
+      try {
+        const task = dispatcher.getTaskStatus(record.binding.taskId);
+        if (task) {
+          const pick = (value) => (typeof value === "string" ? value.slice(0, 60) : null);
+          native = Object.freeze({
+            status: pick(task.status),
+            finalVerdict: pick(task.finalVerdict),
+            failureCategory: pick(task.failureCategory),
+          });
+        }
+      } catch { native = null; }
+    }
+    return Object.freeze({
+      runId,
+      runStatus: snapshot.state.status,
+      runRevision: snapshot.revision,
+      reservationId,
+      reservationStatus: record.status,
+      dispatchedByThisInstance: attempted.has(reservationId),
+      cancelRequested: reservations.get(reservationId)?.cancelRequested === true,
+      native,
+    });
+  }
+
+  return Object.freeze({
+    cancelExecution,
+    executionStatus,
+    pauseRun,
+    prepare,
+    renewApproval,
+    resume,
+    resumeRun,
+    stopRun,
+  });
 }
 
 module.exports = {

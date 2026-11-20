@@ -10,7 +10,14 @@ Le service `services/goals/goal-mode-dev-dispatch-service.js` n'est **pas** câb
    - **correspondance exacte entre `taskId` et fichier** : `safeId` remplace et tronque les caractères, et le `taskId` stocké n'est pas comparé à celui demandé.
 
    Une fois livré, ce journal servira de contrôle supplémentaire dans `dispatch()` et `releaseExecution()`, en plus du ledger DEV.
-2. **Contrôle des routes d'annulation et de statut** (4C-1D) : `GET /api/dev/native/tasks/:id` et `POST /api/dev/native/tasks/:id/cancel` acceptent aujourd'hui un `taskId` de l'espace `goal-mode-dev-`. Un client HTTP pourrait donc annuler ou observer une tâche Goal Mode en dehors du protocole de réservation.
+2. **Tranche de branchement** :
+   - surface HTTP (contrat de normalisation sur le modèle du retry, `decision` obligatoire, aucun `taskId` ni chemin fourni par le client, jeton renvoyé seulement par `prepare` et `renew`) ;
+   - assemblage du service et vraie source de permissions ;
+   - adaptateur `nativeDevFacade` avec les règles projet ;
+   - routes derrière un feature flag désactivé par défaut ;
+   - UI d'approbation.
+
+*Livré en 4C-1D : le contrôle des routes d'annulation, de statut, de budget et de preuves (voir plus bas).*
 
 ## Cycle de vie d'une réservation DEV
 
@@ -56,6 +63,26 @@ Une nouvelle réservation exige que toutes les précédentes soient closes (`REC
 - **Affichage local, rien de persisté.** L'approbation montre le titre du Goal, la consigne exacte du step, le repository, les permissions accordées, le coût maximal, le nombre d'appels maximal et la durée maximale. Le dépôt d'approbations et l'audit ne conservent que des identifiants, des empreintes et des statuts.
 - **Redémarrage.** `ApprovalEngine` annule toute approbation en attente (`RESTART_RECONFIRMATION_REQUIRED`). La réservation reste `PREPARED`, sans contexte de reprise : il faut la libérer explicitement.
 
+## Pause, reprise, arrêt et statut (4C-1D)
+
+- **`pauseRun({ runId, expectedRevision, reasonCode, releasePrepared })`**, et **`stopRun`** pour `BLOCKED` et `CANCELLED` :
+  - la transition du run, par CAS, fait foi ;
+  - les approbations en attente du run sont ensuite annulées (auditées), et un échec d'annulation est rapporté (`approvalCancelFailures`) ;
+  - même sans annulation, aucune réservation `PREPARED` ne peut plus démarrer : la règle d'état 4C-0 n'autorise le départ qu'à la révision qui suit la réservation, run `RUNNING`.
+- **Une réservation `PREPARED` reste `PREPARED` par défaut.** L'option `releasePrepared`, désactivée par défaut, la libère par `releaseExecution` (ledger à 0 et CAS). Un refus, par exemple un ledger non nul, **n'annule pas la pause**. Il est rapporté dans `release` (`released: false`, `code`) et audité (`goal_mode_dev.release_on_halt`), jamais silencieux.
+- **La pause n'arrête pas DEV.** Une réservation `MAY_HAVE_STARTED` continue, et l'arrêt est une action séparée.
+- **`resumeRun`** ne fonctionne que depuis `PAUSED` ou `BLOCKED`. Il ne réactive rien et signale `releaseRequired` (réservations `PREPARED` d'avant l'arrêt) et `reconciliationRequired`. Le renouvellement d'approbation reste refusé : il faut libérer explicitement, puis proposer un nouveau step.
+- **L'échéance du run continue de courir** pendant la pause (`admittedAt + maxDuration`).
+- **`WAITING_APPROVAL` n'est pas utilisé** pendant une approbation DEV : changer de statut rendrait le départ impossible.
+- **`cancelExecution({ runId, reservationId })`** demande l'arrêt d'une tâche `MAY_HAVE_STARTED` dispatchée par cette instance :
+  - un seul `cancelTask`, et un second appel n'a pas d'effet de plus ;
+  - un échec natif est rapporté et l'appel peut être réessayé ;
+  - le statut de la réservation **ne change pas** : seule la réconciliation (4C-2) tranche l'issue ;
+  - pas d'approbation, mais l'action est explicite et auditée ;
+  - refusée pour `PREPARED` (il faut libérer), `RELEASED` et `UNKNOWN`.
+- **`executionStatus`** renvoie une projection minimale : statut du run et de la réservation, et statut, verdict et catégorie Native DEV. Jamais de consigne, de chemin ni de contenu.
+- **Routes fermées à l'espace `goal-mode-dev-`** (même normalisation) : `GET /api/dev/native/tasks/:id`, `POST …/cancel`, `GET /api/dev/budget?taskId=`, les fonctions `get` et `cancel` de l'UI Native DEV, les preuves de décision (`devDecisionConsumer`) et l'arrêt du benchmark Native. Un test d'inventaire couvre aussi `cancelTask`, `getTaskStatus` et `projectDecisionEvidence`.
+
 ## Libération explicite (`RELEASED`)
 
 `runStore.releaseExecution(runId, { expectedRevision, reservationId })` :
@@ -80,4 +107,4 @@ La réservation de planning est hors périmètre : elle garde son modèle actuel
 - `test/goal-mode-dev-dispatch-service.test.js` : 4C-1B (par `resume`), 4C-1C, empreinte, Goal, RELEASED × dispatch.
 - `test/approval-engine-consume-boundary.test.js` : option `consumeAtBoundary` et lecture bornée Goal Mode d'`ApprovalEngine`.
 - `test/goal-mode-execution-release.test.js` : RELEASED (transitions, forme, ledger, course, SQLite, compatibilité ancien ↔ nouveau code).
-- `test/dev-task-id-namespace.test.js` : espace réservé et inventaire des appelants de `runTask`.
+- `test/dev-task-id-namespace.test.js` : espace réservé, inventaire des appelants de `runTask`, `cancelTask`, `getTaskStatus` et `projectDecisionEvidence`, câblage des routes.

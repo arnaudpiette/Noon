@@ -4,6 +4,9 @@ const {
   V2_LIMITS,
   normalizeDecisionRequestV2,
 } = require("./decision-schema");
+const {
+  isReservedGoalModeDevTaskId,
+} = require("../dev/dev-task-id-namespace");
 
 function exactObject(
   value,
@@ -81,6 +84,20 @@ function createDevDecisionConsumer({
     ) {
       throw new TypeError(
         "devEvidence.taskId requis."
+      );
+    }
+
+    // 4C-1D : aucune preuve tirée d'une tâche Goal Mode par cette surface.
+    if (
+      isReservedGoalModeDevTaskId(
+        devEvidence.taskId
+      )
+    ) {
+      throw Object.assign(
+        new Error(
+          "Ce taskId est réservé aux exécutions Goal Mode."
+        ),
+        { code: "DEV_TASK_ID_RESERVED" }
       );
     }
 

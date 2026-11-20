@@ -66,6 +66,7 @@ function fixture({
   const calls = {
     run: [],
     cancel: [],
+    status: [],
     rules: [],
     claims: [],
     appliedValidations: [],
@@ -85,7 +86,13 @@ function fixture({
       return run.promise;
     },
 
-    getTaskStatus() {
+    getTaskStatus(
+      taskId
+    ) {
+      calls.status.push(
+        taskId
+      );
+
       return null;
     },
 
@@ -754,5 +761,51 @@ test(
         0
       );
     }
+  }
+);
+
+test(
+  "4C-1D Native DEV UI refuse lecture et arrêt d'une tâche de l'espace réservé Goal Mode",
+  () => {
+    const f =
+      fixture();
+
+    for (const taskId of [
+      "goal-mode-dev-abc",
+      " GOAL-MODE-DEV-abc",
+      "goal\u2011mode\u2011dev\u2011abc",
+    ]) {
+      assert.equal(
+        f.service.get(taskId),
+        null
+      );
+
+      assert.throws(
+        () =>
+          f.service.cancel(taskId),
+        {
+          code:
+            "DEV_TASK_ID_RESERVED",
+        }
+      );
+    }
+
+    assert.equal(
+      f.calls.cancel.length,
+      0
+    );
+
+    assert.equal(
+      f.calls.status.length,
+      0
+    );
+
+    // Témoin : un identifiant ordinaire atteint bien la façade.
+    f.service.get("native-ui-unknown");
+
+    assert.deepEqual(
+      f.calls.status,
+      ["native-ui-unknown"]
+    );
   }
 );

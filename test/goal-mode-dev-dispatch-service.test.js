@@ -143,8 +143,21 @@ function fixture({ realRepository = false } = {}) {
     expectedRevision: created.revision, transitionedAt: "2026-10-13T12:00:01.000Z",
   });
   const calls = [];
+  const cancels = [];
   const dispatcher = {
     behaviour: null,
+    cancelBehaviour: null,
+    cancelTask(taskId) {
+      cancels.push(taskId);
+      if (dispatcher.cancelBehaviour) return dispatcher.cancelBehaviour(taskId);
+      return { cancelled: true, taskId };
+    },
+    getTaskStatus(taskId) {
+      return {
+        taskId, status: "RUNNING", finalVerdict: null, failureCategory: null,
+        objective: "SYNTHETIC_PRIVATE_OBJECTIVE", repositoryRoot,
+      };
+    },
     async runTask(payload) {
       calls.push({
         payload,
@@ -189,7 +202,7 @@ function fixture({ realRepository = false } = {}) {
   });
   return {
     file, directory, repositoryRoot, repositoryA, repositoryB, storeA, storeB, running,
-    budget, live, goal, goalStrategyEngine, calls, dispatcher, makeStore, makeService,
+    budget, live, goal, goalStrategyEngine, calls, cancels, dispatcher, makeStore, makeService,
     approvalEngine, approvalRepository, makeEngine, audit, dbA,
     prepare(service) {
       return service.prepare(running.state.runId, {
@@ -725,7 +738,12 @@ test("RELEASED × dispatch : aucune libération automatique, ticket invalidé, c
   const f = fixture();
   try {
     const service = f.makeService();
-    assert.deepEqual(Object.keys(service).sort(), ["prepare", "renewApproval", "resume"]);
+    // 4C-1D ajoute pause/reprise/arrêt/statut ; toujours ni libération ni dispatch publics.
+    assert.deepEqual(Object.keys(service).sort(), [
+      "cancelExecution", "executionStatus", "pauseRun", "prepare", "renewApproval",
+      "resume", "resumeRun", "stopRun",
+    ]);
+    assert.equal(Object.keys(service).some((key) => /release|dispatch/i.test(key)), false);
     const prepared = f.prepare(service);
     const ticket = prepared.ticket;
     f.live.network = false;
@@ -1048,5 +1066,367 @@ test("4C-1C redémarrage : approbation annulée, reprise impossible, libération
       assert.equal(f.status(), "RELEASED");
       assert.equal(f.calls.length, 0);
     } finally { reopenedDatabase.close(); }
+  } finally { f.close(); }
+});
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+test("4C-1D pause avec réservation PREPARED : approbation annulée, jamais dispatchable, même après reprise", async () => {
+  const f = fixture();
+  const events = [];
+  try {
+    const service = f.makeService(f.storeA, { observability: (event, metadata) => events.push({ event, metadata }) });
+    const prepared = f.prepare(service);
+    const { ticket } = prepared;
+    const paused = service.pauseRun({
+      runId: f.running.state.runId, expectedRevision: ticket.reservedRevision, reasonCode: "USER_PAUSE",
+    });
+    assert.equal(paused.status, "PAUSED");
+    assert.equal(paused.revision, ticket.reservedRevision + 1);
+    assert.deepEqual(paused.approvalsCancelled, [prepared.approval.id]);
+    assert.deepEqual(paused.approvalCancelFailures, []);
+    assert.equal(paused.release, null);
+    assert.equal(f.latest().state.status, "PAUSED");
+    assert.equal(f.status(), "PREPARED"); // aucune libération implicite
+    assert.equal(f.approvalRow(prepared.approval.id).status, "cancelled");
+    await assert.rejects(() => resume(service, prepared), { code: "APPROVAL_INVALID" });
+    assert.throws(() => service.renewApproval({ reservationId: ticket.reservationId }),
+      { code: "GOAL_MODE_DEV_DISPATCH_RENEW_UNAVAILABLE" });
+    // Reprise : rien n'est réactivé, la réservation est signalée à libérer.
+    const resumed = service.resumeRun({ runId: f.running.state.runId, expectedRevision: paused.revision });
+    assert.equal(resumed.status, "RUNNING");
+    assert.deepEqual(resumed.releaseRequired, [ticket.reservationId]);
+    assert.deepEqual(resumed.reconciliationRequired, []);
+    assert.throws(() => service.renewApproval({ reservationId: ticket.reservationId }),
+      { code: "GOAL_MODE_DEV_DISPATCH_RENEW_UNAVAILABLE" });
+    // Règle d'état 4C-0 : un départ direct est refusé après la transition.
+    assert.throws(() => f.storeA.markExecutionMayHaveStarted(f.running.state.runId, {
+      expectedRevision: resumed.revision, reservationId: ticket.reservationId,
+    }), { code: "GOAL_MODE_EXECUTION_TRANSITION_INVALID" });
+    assert.equal(f.calls.length, 0);
+    // Sortie explicite : libération (ledger 0), puis nouveau step.
+    f.setTime("2026-10-13T12:00:04.000Z");
+    const released = f.storeA.releaseExecution(f.running.state.runId, {
+      expectedRevision: resumed.revision, reservationId: ticket.reservationId,
+    });
+    assert.equal(f.status(), "RELEASED");
+    const next = service.prepare(f.running.state.runId, {
+      expectedRevision: released.revision, stepId: "step-next",
+    });
+    assert.notEqual(next.ticket.reservationId, ticket.reservationId);
+    await resume(service, next);
+    assert.equal(f.calls.length, 1);
+    assert.ok(events.some((item) => item.event === "goal_mode_dev.run_halted" &&
+      item.metadata.status === "PAUSED" && item.metadata.approvalsCancelled === 1));
+    assert.equal(JSON.stringify(events).includes("SYNTHETIC_PRIVATE_OBJECTIVE"), false);
+  } finally { f.close(); }
+});
+
+test("4C-1D annulation d'approbation en échec pendant la pause : rapportée, dispatch toujours impossible", async () => {
+  const f = fixture();
+  try {
+    const failingEngine = {
+      ...f.approvalEngine,
+      cancel() { throw Object.assign(new Error("x"), { code: "SYNTHETIC_CANCEL_FAILURE" }); },
+    };
+    const service = f.makeService(f.storeA, { approvalEngine: failingEngine });
+    const prepared = f.prepare(service);
+    const paused = service.pauseRun({
+      runId: f.running.state.runId, expectedRevision: prepared.ticket.reservedRevision,
+    });
+    assert.deepEqual(paused.approvalsCancelled, []);
+    assert.deepEqual(paused.approvalCancelFailures,
+      [{ approvalId: prepared.approval.id, code: "SYNTHETIC_CANCEL_FAILURE" }]);
+    assert.equal(f.approvalRow(prepared.approval.id).status, "pending");
+    await assert.rejects(() => resume(service, prepared), { code: "GOAL_MODE_DEV_DISPATCH_STALE" });
+    const resumed = service.resumeRun({ runId: f.running.state.runId, expectedRevision: paused.revision });
+    await assert.rejects(() => resume(service, prepared), { code: "GOAL_MODE_DEV_DISPATCH_STALE" });
+    assert.equal(resumed.status, "RUNNING");
+    assert.equal(f.status(), "PREPARED");
+    assert.equal(f.calls.length, 0);
+    assert.equal(f.approvalRow(prepared.approval.id).status, "pending");
+  } finally { f.close(); }
+});
+
+test("4C-1D releasePrepared : libération explicite pendant la pause, auditée", () => {
+  const f = fixture();
+  const events = [];
+  try {
+    const service = f.makeService(f.storeA, { observability: (event, metadata) => events.push({ event, metadata }) });
+    const prepared = f.prepare(service);
+    f.setTime("2026-10-13T12:00:03.000Z");
+    const paused = service.pauseRun({
+      runId: f.running.state.runId, expectedRevision: prepared.ticket.reservedRevision,
+      releasePrepared: true,
+    });
+    assert.deepEqual({ ...paused.release }, {
+      requested: true, reservationId: prepared.ticket.reservationId, released: true, code: null,
+    });
+    assert.equal(paused.revision, prepared.ticket.reservedRevision + 2);
+    assert.equal(f.latest().state.status, "PAUSED");
+    assert.equal(f.status(), "RELEASED");
+    assert.ok(events.some((item) => item.event === "goal_mode_dev.release_on_halt" &&
+      item.metadata.released === true && item.metadata.reservationId === prepared.ticket.reservationId));
+    // Par défaut, aucune libération.
+    assert.throws(() => service.pauseRun({
+      runId: f.running.state.runId, expectedRevision: paused.revision, releasePrepared: "yes",
+    }), { code: "GOAL_MODE_DEV_RUN_TRANSITION_INVALID" });
+  } finally { f.close(); }
+});
+
+test("4C-1D releasePrepared avec ledger non nul : la pause passe, la libération est refusée et rapportée", () => {
+  const f = fixture();
+  const events = [];
+  try {
+    const service = f.makeService(f.storeA, { observability: (event, metadata) => events.push({ event, metadata }) });
+    const prepared = f.prepare(service);
+    f.budget.calls = 1;
+    f.setTime("2026-10-13T12:00:03.000Z");
+    const paused = service.pauseRun({
+      runId: f.running.state.runId, expectedRevision: prepared.ticket.reservedRevision,
+      releasePrepared: true,
+    });
+    assert.equal(paused.status, "PAUSED");
+    assert.equal(paused.revision, prepared.ticket.reservedRevision + 1);
+    assert.deepEqual({ ...paused.release }, {
+      requested: true, reservationId: prepared.ticket.reservationId, released: false,
+      code: "GOAL_MODE_EXECUTION_RELEASE_LEDGER_ENGAGED",
+    });
+    assert.equal(f.latest().state.status, "PAUSED");
+    assert.equal(f.status(), "PREPARED");
+    const audit = events.find((item) => item.event === "goal_mode_dev.release_on_halt");
+    assert.equal(audit.metadata.released, false);
+    assert.equal(audit.metadata.code, "GOAL_MODE_EXECUTION_RELEASE_LEDGER_ENGAGED");
+    // Sans réservation PREPARED : demande rapportée, pas d'erreur silencieuse.
+    const resumed = service.resumeRun({ runId: f.running.state.runId, expectedRevision: paused.revision });
+    f.budget.calls = 0;
+    f.setTime("2026-10-13T12:00:04.000Z");
+    const released = f.storeA.releaseExecution(f.running.state.runId, {
+      expectedRevision: resumed.revision, reservationId: prepared.ticket.reservationId,
+    });
+    const again = service.pauseRun({
+      runId: f.running.state.runId, expectedRevision: released.revision, releasePrepared: true,
+    });
+    assert.deepEqual({ ...again.release }, {
+      requested: true, reservationId: null, released: false, code: "GOAL_MODE_DEV_NO_PREPARED_RESERVATION",
+    });
+  } finally { f.close(); }
+});
+
+test("4C-1D course pause / dispatch : la pause interposée avant le CAS empêche le dispatch", async () => {
+  const f = fixture();
+  try {
+    const service = f.makeService();
+    const prepared = f.prepare(service);
+    const { ticket } = prepared;
+    const other = f.makeService(f.storeB);
+    f.setOnInspect(() => {
+      other.pauseRun({ runId: f.running.state.runId, expectedRevision: ticket.reservedRevision });
+    }, 2);
+    await assert.rejects(() => resume(service, prepared), { code: "GOAL_MODE_RUN_PERSISTENCE_CONFLICT" });
+    assert.equal(f.calls.length, 0);
+    assert.equal(f.latest().state.status, "PAUSED");
+    assert.equal(f.status(), "PREPARED");
+  } finally { f.close(); }
+});
+
+test("4C-1D pause avec MAY_HAVE_STARTED : DEV n'est pas annulé, aucune nouvelle réservation", async () => {
+  const f = fixture();
+  try {
+    const gate = deferred();
+    f.dispatcher.behaviour = (payload) => gate.promise.then(() => ({ taskId: payload.taskId }));
+    const service = f.makeService();
+    const prepared = f.prepare(service);
+    const running = resume(service, prepared);
+    await new Promise((done) => setImmediate(done));
+    assert.equal(f.calls.length, 1);
+    assert.equal(f.status(), "MAY_HAVE_STARTED");
+    const paused = service.pauseRun({
+      runId: f.running.state.runId, expectedRevision: f.latest().revision,
+    });
+    assert.equal(paused.status, "PAUSED");
+    assert.deepEqual(f.cancels, []); // la pause n'arrête pas DEV
+    assert.equal(f.status(), "MAY_HAVE_STARTED");
+    const resumed = service.resumeRun({ runId: f.running.state.runId, expectedRevision: paused.revision });
+    assert.deepEqual(resumed.reconciliationRequired, [prepared.ticket.reservationId]);
+    assert.throws(() => service.prepare(f.running.state.runId, {
+      expectedRevision: resumed.revision, stepId: "step-other",
+    }), { code: "GOAL_MODE_EXECUTION_IN_FLIGHT" });
+    gate.resolve();
+    const result = await running;
+    assert.equal(result.reservationId, prepared.ticket.reservationId);
+    assert.equal(f.status(), "MAY_HAVE_STARTED");
+  } finally { f.close(); }
+});
+
+test("4C-1D BLOCKED et CANCELLED traités comme la pause ; reprise seulement depuis PAUSED ou BLOCKED", async () => {
+  for (const status of ["BLOCKED", "CANCELLED"]) {
+    const f = fixture();
+    try {
+      const service = f.makeService();
+      const prepared = f.prepare(service);
+      const halted = service.stopRun({
+        runId: f.running.state.runId, expectedRevision: prepared.ticket.reservedRevision, status,
+      });
+      assert.equal(halted.status, status);
+      assert.deepEqual(halted.approvalsCancelled, [prepared.approval.id]);
+      assert.equal(f.status(), "PREPARED");
+      await assert.rejects(() => resume(service, prepared), { code: "APPROVAL_INVALID" });
+      if (status === "BLOCKED") {
+        const resumed = service.resumeRun({ runId: f.running.state.runId, expectedRevision: halted.revision });
+        assert.deepEqual(resumed.releaseRequired, [prepared.ticket.reservationId]);
+      } else {
+        assert.throws(() => service.resumeRun({ runId: f.running.state.runId, expectedRevision: halted.revision }),
+          { code: "GOAL_MODE_DEV_RUN_NOT_PAUSED" });
+      }
+      assert.equal(f.calls.length, 0);
+    } finally { f.close(); }
+  }
+  const g = fixture();
+  try {
+    const service = g.makeService();
+    assert.throws(() => service.stopRun({ runId: g.running.state.runId, expectedRevision: g.running.revision, status: "PAUSED" }),
+      { code: "GOAL_MODE_DEV_RUN_TRANSITION_INVALID" });
+    assert.throws(() => service.resumeRun({ runId: g.running.state.runId, expectedRevision: g.running.revision }),
+      { code: "GOAL_MODE_DEV_RUN_NOT_PAUSED" });
+    assert.throws(() => service.pauseRun({ runId: g.running.state.runId, expectedRevision: g.running.revision - 1 }),
+      { code: "GOAL_MODE_RUN_PERSISTENCE_CONFLICT" });
+  } finally { g.close(); }
+});
+
+test("4C-1D l'échéance court pendant la pause : prepare et renouvellement refusés ensuite", () => {
+  const f = fixture();
+  try {
+    const service = f.makeService();
+    const prepared = f.prepare(service);
+    const paused = service.pauseRun({ runId: f.running.state.runId, expectedRevision: prepared.ticket.reservedRevision });
+    f.setTime("2026-10-13T12:09:59.500Z");
+    const resumed = service.resumeRun({ runId: f.running.state.runId, expectedRevision: paused.revision });
+    f.storeA.releaseExecution(f.running.state.runId, {
+      expectedRevision: resumed.revision, reservationId: prepared.ticket.reservationId,
+    });
+    assert.throws(() => service.prepare(f.running.state.runId, {
+      expectedRevision: f.latest().revision, stepId: "step-late",
+    }), { code: "GOAL_MODE_DEV_DISPATCH_TIME_BUDGET_BLOCKED" });
+  } finally { f.close(); }
+});
+
+test("4C-1D cancelExecution : arrêt demandé une fois, statut inchangé, issue incertaine", async () => {
+  const f = fixture();
+  const events = [];
+  try {
+    const gate = deferred();
+    f.dispatcher.behaviour = () => gate.promise.then(() => {
+      throw Object.assign(new Error("aborted"), { code: "CANCELLED" });
+    });
+    const service = f.makeService(f.storeA, { observability: (event, metadata) => events.push({ event, metadata }) });
+    const prepared = f.prepare(service);
+    const { ticket } = prepared;
+    const runId = f.running.state.runId;
+    assert.throws(() => service.cancelExecution({ runId, reservationId: ticket.reservationId }),
+      (error) => error.code === "GOAL_MODE_DEV_CANCEL_UNAVAILABLE" && error.details.status === "PREPARED");
+    const running = resume(service, prepared);
+    await new Promise((done) => setImmediate(done));
+    const first = service.cancelExecution({ runId, reservationId: ticket.reservationId });
+    assert.equal(first.cancelRequested, true);
+    assert.equal(first.alreadyRequested, false);
+    assert.equal(first.nativeCancelled, true);
+    assert.equal(first.reservationStatus, "MAY_HAVE_STARTED");
+    assert.equal(first.reconciliationRequired, true);
+    assert.deepEqual(f.cancels, [ticket.taskId]);
+    const second = service.cancelExecution({ runId, reservationId: ticket.reservationId });
+    assert.equal(second.alreadyRequested, true);
+    assert.deepEqual(f.cancels, [ticket.taskId]);
+    assert.equal(f.status(), "MAY_HAVE_STARTED");
+    gate.resolve();
+    await assert.rejects(() => running, { code: "GOAL_MODE_DEV_DISPATCH_OUTCOME_UNCERTAIN" });
+    assert.equal(f.status(), "MAY_HAVE_STARTED"); // seule la réconciliation tranchera
+    assert.ok(events.some((item) => item.event === "goal_mode_dev.execution_cancel_requested"));
+    // Instance inconnue ou mauvais run : refus.
+    const other = f.makeService(f.storeB);
+    assert.throws(() => other.cancelExecution({ runId, reservationId: ticket.reservationId }),
+      { code: "GOAL_MODE_DEV_DISPATCH_TICKET_UNKNOWN" });
+    assert.throws(() => service.cancelExecution({ runId: "goal-run-other", reservationId: ticket.reservationId }),
+      { code: "GOAL_MODE_DEV_DISPATCH_TICKET_UNKNOWN" });
+  } finally { f.close(); }
+});
+
+test("4C-1D cancelExecution refusé pour RELEASED et UNKNOWN ; échec natif rapporté puis réessayable", async () => {
+  const f = fixture();
+  try {
+    const service = f.makeService();
+    const prepared = f.prepare(service);
+    f.setTime("2026-10-13T12:00:03.000Z");
+    f.storeA.releaseExecution(f.running.state.runId, {
+      expectedRevision: prepared.ticket.reservedRevision, reservationId: prepared.ticket.reservationId,
+    });
+    assert.throws(() => service.cancelExecution({
+      runId: f.running.state.runId, reservationId: prepared.ticket.reservationId,
+    }), (error) => error.code === "GOAL_MODE_DEV_CANCEL_UNAVAILABLE" && error.details.status === "RELEASED");
+  } finally { f.close(); }
+
+  const g = fixture();
+  try {
+    const gate = deferred();
+    g.dispatcher.behaviour = () => gate.promise;
+    const service = g.makeService();
+    const prepared = g.prepare(service);
+    const running = resume(service, prepared);
+    await new Promise((done) => setImmediate(done));
+    g.dispatcher.cancelBehaviour = () => { throw Object.assign(new Error("x"), { code: "NATIVE_CANCEL_FAILED" }); };
+    assert.throws(() => service.cancelExecution({
+      runId: g.running.state.runId, reservationId: prepared.ticket.reservationId,
+    }), (error) => error.code === "GOAL_MODE_DEV_CANCEL_FAILED" && error.details.causeCode === "NATIVE_CANCEL_FAILED");
+    g.dispatcher.cancelBehaviour = null;
+    const retried = service.cancelExecution({
+      runId: g.running.state.runId, reservationId: prepared.ticket.reservationId,
+    });
+    assert.equal(retried.alreadyRequested, false);
+    assert.equal(g.cancels.length, 2);
+    // UNKNOWN : plus rien à arrêter.
+    g.storeA.markExecutionUnknown(g.running.state.runId, {
+      expectedRevision: g.latest().revision, reservationId: prepared.ticket.reservationId,
+    });
+    gate.resolve({ taskId: prepared.ticket.taskId });
+    await running;
+    const late = g.makeService();
+    assert.throws(() => late.cancelExecution({
+      runId: g.running.state.runId, reservationId: prepared.ticket.reservationId,
+    }), { code: "GOAL_MODE_DEV_DISPATCH_TICKET_UNKNOWN" });
+    assert.equal(g.status(), "UNKNOWN");
+  } finally { g.close(); }
+});
+
+test("4C-1D executionStatus : projection minimale, sans donnée privée", async () => {
+  const f = fixture();
+  try {
+    const service = f.makeService();
+    const prepared = f.prepare(service);
+    const runId = f.running.state.runId;
+    const before = service.executionStatus({ runId, reservationId: prepared.ticket.reservationId });
+    assert.deepEqual({ ...before }, {
+      runId, runStatus: "RUNNING", runRevision: prepared.ticket.reservedRevision,
+      reservationId: prepared.ticket.reservationId, reservationStatus: "PREPARED",
+      dispatchedByThisInstance: false, cancelRequested: false, native: null,
+    });
+    const gate = deferred();
+    f.dispatcher.behaviour = () => gate.promise;
+    const running = resume(service, prepared);
+    await new Promise((done) => setImmediate(done));
+    const during = service.executionStatus({ runId, reservationId: prepared.ticket.reservationId });
+    assert.equal(during.reservationStatus, "MAY_HAVE_STARTED");
+    assert.equal(during.dispatchedByThisInstance, true);
+    assert.deepEqual({ ...during.native }, { status: "RUNNING", finalVerdict: null, failureCategory: null });
+    const serialized = JSON.stringify(during);
+    assert.equal(serialized.includes("SYNTHETIC_PRIVATE_OBJECTIVE"), false);
+    assert.equal(serialized.includes(f.repositoryRoot), false);
+    assert.throws(() => service.executionStatus({ runId, reservationId: "goal-dev-execution-missing" }),
+      { code: "GOAL_MODE_DEV_DISPATCH_RESERVATION_MISSING" });
+    gate.resolve({ taskId: prepared.ticket.taskId });
+    await running;
   } finally { f.close(); }
 });

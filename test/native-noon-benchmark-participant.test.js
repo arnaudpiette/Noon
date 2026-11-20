@@ -336,3 +336,39 @@ test(
     );
   }
 );
+
+test(
+  "4C-1D le participant Native refuse d'arrêter une tâche de l'espace réservé Goal Mode",
+  () => {
+    const cancelled = [];
+
+    const participant =
+      createNativeNoonBenchmarkParticipant({
+        coordinator: {
+          async runTask() {
+            return {};
+          },
+
+          cancelTask(runId) {
+            cancelled.push(runId);
+            return { cancelled: true };
+          },
+        },
+      });
+
+    assert.deepEqual(
+      participant.cancel("goal-mode-dev-abc"),
+      { cancelled: false, reason: "DEV_TASK_ID_RESERVED" }
+    );
+
+    assert.deepEqual(
+      participant.cancel("benchmark-run-1"),
+      { cancelled: true }
+    );
+
+    assert.deepEqual(
+      cancelled,
+      ["benchmark-run-1"]
+    );
+  }
+);

@@ -746,6 +746,15 @@ function createNativeDevUiExecutionService({
         180
       );
 
+    // 4C-1D : aucune lecture d'une tâche Goal Mode par la surface UI.
+    if (
+      isReservedGoalModeDevTaskId(
+        id
+      )
+    ) {
+      return null;
+    }
+
     const record =
       records.get(id);
 
@@ -851,6 +860,18 @@ function createNativeDevUiExecutionService({
         taskId,
         180
       );
+
+    // 4C-1D : l'arrêt d'une tâche Goal Mode ne passe que par Goal Mode.
+    if (
+      isReservedGoalModeDevTaskId(
+        id
+      )
+    ) {
+      throw executionError(
+        "DEV_TASK_ID_RESERVED",
+        "Ce taskId est réservé aux exécutions Goal Mode."
+      );
+    }
 
     const result =
       nativeDevFacade

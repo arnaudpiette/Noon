@@ -594,3 +594,52 @@ test(
     );
   }
 );
+
+test(
+  "4C-1D aucune preuve de décision tirée d'une tâche de l'espace réservé Goal Mode",
+  () => {
+    let projectionCalls = 0;
+    let compareCalls = 0;
+
+    const consumer =
+      createDevDecisionConsumer({
+        nativeDevFacade: {
+          projectDecisionEvidence() {
+            projectionCalls += 1;
+            return { evidence: [], attestedEvidenceIds: [] };
+          },
+        },
+        decisionSupportEngine: {
+          compare() {
+            compareCalls += 1;
+            return { verdict: "DECIDED" };
+          },
+        },
+      });
+
+    for (const taskId of [
+      "goal-mode-dev-abc",
+      "Goal-Mode-Dev-abc",
+      "ｇｏａｌ－ｍｏｄｅ－ｄｅｖ－abc",
+    ]) {
+      assert.throws(
+        () =>
+          consumer.compare({
+            decisionRequest:
+              request(),
+            devEvidence: {
+              taskId,
+              mappings: [],
+            },
+          }),
+        {
+          code:
+            "DEV_TASK_ID_RESERVED",
+        }
+      );
+    }
+
+    assert.equal(projectionCalls, 0);
+    assert.equal(compareCalls, 0);
+  }
+);

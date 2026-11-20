@@ -105,3 +105,48 @@ test("câblage : la route Native DEV refuse l'espace réservé avant runTask", (
   assert.match(block, /assertDevTaskIdNotReserved\(body\.taskId\)/);
   assert.match(source, /require\("\.\/services\/dev\/dev-task-id-namespace"\)/);
 });
+
+test("4C-1D inventaire : tout appel cancelTask / getTaskStatus / projectDecisionEvidence est audité", () => {
+  const audited = new Map([
+    ["server.js", "GET /api/dev/native/tasks/:id et /cancel : refus de l'espace réservé"],
+    ["services/dev/native-dev-ui-execution-service.js", "UI get/cancel : refus de l'espace réservé"],
+    ["services/decision/dev-decision-consumer.js", "preuves de décision : refus de l'espace réservé"],
+    ["services/dev/benchmark/native-noon-benchmark-participant.js", "benchmark Native : refus de l'espace réservé"],
+    ["services/dev/native-dev-orchestrator-facade.js", "interne : façade → orchestrateur"],
+    ["services/goals/goal-mode-dev-dispatch-service.js", "Goal Mode : cancelExecution / executionStatus"],
+    ["services/delegation/dev-delegation-runner.js", "hors Native DEV : délégation Codex"],
+    ["services/dev/benchmark/codex-benchmark-participant.js", "hors Native DEV : benchmark Codex"],
+  ]);
+  const found = new Set();
+  const files = [
+    path.join(ROOT, "server.js"),
+    ...["services", "lib", "electron", "public", "scripts"]
+      .map((item) => path.join(ROOT, item))
+      .filter((item) => fs.existsSync(item))
+      .flatMap(sourceFiles),
+  ];
+  for (const file of files) {
+    if (/\.\s*(cancelTask|getTaskStatus|projectDecisionEvidence)\s*\(/.test(fs.readFileSync(file, "utf8"))) {
+      found.add(path.relative(ROOT, file).split(path.sep).join("/"));
+    }
+  }
+  assert.deepEqual([...found].sort(), [...audited.keys()].sort());
+});
+
+test("4C-1D câblage : statut, arrêt et budget refusent l'espace réservé avant tout accès", () => {
+  const source = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+  const block = (marker, until) => {
+    const start = source.indexOf(marker);
+    assert.notEqual(start, -1, marker);
+    const end = source.indexOf(until, start);
+    assert.notEqual(end, -1, until);
+    return source.slice(start, end);
+  };
+  assert.match(block('requestPath.startsWith("/api/dev/native/tasks/") && req.method === "GET"',
+    "nativeDevB3Facade.getTaskStatus("), /isReservedGoalModeDevTaskId\(taskId\)\) return sendReservedDevTaskId/);
+  assert.match(block('requestPath.endsWith("/cancel") && req.method === "POST"',
+    "nativeDevB3Facade.cancelTask("), /isReservedGoalModeDevTaskId\(taskId\)\) return sendReservedDevTaskId/);
+  assert.match(block('requestPath === "/api/dev/budget" && req.method === "GET"',
+    "devCostBudgetService.snapshot("), /isReservedGoalModeDevTaskId\(taskId\)\) return sendReservedDevTaskId/);
+  assert.match(source, /function sendReservedDevTaskId\(res\)[\s\S]{0,200}DEV_TASK_ID_RESERVED/);
+});

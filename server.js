@@ -172,7 +172,7 @@ const { createNativeDevCoordinator } = require("./services/dev/native-dev-coordi
 const { createNativeDevOrchestrator } = require("./services/dev/native-dev-orchestrator");
 const { createNativeDevOrchestratorFacade } = require("./services/dev/native-dev-orchestrator-facade");
 const { createNativeDevUiExecutionService } = require("./services/dev/native-dev-ui-execution-service");
-const { assertDevTaskIdNotReserved } = require("./services/dev/dev-task-id-namespace");
+const { assertDevTaskIdNotReserved, isReservedGoalModeDevTaskId } = require("./services/dev/dev-task-id-namespace");
 const { createSandboxDevValidationExecutor } = require("./services/security/dev-validation-runner");
 const { createDevWorkspaceTerminalService } = require("./services/dev/workspace-terminal-service");
 const { createDevWorkspaceAgentExecutionLoop } = require("./services/dev/workspace-agent-execution-loop");
@@ -9177,6 +9177,12 @@ if (benchmarkRead && req.method === "GET") {
 }
 
 
+// Espace goal-mode-dev- : statut, arrêt, budget et preuves passent par Goal Mode.
+function sendReservedDevTaskId(res) {
+  res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+  return res.end(JSON.stringify({ status: "error", code: "DEV_TASK_ID_RESERVED" }));
+}
+
 function requireTrustedDevUi(req) {
   if (req.headers["x-noon-request"] !== "1") {
     throw Object.assign(
@@ -10185,6 +10191,7 @@ if (requestPath === "/api/dev/budget" && req.method === "GET") {
   if (req.headers["x-noon-request"] !== "1") { res.writeHead(403); return res.end(); }
   const url = new URL(req.url, `http://${req.headers.host || DEFAULT_HOST}`);
   const taskId = url.searchParams.get("taskId");
+  if (isReservedGoalModeDevTaskId(taskId)) return sendReservedDevTaskId(res);
   const context = { workspaceId: url.searchParams.get("workspaceId"), sessionId: taskId };
   const budgetEnforcement = featureFlags.evaluate("dev.budget-enforcement", context).enabled;
   res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
@@ -10199,6 +10206,8 @@ if (requestPath.startsWith("/api/dev/native/tasks/") && req.method === "GET") {
         "/api/dev/native/tasks/".length
       )
     );
+  // 4C-1D : le statut d'une tâche Goal Mode ne passe que par Goal Mode.
+  if (isReservedGoalModeDevTaskId(taskId)) return sendReservedDevTaskId(res);
 
   const result =
     nativeDevB3Facade.getTaskStatus(
@@ -10235,7 +10244,10 @@ if (requestPath.startsWith("/api/dev/native/tasks/") && req.method === "GET") {
 
 if (requestPath.startsWith("/api/dev/native/tasks/") && requestPath.endsWith("/cancel") && req.method === "POST") {
   if (req.headers["x-noon-request"] !== "1") { res.writeHead(403); return res.end(); }
-  const taskId = decodeURIComponent(requestPath.slice("/api/dev/native/tasks/".length, -"/cancel".length)); const result = nativeDevB3Facade.cancelTask(taskId);
+  const taskId = decodeURIComponent(requestPath.slice("/api/dev/native/tasks/".length, -"/cancel".length));
+  // 4C-1D : l'arrêt d'une tâche Goal Mode ne passe que par cancelExecution.
+  if (isReservedGoalModeDevTaskId(taskId)) return sendReservedDevTaskId(res);
+  const result = nativeDevB3Facade.cancelTask(taskId);
   res.writeHead(result.cancelled ? 200 : 409, { "Content-Type": "application/json", "Cache-Control": "no-store" }); return res.end(JSON.stringify(result));
 }
 
