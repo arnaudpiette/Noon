@@ -518,7 +518,10 @@ function createGoalModeRunStore({
         observed.reservationId !== record.reservationId ||
         (requiredComplete &&
          (observed.terminal !== true || observed.complete !== true ||
-          observed.stepEngaged !== true))) {
+          // 4C-2 : « jamais lancée » = stepEngaged false, 0 appel, coût nul.
+          (observed.stepEngaged !== true &&
+           !(observed.stepEngaged === false && observed.providerCalls === 0 &&
+             observed.accountedCost === 0))))) {
       fail("GOAL_MODE_EXECUTION_OBSERVATION_INVALID", "Observation DEV non liée ou incomplète.");
     }
     return {
@@ -597,8 +600,14 @@ function createGoalModeRunStore({
     return repository.save(next, { expectedRevision: current.revision });
   }
 
+  // 4C-2 : lecture seule, pour le scan de réconciliation au démarrage.
+  function listRunIds() {
+    return typeof repository.listRunIds === "function" ? repository.listRunIds() : [];
+  }
+
   return Object.freeze({
     consume,
+    listRunIds,
     create,
     get,
     history,

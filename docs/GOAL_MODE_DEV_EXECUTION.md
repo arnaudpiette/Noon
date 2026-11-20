@@ -2,7 +2,7 @@
 
 ## Branchement serveur et activation
 
-**Activation réelle du flag `goals.mode-dev` : interdite tant que 4C-2 (réconciliation et coûts) et B3 (UI d'approbation) ne sont pas livrés.** Sans 4C-2, une réservation `MAY_HAVE_STARTED` ou `UNKNOWN` ne peut pas être réconciliée. Sans B3, aucune approbation exacte ne peut être donnée par l'utilisateur.
+**Activation réelle du flag `goals.mode-dev` : interdite tant que B3 (UI d'approbation) n'est pas livré.** 4C-2 (réconciliation et coûts) est livré. Sans B3, aucune approbation exacte ne peut être donnée par l'utilisateur.
 
 - **B1, livré : runtime composé, non exposé.** `services/goals/goal-mode-dev-runtime.js` assemble toute la chaîne : runs, planning, propositions, admission, projection, réservation, approbation et dispatch. Il s'appuie sur les services canoniques du serveur : `personalDatabase`, `devCostBudgetService`, `nativeDevJournal`, `approvalManager`, `operationalSecurityPolicy`, `devProjectRuleResolver`, la façade Native DEV B3, et le routage fournisseur déjà utilisé par Native DEV.
   - **Flag `goals.mode-dev`** : `OFF` par défaut, exige `goals.engine` et `dev.native-core`, et figure dans le test de gel. Il est lu **au démarrage** : le changer exige un redémarrage. Quand il est `OFF`, le runtime n'est pas construit.
@@ -34,7 +34,7 @@
   - **Audit** : route, statut HTTP et code seulement. Jamais de corps, de jeton, d'affichage ni de règles.
   - **Activer le flag** exige `LIMITED` avec un pourcentage ou une liste d'autorisation pour `goals.engine`, `dev.native-core` et `goals.mode-dev`. Sans contexte de workspace, un `LIMITED` sans pourcentage reste `OFF`.
 - **B3, à venir : UI d'approbation.** Carte dédiée, affichage local, aucun jeton dans `localStorage`.
-- **4C-2, à venir : réconciliation et coûts.**
+- **4C-2, livré : réconciliation et coûts** (voir la section dédiée plus bas).
 
 *Livrés avant le branchement : le contrôle des routes d'annulation, de statut, de budget et de preuves (4C-1D), et le journal Native DEV fiable (voir plus bas).*
 
@@ -120,6 +120,38 @@ Une nouvelle réservation exige que toutes les précédentes soient closes (`REC
 - **Pas de nettoyage.** Le dossier grossit sans rotation ni purge. Toute purge future devra préserver les tâches Goal Mode non réconciliées. Un fichier illisible bloque son `taskId` pour toujours (fail-closed) : il faut un diagnostic, jamais un effacement automatique.
 - **`recoverInterrupted` est appelé au démarrage depuis B1** (audit sans contenu, aucune action, pas en safe mode).
 
+## Réconciliation et coûts (4C-2)
+
+`services/goals/goal-mode-dev-observation.js` contient le lecteur d'observation et le relais vers le store. Le service de dispatch porte la réconciliation.
+
+- **Sources**, en lecture seule :
+  - le **ledger DEV** fait foi pour les appels et le coût : entrées du `taskId` exact, sans `RELEASED` ;
+  - le **journal** fait foi pour l'état terminal et le démarrage ;
+  - le résultat Native DEV en mémoire sert seulement de recoupement. Un écart avec le ledger donne `UNKNOWN (USAGE_INCOMPLETE)`.
+- **Décisions**, depuis `MAY_HAVE_STARTED` :
+
+  | Journal | Ledger | Issue |
+  |---|---|---|
+  | terminal | réglé | `RECONCILED` avec un pas, appels et coût exacts (`basis: ACTUAL`) |
+  | terminal | appels au coût réel inconnu ou au résultat inconnu (`UNKNOWN_PENDING`) | `RECONCILED` **prudent** : coût estimé, borne haute, `observedActualCost: null`, `basis: ESTIMATED_UPPER_BOUND`, visible dans l'audit et dans la réponse de la route |
+  | terminal `CANCELLED` | réglé | `RECONCILED` (annulation observée complètement) |
+  | non terminal, dispatch disparu | quelconque | `UNKNOWN` : `CANCELLED` si un arrêt avait été demandé, sinon `OUTCOME_UNCERTAIN` |
+  | non terminal, dispatch en cours dans ce processus | — | aucune transition |
+  | quelconque | entrée `RESERVED` | aucune transition (en cours) |
+  | illisible | — | aucune transition |
+  | `ABSENT` | au moins une entrée | `UNKNOWN (PERSISTENCE_UNCERTAIN)` |
+  | `ABSENT` | aucune entrée | **« jamais lancée »** : `RECONCILED` avec `observedSteps: 0`, 0 appel, coût 0 (`basis: NEVER_LAUNCHED`) |
+
+- **Garde-fous de « jamais lancée »** : la conclusion n'est admise qu'en **fin de `resume`**, dans le processus qui a dispatché (la façade réserve son démarrage avant tout `await`, dans le même tour que le CAS) ; **au démarrage**, sous verrou exclusif ; ou **par action explicite**, avec le verrou détenu par ce processus, aucun dispatch en cours ici, et au moins **2 min** écoulées depuis `mayHaveStartedAt`.
+- **Comptabilité** : l'usage du run est augmenté une seule fois (pas, appels, coût). Les itérations internes de Native DEV ne comptent pas comme des essais Goal (`observedRetries: 0`). Le budget DEV, déjà débité appel par appel, ne reçoit aucune écriture. La **durée** est rapportée (début et fin du journal) mais **non persistée**.
+- **Déclencheurs** : fin de `resume` (le résultat est joint à la réponse), scan au démarrage, et route `POST /api/goals/mode-dev/dispatch/reconcile`. Toute réconciliation ne fait **qu'un CAS** sur la réservation : jamais d'appel au dispatcher, à l'arrêt ni au ledger. Elle est idempotente : une réservation déjà close renvoie `UNCHANGED`. Les réservations `RELEASED` sont ignorées.
+- **Verrou exclusif sur `DATA_DIRECTORY`** (`services/runtime/data-directory-lock.js`, fichier `noon-data.lock`) :
+  - créé de façon atomique (`wx`, `fsync` du fichier puis du dossier) au démarrage, hors safe mode, avant le scan ;
+  - libéré à l'arrêt et à la sortie du processus ;
+  - s'il est détenu par un autre processus vivant (`HELD`), **périmé** (processus disparu, `STALE`) ou illisible, il n'y a **aucun scan** et l'audit `goals.mode-dev.RECONCILE_SCAN_SKIPPED_LOCK` est écrit. **Un verrou périmé n'est jamais repris automatiquement** : après un arrêt brutal, le scan au démarrage et les conclusions explicites qui exigent le verrou restent indisponibles, jusqu'à ce que l'utilisateur supprime ce fichier en connaissance de cause.
+- **Limite de downgrade** : une version de Noon antérieure à 4C-2 refuse de relire un run qui contient un `RECONCILED` à 0 pas. C'est la même classe de limite que pour `RELEASED` (option A) : refus propre, sans corruption.
+- **Hors périmètre** : la sortie d'un `UNKNOWN`, qui bloque définitivement le DEV du run.
+
 ## Libération explicite (`RELEASED`)
 
 `runStore.releaseExecution(runId, { expectedRevision, reservationId })` :
@@ -149,5 +181,7 @@ La réservation de planning est hors périmètre : elle garde son modèle actuel
 - `test/goal-mode-dev-http-contract.test.js` : contrat B2 (clés exactes, `decision`, projections, statuts, erreurs minimales).
 - `test/goal-mode-dev-http-transport.test.js` : bout en bout B2 au niveau transport (vrai serveur HTTP de test, vrai runtime, fournisseur et façade factices), délais d'attente et déconnexion.
 - `test/goal-mode-dev-http-server.test.js` : garde-fous B2 sur le vrai serveur, dans un processus enfant sans `.env` ni clés de fournisseurs.
+- `test/goal-mode-dev-observation.test.js` : lecteur d'observation (toutes les décisions), relais, état `RECONCILED` à engagement nul.
+- `test/data-directory-lock.test.js` : verrou exclusif (atomicité, `HELD`, `STALE` sans reprise, deux processus, arrêt brutal).
 - `test/goal-mode-dev-runtime.test.js` : composition B1, permissions vivantes, règles projet, signalement des tâches interrompues, câblage serveur et flag.
 - `test/dev-task-id-namespace.test.js` : espace réservé, inventaire des appelants de `runTask`, `cancelTask`, `getTaskStatus` et `projectDecisionEvidence`, câblage des routes.

@@ -417,7 +417,11 @@ function assertExecutionRecord(record, state) {
       (record.status === "MAY_HAVE_STARTED" &&
        (startedAt === null || closedAt !== null || !unobserved || record.unknownReasonCode !== null)) ||
       (record.status === "RECONCILED" &&
-       (startedAt === null || closedAt === null || record.observedSteps !== 1 ||
+       (startedAt === null || closedAt === null || ![0, 1].includes(record.observedSteps) ||
+        // 4C-2 « jamais lancée » : 0 pas impose 0 essai, 0 appel et un coût nul.
+        (record.observedSteps === 0 &&
+         (record.observedRetries !== 0 || record.observedProviderCalls !== 0 ||
+          record.accountedCost !== 0 || ![null, 0].includes(record.observedActualCost))) ||
         record.observedRetries === null || record.observedProviderCalls === null ||
         record.accountedCost === null || record.accountingUnit !== "USD" ||
         (record.observedActualCost !== null &&
@@ -1493,7 +1497,9 @@ function reconcileGoalModeExecution(state, {
   reconciledAt,
 } = {}) {
   openExecutionRecord(state, reservationId, ["MAY_HAVE_STARTED"]);
-  if (observationComplete !== true || observedSteps !== 1 ||
+  if (observationComplete !== true || ![0, 1].includes(observedSteps) ||
+      (observedSteps === 0 && (observedRetries !== 0 || observedProviderCalls !== 0 ||
+        accountedCost !== 0 || ![null, 0].includes(observedActualCost))) ||
       !Number.isSafeInteger(observedRetries) || observedRetries < 0 ||
       !Number.isSafeInteger(observedProviderCalls) || observedProviderCalls < 0 ||
       typeof accountedCost !== "number" || !Number.isFinite(accountedCost) ||

@@ -145,6 +145,7 @@ const { createGoalDevRetryRuntime } = require("./services/goals/goal-dev-retry-r
 const { createGoalModeDevRuntime } = require("./services/goals/goal-mode-dev-runtime");
 const { createGoalModeDevHttpHandler, GOAL_MODE_DEV_HTTP_PREFIX } = require("./services/goals/goal-mode-dev-http-routes");
 const { reportInterruptedNativeDevTasks } = require("./services/dev/native-dev-interrupted-report");
+const { createDataDirectoryLock } = require("./services/runtime/data-directory-lock");
 const {
   goalDevRetryHttpStatus,
   normalizeGoalDevRetryPrepareRequest,
@@ -1137,6 +1138,7 @@ repository: sessionContinuityRepository,
 });
 let sessionRecoveryCompleted = false;
 let nativeDevInterruptedReported = false;
+let goalModeDevReconcileScanDone = false;
 const artifactEngine = createArtifactEngine({
   repository: artifactRepository,
   writableRoots: () => localPermissionStore.roots("read-write"),
@@ -1660,6 +1662,11 @@ const goalDevRetryRuntime =
  * démarrage ; un échec de composition n'empêche jamais Noon de démarrer.
  * Activation réelle : exige aussi 4C-2 (réconciliation) et B3 (UI).
  */
+// 4C-2 : verrou exclusif sur DATA_DIRECTORY, acquis au démarrage avant le
+// scan de réconciliation, jamais repris s'il est périmé, libéré à l'arrêt.
+const dataDirectoryLock = createDataDirectoryLock({ directory: DATA_DIRECTORY });
+process.once("exit", () => { try { dataDirectoryLock.release(); } catch {} });
+
 let goalModeDevRuntime = null;
 try {
   if (featureFlags.evaluate("goals.mode-dev", {}).mode !== "OFF") {
@@ -1679,6 +1686,7 @@ try {
       authorizePrivacy: authorizeOpenAIPrivacy,
       providerAdapter: openAIProviderAdapter,
       trackUsage,
+      dataDirectoryLock,
       observability: (event, metadata) => toolAuditLog.append(`goals.mode-dev.${event}`, metadata),
     });
   }
@@ -10396,6 +10404,26 @@ async function startNoonServer({
     });
   }
 
+  // 4C-2 : réconciliation au démarrage, seulement avec le verrou exclusif sur
+  // DATA_DIRECTORY (un seul processus Noon par dossier). Verrou détenu par un
+  // autre processus, périmé ou illisible : aucun scan, audit sans reprise.
+  if (goalModeDevRuntime && !goalModeDevReconcileScanDone && process.env.NOON_SAFE_MODE !== "1") {
+    goalModeDevReconcileScanDone = true;
+    const lock = dataDirectoryLock.acquire();
+    if (lock.acquired) {
+      try {
+        const summary = goalModeDevRuntime.dispatchService.reconcileAtStartup();
+        toolAuditLog.append("goals.mode-dev.reconcile_scan", { ...summary });
+      } catch (error) {
+        toolAuditLog.append("goals.mode-dev.reconcile_scan_failed", {
+          code: String(error?.code || error?.name || "SCAN_FAILED").slice(0, 80),
+        });
+      }
+    } else {
+      toolAuditLog.append("goals.mode-dev.RECONCILE_SCAN_SKIPPED_LOCK", { reason: lock.reason });
+    }
+  }
+
   // Le safe mode conserve le serveur local mais suspend les travaux autonomes.
   if (process.env.NOON_SAFE_MODE !== "1") backgroundJobEngine?.start();
 
@@ -10420,6 +10448,7 @@ async function startNoonServer({
 
 function stopNoonServer() {
   backgroundJobEngine?.stop();
+  try { dataDirectoryLock.release(); } catch {}
   if (!server.listening) return Promise.resolve();
 
   return new Promise((resolve, reject) => {

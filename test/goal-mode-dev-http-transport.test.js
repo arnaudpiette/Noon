@@ -57,7 +57,9 @@ async function harness({ goal = goalFixture() } = {}) {
   const repositoryRoot = fs.realpathSync(repository);
   const database = createPersonalDatabase(path.join(directory, "personal.sqlite"));
   const state = {
-    enabled: true, preference: "BALANCED", ledgerCalls: 0, providerCalls: 0,
+    enabled: true, preference: "BALANCED", ledgerCalls: 0, providerCalls: 0, ledgerEntries: [],
+    // Façade factice réaliste (4C-2) : NORMAL | SKIP_CLAIM (feature gate) | INTERRUPT.
+    facadeMode: "NORMAL", facadeCalls_: 0, callCost: { estimatedCost: 0.06, actualCost: 0.05 }, unknownPending: false,
     facadeCalls: [], cancels: [], gate: null, audit: [],
   };
   const workspace = {
@@ -65,20 +67,56 @@ async function harness({ goal = goalFixture() } = {}) {
     projects: [{ id: "project-b2", rootPath: repositoryRoot }],
     relevantRoots: [{ path: writable, mode: "read-write" }],
   };
-  const runtime = createGoalModeDevRuntime({
-    database,
+  const journal = createDevTaskJournal({ directory: path.join(directory, "journal") });
+  state.clockOffset = 0;
+  state.events = [];
+  // Construit un runtime sur ces données ; appelé à nouveau pour simuler un redémarrage.
+  const makeRuntime = (databaseHandle, lock = { isHeld: () => state.lockHeld === true }) => createGoalModeDevRuntime({
+    database: databaseHandle,
+    dataDirectoryLock: lock,
+    now: () => new Date(Date.now() + state.clockOffset),
+    observability: (event, metadata) => state.events.push({ event, metadata }),
     goalStrategyEngine: { registry: { get: (goalId) => (goalId === goal.goalId ? goal : null), list: () => [goal] } },
     workspaceEngine: { context: (id) => (id === "workspace-b2" ? workspace : null) },
-    devBudgetService: { effectiveRemaining: () => 10, taskProviderCalls: () => state.ledgerCalls },
-    devTaskJournal: createDevTaskJournal({ directory: path.join(directory, "journal") }),
+    // Ledger factice : entrées contrôlables par taskId (4C-2).
+    devBudgetService: {
+      effectiveRemaining: () => 10,
+      taskProviderCalls: (taskId) => state.ledgerCalls +
+        state.ledgerEntries.filter((entry) => entry.taskId === taskId && entry.status !== "RELEASED").length,
+      entries: () => state.ledgerEntries.map((entry) => ({ ...entry })),
+    },
+    devTaskJournal: journal,
     approvalEngine: createApprovalEngine({}),
     operationalSecurityPolicy: createOperationalSecurityPolicy(),
     projectRuleResolver: { resolve: () => ({ applied: [{ text: "SYNTHETIC_PROJECT_RULE_B2" }] }) },
     nativeDevFacade: {
       async runTask(payload) {
         state.facadeCalls.push(payload);
+        // Processus bloqué avant la réservation de démarrage (jamais résolu).
+        if (state.facadeMode === "HANG_BEFORE_CLAIM") return new Promise(() => {});
+        if (state.facadeMode === "SKIP_CLAIM") {
+          // Feature gate désactivé : retour avant la réservation de démarrage.
+          return { taskId: payload.taskId, status: "FAILED", finalVerdict: "FAIL", failureCategory: "FEATURE_DISABLED" };
+        }
+        journal.claim(payload.taskId, { source: "B3" });
+        state.ledgerEntries.push({ taskId: payload.taskId, status: "RECONCILED", ...state.callCost });
+        if (state.facadeMode === "HANG_AFTER_CLAIM") return new Promise(() => {});
+        if (state.reservedLeftover) {
+          state.ledgerEntries.push({ taskId: payload.taskId, status: "RESERVED", estimatedCost: 0.03, actualCost: null });
+        }
+        if (state.unknownPending) {
+          state.ledgerEntries.push({ taskId: payload.taskId, status: "UNKNOWN_PENDING_RECONCILIATION", estimatedCost: 0.07, actualCost: null });
+        }
         if (state.gate) await state.gate.promise;
-        return { taskId: payload.taskId, status: "COMPLETED", finalVerdict: "PASS" };
+        if (state.facadeMode === "INTERRUPT") throw Object.assign(new Error("interrupted"), { code: "SYNTHETIC_INTERRUPT" });
+        const cancelled = state.cancels.includes(payload.taskId);
+        journal.finish(payload.taskId, cancelled ? "CANCELLED" : "PASS", cancelled ? "CANCELLED" : null);
+        const calls = state.ledgerEntries.filter((entry) => entry.taskId === payload.taskId)
+          .map(() => ({ provider: "openai", model: "synthetic-model" }));
+        return {
+          taskId: payload.taskId, status: cancelled ? "CANCELLED" : "COMPLETED",
+          finalVerdict: cancelled ? "CANCELLED" : "PASS", metrics: { providerCalls: calls },
+        };
       },
       cancelTask(taskId) { state.cancels.push(taskId); return { cancelled: true }; },
       getTaskStatus() { return { status: "RUNNING", finalVerdict: null, failureCategory: null }; },
@@ -110,6 +148,7 @@ async function harness({ goal = goalFixture() } = {}) {
       },
     },
   });
+  const runtime = makeRuntime(database);
   const handler = createGoalModeDevHttpHandler({
     runtime,
     goalStrategyEngine: { registry: { get: (goalId) => (goalId === goal.goalId ? goal : null) } },
@@ -128,6 +167,7 @@ async function harness({ goal = goalFixture() } = {}) {
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
+  const restarted = [];
   async function call(method, route, body, { trusted = true, signal } = {}) {
     const response = await fetch(`${origin}/api/goals/mode-dev/${route}`, {
       method,
@@ -142,7 +182,13 @@ async function harness({ goal = goalFixture() } = {}) {
     return { status: response.status, body: response.ok ? json.result : json, raw: json };
   }
   return {
-    directory, repositoryRoot, database, runtime, server, state, call, goal,
+    directory, repositoryRoot, database, runtime, server, state, call, goal, journal,
+    // Redémarrage simulé : nouvelle connexion SQLite, nouveau runtime, mêmes données.
+    restart(lock) {
+      const handle = createPersonalDatabase(path.join(directory, "personal.sqlite"));
+      restarted.push(handle);
+      return makeRuntime(handle, lock);
+    },
     async createRunning() {
       const created = await call("POST", "runs", {
         goalId: "goal-b2", workspaceId: "workspace-b2", projectId: "project-b2", userConfirmed: true,
@@ -173,6 +219,7 @@ async function harness({ goal = goalFixture() } = {}) {
     },
     async close() {
       await new Promise((resolve) => server.close(resolve));
+      for (const handle of restarted) handle.close();
       database.close();
       fs.rmSync(directory, { recursive: true, force: true });
     },
@@ -232,10 +279,23 @@ test("B2 transport : parcours complet run → planning → proposition → prepa
     assert.equal(Object.hasOwn(dispatched.body, "display"), false);
     assert.equal(h.state.facadeCalls.length, 1);
     assert.deepEqual(h.state.facadeCalls[0].projectInstructions, ["SYNTHETIC_PROJECT_RULE_B2"]);
+    // 4C-2 : réconciliation immédiate en fin de resume, comptabilité exacte.
+    assert.deepEqual(dispatched.body.reconciliation.accounting,
+      { providerCalls: 1, accountedCost: 0.05, actualCostKnown: true });
+    assert.equal(dispatched.body.reconciliation.outcome, "RECONCILED");
+    assert.equal(dispatched.body.reconciliation.basis, "ACTUAL");
+    assert.equal(dispatched.body.reconciliationRequired, false);
     const reservation = await h.call("GET", `runs/${run.runId}/reservations/${prepared.body.reservationId}`);
     assert.equal(reservation.status, 200);
-    assert.equal(reservation.body.reservationStatus, "MAY_HAVE_STARTED");
+    assert.equal(reservation.body.reservationStatus, "RECONCILED");
+    assert.equal(reservation.body.observation.journal, "TERMINAL");
+    assert.deepEqual(reservation.body.observation.ledger, { RECONCILED: 1 });
     assert.equal(JSON.stringify(reservation.body).includes("goal-mode-dev-"), false);
+    const after = await h.call("GET", `runs/${run.runId}`);
+    // Usage du run : planning (1 appel) + DEV réconcilié (1 appel, 0,05 USD), une seule fois.
+    assert.equal(after.body.usage.steps, 1);
+    assert.equal(after.body.usage.providerCalls, current.body.usage.providerCalls + 1);
+    assert.ok(Math.abs(after.body.usage.estimatedCost - (current.body.usage.estimatedCost + 0.05)) < 1e-9);
     const replay = await h.call("POST", "dispatch/resume", {
       approvalId: prepared.body.approval.approvalId, resumeToken: prepared.body.resumeToken, decision: "approve",
     });
@@ -469,6 +529,9 @@ test("B2 transport : annulation pendant un dispatch, statut, puis fin du dispatc
     h.state.gate.resolve();
     const done = await pending;
     assert.equal(done.status, 200);
+    // Annulation observée complètement (journal terminal CANCELLED) : RECONCILED.
+    assert.equal(done.body.reconciliation.outcome, "RECONCILED");
+    assert.equal(h.journal.load(h.state.facadeCalls[0].taskId).state, "CANCELLED");
   } finally { await h.close(); }
 });
 
@@ -491,7 +554,7 @@ test("B2 transport : une déconnexion du client ne coupe pas le dispatch", async
     const entry = h.state.audit.find((item) => item.metadata.route === "POST dispatch/resume");
     assert.equal(entry.metadata.status, 200); // dispatch terminé côté serveur
     const status = await h.call("GET", `runs/${runId}/reservations/${prepared.reservationId}`);
-    assert.equal(status.body.reservationStatus, "MAY_HAVE_STARTED");
+    assert.equal(status.body.reservationStatus, "RECONCILED"); // réconcilié malgré la déconnexion
     assert.equal(h.state.facadeCalls.length, 1);
   } finally { await h.close(); }
 });
@@ -522,5 +585,222 @@ test("B2 transport : proposition d'un autre run introuvable", async () => {
     const response = await h.call("GET", `runs/${other.runId}/proposals/${planned.stepId}`);
     assert.equal(response.status, 404);
     assert.equal(response.body.code, "GOAL_MODE_DEV_PROPOSAL_NOT_FOUND");
+  } finally { await h.close(); }
+});
+
+// ---- 4C-2 : réconciliation ----
+
+async function dispatchDirect(h, prepared) {
+  return h.runtime.dispatchService.resume({
+    approvalId: prepared.approval.approvalId, resumeToken: prepared.resumeToken, decision: "approve",
+  });
+}
+
+test("4C-2 fin de resume : façade jamais atteinte (feature gate) → RECONCILED à engagement nul", async () => {
+  const h = await harness();
+  try {
+    const { runId, revision, prepared } = await h.prepared();
+    const before = (await h.call("GET", `runs/${runId}`)).body;
+    h.state.facadeMode = "SKIP_CLAIM";
+    const dispatched = await h.call("POST", "dispatch/resume", {
+      approvalId: prepared.approval.approvalId, resumeToken: prepared.resumeToken, decision: "approve",
+    });
+    assert.equal(dispatched.status, 200, JSON.stringify(dispatched.body));
+    assert.deepEqual(dispatched.body.reconciliation, {
+      outcome: "RECONCILED", reason: "NEVER_LAUNCHED", basis: "NEVER_LAUNCHED", reservationStatus: "RECONCILED",
+      accounting: { providerCalls: 0, accountedCost: 0, actualCostKnown: true }, durationMs: null,
+    });
+    const record = h.runtime.runStore.get(runId).state.executionReservations.at(-1);
+    assert.equal(record.observedSteps, 0);
+    assert.equal(record.observedProviderCalls, 0);
+    const after = (await h.call("GET", `runs/${runId}`)).body;
+    assert.deepEqual(after.usage, before.usage); // rien consommé
+    assert.ok(revision > 0);
+  } finally { await h.close(); }
+});
+
+test("4C-2 appel au résultat inconnu + journal terminal → RECONCILED prudent, basis visible dans l'audit et la route", async () => {
+  const h = await harness();
+  try {
+    const { runId, prepared } = await h.prepared();
+    h.state.unknownPending = true;
+    const dispatched = await h.call("POST", "dispatch/resume", {
+      approvalId: prepared.approval.approvalId, resumeToken: prepared.resumeToken, decision: "approve",
+    });
+    assert.equal(dispatched.status, 200, JSON.stringify(dispatched.body));
+    assert.equal(dispatched.body.reconciliation.basis, "ESTIMATED_UPPER_BOUND");
+    const accounting = dispatched.body.reconciliation.accounting;
+    assert.equal(accounting.providerCalls, 2);
+    assert.equal(accounting.actualCostKnown, false);
+    assert.ok(Math.abs(accounting.accountedCost - 0.12) < 1e-9); // somme IEEE exacte de 0,05 + 0,07
+    const record = h.runtime.runStore.get(runId).state.executionReservations.at(-1);
+    assert.equal(record.status, "RECONCILED");
+    assert.equal(record.observedActualCost, null);
+    assert.equal(record.accountedCost, accounting.accountedCost);
+    const audit = h.state.events.find((item) => item.event === "goal_mode_dev.reconciliation");
+    assert.equal(audit.metadata.basis, "ESTIMATED_UPPER_BOUND");
+    assert.equal(audit.metadata.trigger, "RESUME_END");
+    assert.equal(JSON.stringify(h.state.events).includes("SYNTHETIC_PRIVATE_OBJECTIVE"), false);
+  } finally { await h.close(); }
+});
+
+test("4C-2 tâche interrompue (journal non terminal) → UNKNOWN, puis plus aucune réservation", async () => {
+  const h = await harness();
+  try {
+    const { runId, prepared } = await h.prepared();
+    h.state.facadeMode = "INTERRUPT";
+    const dispatched = await h.call("POST", "dispatch/resume", {
+      approvalId: prepared.approval.approvalId, resumeToken: prepared.resumeToken, decision: "approve",
+    });
+    assert.equal(dispatched.status, 502);
+    assert.equal(dispatched.body.code, "GOAL_MODE_DEV_DISPATCH_OUTCOME_UNCERTAIN");
+    assert.equal(dispatched.body.details.status, "UNKNOWN");
+    const record = h.runtime.runStore.get(runId).state.executionReservations.at(-1);
+    assert.equal(record.status, "UNKNOWN");
+    assert.equal(record.unknownReasonCode, "OUTCOME_UNCERTAIN");
+    assert.equal(record.observedProviderCalls, 1);
+  } finally { await h.close(); }
+});
+
+test("4C-2 ledger encore en cours → aucune transition ; route explicite ensuite, idempotente, conflit refusé", async () => {
+  const h = await harness();
+  try {
+    const { runId, prepared } = await h.prepared();
+    h.state.reservedLeftover = true;
+    const dispatched = await h.call("POST", "dispatch/resume", {
+      approvalId: prepared.approval.approvalId, resumeToken: prepared.resumeToken, decision: "approve",
+    });
+    assert.equal(dispatched.status, 200);
+    assert.equal(dispatched.body.reconciliation.outcome, "UNCHANGED");
+    assert.equal(dispatched.body.reconciliation.reason, "LEDGER_IN_PROGRESS");
+    assert.equal(dispatched.body.reconciliationRequired, true);
+    let run = await h.call("GET", `runs/${runId}`);
+    const stale = await h.call("POST", "dispatch/reconcile", {
+      runId, expectedRevision: run.body.revision - 1, reservationId: prepared.reservationId,
+    });
+    assert.equal(stale.status, 409);
+    const injected = await h.call("POST", "dispatch/reconcile", {
+      runId, expectedRevision: run.body.revision, reservationId: prepared.reservationId, taskId: "goal-mode-dev-x",
+    });
+    assert.equal(injected.status, 400);
+    const ledgerBefore = JSON.stringify(h.state.ledgerEntries);
+    const facadeBefore = h.state.facadeCalls.length;
+    const stillRunning = await h.call("POST", "dispatch/reconcile", {
+      runId, expectedRevision: run.body.revision, reservationId: prepared.reservationId,
+    });
+    assert.equal(stillRunning.body.outcome, "UNCHANGED");
+    // L'appel en suspens se règle (ledger), puis réconciliation explicite.
+    h.state.ledgerEntries.find((entry) => entry.status === "RESERVED").status = "RECONCILED";
+    const done = await h.call("POST", "dispatch/reconcile", {
+      runId, expectedRevision: run.body.revision, reservationId: prepared.reservationId,
+    });
+    assert.equal(done.status, 200, JSON.stringify(done.body));
+    assert.equal(done.body.outcome, "RECONCILED");
+    assert.equal(done.body.basis, "ESTIMATED_UPPER_BOUND");
+    assert.equal(done.body.accounting.providerCalls, 2);
+    run = await h.call("GET", `runs/${runId}`);
+    const again = await h.call("POST", "dispatch/reconcile", {
+      runId, expectedRevision: run.body.revision, reservationId: prepared.reservationId,
+    });
+    assert.equal(again.body.outcome, "UNCHANGED");
+    assert.equal(again.body.reason, "NOT_MAY_HAVE_STARTED");
+    // Réconcilier n'appelle jamais le dispatcher et n'écrit jamais le ledger.
+    assert.equal(h.state.facadeCalls.length, facadeBefore);
+    assert.equal(h.state.cancels.length, 0);
+    assert.notEqual(JSON.stringify(h.state.ledgerEntries), ledgerBefore); // modifié par le test seulement
+  } finally { await h.close(); }
+});
+
+test("4C-2 redémarrage : scan au démarrage sous verrou, jamais lancée et interrompue, RELEASED ignorée", async () => {
+  const h = await harness();
+  try {
+    // Run A : bloqué avant la réservation de démarrage (crash entre CAS et façade).
+    const a = await h.prepared();
+    h.state.facadeMode = "HANG_BEFORE_CLAIM";
+    dispatchDirect(h, a.prepared);
+    await waitFor(() => h.runtime.runStore.get(a.runId).state.executionReservations.at(-1).status === "MAY_HAVE_STARTED", "A");
+    // Run B : bloqué après la réservation de démarrage (tâche interrompue).
+    const b = await h.prepared();
+    h.state.facadeMode = "HANG_AFTER_CLAIM";
+    dispatchDirect(h, b.prepared);
+    await waitFor(() => h.journal.lookup(h.state.facadeCalls.at(-1).taskId).status === "PRESENT", "B");
+    // Run C : réservation libérée (ignorée par le scan).
+    const c = await h.prepared();
+    h.runtime.runStore.releaseExecution(c.runId, {
+      expectedRevision: h.runtime.runStore.get(c.runId).revision, reservationId: c.prepared.reservationId,
+    });
+    const facadeBefore = h.state.facadeCalls.length;
+    const ledgerBefore = JSON.stringify(h.state.ledgerEntries);
+    // Sans verrou : aucun scan.
+    const unlocked = h.restart({ isHeld: () => false });
+    assert.throws(() => unlocked.dispatchService.reconcileAtStartup(), { code: "GOAL_MODE_DEV_RECONCILE_LOCK_REQUIRED" });
+    // Avec verrou : le processus d'origine est réputé disparu.
+    const restarted = h.restart({ isHeld: () => true });
+    const summary = restarted.dispatchService.reconcileAtStartup();
+    assert.deepEqual({ ...summary }, { scanned: 2, reconciled: 1, unknown: 1, unchanged: 0, failed: 0 });
+    const statusOf = (runId) => restarted.runStore.get(runId).state.executionReservations.at(-1);
+    assert.equal(statusOf(a.runId).status, "RECONCILED");
+    assert.equal(statusOf(a.runId).observedSteps, 0);
+    assert.equal(statusOf(b.runId).status, "UNKNOWN");
+    assert.equal(statusOf(b.runId).unknownReasonCode, "OUTCOME_UNCERTAIN");
+    assert.equal(statusOf(c.runId).status, "RELEASED");
+    // Rejouer le scan ne change rien (idempotent), sans aucun effet de bord.
+    assert.deepEqual({ ...restarted.dispatchService.reconcileAtStartup() },
+      { scanned: 0, reconciled: 0, unknown: 0, unchanged: 0, failed: 0 });
+    assert.equal(h.state.facadeCalls.length, facadeBefore);
+    assert.equal(JSON.stringify(h.state.ledgerEntries), ledgerBefore);
+  } finally { await h.close(); }
+});
+
+test("4C-2 route explicite « jamais lancée » : dispatch en cours, verrou, délai de grâce de 2 min", async () => {
+  const h = await harness();
+  try {
+    const { runId, prepared } = await h.prepared();
+    h.state.facadeMode = "HANG_BEFORE_CLAIM";
+    dispatchDirect(h, prepared);
+    await waitFor(() => h.runtime.runStore.get(runId).state.executionReservations.at(-1).status === "MAY_HAVE_STARTED", "dispatch");
+    let revision = h.runtime.runStore.get(runId).revision;
+    const input = { runId, expectedRevision: revision, reservationId: prepared.reservationId };
+    // Même processus, dispatch en cours : jamais de conclusion.
+    h.state.lockHeld = true;
+    h.state.clockOffset = 10 * 60_000;
+    assert.equal(h.runtime.dispatchService.reconcileExecution(input).reason, "IN_PROGRESS");
+    // Autre processus (redémarré) : verrou requis, puis délai de grâce.
+    h.state.clockOffset = 0;
+    const lockState = { held: false };
+    const other = h.restart({ isHeld: () => lockState.held });
+    assert.equal(other.dispatchService.reconcileExecution(input).reason, "LOCK_NOT_HELD");
+    lockState.held = true;
+    assert.equal(other.dispatchService.reconcileExecution(input).reason, "GRACE_PERIOD");
+    h.state.clockOffset = 119_000;
+    assert.equal(other.dispatchService.reconcileExecution(input).reason, "GRACE_PERIOD");
+    h.state.clockOffset = 121_000;
+    const result = other.dispatchService.reconcileExecution(input);
+    assert.equal(result.outcome, "RECONCILED");
+    assert.equal(result.basis, "NEVER_LAUNCHED");
+    revision = other.runStore.get(runId).revision;
+    assert.equal(other.runStore.get(runId).state.executionReservations.at(-1).observedSteps, 0);
+    assert.ok(revision > input.expectedRevision);
+  } finally { await h.close(); }
+});
+
+test("4C-2 course entre deux processus sur la même réservation : un seul CAS gagne", async () => {
+  const h = await harness();
+  try {
+    const { runId, prepared } = await h.prepared();
+    h.state.reservedLeftover = true;
+    await dispatchDirect(h, prepared);
+    h.state.ledgerEntries.find((entry) => entry.status === "RESERVED").status = "RECONCILED";
+    const revision = h.runtime.runStore.get(runId).revision;
+    const input = { runId, expectedRevision: revision, reservationId: prepared.reservationId };
+    const first = h.restart({ isHeld: () => true });
+    const second = h.restart({ isHeld: () => true });
+    const won = first.dispatchService.reconcileExecution(input);
+    assert.equal(won.outcome, "RECONCILED");
+    assert.throws(() => second.dispatchService.reconcileExecution(input), { code: "GOAL_MODE_RUN_PERSISTENCE_CONFLICT" });
+    const usage = h.runtime.runStore.get(runId).state.usage;
+    // Comptabilité appliquée une seule fois.
+    assert.equal(h.runtime.runStore.get(runId).state.executionReservations.at(-1).observedProviderCalls, 2);
+    assert.ok(usage.providerCalls >= 2);
   } finally { await h.close(); }
 });

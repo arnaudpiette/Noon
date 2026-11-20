@@ -143,6 +143,13 @@ function normalizeRelease(body) {
   });
 }
 
+function normalizeReconcile(body) {
+  exactKeys(body, ["runId", "expectedRevision", "reservationId"]);
+  return Object.freeze({
+    runId: id(body.runId), expectedRevision: revision(body.expectedRevision), reservationId: id(body.reservationId),
+  });
+}
+
 function normalizePathId(value) {
   let decoded;
   try { decoded = decodeURIComponent(String(value ?? "")); } catch { fail(); }
@@ -218,6 +225,19 @@ function projectPlanning(result) {
   });
 }
 
+// 4C-2 : résumé de réconciliation sans contenu (basis visible).
+function projectReconciliation(result) {
+  if (!result) return null;
+  return Object.freeze({
+    outcome: result.outcome,
+    reason: typeof result.reason === "string" ? result.reason.slice(0, 80) : null,
+    basis: result.basis ?? null,
+    reservationStatus: result.reservationStatus ?? null,
+    accounting: result.accounting ? { ...result.accounting } : null,
+    durationMs: Number.isFinite(result.durationMs) ? result.durationMs : null,
+  });
+}
+
 function projectDispatch(result) {
   if (result?.status === "rejected") {
     return Object.freeze({ status: "rejected", reservationId: result.reservationId });
@@ -228,7 +248,8 @@ function projectDispatch(result) {
     reservationId: result.reservationId,
     mayHaveStartedRevision: result.mayHaveStartedRevision,
     native: { status: pick(result.devResult?.status), finalVerdict: pick(result.devResult?.finalVerdict) },
-    reconciliationRequired: true,
+    reconciliation: projectReconciliation(result.reconciliation),
+    reconciliationRequired: result.reconciliationRequired !== false,
   });
 }
 
@@ -271,6 +292,11 @@ function projectReservation(status) {
     dispatchedByThisInstance: status.dispatchedByThisInstance === true,
     cancelRequested: status.cancelRequested === true,
     native: status.native ? { ...status.native } : null,
+    observation: status.observation ? {
+      journal: status.observation.journal,
+      ledger: status.observation.ledger ? { ...status.observation.ledger } : null,
+      durationMs: status.observation.durationMs,
+    } : null,
   });
 }
 
@@ -297,7 +323,7 @@ const STATUS_BY_CODE = new Map([
     "GOAL_MODE_DEV_DISPATCH_STALE", "GOAL_MODE_DEV_DISPATCH_RENEW_UNAVAILABLE",
     "GOAL_MODE_DEV_CANCEL_UNAVAILABLE", "GOAL_MODE_DEV_DISPATCH_RECONCILIATION_REQUIRED",
     "GOAL_MODE_DEV_DISPATCH_ALREADY_ATTEMPTED", "GOAL_MODE_DEV_DISPATCH_IN_PROGRESS",
-    "GOAL_MODE_DEV_RUN_NOT_PAUSED", "GOAL_MODE_DEV_RUN_NOT_READY", "GOAL_MODE_DEV_DISPATCH_RUN_NOT_RUNNING",
+    "GOAL_MODE_DEV_RUN_NOT_PAUSED", "GOAL_MODE_DEV_RUN_NOT_READY", "GOAL_MODE_DEV_RECONCILE_LOCK_REQUIRED", "GOAL_MODE_DEV_DISPATCH_RUN_NOT_RUNNING",
     "GOAL_MODE_RUN_NOT_RUNNING", "APPROVAL_INVALID", "APPROVAL_IN_FLIGHT"].map((code) => [code, 409]),
   ...["approval_expired", "APPROVAL_CONSUMED"].map((code) => [code, 410]),
   ...["GOAL_MODE_DEV_LOCAL_ONLY_REQUIRED", "GOAL_MODE_DEV_DISPATCH_PERMISSION_REVOKED",
@@ -313,7 +339,8 @@ const STATUS_BY_CODE = new Map([
   ...["GOAL_MODE_DEV_DISPATCH_OUTCOME_UNCERTAIN"].map((code) => [code, 502]),
   ...["GOAL_MODE_EXECUTION_ATOMIC_BACKEND_REQUIRED", "APPROVAL_STORAGE_ERROR",
     "GOAL_MODE_DEV_RUNTIME_NOT_READY", "GOAL_MODE_EXECUTION_JOURNAL_REQUIRED",
-    "GOAL_MODE_EXECUTION_RELEASE_JOURNAL_REQUIRED", "GOAL_MODE_EXECUTION_RELEASE_LEDGER_REQUIRED"]
+    "GOAL_MODE_EXECUTION_RELEASE_JOURNAL_REQUIRED", "GOAL_MODE_EXECUTION_RELEASE_LEDGER_REQUIRED",
+    "GOAL_MODE_DEV_RECONCILIATION_UNAVAILABLE"]
     .map((code) => [code, 503]),
 ]);
 
@@ -358,6 +385,7 @@ module.exports = {
   normalizePlanning,
   normalizePrepare,
   normalizeRelease,
+  normalizeReconcile,
   normalizeRenew,
   normalizeResume,
   normalizeResumeRun,
@@ -369,6 +397,7 @@ module.exports = {
   projectHalt,
   projectPlanning,
   projectProposal,
+  projectReconciliation,
   projectRelease,
   projectReservation,
   projectResumeRun,

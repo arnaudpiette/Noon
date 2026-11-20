@@ -763,9 +763,10 @@ test("RELEASED × dispatch : aucune libération automatique, ticket invalidé, c
   try {
     const service = f.makeService();
     // 4C-1D ajoute pause/reprise/arrêt/statut ; toujours ni libération ni dispatch publics.
+    // 4C-2 ajoute la réconciliation explicite et au démarrage (jamais de libération).
     assert.deepEqual(Object.keys(service).sort(), [
-      "cancelExecution", "executionStatus", "pauseRun", "prepare", "renewApproval",
-      "resume", "resumeRun", "stopRun",
+      "cancelExecution", "executionStatus", "pauseRun", "prepare", "reconcileAtStartup",
+      "reconcileExecution", "renewApproval", "resume", "resumeRun", "stopRun",
     ]);
     assert.equal(Object.keys(service).some((key) => /release|dispatch/i.test(key)), false);
     const prepared = f.prepare(service);
@@ -1440,6 +1441,7 @@ test("4C-1D executionStatus : projection minimale, sans donnée privée", async 
       runId, runStatus: "RUNNING", runRevision: prepared.ticket.reservedRevision,
       reservationId: prepared.ticket.reservationId, reservationStatus: "PREPARED",
       dispatchedByThisInstance: false, cancelRequested: false, native: null,
+      observation: null, // pas de lecteur d'observation dans ce fixture
     });
     const gate = deferred();
     f.dispatcher.behaviour = () => gate.promise;

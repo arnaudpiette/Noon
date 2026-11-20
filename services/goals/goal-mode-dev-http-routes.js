@@ -160,6 +160,11 @@ function createGoalModeDevHttpHandler({
       const input = contract.normalizeCancel(await body(req));
       return [200, contract.projectCancel(runtime.dispatchService.cancelExecution(input))];
     },
+    // 4C-2 : réconciliation explicite (CAS seulement, jamais de replay).
+    "POST dispatch/reconcile": async (req) => {
+      const input = contract.normalizeReconcile(await body(req));
+      return [200, contract.projectReconciliation(runtime.dispatchService.reconcileExecution(input))];
+    },
     "POST dispatch/release": async (req) => {
       const input = contract.normalizeRelease(await body(req));
       const snapshot = runtime.runStore.releaseExecution(input.runId, {

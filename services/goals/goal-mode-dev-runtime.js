@@ -30,6 +30,10 @@ const { createGoalModeDevProjectionService } = require("./goal-mode-dev-projecti
 const { createGoalModeDevDispatchService } = require("./goal-mode-dev-dispatch-service");
 const { OPERATION, SKILL_NAME } = require("./goal-mode-dev-approval-action");
 const {
+  createGoalModeDevObservationBroker,
+  createGoalModeDevObservationReader,
+} = require("./goal-mode-dev-observation");
+const {
   createGoalModeRunRepository,
 } = require("../persistence/repositories/goal-mode-run-repository");
 const {
@@ -77,6 +81,7 @@ function createGoalModeDevRuntime({
   authorizePrivacy,
   providerAdapter,
   trackUsage = null,
+  dataDirectoryLock = null,
   now = () => new Date(),
   observability = null,
 } = {}) {
@@ -85,6 +90,7 @@ function createGoalModeDevRuntime({
       typeof workspaceEngine?.context !== "function" ||
       typeof devBudgetService?.effectiveRemaining !== "function" ||
       typeof devBudgetService?.taskProviderCalls !== "function" ||
+      typeof devBudgetService?.entries !== "function" ||
       typeof devTaskJournal?.lookup !== "function" ||
       typeof approvalEngine?.prepareAction !== "function" ||
       typeof operationalSecurityPolicy?.createActionRequest !== "function" ||
@@ -118,9 +124,14 @@ function createGoalModeDevRuntime({
     },
   });
 
+  // 4C-2 : observation (journal + ledger) et relais vers le store.
+  const observationReader = createGoalModeDevObservationReader({ devTaskJournal, devBudgetService });
+  const observationBroker = createGoalModeDevObservationBroker();
+
   const runStore = createGoalModeRunStore({
     repository: createGoalModeRunRepository(database),
     devProjectionService: lazyProjection,
+    devObservationReader: observationBroker,
     devTaskLedger: devBudgetService,
     devTaskJournal,
     now: nowIso,
@@ -250,6 +261,9 @@ function createGoalModeDevRuntime({
     approvalEngine,
     devTaskJournal,
     projectRulesResolver,
+    observationReader,
+    observationBroker,
+    dataDirectoryLock,
     now,
     observability: (event, metadata) => emit(event, metadata),
   });

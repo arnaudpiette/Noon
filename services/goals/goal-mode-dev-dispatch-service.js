@@ -18,6 +18,10 @@
  *   releasePrepared, désactivé par défaut, passe par releaseExecution.
  *   resumeRun ne réactive rien. cancelExecution demande l'arrêt d'une tâche
  *   MAY_HAVE_STARTED sans changer son statut (réconciliation 4C-2).
+ * - 4C-2 : réconciliation MAY_HAVE_STARTED → RECONCILED | UNKNOWN à partir du
+ *   journal, du ledger et du résultat en mémoire ; en fin de resume, au
+ *   démarrage (verrou DATA_DIRECTORY) ou sur action explicite. Elle ne fait
+ *   qu'un CAS : jamais d'appel au dispatcher, à l'arrêt ni au ledger.
  * - Aucune permission n'est accordée ici, aucune libération implicite.
  * - Le service n'est pas câblé au serveur : le dispatcher est injecté.
  */
@@ -193,6 +197,9 @@ function createGoalModeDevDispatchService({
   approvalEngine,
   devTaskJournal,
   projectRulesResolver,
+  observationReader = null,
+  observationBroker = null,
+  dataDirectoryLock = null,
   targetInspector = defaultTargetInspector,
   now = () => new Date(),
   approvalTtlMs = APPROVAL_TTL_MS,
@@ -658,15 +665,22 @@ function createGoalModeDevDispatchService({
       projectInstructions: [...internal.projectInstructions],
     };
     let devResult;
+    let dispatchError = null;
     try {
       devResult = await dispatcher.runTask(payload);
     } catch (error) {
+      dispatchError = error;
+    }
+    // 4C-2 : réconciliation immédiate, dans le processus qui a dispatché.
+    const reconciliation = settleAfterDispatch(ticket, dispatchError ? null : devResult);
+    if (dispatchError) {
       fail("GOAL_MODE_DEV_DISPATCH_OUTCOME_UNCERTAIN",
         "Issue DEV incertaine : réconciliation requise, aucun replay.", {
           reservationId: ticket.reservationId,
           mayHaveStartedRevision: started.revision,
-          causeCode: typeof error?.code === "string" ? error.code.slice(0, 80) : null,
-          reconciliationRequired: true,
+          causeCode: typeof dispatchError?.code === "string" ? dispatchError.code.slice(0, 80) : null,
+          reconciliationRequired: reconciliation.outcome === "UNCHANGED",
+          status: reconciliation.reservationStatus || undefined,
         });
     }
     return Object.freeze({
@@ -675,7 +689,8 @@ function createGoalModeDevDispatchService({
       approvalId: internal.approvalId,
       mayHaveStartedRevision: started.revision,
       devResult,
-      reconciliationRequired: true,
+      reconciliation,
+      reconciliationRequired: reconciliation.outcome === "UNCHANGED",
       authority: Object.freeze({
         approvalConsumedBy: "ApprovalEngine",
         capabilitiesGranted: false,
@@ -926,7 +941,123 @@ function createGoalModeDevDispatchService({
       dispatchedByThisInstance: attempted.has(reservationId),
       cancelRequested: reservations.get(reservationId)?.cancelRequested === true,
       native,
+      observation: observationReader ? observationReader.summarize(record.binding) : null,
     });
+  }
+
+  // ---- 4C-2 : réconciliation ----
+
+  function reconciliationAvailable() {
+    return Boolean(observationReader && observationBroker &&
+      typeof runStore.reconcileExecution === "function" &&
+      typeof runStore.markExecutionUnknown === "function");
+  }
+
+  function reconcileReservation({ runId, reservationId, expectedRevision = null, trigger, devResult = null }) {
+    if (!reconciliationAvailable()) {
+      fail("GOAL_MODE_DEV_RECONCILIATION_UNAVAILABLE", "Réconciliation Goal Mode DEV indisponible.");
+    }
+    const { snapshot, record } = reservationRecord(runId, reservationId);
+    if (expectedRevision !== null && snapshot.revision !== expectedRevision) {
+      fail("GOAL_MODE_RUN_PERSISTENCE_CONFLICT", "Goal Run modifié concurremment.");
+    }
+    if (record.status !== "MAY_HAVE_STARTED") {
+      return Object.freeze({
+        runId, reservationId, trigger, outcome: "UNCHANGED", reason: "NOT_MAY_HAVE_STARTED",
+        basis: null, reservationStatus: record.status, accounting: null, durationMs: null,
+      });
+    }
+    const internal = reservations.get(reservationId);
+    const context = Object.freeze({
+      trigger,
+      inProgress: trigger === "RESUME_END" ? false : resuming.has(reservationId),
+      cancelRequested: internal?.cancelRequested === true,
+      devResult,
+      lockHeld: typeof dataDirectoryLock?.isHeld === "function" && dataDirectoryLock.isHeld() === true,
+      now: new Date(now()).getTime(),
+    });
+    // Le reservationId est porté par la réservation, pas par son binding.
+    const observed = Object.freeze({ ...record.binding, reservationId: record.reservationId });
+    const verdict = observationReader.observe({ binding: observed, record, context });
+    let updated = snapshot;
+    let outcome = "UNCHANGED";
+    if (verdict.decision === "RECONCILE") {
+      updated = observationBroker.withObservation(observed, verdict.observation,
+        () => runStore.reconcileExecution(runId, { expectedRevision: snapshot.revision, reservationId }));
+      outcome = "RECONCILED";
+    } else if (verdict.decision === "UNKNOWN") {
+      updated = observationBroker.withObservation(observed, verdict.observation,
+        () => runStore.markExecutionUnknown(runId, {
+          expectedRevision: snapshot.revision, reservationId, reasonCode: verdict.reason,
+        }));
+      outcome = "UNKNOWN";
+    }
+    const status = updated.state.executionReservations.find((item) => item.reservationId === reservationId)?.status;
+    const accounting = outcome === "RECONCILED" ? Object.freeze({
+      providerCalls: verdict.observation.providerCalls,
+      accountedCost: verdict.observation.accountedCost,
+      actualCostKnown: verdict.observation.actualCost !== null,
+    }) : null;
+    emit("goal_mode_dev.reconciliation", {
+      runId, reservationId, trigger, outcome, reason: verdict.reason, basis: verdict.basis ?? null,
+      providerCalls: accounting?.providerCalls ?? null, accountedCost: accounting?.accountedCost ?? null,
+    });
+    return Object.freeze({
+      runId, reservationId, trigger, outcome, reason: verdict.reason, basis: verdict.basis ?? null,
+      reservationStatus: status, accounting, durationMs: verdict.durationMs ?? null,
+    });
+  }
+
+  // Fin de resume : jamais d'exception, la réservation reste sinon MAY_HAVE_STARTED.
+  function settleAfterDispatch(ticket, devResult) {
+    if (!reconciliationAvailable()) {
+      return Object.freeze({ outcome: "UNCHANGED", reason: "RECONCILIATION_UNAVAILABLE", basis: null, reservationStatus: null, accounting: null });
+    }
+    try {
+      return reconcileReservation({
+        runId: ticket.runId, reservationId: ticket.reservationId, trigger: "RESUME_END", devResult,
+      });
+    } catch (error) {
+      return Object.freeze({
+        outcome: "UNCHANGED", reason: typeof error?.code === "string" ? error.code.slice(0, 80) : "RECONCILIATION_FAILED",
+        basis: null, reservationStatus: null, accounting: null,
+      });
+    }
+  }
+
+  // Action explicite (route HTTP) : garde-fous du lecteur (verrou, délai de grâce).
+  function reconcileExecution({ runId, expectedRevision, reservationId } = {}) {
+    return reconcileReservation({ runId, reservationId, expectedRevision, trigger: "EXPLICIT" });
+  }
+
+  // Démarrage : exige le verrou exclusif ; aucun dispatch de ce processus en cours.
+  function reconcileAtStartup() {
+    if (!reconciliationAvailable()) {
+      fail("GOAL_MODE_DEV_RECONCILIATION_UNAVAILABLE", "Réconciliation Goal Mode DEV indisponible.");
+    }
+    if (!(typeof dataDirectoryLock?.isHeld === "function" && dataDirectoryLock.isHeld() === true)) {
+      fail("GOAL_MODE_DEV_RECONCILE_LOCK_REQUIRED", "Verrou DATA_DIRECTORY requis pour le scan.");
+    }
+    const summary = { scanned: 0, reconciled: 0, unknown: 0, unchanged: 0, failed: 0 };
+    const runIds = typeof runStore.listRunIds === "function" ? runStore.listRunIds() : [];
+    for (const runId of runIds) {
+      let snapshot;
+      try { snapshot = runStore.get(runId); } catch { summary.failed += 1; continue; }
+      for (const record of snapshot.state.executionReservations || []) {
+        if (record.status !== "MAY_HAVE_STARTED") continue;
+        summary.scanned += 1;
+        try {
+          const result = reconcileReservation({ runId, reservationId: record.reservationId, trigger: "STARTUP" });
+          if (result.outcome === "RECONCILED") summary.reconciled += 1;
+          else if (result.outcome === "UNKNOWN") summary.unknown += 1;
+          else summary.unchanged += 1;
+        } catch {
+          summary.failed += 1;
+        }
+      }
+    }
+    emit("goal_mode_dev.reconciliation_scan", { ...summary });
+    return Object.freeze(summary);
   }
 
   return Object.freeze({
@@ -934,6 +1065,8 @@ function createGoalModeDevDispatchService({
     executionStatus,
     pauseRun,
     prepare,
+    reconcileAtStartup,
+    reconcileExecution,
     renewApproval,
     resume,
     resumeRun,

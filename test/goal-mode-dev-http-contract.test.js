@@ -130,3 +130,36 @@ test("contrat B2 : statuts HTTP et corps d'erreur minimal", () => {
   const internal = c.goalModeDevErrorBody(new Error("stack SYNTHETIC_PRIVATE_OBJECTIVE"));
   assert.deepEqual(internal, { status: "error", code: "GOAL_MODE_DEV_INTERNAL_ERROR", message: "Opération Goal Mode DEV refusée." });
 });
+
+test("contrat 4C-2 : réconciliation à clés exactes, résumé sans contenu, basis visible", () => {
+  assert.deepEqual({ ...c.normalizeReconcile({ runId: "r-1", expectedRevision: 3, reservationId: "res-1" }) },
+    { runId: "r-1", expectedRevision: 3, reservationId: "res-1" });
+  for (const broken of [{ runId: "r-1", expectedRevision: 3 }, { runId: "r-1", expectedRevision: 0, reservationId: "res-1" },
+    { runId: "r-1", expectedRevision: 3, reservationId: "res-1", taskId: "goal-mode-dev-x" }]) {
+    assert.throws(() => c.normalizeReconcile(broken), BODY);
+  }
+  const summary = c.projectReconciliation({
+    runId: "r-1", reservationId: "res-1", trigger: "EXPLICIT", outcome: "RECONCILED", reason: "ESTIMATED",
+    basis: "ESTIMATED_UPPER_BOUND", reservationStatus: "RECONCILED",
+    accounting: { providerCalls: 2, accountedCost: 0.12, actualCostKnown: false }, durationMs: 1000,
+    taskId: "goal-mode-dev-secret",
+  });
+  assert.deepEqual({ ...summary, accounting: { ...summary.accounting } }, {
+    outcome: "RECONCILED", reason: "ESTIMATED", basis: "ESTIMATED_UPPER_BOUND", reservationStatus: "RECONCILED",
+    accounting: { providerCalls: 2, accountedCost: 0.12, actualCostKnown: false }, durationMs: 1000,
+  });
+  assert.equal(c.projectReconciliation(null), null);
+  const dispatched = c.projectDispatch({
+    reservationId: "res-1", mayHaveStartedRevision: 4, devResult: { status: "COMPLETED", finalVerdict: "PASS" },
+    reconciliation: { outcome: "UNCHANGED", reason: "LEDGER_IN_PROGRESS" }, reconciliationRequired: true,
+  });
+  assert.equal(dispatched.reconciliation.outcome, "UNCHANGED");
+  assert.equal(dispatched.reconciliationRequired, true);
+  const reservation = c.projectReservation({
+    runId: "r-1", runStatus: "RUNNING", runRevision: 5, reservationId: "res-1", reservationStatus: "RECONCILED",
+    observation: { journal: "TERMINAL", ledger: { RECONCILED: 1 }, durationMs: 2000, objective: "SYNTHETIC_PRIVATE_OBJECTIVE" },
+  });
+  assert.deepEqual(reservation.observation, { journal: "TERMINAL", ledger: { RECONCILED: 1 }, durationMs: 2000 });
+  assert.equal(c.goalModeDevHttpStatus({ code: "GOAL_MODE_DEV_RECONCILE_LOCK_REQUIRED" }), 409);
+  assert.equal(c.goalModeDevHttpStatus({ code: "GOAL_MODE_DEV_RECONCILIATION_UNAVAILABLE" }), 503);
+});

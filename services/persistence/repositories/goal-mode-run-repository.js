@@ -200,6 +200,15 @@ function createSqliteRepository(
       LIMIT 1
     `);
 
+  // 4C-2 : lecture seule, identifiants des runs pour le scan de réconciliation.
+  const listStatement =
+    db.prepare(`
+      SELECT DISTINCT record_id
+      FROM goal_strategy_records
+      WHERE record_type=?
+      ORDER BY record_id ASC
+    `);
+
   const historyStatement =
     db.prepare(`
       SELECT
@@ -380,12 +389,19 @@ function createSqliteRepository(
     }
   }
 
+  function listRunIds() {
+    return listStatement
+      .all(RECORD_TYPE)
+      .map((row) => String(row.record_id));
+  }
+
   return Object.freeze({
     kind:
       "sqlite",
 
     history,
     latest,
+    listRunIds,
     save,
   });
 }
@@ -607,12 +623,22 @@ function createFallbackRepository(
     };
   }
 
+  function listRunIds() {
+    const { rows: list } = rows();
+    return [...new Set(
+      list
+        .filter((row) => row.recordType === RECORD_TYPE)
+        .map((row) => String(row.recordId))
+    )].sort();
+  }
+
   return Object.freeze({
     kind:
       "json-fallback",
 
     history,
     latest,
+    listRunIds,
     save,
   });
 }

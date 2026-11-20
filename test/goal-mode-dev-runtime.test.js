@@ -40,7 +40,7 @@ function harness(overrides = {}) {
     database,
     goalStrategyEngine: { registry: { get: () => null, list: () => [] } },
     workspaceEngine: { context: (id) => (id === "workspace-1" ? workspace : null) },
-    devBudgetService: { effectiveRemaining: () => 10, taskProviderCalls: () => 0 },
+    devBudgetService: { effectiveRemaining: () => 10, taskProviderCalls: () => 0, entries: () => [] },
     devTaskJournal: createDevTaskJournal({ directory: path.join(directory, "journal") }),
     approvalEngine: createApprovalEngine({}),
     operationalSecurityPolicy: createOperationalSecurityPolicy(),
@@ -86,8 +86,8 @@ test("B1 runtime : composition complète sur les modules canoniques, persistance
     assert.equal(persistence.backend, "SQLITE");
     assert.equal(persistence.atomicRevisionCas, true);
     assert.deepEqual(Object.keys(runtime.dispatchService).sort(), [
-      "cancelExecution", "executionStatus", "pauseRun", "prepare", "renewApproval",
-      "resume", "resumeRun", "stopRun",
+      "cancelExecution", "executionStatus", "pauseRun", "prepare", "reconcileAtStartup",
+      "reconcileExecution", "renewApproval", "resume", "resumeRun", "stopRun",
     ]);
     const composed = h.events.find((item) => item.event === "goal_mode_dev.runtime_composed");
     assert.ok(composed);
@@ -266,8 +266,9 @@ test("B1 câblage serveur : flag OFF par défaut, composition protégée, signal
     assert.ok(block.includes(dependency), dependency);
   }
   assert.match(block, /catch \(error\) \{\s*goalModeDevRuntime = null;\s*toolAuditLog\.append\("goals\.mode-dev\.runtime_unavailable"/);
-  // B2 : aucun accès direct au dispatch depuis server.js, seulement via le handler HTTP.
-  assert.equal(/goalModeDevRuntime\s*\.\s*dispatchService/.test(source), false);
+  // B2/4C-2 : seul accès direct au dispatch depuis server.js = scan de réconciliation au démarrage.
+  const direct = [...source.matchAll(/goalModeDevRuntime\s*\.\s*dispatchService\s*\.\s*([a-zA-Z]+)/g)].map((match) => match[1]);
+  assert.deepEqual(direct, ["reconcileAtStartup"]);
   const httpStart = source.indexOf("const goalModeDevHttp = createGoalModeDevHttpHandler({");
   assert.notEqual(httpStart, -1);
   const httpBlock = source.slice(httpStart, source.indexOf('"goals.dev-retry.runtime_composed"', httpStart));
@@ -284,4 +285,13 @@ test("B1 câblage serveur : flag OFF par défaut, composition protégée, signal
   assert.match(startup, /if \(!nativeDevInterruptedReported && process\.env\.NOON_SAFE_MODE !== "1"\) \{\s*nativeDevInterruptedReported = true;\s*reportInterruptedNativeDevTasks\(/);
   assert.match(startup.slice(0, 900), /nativeDevB3Facade\.recoverInterrupted\(\)/);
   assert.match(startup.slice(0, 900), /nativeDevCoordinator\.recoverInterrupted\(\)/);
+  // 4C-2 : verrou exclusif DATA_DIRECTORY, scan seulement s'il est obtenu, libéré à l'arrêt.
+  assert.match(source, /const dataDirectoryLock = createDataDirectoryLock\(\{ directory: DATA_DIRECTORY \}\);/);
+  assert.match(source, /process\.once\("exit", \(\) => \{ try \{ dataDirectoryLock\.release\(\); \} catch \{\} \}\);/);
+  assert.match(block, /dataDirectoryLock,/);
+  const scan = startup.slice(startup.indexOf("if (goalModeDevRuntime && !goalModeDevReconcileScanDone"));
+  assert.match(scan, /^if \(goalModeDevRuntime && !goalModeDevReconcileScanDone && process\.env\.NOON_SAFE_MODE !== "1"\) \{/);
+  assert.match(scan.slice(0, 1200), /const lock = dataDirectoryLock\.acquire\(\);\s*if \(lock\.acquired\) \{[\s\S]*reconcileAtStartup\(\)[\s\S]*\} else \{\s*toolAuditLog\.append\("goals\.mode-dev\.RECONCILE_SCAN_SKIPPED_LOCK", \{ reason: lock\.reason \}\);/);
+  const stop = source.slice(source.indexOf("function stopNoonServer() {"));
+  assert.match(stop.slice(0, 200), /dataDirectoryLock\.release\(\)/);
 });
