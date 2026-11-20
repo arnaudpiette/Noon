@@ -2,7 +2,7 @@
 
 ## Branchement serveur et activation
 
-**Activation réelle du flag `goals.mode-dev` : interdite tant que B3 (UI d'approbation) n'est pas livré.** 4C-2 (réconciliation et coûts) est livré. Sans B3, aucune approbation exacte ne peut être donnée par l'utilisateur.
+**B3 (B3a et B3b) et 4C-2 sont livrés.** L'activation réelle du flag `goals.mode-dev` reste une décision explicite de l'utilisateur, à faire sur le Mac, avec vérification manuelle du panneau dans Electron puis dans l'app packagée (non couvertes par les tests automatiques).
 
 - **B1, livré : runtime composé, non exposé.** `services/goals/goal-mode-dev-runtime.js` assemble toute la chaîne : runs, planning, propositions, admission, projection, réservation, approbation et dispatch. Il s'appuie sur les services canoniques du serveur : `personalDatabase`, `devCostBudgetService`, `nativeDevJournal`, `approvalManager`, `operationalSecurityPolicy`, `devProjectRuleResolver`, la façade Native DEV B3, et le routage fournisseur déjà utilisé par Native DEV.
   - **Flag `goals.mode-dev`** : `OFF` par défaut, exige `goals.engine` et `dev.native-core`, et figure dans le test de gel. Il est lu **au démarrage** : le changer exige un redémarrage. Quand il est `OFF`, le runtime n'est pas construit.
@@ -22,7 +22,7 @@
     | Méthode | Chemin |
     |---|---|
     | `POST` | `runs`, `runs/start`, `planning`, `dispatch/prepare`, `dispatch/resume`, `dispatch/renew`, `runs/pause`, `runs/resume`, `runs/stop`, `dispatch/cancel`, `dispatch/release` |
-    | `GET` | `runs/:runId`, `runs/:runId/proposals/:stepId`, `runs/:runId/reservations/:reservationId` |
+    | `GET` | `runs` (B3a), `runs/:runId`, `runs/:runId/planning-estimate` (B3a), `runs/:runId/proposals/:stepId`, `runs/:runId/reservations/:reservationId` |
 
     Réponse en cas de succès : `{status: "ok", result}`. En cas d'erreur : `{status: "error", code, message}` (message générique), avec seulement des détails sûrs (`reservationId`, statut).
   - **Aucune autorité client** : `taskId`, chemins, permissions, `capabilityCeilings`, `projectInstructions` et `localOnly` sont refusés (400). `decision` est **obligatoire** (`approve` ou `reject`), sans valeur par défaut. Le planning exige `confirmProviderCall: true`. Le jeton et l'affichage ne sont renvoyés que par `prepare` et `renew`, et aucune réponse ne contient de `taskId`.
@@ -33,7 +33,23 @@
     - La limite réelle est celle du client (UI ou `fetch`). Une déconnexion ne coupe pas le dispatch (vérifié par un test), et l'état reste lisible par `GET runs/:runId/reservations/:reservationId`.
   - **Audit** : route, statut HTTP et code seulement. Jamais de corps, de jeton, d'affichage ni de règles.
   - **Activer le flag** exige `LIMITED` avec un pourcentage ou une liste d'autorisation pour `goals.engine`, `dev.native-core` et `goals.mode-dev`. Sans contexte de workspace, un `LIMITED` sans pourcentage reste `OFF`.
-- **B3, à venir : UI d'approbation.** Carte dédiée, affichage local, aucun jeton dans `localStorage`.
+- **B3a, livré : UI d'approbation**, `public/goal-mode-dev-ui.js` (module sans dépendance, testé sans navigateur), monté dans `#goalModeDevPanel` du panneau Approbations. Le panneau reste masqué si le flag vaut `OFF`.
+  - **Panneau** : formulaire « Nouveau run » (Goals `ACTIVE` confirmés, workspace et projet liés, limites explicites), liste des runs récents, contrôles (pause, reprise, arrêt, arrêt de la tâche, libération ; les actions destructives demandent une confirmation).
+  - **Planifier** : la confirmation affiche le **coût maximal estimé** de l'appel de planning (`GET runs/:runId/planning-estimate`, en lecture seule : ni appel fournisseur, ni autorisation de confidentialité, ni réservation ; refus `LOCAL_ONLY` identique au planning), puis envoie `confirmProviderCall: true`.
+  - **Carte d'approbation dédiée** : titre du Goal, consigne exacte du step, repository et branche, permissions, coût maximal, appels maximum, durée maximale, règles projet. Tout passe par `textContent`, jamais `innerHTML`. Boutons Approuver, Refuser (`decision` explicite) et Renouveler (l'ancien jeton est oublié).
+  - **Jeton en mémoire seulement** (une `Map` du contrôleur) : jamais dans le DOM, `localStorage`, `sessionStorage`, un cookie ni la console. Il est effacé après usage, consommation, invalidité ou expiration. Un rechargement le perd : la liste des runs propose alors Renouveler (run `RUNNING`) ou Libérer pour la réservation `PREPARED`.
+  - **Approbations génériques** : `GET /approvals` n'expose plus les approbations Goal Mode DEV, et `POST /approvals/:id/confirm|reject` les refuse en `409 GOAL_MODE_DEV_APPROVAL_DEDICATED` avant tout `resume` (`services/approvals/goal-mode-dev-approval-guard.js`).
+  - **`resume` synchrone et suivi** : pendant la requête, `GET runs/:runId/reservations/:reservationId` toutes les 3 s. Le suivi s'arrête quand la réservation n'est plus `PREPARED` ni `MAY_HAVE_STARTED`, ou à `maxDuration` du contrat + 2 min ; il affiche alors « Suivi arrêté » et un bouton Réconcilier. Une déconnexion du client ne l'arrête pas.
+  - **Résultat** : issue de la réconciliation et base du coût, avec les libellés « coût réel » (`ACTUAL`), « coût estimé (borne haute) » (`ESTIMATED_UPPER_BOUND`) et « jamais lancée — rien consommé » (`NEVER_LAUNCHED`). `UNKNOWN` est signalé comme bloquant ; `UNCHANGED` propose Réconcilier.
+- **B3b, livré : maintenance et reprise du verrou `DATA_DIRECTORY`** (`services/runtime/data-directory-lock.js`, `services/goals/goal-mode-dev-lock-maintenance.js`).
+  - **Reprise automatique au démarrage, stricte** : seulement si le verrou a été posé depuis **le même hostname** **et** si `process.kill(pid, 0)` lève exactement **`ESRCH`**. `EPERM`, un processus vivant (y compris un PID réutilisé) ou toute autre erreur : aucune reprise. Un PID réutilisé ne peut donc qu'empêcher une reprise, jamais en provoquer une à tort.
+  - **Mutex de reprise** (`noon-data.lock.takeover`, créé en `wx`) : un seul processus reprend. Sous le mutex, le verrou est relu (mêmes octets que ceux observés, sinon `TAKEOVER_CHANGED`), renommé en `noon-data.lock.stale-<uuid>` (conservé), puis recréé en `wx` avec `fsync`. Un mutex laissé par un crash n'est **jamais** écarté automatiquement (`TAKEOVER_BUSY`) : seule la reprise explicite l'écarte, et jamais si son détenteur est vivant.
+  - **Après une reprise automatique**, le scan de démarrage s'exécute (audit `goals.mode-dev.lock_takeover`, `mode: AUTOMATIC`).
+  - **Heure de démarrage de la machine** (`bootTime`) enregistrée dans le verrou **pour l'affichage seulement** (« Mac redémarré depuis, PID probablement réutilisé ») : elle n'entre dans aucune décision.
+  - **Routes** (derrière le flag et l'en-tête de confiance) : `GET maintenance/lock` (état à clés fixes, sans jeton ni chemin), `POST maintenance/lock-takeover` (`{confirm: true, expectedHolderPid}` exacts), `POST maintenance/reconcile-scan` (`{confirm: true}`, verrou exigé, sinon 409).
+  - **Reprise explicite** : autorisée pour un verrou périmé, illisible (`expectedHolderPid: null`) ou posé depuis une autre machine ; **refusée si le détenteur est vivant ou indéterminé sur ce Mac** (`409 GOAL_MODE_DEV_LOCK_HOLDER_ALIVE` / `HOLDER_UNVERIFIED`) ou si le détenteur a changé (`EXPECTED_HOLDER_MISMATCH`). **Aucun scan automatique** ensuite : l'UI propose « Réconcilier maintenant ».
+  - **« Réconcilier maintenant »** : chaque réservation `MAY_HAVE_STARTED` passe par la réconciliation **`EXPLICIT`** (et non `STARTUP`) : un dispatch de ce processus encore en vol n'est jamais conclu, et « jamais lancée » exige toujours le délai de grâce de 2 min.
+  - **UI** : encart « Verrou des données » dans le panneau Goal Mode DEV (état, détenteur, bouton de reprise avec confirmation affichant le PID, la machine et la raison).
 - **4C-2, livré : réconciliation et coûts** (voir la section dédiée plus bas).
 
 *Livrés avant le branchement : le contrôle des routes d'annulation, de statut, de budget et de preuves (4C-1D), et le journal Native DEV fiable (voir plus bas).*
@@ -148,7 +164,7 @@ Une nouvelle réservation exige que toutes les précédentes soient closes (`REC
 - **Verrou exclusif sur `DATA_DIRECTORY`** (`services/runtime/data-directory-lock.js`, fichier `noon-data.lock`) :
   - créé de façon atomique (`wx`, `fsync` du fichier puis du dossier) au démarrage, hors safe mode, avant le scan ;
   - libéré à l'arrêt et à la sortie du processus ;
-  - s'il est détenu par un autre processus vivant (`HELD`), **périmé** (processus disparu, `STALE`) ou illisible, il n'y a **aucun scan** et l'audit `goals.mode-dev.RECONCILE_SCAN_SKIPPED_LOCK` est écrit. **Un verrou périmé n'est jamais repris automatiquement** : après un arrêt brutal, le scan au démarrage et les conclusions explicites qui exigent le verrou restent indisponibles, jusqu'à ce que l'utilisateur supprime ce fichier en connaissance de cause.
+  - s'il est détenu par un autre processus vivant (`HELD`), posé depuis une autre machine ou illisible, il n'y a **aucun scan** et l'audit `goals.mode-dev.RECONCILE_SCAN_SKIPPED_LOCK` est écrit. **Périmé sur ce Mac** (`ESRCH`) : repris automatiquement sous mutex puis scan (B3b). Les autres cas passent par la reprise explicite de l'UI, jamais par une suppression manuelle du fichier.
 - **Limite de downgrade** : une version de Noon antérieure à 4C-2 refuse de relire un run qui contient un `RECONCILED` à 0 pas. C'est la même classe de limite que pour `RELEASED` (option A) : refus propre, sans corruption.
 - **Hors périmètre** : la sortie d'un `UNKNOWN`, qui bloque définitivement le DEV du run.
 
@@ -181,7 +197,10 @@ La réservation de planning est hors périmètre : elle garde son modèle actuel
 - `test/goal-mode-dev-http-contract.test.js` : contrat B2 (clés exactes, `decision`, projections, statuts, erreurs minimales).
 - `test/goal-mode-dev-http-transport.test.js` : bout en bout B2 au niveau transport (vrai serveur HTTP de test, vrai runtime, fournisseur et façade factices), délais d'attente et déconnexion.
 - `test/goal-mode-dev-http-server.test.js` : garde-fous B2 sur le vrai serveur, dans un processus enfant sans `.env` ni clés de fournisseurs.
+- `test/goal-mode-dev-ui.test.js` : UI B3a sans navigateur (vm + faux DOM : carte, jeton en mémoire, confirmations, suivi, libellés de coût, contrat source).
+- `test/goal-mode-dev-approval-guard.test.js` : filtre et refus 409 des approbations Goal Mode DEV sur les routes génériques.
 - `test/goal-mode-dev-observation.test.js` : lecteur d'observation (toutes les décisions), relais, état `RECONCILED` à engagement nul.
-- `test/data-directory-lock.test.js` : verrou exclusif (atomicité, `HELD`, `STALE` sans reprise, deux processus, arrêt brutal).
+- `test/data-directory-lock.test.js` : verrou exclusif (atomicité, `HELD`, `STALE` sans reprise par défaut, deux processus, arrêt brutal) ; B3b : sonde `ESRCH`/`EPERM`, reprise automatique stricte, refus (vivant, PID réutilisé, indéterminé, autre machine, illisible), mutex laissé par un crash, verrou modifié pendant la reprise, ordre des opérations, course de 4 processus.
+- `test/goal-mode-dev-lock-maintenance.test.js` : démarrage (reprise puis scan, ou aucun scan), reprise explicite sans scan, scan explicite en `EXPLICIT`, contrat des routes de maintenance.
 - `test/goal-mode-dev-runtime.test.js` : composition B1, permissions vivantes, règles projet, signalement des tâches interrompues, câblage serveur et flag.
 - `test/dev-task-id-namespace.test.js` : espace réservé, inventaire des appelants de `runTask`, `cancelTask`, `getTaskStatus` et `projectDecisionEvidence`, câblage des routes.

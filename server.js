@@ -146,6 +146,8 @@ const { createGoalModeDevRuntime } = require("./services/goals/goal-mode-dev-run
 const { createGoalModeDevHttpHandler, GOAL_MODE_DEV_HTTP_PREFIX } = require("./services/goals/goal-mode-dev-http-routes");
 const { reportInterruptedNativeDevTasks } = require("./services/dev/native-dev-interrupted-report");
 const { createDataDirectoryLock } = require("./services/runtime/data-directory-lock");
+const { createGoalModeDevLockMaintenance } = require("./services/goals/goal-mode-dev-lock-maintenance");
+const { assertGenericApprovalAllowed, genericApprovals } = require("./services/approvals/goal-mode-dev-approval-guard");
 const {
   goalDevRetryHttpStatus,
   normalizeGoalDevRetryPrepareRequest,
@@ -1662,8 +1664,9 @@ const goalDevRetryRuntime =
  * démarrage ; un échec de composition n'empêche jamais Noon de démarrer.
  * Activation réelle : exige aussi 4C-2 (réconciliation) et B3 (UI).
  */
-// 4C-2 : verrou exclusif sur DATA_DIRECTORY, acquis au démarrage avant le
-// scan de réconciliation, jamais repris s'il est périmé, libéré à l'arrêt.
+// 4C-2 / B3b : verrou exclusif sur DATA_DIRECTORY, acquis au démarrage avant le
+// scan de réconciliation, libéré à l'arrêt. Périmé : repris automatiquement
+// seulement si même hostname + ESRCH (mutex de reprise) ; sinon reprise explicite.
 const dataDirectoryLock = createDataDirectoryLock({ directory: DATA_DIRECTORY });
 process.once("exit", () => { try { dataDirectoryLock.release(); } catch {} });
 
@@ -1698,6 +1701,23 @@ try {
   });
 }
 
+// B3b : maintenance du verrou (démarrage, état, reprise explicite, scan explicite).
+let goalModeDevLockMaintenance = null;
+try {
+  if (goalModeDevRuntime) {
+    goalModeDevLockMaintenance = createGoalModeDevLockMaintenance({
+      lock: dataDirectoryLock,
+      runtime: goalModeDevRuntime,
+      audit: (event, metadata) => toolAuditLog.append(event, metadata),
+    });
+  }
+} catch (error) {
+  goalModeDevLockMaintenance = null;
+  toolAuditLog.append("goals.mode-dev.lock_maintenance_unavailable", {
+    code: String(error?.code || error?.name || "COMPOSITION_FAILED").slice(0, 80),
+  });
+}
+
 /*
  * Branchement B2 — routes HTTP Goal Mode DEV. 404 si le runtime n'est pas
  * composé ou si goals.mode-dev vaut OFF au moment de la requête.
@@ -1715,6 +1735,7 @@ const goalModeDevHttp = createGoalModeDevHttpHandler({
   readJsonBody,
   executionPreference: () => runtimeConfig.get("runtime.executionPreference", {}).value,
   audit: (event, metadata) => toolAuditLog.append(event, metadata),
+  lockMaintenance: goalModeDevLockMaintenance,
 });
 
 toolAuditLog.append(
@@ -6686,6 +6707,15 @@ if (req.method === "GET" && req.url === "/dev-project-rules-ui.js") {
   return res.end(fs.readFileSync(filePath));
 }
 
+// B3a : sert le contrôleur de l'UI d'approbation Goal Mode DEV (masqué si flag OFF).
+if (req.method === "GET" && req.url === "/goal-mode-dev-ui.js") {
+  const filePath = path.join(__dirname, "public", "goal-mode-dev-ui.js");
+  res.writeHead(200, {
+    "Content-Type": "application/javascript; charset=utf-8",
+  });
+  return res.end(fs.readFileSync(filePath));
+}
+
 
 // Sert le contrôleur du profil d’exécution du Terminal DEV.
 if (
@@ -9114,7 +9144,11 @@ if (req.method === "POST" && ["/daily-brief/generate", "/brief/generate", "/pers
 
 if (req.method === "GET" && req.url === "/approvals") {
   res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-  return res.end(JSON.stringify({ status: "ok", approvals: approvalManager.listPending() }));
+  // B3a : les approbations Goal Mode DEV ont leur carte dédiée (jamais reprises ici).
+  return res.end(JSON.stringify({
+    status: "ok",
+    approvals: genericApprovals(approvalManager.listPending()),
+  }));
 }
 
 if (req.method === "POST" && requestPath.startsWith("/approvals/")) {
@@ -9126,7 +9160,8 @@ if (req.method === "POST" && requestPath.startsWith("/approvals/")) {
     if (!["confirm", "reject"].includes(action)) {
       throw Object.assign(new Error("Décision invalide."), { statusCode: 400 });
     }
-    const approval = approvalManager.get(decodeURIComponent(encodedId));
+    // B3a : une approbation Goal Mode DEV ne se reprend que par sa carte dédiée.
+    const approval = assertGenericApprovalAllowed(approvalManager.get(decodeURIComponent(encodedId)));
     const result = await noonOrchestrator.resume({
       executionId: approval.executionId,
       approvalId: approval.id,
@@ -10404,24 +10439,13 @@ async function startNoonServer({
     });
   }
 
-  // 4C-2 : réconciliation au démarrage, seulement avec le verrou exclusif sur
-  // DATA_DIRECTORY (un seul processus Noon par dossier). Verrou détenu par un
-  // autre processus, périmé ou illisible : aucun scan, audit sans reprise.
-  if (goalModeDevRuntime && !goalModeDevReconcileScanDone && process.env.NOON_SAFE_MODE !== "1") {
+  // 4C-2 / B3b : réconciliation au démarrage, seulement avec le verrou exclusif
+  // sur DATA_DIRECTORY (un seul processus Noon par dossier). Périmé sur la même
+  // machine (ESRCH) : repris sous mutex puis scan. Détenu, autre machine ou
+  // illisible : aucun scan, audit RECONCILE_SCAN_SKIPPED_LOCK.
+  if (goalModeDevLockMaintenance && !goalModeDevReconcileScanDone && process.env.NOON_SAFE_MODE !== "1") {
     goalModeDevReconcileScanDone = true;
-    const lock = dataDirectoryLock.acquire();
-    if (lock.acquired) {
-      try {
-        const summary = goalModeDevRuntime.dispatchService.reconcileAtStartup();
-        toolAuditLog.append("goals.mode-dev.reconcile_scan", { ...summary });
-      } catch (error) {
-        toolAuditLog.append("goals.mode-dev.reconcile_scan_failed", {
-          code: String(error?.code || error?.name || "SCAN_FAILED").slice(0, 80),
-        });
-      }
-    } else {
-      toolAuditLog.append("goals.mode-dev.RECONCILE_SCAN_SKIPPED_LOCK", { reason: lock.reason });
-    }
+    goalModeDevLockMaintenance.startup();
   }
 
   // Le safe mode conserve le serveur local mais suspend les travaux autonomes.

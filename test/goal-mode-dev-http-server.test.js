@@ -55,8 +55,8 @@ async function startChild({ flags, safeMode = true, sharedRoot = null }) {
       try {
         const log = JSON.parse(require("fs").readFileSync(require("path").join(process.env.NOON_DATA_DIR, "tool-audit.json"), "utf8"));
         const list = Array.isArray(log) ? log : (log.entries || log.events || []);
-        events = list.filter((item) => /goals\.mode-dev\.(reconcile_scan|RECONCILE_SCAN_SKIPPED_LOCK)/.test(item.event))
-          .map((item) => ({ event: item.event, reason: item.details && item.details.reason }));
+        events = list.filter((item) => /goals\.mode-dev\.(reconcile_scan|RECONCILE_SCAN_SKIPPED_LOCK|lock_takeover)/.test(item.event))
+          .map((item) => ({ event: item.event, reason: item.details && item.details.reason, mode: item.details && item.details.mode }));
       } catch {}
       process.stdout.write("NOON_AUDIT=" + JSON.stringify(events) + "\\n");
       process.stdout.write("NOON_PORT=" + server.address().port + "\\n");
@@ -92,7 +92,7 @@ async function startChild({ flags, safeMode = true, sharedRoot = null }) {
     return { status: response.status, body: json };
   }
   return {
-    dataDirectory, call, audit: () => audit, root,
+    dataDirectory, call, audit: () => audit, root, origin,
     async stop({ keep = false } = {}) {
       child.stdin.end();
       await new Promise((resolve) => {
@@ -107,11 +107,23 @@ async function startChild({ flags, safeMode = true, sharedRoot = null }) {
 test("B2 serveur réel : flag OFF par défaut → toutes les routes Goal Mode DEV en 404", async () => {
   const server = await startChild({ flags: false });
   try {
+    // B3a : le module UI est servi (le panneau se masque lui-même si le flag vaut OFF).
+    const page = await fetch(`${server.origin}/app`);
+    assert.ok((await page.text()).includes('<script src="goal-mode-dev-ui.js"></script>'));
+    const script = await fetch(`${server.origin}/goal-mode-dev-ui.js`);
+    assert.equal(script.status, 200);
+    assert.match(script.headers.get("content-type"), /application\/javascript/);
+    assert.match(await script.text(), /NoonGoalModeDevUi/);
     for (const [method, route, body] of [
       ["GET", "/api/goals/mode-dev/runs/goal-run-x"],
+      ["GET", "/api/goals/mode-dev/runs"],
+      ["GET", "/api/goals/mode-dev/runs/goal-run-x/planning-estimate"],
       ["POST", "/api/goals/mode-dev/runs", {}],
       ["POST", "/api/goals/mode-dev/planning", { runId: "goal-run-x", confirmProviderCall: true }],
       ["POST", "/api/goals/mode-dev/dispatch/resume", {}],
+      ["GET", "/api/goals/mode-dev/maintenance/lock"],
+      ["POST", "/api/goals/mode-dev/maintenance/lock-takeover", { confirm: true, expectedHolderPid: null }],
+      ["POST", "/api/goals/mode-dev/maintenance/reconcile-scan", { confirm: true }],
     ]) {
       const response = await server.call(method, route, body);
       assert.equal(response.status, 404, route);
@@ -132,6 +144,16 @@ test("B2 serveur réel : flag actif → runtime composé, routes avant /api/goal
     const untrusted = await server.call("GET", "/api/goals/mode-dev/runs/goal-run-missing", undefined, { trusted: false });
     assert.equal(untrusted.status, 403);
     assert.equal(untrusted.body.code, "TRUSTED_UI_REQUIRED");
+    // B3a : liste des runs (vide) et estimation de planning d'un run inconnu, sans fournisseur.
+    const runs = await server.call("GET", "/api/goals/mode-dev/runs");
+    assert.equal(runs.status, 200, JSON.stringify(runs.body));
+    assert.deepEqual(runs.body, { status: "ok", result: { runs: [] } });
+    const estimate = await server.call("GET", "/api/goals/mode-dev/runs/goal-run-missing/planning-estimate");
+    assert.equal(estimate.status, 404);
+    assert.equal(estimate.body.code, "GOAL_MODE_RUN_NOT_FOUND");
+    const approvals = await server.call("GET", "/approvals");
+    assert.equal(approvals.status, 200);
+    assert.deepEqual(approvals.body.approvals, []);
     // POST non capturé par le bloc POST /api/goals/* générique.
     const unknownRoute = await server.call("POST", "/api/goals/mode-dev/unknown", {});
     assert.equal(unknownRoute.status, 404);
@@ -172,6 +194,16 @@ test("4C-2 serveur réel : deux processus sur le même DATA_DIRECTORY, un seul s
     second = await startChild({ flags: true, safeMode: false, sharedRoot: first.root });
     const skipped = second.audit().filter((item) => item.event === "goals.mode-dev.RECONCILE_SCAN_SKIPPED_LOCK");
     assert.deepEqual(skipped, [{ event: "goals.mode-dev.RECONCILE_SCAN_SKIPPED_LOCK", reason: "HELD" }]);
+    // B3b : détenteur vivant sur la même machine → jamais repris, ni au démarrage ni explicitement.
+    assert.equal(second.audit().some((item) => item.event === "goals.mode-dev.lock_takeover"), false);
+    const lockView = await second.call("GET", "/api/goals/mode-dev/maintenance/lock");
+    assert.equal(lockView.body.result.state, "HELD");
+    assert.equal(lockView.body.result.canTakeOver, false);
+    const refused = await second.call("POST", "/api/goals/mode-dev/maintenance/lock-takeover", {
+      confirm: true, expectedHolderPid: lockView.body.result.holderPid,
+    });
+    assert.equal(refused.status, 409);
+    assert.equal(refused.body.code, "GOAL_MODE_DEV_LOCK_HOLDER_ALIVE");
     await second.stop({ keep: true });
     second = null;
     assert.ok(fs.existsSync(path.join(first.dataDirectory, "noon-data.lock"))); // toujours détenu par le premier
@@ -181,5 +213,62 @@ test("4C-2 serveur réel : deux processus sur le même DATA_DIRECTORY, un seul s
     // Arrêt propre du détenteur : verrou libéré.
     assert.equal(fs.existsSync(path.join(first.dataDirectory, "noon-data.lock")), false);
     fs.rmSync(first.root, { recursive: true, force: true });
+  }
+});
+
+test("B3b serveur réel : verrou périmé sur ce Mac (ESRCH) repris au démarrage puis scan ; autre machine jamais repris", async () => {
+  const { spawnSync } = require("node:child_process");
+  const deadPid = Number(spawnSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], { encoding: "utf8" }).stdout);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "noon-b3b-server-"));
+  const dataDirectory = path.join(root, "data");
+  fs.mkdirSync(dataDirectory, { recursive: true });
+  const stale = JSON.stringify({ pid: deadPid, hostname: os.hostname(), token: "stale-token", createdAt: "2026-10-13T12:00:00.000Z" });
+  fs.writeFileSync(path.join(dataDirectory, "noon-data.lock"), stale);
+  const first = await startChild({ flags: true, safeMode: false, sharedRoot: root });
+  let firstEvents = 0;
+  try {
+    firstEvents = first.audit().length;
+    assert.deepEqual(first.audit().map((item) => [item.event, item.mode || null]), [
+      ["goals.mode-dev.lock_takeover", "AUTOMATIC"], ["goals.mode-dev.reconcile_scan", null],
+    ]);
+    const kept = fs.readdirSync(dataDirectory).filter((name) => name.startsWith("noon-data.lock.stale-"));
+    assert.equal(kept.length, 1);
+    assert.equal(fs.readFileSync(path.join(dataDirectory, kept[0]), "utf8"), stale);
+    assert.equal(fs.existsSync(path.join(dataDirectory, "noon-data.lock.takeover")), false);
+    const view = await first.call("GET", "/api/goals/mode-dev/maintenance/lock");
+    assert.equal(view.body.result.state, "HELD_BY_THIS");
+    const scan = await first.call("POST", "/api/goals/mode-dev/maintenance/reconcile-scan", { confirm: true });
+    assert.equal(scan.status, 200, JSON.stringify(scan.body));
+    assert.deepEqual(scan.body.result, { scanned: 0, reconciled: 0, unknown: 0, unchanged: 0, failed: 0 });
+  } finally {
+    await first.stop({ keep: true });
+  }
+  // Verrou d'une autre machine : aucun scan, aucune reprise automatique ; reprise explicite possible.
+  const foreign = JSON.stringify({ pid: deadPid, hostname: "synthetic-other-host", token: "foreign-token" });
+  fs.writeFileSync(path.join(dataDirectory, "noon-data.lock"), foreign);
+  const second = await startChild({ flags: true, safeMode: false, sharedRoot: root });
+  let stopped = false;
+  try {
+    // tool-audit.json est persistant : après les événements du premier démarrage viennent
+    // son scan explicite, puis le seul événement du second démarrage (aucune reprise).
+    assert.deepEqual(second.audit().slice(firstEvents).map((item) => [item.event, item.reason]),
+      [["goals.mode-dev.reconcile_scan", undefined], ["goals.mode-dev.RECONCILE_SCAN_SKIPPED_LOCK", "HELD"]]);
+    assert.equal(fs.readFileSync(path.join(dataDirectory, "noon-data.lock"), "utf8"), foreign);
+    const view = await second.call("GET", "/api/goals/mode-dev/maintenance/lock");
+    assert.equal(view.body.result.state, "FOREIGN_HOST");
+    assert.equal(view.body.result.canTakeOver, true);
+    const scanRefused = await second.call("POST", "/api/goals/mode-dev/maintenance/reconcile-scan", { confirm: true });
+    assert.equal(scanRefused.status, 409);
+    const taken = await second.call("POST", "/api/goals/mode-dev/maintenance/lock-takeover", { confirm: true, expectedHolderPid: deadPid });
+    assert.equal(taken.status, 200, JSON.stringify(taken.body));
+    assert.equal(taken.body.result.reason, "TAKEN_OVER");
+    assert.equal(taken.body.result.reconcileRecommended, true);
+    assert.equal((await second.call("GET", "/api/goals/mode-dev/maintenance/lock")).body.result.state, "HELD_BY_THIS");
+    await second.stop({ keep: true });
+    stopped = true;
+    assert.equal(fs.existsSync(path.join(dataDirectory, "noon-data.lock")), false); // libéré à l'arrêt
+  } finally {
+    if (!stopped) await second.stop({ keep: true });
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });

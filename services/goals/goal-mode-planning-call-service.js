@@ -1354,7 +1354,55 @@ function createGoalModePlanningCallService({
     });
   }
 
+  /*
+   * B3a — estimation en lecture seule du coût maximal de l'appel de planning,
+   * pour la confirmation affichée à l'utilisateur. Mêmes sélection, contexte et
+   * route que planOnce, mais sans autorisation de confidentialité, sans
+   * réservation et sans appel fournisseur. L'appel réel recalcule sa route.
+   */
+  function estimatePlanning(input = {}) {
+    const source = exactObject(input, "estimatePlanning", ["runId"]);
+    const runId = requiredString(source.runId, "runId");
+    const selection = nextStepPlanner.select({ runId });
+    if (selection.decision !== "PLAN") {
+      return Object.freeze({ version: VERSION, decision: selection.decision, maxEstimatedCost: null, currency: "USD" });
+    }
+    const snapshot = runStore.get(runId);
+    if (snapshot.state.contract.localOnly === true) {
+      fail("GOAL_MODE_PLANNING_LOCAL_ONLY", "Goal Mode local_only interdit l'appel distant de planning.");
+    }
+    const goal = goalFor(selection);
+    const payload = contextPayload({ snapshot, selection, goal });
+    const estimatedUsage = normalizeUsageEstimate(SYSTEM_PROMPT, payload);
+    const remainingCost = Math.max(0,
+      snapshot.state.contract.limits.maxEstimatedCost - snapshot.state.usage.estimatedCost);
+    const route = selectModelRoute({
+      question: `${goal.outcomeDefinition}\n${selection.target.title}`,
+      taskDomain: "GOAL_PLANNING",
+      requiredQuality: "NORMAL",
+      maxEstimatedCost: remainingCost,
+      estimatedUsage,
+      requiredCapabilities: ["STRUCTURED_OUTPUT"],
+      eligibleProviders: [providerAdapter.provider],
+      workspaceId: snapshot.state.contract.scope.workspaceId,
+    });
+    if (!route || typeof route !== "object" || typeof route.model !== "string" || !route.model) {
+      fail("GOAL_MODE_PLANNING_ROUTE_INVALID", "Route modèle Goal Mode invalide.");
+    }
+    const provider = route.provider || providerAdapter.provider;
+    if (provider !== providerAdapter.provider) {
+      fail("GOAL_MODE_PLANNING_PROVIDER_MISMATCH", "Le provider routé n'est pas celui de l'adapter borné.");
+    }
+    return Object.freeze({
+      version: VERSION,
+      decision: "PLAN",
+      maxEstimatedCost: routeCost(route, estimateCost, provider, estimatedUsage),
+      currency: "USD",
+    });
+  }
+
   return Object.freeze({
+    estimatePlanning,
     planOnce,
   });
 }

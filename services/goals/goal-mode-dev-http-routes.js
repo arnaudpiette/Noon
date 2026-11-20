@@ -21,6 +21,7 @@ const contract = require("./goal-mode-dev-http-contract");
 
 const GOAL_MODE_DEV_HTTP_PREFIX = "/api/goals/mode-dev/";
 const BODY_LIMIT_BYTES = 8 * 1024;
+const MAX_LISTED_RUNS = 50;
 const FIXED_CAPABILITY_CEILINGS = Object.freeze({ network: true, gitWrite: false, destructiveActions: false });
 
 function httpError(code) {
@@ -35,6 +36,7 @@ function createGoalModeDevHttpHandler({
   readJsonBody,
   executionPreference,
   audit = null,
+  lockMaintenance = null,
   now = () => new Date(),
 } = {}) {
   if (typeof enabled !== "function" || typeof requireTrustedUi !== "function" ||
@@ -78,6 +80,12 @@ function createGoalModeDevHttpHandler({
   function goalForRun(runId) {
     const snapshot = runtime.runStore.get(runId);
     return goal(snapshot.state.contract.goalRef.goalId);
+  }
+
+  // B3b : maintenance du verrou DATA_DIRECTORY (absente → 503 explicite).
+  function maintenance() {
+    if (!lockMaintenance) throw httpError("GOAL_MODE_DEV_LOCK_MAINTENANCE_UNAVAILABLE");
+    return lockMaintenance;
   }
 
   async function body(req) {
@@ -165,6 +173,16 @@ function createGoalModeDevHttpHandler({
       const input = contract.normalizeReconcile(await body(req));
       return [200, contract.projectReconciliation(runtime.dispatchService.reconcileExecution(input))];
     },
+    // B3b : reprise explicite du verrou ; aucun scan automatique ensuite.
+    "POST maintenance/lock-takeover": async (req) => {
+      const input = contract.normalizeLockTakeover(await body(req));
+      return [200, contract.projectLockTakeover(maintenance().takeover(input))];
+    },
+    // B3b : « Réconcilier maintenant » (verrou exigé, réconciliation EXPLICIT).
+    "POST maintenance/reconcile-scan": async (req) => {
+      contract.normalizeReconcileScan(await body(req));
+      return [200, contract.projectReconcileScan(maintenance().scanNow())];
+    },
     "POST dispatch/release": async (req) => {
       const input = contract.normalizeRelease(await body(req));
       const snapshot = runtime.runStore.releaseExecution(input.runId, {
@@ -175,6 +193,29 @@ function createGoalModeDevHttpHandler({
   };
 
   function matchGet(segments) {
+    // B3b : état du verrou DATA_DIRECTORY (lecture seule).
+    if (segments.length === 2 && segments[0] === "maintenance" && segments[1] === "lock") {
+      return ["GET maintenance/lock", () => [200, contract.projectLockState(maintenance().inspect())]];
+    }
+    // B3a : liste des runs récents, en lecture seule (reprise après rechargement).
+    if (segments.length === 1 && segments[0] === "runs") {
+      return ["GET runs", () => {
+        const snapshots = [];
+        for (const runId of runtime.runStore.listRunIds()) {
+          try { snapshots.push(runtime.runStore.get(runId)); } catch {}
+        }
+        snapshots.sort((left, right) => String(right.state.updatedAt).localeCompare(String(left.state.updatedAt)));
+        return [200, contract.projectRunSummaries(snapshots.slice(0, MAX_LISTED_RUNS))];
+      }];
+    }
+    // B3a : coût maximal estimé de l'appel de planning, sans appel ni réservation.
+    if (segments.length === 3 && segments[0] === "runs" && segments[2] === "planning-estimate") {
+      return ["GET runs/:runId/planning-estimate", () => {
+        const runId = contract.normalizePathId(segments[1]);
+        assertRemoteAllowed(goalForRun(runId));
+        return [200, contract.projectPlanningEstimate(runtime.planningCallService.estimatePlanning({ runId }))];
+      }];
+    }
     if (segments.length === 2 && segments[0] === "runs") {
       return ["GET runs/:runId", () => [200, contract.projectRun(
         runtime.runStore.get(contract.normalizePathId(segments[1])))]];

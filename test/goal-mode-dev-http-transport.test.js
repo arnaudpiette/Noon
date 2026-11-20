@@ -19,6 +19,8 @@ const { createPersonalDatabase } = require("../services/persistence/database");
 const { createApprovalEngine } = require("../services/approvals/approval-engine");
 const { createDevTaskJournal } = require("../services/dev/dev-task-journal");
 const { createOperationalSecurityPolicy } = require("../services/security/operational-security-policy");
+const { createDataDirectoryLock, LOCK_FILE } = require("../services/runtime/data-directory-lock");
+const { createGoalModeDevLockMaintenance } = require("../services/goals/goal-mode-dev-lock-maintenance");
 
 function git(cwd, ...args) {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -44,7 +46,7 @@ function goalFixture(overrides = {}) {
   };
 }
 
-async function harness({ goal = goalFixture() } = {}) {
+async function harness({ goal = goalFixture(), realLock = false } = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "noon-b2-transport-"));
   const writable = path.join(directory, "rw");
   const repository = path.join(writable, "repo");
@@ -127,7 +129,7 @@ async function harness({ goal = goalFixture() } = {}) {
       estimatedCost: { status: "available", total: 0.2 },
     }),
     estimateCost: () => ({ status: "available", total: 0.15 }),
-    authorizePrivacy: () => ({}),
+    authorizePrivacy: () => { state.privacyCalls = (state.privacyCalls || 0) + 1; return {}; },
     providerAdapter: {
       provider: "openai",
       async execute() {
@@ -148,7 +150,12 @@ async function harness({ goal = goalFixture() } = {}) {
       },
     },
   });
-  const runtime = makeRuntime(database);
+  // B3b : vrai verrou DATA_DIRECTORY (dossier temporaire) partagé par le runtime et la maintenance.
+  const dataLock = realLock ? createDataDirectoryLock({ directory: path.join(directory, "data") }) : null;
+  const runtime = dataLock ? makeRuntime(database, dataLock) : makeRuntime(database);
+  const lockMaintenance = dataLock ? createGoalModeDevLockMaintenance({
+    lock: dataLock, runtime, audit: (event, metadata) => state.audit.push({ event, metadata }),
+  }) : null;
   const handler = createGoalModeDevHttpHandler({
     runtime,
     goalStrategyEngine: { registry: { get: (goalId) => (goalId === goal.goalId ? goal : null) } },
@@ -159,6 +166,7 @@ async function harness({ goal = goalFixture() } = {}) {
     readJsonBody,
     executionPreference: () => state.preference,
     audit: (event, metadata) => state.audit.push({ event, metadata }),
+    lockMaintenance,
   });
   const server = http.createServer((req, res) => {
     handler.handle(req, res, new URL(req.url, "http://127.0.0.1").pathname).then((handled) => {
@@ -182,7 +190,7 @@ async function harness({ goal = goalFixture() } = {}) {
     return { status: response.status, body: response.ok ? json.result : json, raw: json };
   }
   return {
-    directory, repositoryRoot, database, runtime, server, state, call, goal, journal,
+    directory, repositoryRoot, database, runtime, server, state, call, goal, journal, dataLock,
     // Redémarrage simulé : nouvelle connexion SQLite, nouveau runtime, mêmes données.
     restart(lock) {
       const handle = createPersonalDatabase(path.join(directory, "personal.sqlite"));
@@ -219,6 +227,7 @@ async function harness({ goal = goalFixture() } = {}) {
     },
     async close() {
       await new Promise((resolve) => server.close(resolve));
+      dataLock?.release();
       for (const handle of restarted) handle.close();
       database.close();
       fs.rmSync(directory, { recursive: true, force: true });
@@ -330,7 +339,7 @@ test("B2 transport : 404 si désactivé (réévalué à chaque requête), 403 sa
     const untrusted = await h.call("GET", `runs/${run.runId}`, undefined, { trusted: false });
     assert.equal(untrusted.status, 403);
     assert.equal(untrusted.body.code, "TRUSTED_UI_REQUIRED");
-    for (const [method, route] of [["POST", "unknown"], ["GET", "runs"], ["DELETE", `runs/${run.runId}`],
+    for (const [method, route] of [["POST", "unknown"], ["GET", `runs/${run.runId}/unknown`], ["DELETE", `runs/${run.runId}`],
       ["GET", "dispatch/prepare"]]) {
       const response = await h.call(method, route, method === "POST" ? {} : undefined);
       assert.equal(response.status, 404, `${method} ${route}`);
@@ -802,5 +811,204 @@ test("4C-2 course entre deux processus sur la même réservation : un seul CAS g
     // Comptabilité appliquée une seule fois.
     assert.equal(h.runtime.runStore.get(runId).state.executionReservations.at(-1).observedProviderCalls, 2);
     assert.ok(usage.providerCalls >= 2);
+  } finally { await h.close(); }
+});
+
+test("B3a transport : GET runs liste les runs récents en lecture seule, sans contenu de tâche", async () => {
+  const h = await harness();
+  try {
+    const empty = await h.call("GET", "runs");
+    assert.equal(empty.status, 200);
+    assert.deepEqual(empty.body, { runs: [] });
+    const first = await h.createRunning();
+    h.state.clockOffset = 60_000;
+    const { runId: second, prepared } = await h.prepared();
+    const listed = await h.call("GET", "runs");
+    assert.equal(listed.status, 200);
+    // Tri par updatedAt décroissant : le run le plus récent d'abord.
+    assert.deepEqual(listed.body.runs.map((run) => run.runId), [second, first.runId]);
+    const top = listed.body.runs[0];
+    assert.deepEqual(Object.keys(top).sort(),
+      ["deadline", "goalId", "limits", "reservations", "revision", "runId", "status", "updatedAt", "usage"]);
+    assert.equal(top.goalId, "goal-b2");
+    assert.equal(top.limits.maxDuration, 600_000);
+    assert.deepEqual(top.reservations, [{ reservationId: prepared.reservationId, status: "PREPARED" }]);
+    const serialized = JSON.stringify(listed.raw);
+    for (const secret of ["SYNTHETIC_PRIVATE_OBJECTIVE", "SYNTHETIC_PROJECT_RULE_B2", prepared.resumeToken, h.repositoryRoot]) {
+      assert.equal(serialized.includes(secret), false, secret);
+    }
+    // Lecture seule : aucune révision modifiée.
+    assert.equal((await h.call("GET", `runs/${second}`)).body.revision, top.revision);
+    const untrusted = await h.call("GET", "runs", undefined, { trusted: false });
+    assert.equal(untrusted.status, 403);
+    h.state.enabled = false;
+    const disabled = await h.call("GET", "runs");
+    assert.equal(disabled.status, 404);
+    assert.equal(disabled.body.code, "GOAL_MODE_DEV_DISABLED");
+  } finally { await h.close(); }
+});
+
+test("B3a transport : planning-estimate donne le coût maximal sans appel fournisseur, réservation ni autorisation", async () => {
+  const h = await harness();
+  try {
+    const run = await h.createRunning();
+    const before = await h.call("GET", `runs/${run.runId}`);
+    const privacyBefore = h.state.privacyCalls || 0;
+    const estimate = await h.call("GET", `runs/${run.runId}/planning-estimate`);
+    assert.equal(estimate.status, 200, JSON.stringify(estimate.body));
+    assert.deepEqual(estimate.body, { decision: "PLAN", maxEstimatedCost: 0.2, currency: "USD" });
+    assert.equal(h.state.providerCalls, 0);
+    assert.equal(h.state.privacyCalls || 0, privacyBefore);
+    const after = await h.call("GET", `runs/${run.runId}`);
+    assert.equal(after.body.revision, before.body.revision);
+    assert.deepEqual(after.body.usage, before.body.usage);
+    assert.deepEqual(after.body.reservations, []);
+    // Préférence LOCAL_ONLY : refus avant toute estimation.
+    h.state.preference = "LOCAL_ONLY";
+    const local = await h.call("GET", `runs/${run.runId}/planning-estimate`);
+    assert.equal(local.status, 422);
+    assert.equal(local.body.code, "GOAL_MODE_DEV_LOCAL_ONLY_REQUIRED");
+    h.state.preference = "BALANCED";
+    const missing = await h.call("GET", "runs/goal-run-missing/planning-estimate");
+    assert.equal(missing.status, 404);
+    // L'estimation n'a pas consommé le planning : l'appel confirmé reste possible.
+    const planning = await h.call("POST", "planning", { runId: run.runId, confirmProviderCall: true });
+    assert.equal(planning.status, 200, JSON.stringify(planning.body));
+    assert.equal(h.state.providerCalls, 1);
+  } finally { await h.close(); }
+});
+
+function deadPid() {
+  return Number(execFileSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], { encoding: "utf8" }));
+}
+
+test("B3b transport : état du verrou, reprise explicite d'un verrou périmé, sans scan automatique", async () => {
+  const h = await harness({ realLock: true });
+  try {
+    const absent = await h.call("GET", "maintenance/lock");
+    assert.equal(absent.status, 200);
+    assert.deepEqual(absent.body, {
+      state: "ABSENT", holderPid: null, holderHostname: null, holderCreatedAt: null, sameHost: null,
+      machineRestarted: null, takeoverPending: false, canTakeOver: true,
+    });
+    const pid = deadPid();
+    const lockFile = path.join(h.directory, "data", LOCK_FILE);
+    fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+    const staleContent = JSON.stringify({ pid, hostname: os.hostname(), token: "stale-token", createdAt: "2026-10-13T12:00:00.000Z" });
+    fs.writeFileSync(lockFile, staleContent);
+    const stale = await h.call("GET", "maintenance/lock");
+    assert.equal(stale.body.state, "STALE");
+    assert.equal(stale.body.holderPid, pid);
+    assert.equal(stale.body.sameHost, true);
+    assert.equal(stale.body.canTakeOver, true);
+    assert.equal(JSON.stringify(stale.raw).includes("stale-token"), false);
+    // Corps exacts : confirmation et détenteur attendu obligatoires.
+    for (const invalid of [{ confirm: false, expectedHolderPid: pid }, { confirm: true }, { expectedHolderPid: pid },
+      { confirm: true, expectedHolderPid: pid, force: true }, { confirm: true, expectedHolderPid: "1" }]) {
+      const response = await h.call("POST", "maintenance/lock-takeover", invalid);
+      assert.equal(response.status, 400, JSON.stringify(invalid));
+    }
+    const mismatch = await h.call("POST", "maintenance/lock-takeover", { confirm: true, expectedHolderPid: pid + 1 });
+    assert.equal(mismatch.status, 409);
+    assert.equal(mismatch.body.code, "GOAL_MODE_DEV_LOCK_EXPECTED_HOLDER_MISMATCH");
+    assert.equal(fs.readFileSync(lockFile, "utf8"), staleContent);
+    const scansBefore = h.state.events.filter((item) => /reconcil/.test(item.event)).length;
+    const taken = await h.call("POST", "maintenance/lock-takeover", { confirm: true, expectedHolderPid: pid });
+    assert.equal(taken.status, 200, JSON.stringify(taken.body));
+    assert.deepEqual(taken.body, { acquired: true, reason: "TAKEN_OVER", previousPid: pid, reconcileRecommended: true });
+    assert.equal(h.dataLock.isHeld(), true);
+    assert.equal((await h.call("GET", "maintenance/lock")).body.state, "HELD_BY_THIS");
+    // Ancien verrou conservé (renommé), aucun scan lancé par la reprise explicite.
+    const kept = fs.readdirSync(path.dirname(lockFile)).filter((name) => name.startsWith(`${LOCK_FILE}.stale-`));
+    assert.equal(kept.length, 1);
+    assert.equal(fs.readFileSync(path.join(path.dirname(lockFile), kept[0]), "utf8"), staleContent);
+    assert.equal(h.state.events.filter((item) => /reconcil/.test(item.event)).length, scansBefore);
+    assert.deepEqual(h.state.audit.filter((item) => item.event === "goals.mode-dev.lock_takeover").map((item) => item.metadata),
+      [{ mode: "EXPLICIT", previousPid: pid, reason: "USER_CONFIRMED" }]);
+    assert.equal(h.state.audit.some((item) => item.event === "goals.mode-dev.reconcile_scan"), false);
+    // Déjà détenu : idempotent.
+    const again = await h.call("POST", "maintenance/lock-takeover", { confirm: true, expectedHolderPid: null });
+    assert.equal(again.body.reason, "ALREADY_HELD");
+  } finally { await h.close(); }
+});
+
+test("B3b transport : détenteur vivant sur la même machine → reprise refusée, verrou intact", async () => {
+  const h = await harness({ realLock: true });
+  try {
+    const lockFile = path.join(h.directory, "data", LOCK_FILE);
+    fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+    // Le processus de test lui-même est vivant : détenteur vivant sur ce Mac.
+    const live = JSON.stringify({ pid: process.pid, hostname: os.hostname(), token: "live-token", createdAt: "2026-10-13T12:00:00.000Z", bootTime: 0 });
+    fs.writeFileSync(lockFile, live);
+    const state = await h.call("GET", "maintenance/lock");
+    assert.equal(state.body.state, "HELD");
+    assert.equal(state.body.canTakeOver, false);
+    assert.equal(state.body.machineRestarted, true); // indication seulement
+    const refused = await h.call("POST", "maintenance/lock-takeover", { confirm: true, expectedHolderPid: process.pid });
+    assert.equal(refused.status, 409);
+    assert.equal(refused.body.code, "GOAL_MODE_DEV_LOCK_HOLDER_ALIVE");
+    assert.equal(fs.readFileSync(lockFile, "utf8"), live);
+    assert.equal(h.dataLock.isHeld(), false);
+    assert.deepEqual(h.state.audit.filter((item) => item.event === "goals.mode-dev.lock_takeover_refused").map((item) => item.metadata),
+      [{ reason: "HOLDER_ALIVE" }]);
+    const scan = await h.call("POST", "maintenance/reconcile-scan", { confirm: true });
+    assert.equal(scan.status, 409);
+    assert.equal(scan.body.code, "GOAL_MODE_DEV_RECONCILE_LOCK_REQUIRED");
+  } finally { await h.close(); }
+});
+
+test("B3b transport : « Réconcilier maintenant » en EXPLICIT — dispatch en vol jamais conclu, ledger réglé réconcilié", async () => {
+  const h = await harness({ realLock: true });
+  try {
+    assert.equal((await h.call("POST", "maintenance/lock-takeover", { confirm: true, expectedHolderPid: null })).body.reason, "ACQUIRED");
+    // Run A : dispatch de ce processus en vol, avant la réservation de démarrage.
+    const a = await h.prepared();
+    h.state.facadeMode = "HANG_BEFORE_CLAIM";
+    dispatchDirect(h, a.prepared);
+    await waitFor(() => h.runtime.runStore.get(a.runId).state.executionReservations.at(-1).status === "MAY_HAVE_STARTED", "A");
+    // Run B : appel resté RESERVED dans le ledger à la fin de resume, puis réglé.
+    h.state.facadeMode = "NORMAL";
+    const b = await h.prepared();
+    h.state.reservedLeftover = true;
+    const resumed = await h.call("POST", "dispatch/resume", {
+      approvalId: b.prepared.approval.approvalId, resumeToken: b.prepared.resumeToken, decision: "approve",
+    });
+    assert.equal(resumed.body.reconciliation.reason, "LEDGER_IN_PROGRESS");
+    h.state.ledgerEntries.find((entry) => entry.status === "RESERVED").status = "RECONCILED";
+    // Même au-delà du délai de grâce, le dispatch en vol n'est jamais conclu.
+    h.state.clockOffset = 10 * 60_000;
+    const facadeBefore = h.state.facadeCalls.length;
+    const invalid = await h.call("POST", "maintenance/reconcile-scan", {});
+    assert.equal(invalid.status, 400);
+    const scan = await h.call("POST", "maintenance/reconcile-scan", { confirm: true });
+    assert.equal(scan.status, 200, JSON.stringify(scan.body));
+    assert.deepEqual(scan.body, { scanned: 2, reconciled: 1, unknown: 0, unchanged: 1, failed: 0 });
+    const statusOf = (runId) => h.runtime.runStore.get(runId).state.executionReservations.at(-1).status;
+    assert.equal(statusOf(a.runId), "MAY_HAVE_STARTED");
+    assert.equal(statusOf(b.runId), "RECONCILED");
+    assert.equal(h.state.facadeCalls.length, facadeBefore);
+    const scanAudit = h.state.audit.filter((item) => item.event === "goals.mode-dev.reconcile_scan");
+    assert.deepEqual(scanAudit.map((item) => item.metadata), [{ scanned: 2, reconciled: 1, unknown: 0, unchanged: 1, failed: 0, trigger: "EXPLICIT" }]);
+    // Les réconciliations du scan sont EXPLICIT, jamais STARTUP.
+    const triggers = h.state.events.filter((item) => item.event === "goal_mode_dev.reconciliation").map((item) => item.metadata.trigger);
+    assert.equal(triggers.includes("STARTUP"), false);
+  } finally { await h.close(); }
+});
+
+test("B3b transport : maintenance absente → 503, flag OFF → 404, sans en-tête → 403", async () => {
+  const h = await harness();
+  try {
+    const missing = await h.call("GET", "maintenance/lock");
+    assert.equal(missing.status, 503);
+    assert.equal(missing.body.code, "GOAL_MODE_DEV_LOCK_MAINTENANCE_UNAVAILABLE");
+    assert.equal((await h.call("POST", "maintenance/reconcile-scan", { confirm: true })).status, 503);
+    assert.equal((await h.call("GET", "maintenance/lock", undefined, { trusted: false })).status, 403);
+    h.state.enabled = false;
+    for (const [method, route, body] of [["GET", "maintenance/lock"], ["POST", "maintenance/lock-takeover", { confirm: true, expectedHolderPid: null }],
+      ["POST", "maintenance/reconcile-scan", { confirm: true }]]) {
+      const response = await h.call(method, route, body);
+      assert.equal(response.status, 404, route);
+      assert.equal(response.body.code, "GOAL_MODE_DEV_DISABLED", route);
+    }
   } finally { await h.close(); }
 });

@@ -150,6 +150,22 @@ function normalizeReconcile(body) {
   });
 }
 
+// B3b : reprise explicite du verrou (confirmation et détenteur attendu obligatoires).
+function normalizeLockTakeover(body) {
+  exactKeys(body, ["confirm", "expectedHolderPid"]);
+  if (body.confirm !== true) fail();
+  const expected = body.expectedHolderPid;
+  if (expected !== null && !(Number.isSafeInteger(expected) && expected > 0)) fail();
+  return Object.freeze({ expectedHolderPid: expected });
+}
+
+// B3b : scan explicite (« Réconcilier maintenant »), confirmation obligatoire.
+function normalizeReconcileScan(body) {
+  exactKeys(body, ["confirm"]);
+  if (body.confirm !== true) fail();
+  return Object.freeze({});
+}
+
 function normalizePathId(value) {
   let decoded;
   try { decoded = decodeURIComponent(String(value ?? "")); } catch { fail(); }
@@ -174,6 +190,68 @@ function projectRun(snapshot) {
     deadline: runDeadline(state),
     reservations: (state.executionReservations || [])
       .map((item) => ({ reservationId: item.reservationId, status: item.status })),
+  });
+}
+
+// B3a : liste des runs, réduite (aucun contenu de contrat ni de tâche).
+function projectRunSummaries(snapshots) {
+  return Object.freeze({
+    runs: snapshots.map((snapshot) => ({
+      runId: snapshot.state.runId,
+      goalId: snapshot.state.contract.goalRef.goalId,
+      revision: snapshot.revision,
+      status: snapshot.state.status,
+      updatedAt: snapshot.state.updatedAt,
+      usage: { ...snapshot.state.usage },
+      limits: { ...snapshot.state.contract.limits },
+      deadline: runDeadline(snapshot.state),
+      reservations: (snapshot.state.executionReservations || [])
+        .map((item) => ({ reservationId: item.reservationId, status: item.status })),
+    })),
+  });
+}
+
+function projectPlanningEstimate(estimate) {
+  return Object.freeze({
+    decision: String(estimate?.decision || "UNKNOWN").slice(0, 60),
+    maxEstimatedCost: typeof estimate?.maxEstimatedCost === "number" && Number.isFinite(estimate.maxEstimatedCost)
+      ? estimate.maxEstimatedCost : null,
+    currency: "USD",
+  });
+}
+
+const LOCK_STATES = new Set(["HELD_BY_THIS", "ABSENT", "UNREADABLE", "HELD", "STALE", "FOREIGN_HOST", "UNVERIFIED"]);
+
+// B3b : état du verrou pour l'affichage (clés fixes ; ni jeton ni chemin).
+function projectLockState(state) {
+  const value = LOCK_STATES.has(state?.state) ? state.state : "UNVERIFIED";
+  const text = (item, max) => (typeof item === "string" ? item.slice(0, max) : null);
+  return Object.freeze({
+    state: value,
+    holderPid: Number.isSafeInteger(state?.holderPid) ? state.holderPid : null,
+    holderHostname: text(state?.holderHostname, 255),
+    holderCreatedAt: text(state?.holderCreatedAt, 40),
+    sameHost: typeof state?.sameHost === "boolean" ? state.sameHost : null,
+    machineRestarted: typeof state?.machineRestarted === "boolean" ? state.machineRestarted : null,
+    takeoverPending: state?.takeoverPending === true,
+    canTakeOver: state?.canTakeOver === true,
+  });
+}
+
+function projectLockTakeover(result) {
+  return Object.freeze({
+    acquired: result?.acquired === true,
+    reason: String(result?.reason || "UNKNOWN").slice(0, 60),
+    previousPid: Number.isSafeInteger(result?.previousPid) ? result.previousPid : null,
+    reconcileRecommended: result?.reconcileRecommended === true,
+  });
+}
+
+function projectReconcileScan(summary) {
+  const count = (value) => (Number.isSafeInteger(value) && value >= 0 ? value : 0);
+  return Object.freeze({
+    scanned: count(summary?.scanned), reconciled: count(summary?.reconciled), unknown: count(summary?.unknown),
+    unchanged: count(summary?.unchanged), failed: count(summary?.failed),
   });
 }
 
@@ -324,7 +402,12 @@ const STATUS_BY_CODE = new Map([
     "GOAL_MODE_DEV_CANCEL_UNAVAILABLE", "GOAL_MODE_DEV_DISPATCH_RECONCILIATION_REQUIRED",
     "GOAL_MODE_DEV_DISPATCH_ALREADY_ATTEMPTED", "GOAL_MODE_DEV_DISPATCH_IN_PROGRESS",
     "GOAL_MODE_DEV_RUN_NOT_PAUSED", "GOAL_MODE_DEV_RUN_NOT_READY", "GOAL_MODE_DEV_RECONCILE_LOCK_REQUIRED", "GOAL_MODE_DEV_DISPATCH_RUN_NOT_RUNNING",
-    "GOAL_MODE_RUN_NOT_RUNNING", "APPROVAL_INVALID", "APPROVAL_IN_FLIGHT"].map((code) => [code, 409]),
+    "GOAL_MODE_RUN_NOT_RUNNING", "APPROVAL_INVALID", "APPROVAL_IN_FLIGHT",
+    // B3b : reprise du verrou refusée.
+    "GOAL_MODE_DEV_LOCK_HELD", "GOAL_MODE_DEV_LOCK_TAKEOVER_BUSY", "GOAL_MODE_DEV_LOCK_TAKEOVER_CHANGED",
+    "GOAL_MODE_DEV_LOCK_EXPECTED_HOLDER_MISMATCH", "GOAL_MODE_DEV_LOCK_EXPECTED_HOLDER_INVALID",
+    "GOAL_MODE_DEV_LOCK_HOLDER_ALIVE", "GOAL_MODE_DEV_LOCK_HOLDER_UNVERIFIED", "GOAL_MODE_DEV_LOCK_UNREADABLE",
+    "GOAL_MODE_DEV_LOCK_STALE"].map((code) => [code, 409]),
   ...["approval_expired", "APPROVAL_CONSUMED"].map((code) => [code, 410]),
   ...["GOAL_MODE_DEV_LOCAL_ONLY_REQUIRED", "GOAL_MODE_DEV_DISPATCH_PERMISSION_REVOKED",
     "GOAL_MODE_DEV_DISPATCH_PERMISSION_ESCALATION", "GOAL_MODE_DEV_DISPATCH_BUDGET_EXHAUSTED",
@@ -340,7 +423,8 @@ const STATUS_BY_CODE = new Map([
   ...["GOAL_MODE_EXECUTION_ATOMIC_BACKEND_REQUIRED", "APPROVAL_STORAGE_ERROR",
     "GOAL_MODE_DEV_RUNTIME_NOT_READY", "GOAL_MODE_EXECUTION_JOURNAL_REQUIRED",
     "GOAL_MODE_EXECUTION_RELEASE_JOURNAL_REQUIRED", "GOAL_MODE_EXECUTION_RELEASE_LEDGER_REQUIRED",
-    "GOAL_MODE_DEV_RECONCILIATION_UNAVAILABLE"]
+    "GOAL_MODE_DEV_RECONCILIATION_UNAVAILABLE", "GOAL_MODE_DEV_LOCK_UNAVAILABLE",
+    "GOAL_MODE_DEV_LOCK_MAINTENANCE_UNAVAILABLE"]
     .map((code) => [code, 503]),
 ]);
 
@@ -380,12 +464,14 @@ module.exports = {
   goalModeDevHttpStatus,
   normalizeCancel,
   normalizeCreateRun,
+  normalizeLockTakeover,
   normalizePathId,
   normalizePause,
   normalizePlanning,
   normalizePrepare,
   normalizeRelease,
   normalizeReconcile,
+  normalizeReconcileScan,
   normalizeRenew,
   normalizeResume,
   normalizeResumeRun,
@@ -395,8 +481,13 @@ module.exports = {
   projectCancel,
   projectDispatch,
   projectHalt,
+  projectLockState,
+  projectLockTakeover,
   projectPlanning,
+  projectPlanningEstimate,
+  projectRunSummaries,
   projectProposal,
+  projectReconcileScan,
   projectReconciliation,
   projectRelease,
   projectReservation,

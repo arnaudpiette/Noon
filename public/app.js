@@ -11296,7 +11296,8 @@ async function loadPendingApprovals() {
     const response = await fetch("/approvals", { cache: "no-store" });
     const data = await response.json(); approvalsList.replaceChildren();
     if (!data.approvals?.length) { approvalsList.textContent = "Aucune action en attente."; return; }
-    for (const approval of data.approvals) {
+    // B3a : les approbations Goal Mode DEV ont leur carte dédiée (filtre défensif).
+    for (const approval of data.approvals.filter((item) => item.skillName !== "goal_mode_dev")) {
       const card = document.createElement("article"); card.className = "approval-card";
       card.innerHTML = `<strong>${escapeHtml(approval.provider)} · ${escapeHtml(approval.action)}</strong><span>Cible : ${escapeHtml(approval.target)}</span><small>${escapeHtml(approval.consequences)}</small><small>Expire : ${new Date(approval.expiresAt).toLocaleTimeString("fr-FR")}</small>`;
       for (const action of ["confirm", "reject"]) {
@@ -11375,6 +11376,15 @@ restoreSavedDraft();
 checkNoonConnection();
 loadIntegrations();
 loadPendingApprovals();
+// B3a : UI Goal Mode DEV, masquée tant que goals.mode-dev est OFF (404).
+const goalModeDevPanel = document.getElementById("goalModeDevPanel");
+if (goalModeDevPanel && window.NoonGoalModeDevUi) {
+  const goalModeDevUi = window.NoonGoalModeDevUi.createGoalModeDevController({
+    elements: { root: goalModeDevPanel },
+    api: window.NoonGoalModeDevUi.createGoalModeDevApi({ fetchImpl: window.fetch.bind(window) }),
+  });
+  void goalModeDevUi.init();
+}
 loadAutomations();
 refreshWakeWordSettings();
 refreshOpenAIKeyStatus();
