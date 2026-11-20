@@ -5,6 +5,11 @@ const {
 } = require(
   "./goal-dev-execution-contract"
 );
+const {
+  assertDevTaskIdNotReserved,
+} = require(
+  "../dev/dev-task-id-namespace"
+);
 
 function failure(
   code,
@@ -122,6 +127,15 @@ function createGoalDevExecutionService({
         "goalId requis."
       );
     }
+
+    /*
+     * dev-run et Retry approuvé passent ici.
+     * L'espace goal-mode-dev- reste réservé aux
+     * réservations Goal Mode (réservation + CAS).
+     */
+    assertDevTaskIdNotReserved(
+      request?.taskId
+    );
 
     const goal =
       goalStrategyEngine

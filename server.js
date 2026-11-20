@@ -172,6 +172,7 @@ const { createNativeDevCoordinator } = require("./services/dev/native-dev-coordi
 const { createNativeDevOrchestrator } = require("./services/dev/native-dev-orchestrator");
 const { createNativeDevOrchestratorFacade } = require("./services/dev/native-dev-orchestrator-facade");
 const { createNativeDevUiExecutionService } = require("./services/dev/native-dev-ui-execution-service");
+const { assertDevTaskIdNotReserved } = require("./services/dev/dev-task-id-namespace");
 const { createSandboxDevValidationExecutor } = require("./services/security/dev-validation-runner");
 const { createDevWorkspaceTerminalService } = require("./services/dev/workspace-terminal-service");
 const { createDevWorkspaceAgentExecutionLoop } = require("./services/dev/workspace-agent-execution-loop");
@@ -10146,6 +10147,8 @@ if (requestPath === "/api/dev/native/tasks" && req.method === "POST") {
   try {
     if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403, code: "TRUSTED_UI_REQUIRED" });
     const body = await readJsonBody(req, 128 * 1024);
+    // L'espace goal-mode-dev- est réservé aux réservations Goal Mode.
+    assertDevTaskIdNotReserved(body.taskId);
     // Le client ne choisit pas les règles persistantes : le projet et le
     // propriétaire viennent du workspace déjà résolu côté serveur.
     const workspaceContext = workspaceEngine.context(String(body.workspaceId || ""));

@@ -277,3 +277,62 @@ test(
     );
   }
 );
+
+test(
+  "le participant Native refuse un executionTaskId de l'espace réservé Goal Mode",
+  async () => {
+    let calls = 0;
+
+    const participant =
+      createNativeNoonBenchmarkParticipant({
+        coordinator: {
+          async runTask() {
+            calls += 1;
+            return {};
+          },
+
+          cancelTask() {
+            return true;
+          },
+        },
+      });
+
+    for (const executionTaskId of [
+      "goal-mode-dev-abc",
+      "GOAL-MODE-DEV-abc",
+    ]) {
+      await assert.rejects(
+        () =>
+          participant.execute({
+            runId:
+              "run-reserved",
+
+            executionTaskId,
+
+            benchmarkSessionId:
+              "session-reserved",
+
+            benchmarkBudget: {
+              id:
+                "session-reserved",
+            },
+
+            workspace:
+              "/tmp/reserved-fixture",
+
+            objective:
+              "Fixture",
+          }),
+        {
+          code:
+            "EXECUTION_NOT_REACHED",
+        }
+      );
+    }
+
+    assert.equal(
+      calls,
+      0
+    );
+  }
+);

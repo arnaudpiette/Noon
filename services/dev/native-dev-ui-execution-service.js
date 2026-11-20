@@ -2,6 +2,11 @@
 
 const crypto =
   require("node:crypto");
+const {
+  isReservedGoalModeDevTaskId,
+} = require(
+  "./dev-task-id-namespace"
+);
 
 function executionError(
   code,
@@ -425,7 +430,12 @@ function createNativeDevUiExecutionService({
         180
       );
 
-    if (!taskId) {
+    if (
+      !taskId ||
+      isReservedGoalModeDevTaskId(
+        taskId
+      )
+    ) {
       throw executionError(
         "DEV_NATIVE_UI_TASK_ID_INVALID",
         "Identifiant Native DEV invalide."

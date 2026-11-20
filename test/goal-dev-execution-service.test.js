@@ -564,3 +564,47 @@ test(
     );
   }
 );
+
+test(
+  "4C-1B dev-run refuse un taskId de l'espace réservé Goal Mode, sans projection ni Native DEV",
+  async () => {
+    for (const taskId of [
+      "goal-mode-dev-abc",
+      "  Goal-Mode-Dev-abc  ",
+      "goal\u2011mode\u2011dev\u2011abc",
+      "goal-mode-dev\u200b-abc",
+    ]) {
+      const {
+        service,
+        calls,
+      } = fixture();
+
+      await assert.rejects(
+        () =>
+          service.run({
+            goalId:
+              "goal-1",
+            request: {
+              taskId,
+              workspaceId:
+                "workspace-1",
+            },
+          }),
+        {
+          code:
+            "DEV_TASK_ID_RESERVED",
+        }
+      );
+
+      assert.equal(
+        calls.projector.length,
+        0
+      );
+
+      assert.equal(
+        calls.dev.length,
+        0
+      );
+    }
+  }
+);

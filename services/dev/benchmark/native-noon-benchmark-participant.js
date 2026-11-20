@@ -4,8 +4,9 @@ const {
   CONTEXT_MANIFEST_EXPERIMENT,
   normalizeContextManifestMode,
 } = require("./context-manifest-experiment");
+const { isReservedGoalModeDevTaskId } = require("../dev-task-id-namespace");
 function executionNotReached() { return Object.assign(new Error("Session benchmark canonique requise."), { code: "EXECUTION_NOT_REACHED" }); }
-function createNativeNoonBenchmarkParticipant({ coordinator } = {}) { if (!coordinator?.runTask) throw new TypeError("NativeDevCoordinator requis."); return { async isAvailable() { return true; }, prepare: (context) => ({ ...context, executionMode: "NATIVE_NOON", model: "AUTO", codexFallback: false }), async execute(context) { const benchmarkSessionId=String(context?.benchmarkSessionId||""); const executionTaskId=String(context?.executionTaskId||context?.runId||""); if(!benchmarkSessionId||benchmarkSessionId!==context?.benchmarkBudget?.id||!/^[A-Za-z0-9_-]{1,240}$/.test(executionTaskId))throw executionNotReached(); const result = await coordinator.runTask({
+function createNativeNoonBenchmarkParticipant({ coordinator } = {}) { if (!coordinator?.runTask) throw new TypeError("NativeDevCoordinator requis."); return { async isAvailable() { return true; }, prepare: (context) => ({ ...context, executionMode: "NATIVE_NOON", model: "AUTO", codexFallback: false }), async execute(context) { const benchmarkSessionId=String(context?.benchmarkSessionId||""); const executionTaskId=String(context?.executionTaskId||context?.runId||""); if(!benchmarkSessionId||benchmarkSessionId!==context?.benchmarkBudget?.id||!/^[A-Za-z0-9_-]{1,240}$/.test(executionTaskId)||isReservedGoalModeDevTaskId(executionTaskId))throw executionNotReached(); const result = await coordinator.runTask({
     [CONTEXT_MANIFEST_EXPERIMENT]:
       normalizeContextManifestMode(
         context.contextManifestMode

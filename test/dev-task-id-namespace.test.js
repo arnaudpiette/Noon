@@ -1,0 +1,107 @@
+"use strict";
+
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const test = require("node:test");
+
+const {
+  RESERVED_GOAL_MODE_DEV_TASK_PREFIX,
+  assertDevTaskIdNotReserved,
+  isReservedGoalModeDevTaskId,
+} = require("../services/dev/dev-task-id-namespace");
+const {
+  deterministicGoalModeDevTaskId,
+} = require("../services/goals/goal-mode-dev-projection-service");
+
+const ROOT = path.join(__dirname, "..");
+
+test("espace réservé : les taskId Goal Mode réels sont réservés", () => {
+  const taskId = deterministicGoalModeDevTaskId("run-1", "step-1", `sha256:${"a".repeat(64)}`);
+  assert.equal(taskId.startsWith(RESERVED_GOAL_MODE_DEV_TASK_PREFIX), true);
+  assert.equal(isReservedGoalModeDevTaskId(taskId), true);
+  assert.throws(() => assertDevTaskIdNotReserved(taskId), {
+    code: "DEV_TASK_ID_RESERVED", statusCode: 400,
+  });
+});
+
+test("espace réservé : variantes de casse, espaces, NFKC, invisibles et tirets refusées", () => {
+  for (const value of [
+    "goal-mode-dev-x",
+    "  goal-mode-dev-x\n",
+    "GOAL-MODE-DEV-X",
+    "Goal-Mode-Dev-x",
+    "ｇｏａｌ－ｍｏｄｅ－ｄｅｖ－x", // pleine chasse (NFKC)
+    "goal‐mode‐dev‐x", // trait d'union Unicode
+    "goal‑mode‑dev‑x", // trait d'union insécable
+    "goal–mode—dev−x", // tirets demi/cadratin, signe moins
+    "goal﹣mode－dev-x",
+    "goal-mode-dev​-x", // espace sans chasse
+    "go­al-mode-dev-x", // trait d'union conditionnel
+    "﻿goal-mode-dev-x", // BOM
+    "goal-mode-dev -x", // espace insécable
+    "ⓖoal-mode-dev-x", // lettre cerclée (NFKC → g)
+  ]) {
+    assert.equal(isReservedGoalModeDevTaskId(value), true, JSON.stringify(value));
+    assert.throws(() => assertDevTaskIdNotReserved(value), { code: "DEV_TASK_ID_RESERVED" },
+      JSON.stringify(value));
+  }
+});
+
+test("espace réservé : identifiants ordinaires acceptés", () => {
+  for (const value of [
+    undefined, null, "", "task-1", "dev-ui-123e4567", "goal_dev_task_abc",
+    "goal-mode-dev", "goal-mode-devx", "goal_mode_dev_x", "my-goal-mode-dev-x",
+    "goal-mode-development", 42,
+  ]) {
+    assert.equal(isReservedGoalModeDevTaskId(value), false, JSON.stringify(value));
+    assert.equal(assertDevTaskIdNotReserved(value), value);
+  }
+});
+
+function sourceFiles(directory) {
+  const output = [];
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    if (["node_modules", ".git", "dist", "out", "build"].includes(entry.name)) continue;
+    const absolute = path.join(directory, entry.name);
+    if (entry.isDirectory()) output.push(...sourceFiles(absolute));
+    else if (entry.name.endsWith(".js")) output.push(absolute);
+  }
+  return output;
+}
+
+test("inventaire : tout appel runTask de production est audité", () => {
+  // Tout nouvel appelant doit être ajouté ici après vérification qu'il
+  // applique la règle d'espace réservé (ou qu'il n'est pas une entrée).
+  const audited = new Map([
+    ["server.js", "POST /api/dev/native/tasks : assertDevTaskIdNotReserved(body.taskId)"],
+    ["services/goals/goal-dev-execution-service.js", "dev-run + Retry approuvé : assertDevTaskIdNotReserved"],
+    ["services/dev/native-dev-ui-execution-service.js", "UI : taskId serveur + refus réservé"],
+    ["services/dev/benchmark/native-noon-benchmark-participant.js", "benchmark : refus réservé"],
+    ["services/dev/native-dev-orchestrator-facade.js", "interne : façade → orchestrateur"],
+    ["services/goals/goal-mode-dev-dispatch-service.js", "Goal Mode : réservation + CAS (non câblé)"],
+  ]);
+  const found = new Set();
+  const files = [
+    path.join(ROOT, "server.js"),
+    ...["services", "lib", "electron", "public", "scripts"]
+      .map((item) => path.join(ROOT, item))
+      .filter((item) => fs.existsSync(item))
+      .flatMap(sourceFiles),
+  ];
+  for (const file of files) {
+    if (/\.\s*runTask\s*\(/.test(fs.readFileSync(file, "utf8"))) {
+      found.add(path.relative(ROOT, file).split(path.sep).join("/"));
+    }
+  }
+  assert.deepEqual([...found].sort(), [...audited.keys()].sort());
+});
+
+test("câblage : la route Native DEV refuse l'espace réservé avant runTask", () => {
+  const source = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+  const start = source.indexOf('requestPath === "/api/dev/native/tasks" && req.method === "POST"');
+  assert.notEqual(start, -1);
+  const block = source.slice(start, source.indexOf("nativeDevB3Facade.runTask(", start));
+  assert.match(block, /assertDevTaskIdNotReserved\(body\.taskId\)/);
+  assert.match(source, /require\("\.\/services\/dev\/dev-task-id-namespace"\)/);
+});

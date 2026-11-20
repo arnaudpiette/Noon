@@ -58,6 +58,7 @@ function fixture({
     status:
       "PASS",
   },
+  taskIdOverride = null,
 } = {}) {
   const run =
     deferred();
@@ -230,7 +231,8 @@ function fixture({
         () => {
           taskCounter += 1;
 
-          return `native-ui-${taskCounter}`;
+          return taskIdOverride ??
+            `native-ui-${taskCounter}`;
         },
 
       now:
@@ -710,5 +712,47 @@ test(
     await new Promise((resolve) => setImmediate(resolve));
 
     assert.equal(f.calls.appliedValidations.length, 0);
+  }
+);
+
+test(
+  "Native DEV UI refuse un taskId dans l'espace réservé Goal Mode",
+  () => {
+    for (const taskId of [
+      "goal-mode-dev-abc",
+      " GOAL-MODE-DEV-abc",
+      "ｇｏａｌ－ｍｏｄｅ－ｄｅｖ－abc",
+    ]) {
+      const f =
+        fixture({
+          taskIdOverride:
+            taskId,
+        });
+
+      assert.throws(
+        () =>
+          f.service.start({
+            workspaceSessionId:
+              "workspace-session-1",
+
+            validationCommand:
+              "npm test",
+          }),
+        {
+          code:
+            "DEV_NATIVE_UI_TASK_ID_INVALID",
+        }
+      );
+
+      assert.equal(
+        f.calls.run.length,
+        0
+      );
+
+      assert.equal(
+        f.calls.claims.length,
+        0
+      );
+    }
   }
 );
