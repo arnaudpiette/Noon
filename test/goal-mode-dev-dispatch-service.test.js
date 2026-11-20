@@ -146,6 +146,8 @@ function fixture({ realRepository = false } = {}) {
     taskProviderCalls: () => budget.calls,
   };
   const permissionSource = { current: () => ({ ...live }) };
+  const goal = { goalId: "goal-dispatch", status: "ACTIVE", userConfirmed: true, version: 2 };
+  const goalStrategyEngine = { registry: { get: (goalId) => (goalId === goal.goalId ? { ...goal } : null) } };
   const syntheticInspector = () => {
     const callback = onInspect;
     onInspect = null;
@@ -153,14 +155,14 @@ function fixture({ realRepository = false } = {}) {
     return targetFingerprint;
   };
   const makeService = (store = storeA, overrides = {}) => createGoalModeDevDispatchService({
-    runStore: store, devBudgetService, permissionSource, dispatcher,
+    runStore: store, goalStrategyEngine, devBudgetService, permissionSource, dispatcher,
     targetInspector: realRepository ? defaultGoalModeDevTargetInspector : syntheticInspector,
     now: () => new Date(clock),
     ...overrides,
   });
   return {
     file, directory, repositoryRoot, repositoryA, repositoryB, storeA, storeB, running,
-    budget, live, calls, dispatcher, makeStore, makeService,
+    budget, live, goal, goalStrategyEngine, calls, dispatcher, makeStore, makeService,
     prepare(service) {
       return service.prepare(running.state.runId, {
         expectedRevision: storeA.get(running.state.runId).revision, stepId: "step-dispatch",
@@ -478,4 +480,162 @@ test("4C-1B ticket forgé ou d'une autre instance refusé ; dépendances requise
     assert.equal(f.status(), "PREPARED");
     assert.throws(() => createGoalModeDevDispatchService({}), TypeError);
   } finally { f.close(); }
+});
+
+test("4C-1B Goal en pause, archivé, non confirmé ou en nouvelle version : refus sans CAS", async () => {
+  const f = fixture();
+  try {
+    const service = f.makeService();
+    const ticket = f.prepare(service);
+    const changes = [
+      { status: "PAUSED" }, { status: "ABANDONED" }, { status: "SUPERSEDED" },
+      { status: "ACHIEVED" }, { status: "DRAFT" }, { version: 3 },
+      { userConfirmed: false }, { goalId: "goal-other" },
+    ];
+    for (const change of changes) {
+      const saved = { ...f.goal };
+      Object.assign(f.goal, change);
+      await assert.rejects(() => service.dispatch(ticket),
+        { code: "GOAL_MODE_DEV_DISPATCH_GOAL_STALE" }, JSON.stringify(change));
+      Object.assign(f.goal, saved);
+    }
+    assert.equal(f.calls.length, 0);
+    assert.equal(f.status(), "PREPARED");
+    assert.equal(f.latest().revision, ticket.reservedRevision);
+    // Goal rétabli à l'identique : rien n'ayant été engagé, le dispatch passe.
+    await service.dispatch(ticket);
+    assert.equal(f.calls.length, 1);
+  } finally { f.close(); }
+
+  const g = fixture();
+  try {
+    let fail = false;
+    const service = g.makeService(g.storeA, {
+      goalStrategyEngine: {
+        registry: {
+          get: (goalId) => {
+            if (fail) throw new Error("registry unavailable");
+            return g.goalStrategyEngine.registry.get(goalId);
+          },
+        },
+      },
+    });
+    const ticket = g.prepare(service);
+    fail = true;
+    await assert.rejects(() => service.dispatch(ticket), { code: "GOAL_MODE_DEV_DISPATCH_GOAL_STALE" });
+    assert.equal(g.calls.length, 0);
+    assert.equal(g.status(), "PREPARED");
+  } finally { g.close(); }
+});
+
+test("4C-1B chemins protégés : jamais ouverts ni hashés, leur modification ne déclenche pas TARGET_CHANGED", async () => {
+  const f = fixture({ realRepository: true });
+  const root = f.repositoryRoot;
+  const write = (relative, content) => {
+    const absolute = path.join(root, relative);
+    fs.mkdirSync(path.dirname(absolute), { recursive: true });
+    if (fs.existsSync(absolute)) fs.chmodSync(absolute, 0o600);
+    fs.writeFileSync(absolute, content);
+    fs.chmodSync(absolute, 0o000); // illisible : toute lecture ferait échouer l'empreinte
+  };
+  const protectedFiles = [
+    "benchmark-workspaces/run-1/secret.txt",
+    "dev-cost-ledger.json",
+    "dev-task-journal/2026-11-20.md",
+    ".env",
+    "nested/node_modules/pkg/index.js",
+    "local.sqlite",
+    "nested/credentials.json",
+  ];
+  // Un fichier protégé suivi par Git, modifié ensuite : Git ne doit pas le relire.
+  fs.mkdirSync(path.join(root, "config"));
+  fs.writeFileSync(path.join(root, "config", "state.db"), "SYNTHETIC_DB_V1");
+  git(root, "add", "config/state.db");
+  git(root, "-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid",
+    "-c", "commit.gpgsign=false", "commit", "-q", "-m", "tracked protected");
+  fs.chmodSync(path.join(root, "config", "state.db"), 0o000);
+  for (const relative of protectedFiles) write(relative, "SYNTHETIC_PROTECTED_V1");
+
+  const accessed = [];
+  let recording = false;
+  const observed = async (action) => {
+    recording = true;
+    try { return await action(); } finally { recording = false; }
+  };
+  const spied = ["readFileSync", "lstatSync", "statSync", "readlinkSync", "openSync",
+    "realpathSync", "readdirSync", "existsSync", "accessSync", "createReadStream"];
+  const originals = Object.fromEntries(spied.map((name) => [name, fs[name]]));
+  for (const name of spied) {
+    fs[name] = function spy(target, ...rest) {
+      if (recording && typeof target === "string" && target.startsWith(root)) accessed.push(target);
+      return originals[name].call(this, target, ...rest);
+    };
+  }
+  try {
+    const service = f.makeService();
+    const inspectNow = () => defaultGoalModeDevTargetInspector({ repositoryRoot: root, branch: "main" });
+    const inspect = () => { recording = true; try { return inspectNow(); } finally { recording = false; } };
+    const ticket = await observed(() => f.prepare(service));
+    const baseline = inspect();
+
+    for (const relative of protectedFiles) write(relative, "SYNTHETIC_PROTECTED_V2_LONGER");
+    write("benchmark-workspaces/run-2/new.txt", "SYNTHETIC_NEW");
+    write("dev-task-journal/2026-11-21.md", "SYNTHETIC_NEW");
+    write(".env.local", "SYNTHETIC_NEW");
+    write("config/state.db", "SYNTHETIC_DB_V2_LONGER");
+    assert.equal(inspect(), baseline);
+
+    // Contrôle : un fichier non protégé reste mesuré.
+    fs.writeFileSync(path.join(root, "target.js"), "module.exports = 2;\n");
+    assert.notEqual(inspect(), baseline);
+    fs.writeFileSync(path.join(root, "target.js"), "module.exports = 1;\n");
+    assert.equal(inspect(), baseline);
+
+    await observed(() => service.dispatch(ticket));
+    assert.equal(f.calls.length, 1);
+    const leaked = accessed.filter((item) =>
+      /benchmark-workspaces|dev-cost-ledger|dev-task-journal|\.env|node_modules|\.sqlite|credentials|state\.db/
+        .test(item));
+    assert.deepEqual(leaked, []);
+    assert.ok(accessed.some((item) => item.endsWith("target.js")), "le spy observe bien les accès");
+  } finally {
+    for (const name of spied) fs[name] = originals[name];
+    f.close();
+  }
+});
+
+test("4C-1B filtre local des chemins protégés", () => {
+  const { isProtectedGoalModeDevTargetPath: isProtected } =
+    require("../services/goals/goal-mode-dev-dispatch-service");
+  for (const relative of [
+    "benchmark-workspaces", "benchmark-workspaces/", "benchmark-workspaces/a/b.txt",
+    "dev-cost-ledger.json", "dev-task-journal/x.md", ".env", "sub/.env.local",
+    "a/node_modules/b.js", "x.sqlite", "x.sqlite-wal", "db/app.db", "keys/server.pem",
+    "credentials.json", "sub/token-google.json", "dist/app.js", "a/build/x", ".git/config",
+  ]) assert.equal(isProtected(relative), true, relative);
+  for (const relative of [
+    "target.js", "src/dev-cost-ledger.json.md", "docs/benchmark.md", "services/env.js",
+    "lib/database.js", "builder.js", "src/distance.js", "nested/benchmark-workspaces.js",
+  ]) assert.equal(isProtected(relative), false, relative);
+});
+
+test("4C-1B pathspec Git : les chemins protégés ne sont pas inspectés par git status", () => {
+  const { TARGET_STATUS_ARGS } = require("../services/goals/goal-mode-dev-dispatch-service");
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "noon-50d4c1b-git-"));
+  try {
+    const root = createRepository(directory);
+    const files = [
+      "benchmark-workspaces/run/x.txt", "dev-cost-ledger.json", "dev-task-journal/a.md",
+      ".env", "sub/node_modules/p.js", "data.sqlite", "dist/app.js",
+    ];
+    for (const relative of files) {
+      fs.mkdirSync(path.dirname(path.join(root, relative)), { recursive: true });
+      fs.writeFileSync(path.join(root, relative), "SYNTHETIC");
+    }
+    fs.writeFileSync(path.join(root, "visible.js"), "SYNTHETIC");
+    const list = (args) => git(root, ...args).split("\0").filter(Boolean).map((item) => item.slice(3));
+    const unfiltered = list(["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+    for (const relative of files) assert.ok(unfiltered.includes(relative), relative);
+    assert.deepEqual(list(TARGET_STATUS_ARGS), ["visible.js"]);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });

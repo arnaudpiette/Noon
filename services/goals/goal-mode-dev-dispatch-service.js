@@ -24,6 +24,61 @@ const ALLOWED_DEV_PERMISSIONS = Object.freeze(["READ_WRITE_WORKSPACE", "TERMINAL
 const TARGET_MAX_ENTRIES = 5_000;
 const TARGET_MAX_BYTES = 64 * 1024 * 1024;
 
+/*
+ * Chemins jamais lus ni hashés par l'empreinte (AGENTS.md §3, §9, §11) :
+ * données locales de développement, secrets, bases personnelles,
+ * dépendances, caches et builds. Exclus deux fois : par pathspec Git (Git
+ * ne les inspecte pas) puis par filtre local avant tout accès fichier.
+ */
+const PROTECTED_TARGET_GLOBS = Object.freeze([
+  "benchmark-workspaces/**",
+  "dev-cost-ledger.json",
+  "dev-task-journal/**",
+  "**/.git/**",
+  "**/node_modules/**",
+  "**/.env",
+  "**/.env.*",
+  "**/*.sqlite",
+  "**/*.sqlite-*",
+  "**/*.sqlite3",
+  "**/*.db",
+  "**/*.db-*",
+  "**/*.pem",
+  "**/*.key",
+  "**/credentials*.json",
+  "**/token*.json",
+  "**/.cache/**",
+  "**/dist/**",
+  "**/out/**",
+  "**/build/**",
+  "**/coverage/**",
+]);
+
+function protectedPattern(glob) {
+  let source = "";
+  for (let index = 0; index < glob.length; index += 1) {
+    const char = glob[index];
+    if (glob.startsWith("**/", index)) { source += "(?:.*/)?"; index += 2; }
+    else if (glob.startsWith("/**", index) && index + 3 === glob.length) { source += "/.*"; index += 2; }
+    else if (char === "*") source += "[^/]*";
+    else source += char.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${source}$`);
+}
+
+const PROTECTED_TARGET_PATTERNS = Object.freeze(PROTECTED_TARGET_GLOBS.map(protectedPattern));
+
+const TARGET_STATUS_ARGS = Object.freeze([
+  "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=no",
+  "--", ".", ...PROTECTED_TARGET_GLOBS.map((glob) => `:(exclude,glob)${glob}`),
+]);
+
+function isProtectedTargetPath(relative) {
+  const normalized = String(relative).split(path.sep).join("/").replace(/\/+$/, "");
+  return PROTECTED_TARGET_PATTERNS.some((pattern) =>
+    pattern.test(normalized) || pattern.test(`${normalized}/`));
+}
+
 function fail(code, message, details = null) {
   const error = Object.assign(new Error(message), { code });
   if (details !== null) error.details = Object.freeze({ ...details });
@@ -53,13 +108,12 @@ function defaultTargetInspector({ repositoryRoot, branch } = {}) {
     if (top !== root) fail("GOAL_MODE_DEV_TARGET_UNINSPECTABLE", "Racine Git inattendue.");
     const currentBranch = git(root, ["branch", "--show-current"]).toString("utf8").trim();
     const head = git(root, ["rev-parse", "--verify", "HEAD"]).toString("utf8").trim();
-    const status = git(root, [
-      "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=no",
-    ]);
+    const status = git(root, TARGET_STATUS_ARGS);
     const entries = status.toString("utf8").split("\0").filter(Boolean);
     if (entries.length > TARGET_MAX_ENTRIES) {
       fail("GOAL_MODE_DEV_TARGET_UNINSPECTABLE", "Trop de fichiers modifiés.");
     }
+    const listed = [];
     const contents = [];
     let total = 0;
     for (let index = 0; index < entries.length; index += 1) {
@@ -67,7 +121,11 @@ function defaultTargetInspector({ repositoryRoot, branch } = {}) {
       const code = entry.slice(0, 2);
       const relative = entry.slice(3);
       // Renommage/copie : l'entrée suivante est le chemin d'origine.
-      if (code.includes("R") || code.includes("C")) index += 1;
+      const origin = code.includes("R") || code.includes("C") ? entries[++index] : null;
+      // Filtre local avant tout accès : un chemin protégé n'est ni lu,
+      // ni stat, ni compté, même si Git le listait malgré le pathspec.
+      if (isProtectedTargetPath(relative)) continue;
+      listed.push([code, relative, origin !== null && isProtectedTargetPath(origin) ? null : origin]);
       const absolute = path.join(root, relative);
       if (!absolute.startsWith(`${root}${path.sep}`)) {
         fail("GOAL_MODE_DEV_TARGET_UNINSPECTABLE", "Chemin hors repository.");
@@ -88,7 +146,7 @@ function defaultTargetInspector({ repositoryRoot, branch } = {}) {
     }
     return sha256(JSON.stringify([
       root, currentBranch, branch === currentBranch, head,
-      sha256(status), contents,
+      listed, contents,
     ]));
   } catch (error) {
     if (error?.code === "GOAL_MODE_DEV_TARGET_UNINSPECTABLE") throw error;
@@ -102,6 +160,7 @@ function strictBoolean(value) {
 
 function createGoalModeDevDispatchService({
   runStore,
+  goalStrategyEngine,
   devBudgetService,
   permissionSource,
   dispatcher,
@@ -109,6 +168,7 @@ function createGoalModeDevDispatchService({
   now = () => new Date(),
 } = {}) {
   if (typeof runStore?.reserveExecutionWithExactProjection !== "function" ||
+      typeof goalStrategyEngine?.registry?.get !== "function" ||
       typeof runStore?.markExecutionMayHaveStarted !== "function" ||
       typeof runStore?.get !== "function" ||
       typeof devBudgetService?.effectiveRemaining !== "function" ||
@@ -207,11 +267,23 @@ function createGoalModeDevDispatchService({
         });
     }
 
-    // 2. Budgets restants : Goal Run (temps) et budget DEV secondaire.
+    // 2. Run et Goal autoritatif : pause, archivage ou nouvelle version
+    //    depuis la réservation → refus avant tout CAS.
     const state = snapshot.state;
     if (state.status !== "RUNNING") {
       fail("GOAL_MODE_DEV_DISPATCH_RUN_NOT_RUNNING", "Le Goal Run n'est plus RUNNING.");
     }
+    const goalRef = state.contract?.goalRef;
+    let goal = null;
+    try { goal = goalStrategyEngine.registry.get(goalRef?.goalId); } catch { goal = null; }
+    if (!goal || goal.goalId !== goalRef.goalId || goal.status !== "ACTIVE" ||
+        goal.userConfirmed !== true || goal.version !== goalRef.goalVersion ||
+        goal.version !== projection.runRef.goalVersion ||
+        binding.goalId !== goal.goalId || binding.goalVersion !== goal.version) {
+      fail("GOAL_MODE_DEV_DISPATCH_GOAL_STALE", "Le Goal a changé depuis la réservation.");
+    }
+
+    // 3. Budgets restants : Goal Run (temps) et budget DEV secondaire.
     const at = new Date(now()).getTime();
     const deadline = Date.parse(state.contract.admittedAt) + state.contract.limits.maxDuration;
     if (!Number.isFinite(at) || !Number.isFinite(deadline) ||
@@ -226,7 +298,7 @@ function createGoalModeDevDispatchService({
       fail("GOAL_MODE_DEV_DISPATCH_BUDGET_EXHAUSTED", "Budget DEV insuffisant au dispatch.");
     }
 
-    // 3. Permissions par intersection : plafond du run ∩ contrat ∩ état vivant.
+    // 4. Permissions par intersection : plafond du run ∩ contrat ∩ état vivant.
     const ceilings = state.contract.capabilityCeilings || {};
     const capabilities = projection.devContract.capabilities || {};
     const live = permissionSource.current(Object.freeze({
@@ -257,7 +329,7 @@ function createGoalModeDevDispatchService({
       fail("GOAL_MODE_DEV_DISPATCH_PERMISSION_REVOKED", "Permission requise retirée depuis la réservation.");
     }
 
-    // 4. Empreinte de la cible.
+    // 5. Empreinte de la cible.
     if (inspectTarget(projection.taskRef) !== targetBaseline) {
       fail("GOAL_MODE_DEV_DISPATCH_TARGET_CHANGED", "Cible DEV modifiée depuis la réservation.");
     }
@@ -311,7 +383,10 @@ function createGoalModeDevDispatchService({
 }
 
 module.exports = {
+  PROTECTED_TARGET_GLOBS,
+  TARGET_STATUS_ARGS,
   VERSION,
   createGoalModeDevDispatchService,
   defaultGoalModeDevTargetInspector: defaultTargetInspector,
+  isProtectedGoalModeDevTargetPath: isProtectedTargetPath,
 };
