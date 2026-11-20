@@ -141,6 +141,18 @@ function fixture({ realRepository = false } = {}) {
       return { status: state || "ABSENT" };
     },
   };
+  // Règles projet (branchement B1) : résolues côté serveur, contrôlables ici.
+  const rules = { list: ["SYNTHETIC_PROJECT_RULE"], throws: false, calls: 0, onResolve: null };
+  const projectRulesResolver = {
+    resolve(input) {
+      rules.calls += 1;
+      rules.lastInput = input;
+      const hook = rules.onResolve;
+      if (hook) hook(rules.calls);
+      if (rules.throws) throw Object.assign(new Error("rules"), { code: "SYNTHETIC_RULES_FAILURE" });
+      return [...rules.list];
+    },
+  };
   const makeStore = (repository) => createGoalModeRunStore({
     repository, now: () => clock, devProjectionService: projectionService,
     devTaskLedger: { taskProviderCalls: () => budget.calls }, devTaskJournal,
@@ -206,7 +218,7 @@ function fixture({ realRepository = false } = {}) {
   const approvalEngine = makeEngine();
   const makeService = (store = storeA, overrides = {}) => createGoalModeDevDispatchService({
     runStore: store, goalStrategyEngine, devBudgetService, permissionSource, dispatcher,
-    approvalEngine, devTaskJournal,
+    approvalEngine, devTaskJournal, projectRulesResolver,
     targetInspector: realRepository ? defaultGoalModeDevTargetInspector : syntheticInspector,
     now: () => new Date(clock),
     ...overrides,
@@ -215,6 +227,7 @@ function fixture({ realRepository = false } = {}) {
     file, directory, repositoryRoot, repositoryA, repositoryB, storeA, storeB, running,
     budget, live, goal, goalStrategyEngine, calls, cancels, dispatcher, makeStore, makeService,
     approvalEngine, approvalRepository, makeEngine, audit, dbA, devTaskJournal, journalStates,
+    rules, projectRulesResolver,
     prepare(service) {
       return service.prepare(running.state.runId, {
         expectedRevision: storeA.get(running.state.runId).revision, stepId: "step-dispatch",
@@ -828,7 +841,10 @@ test("4C-1C approbation liée au contrat exact : identité, durée, affichage lo
     assert.equal(exact.normalizedArgs.taskId, ticket.taskId);
     assert.equal(exact.normalizedArgs.targetFingerprint, FINGERPRINT);
     assert.match(exact.normalizedArgs.contractFingerprint, /^sha256:[0-9a-f]{64}$/);
-    assert.deepEqual({ ...display, permissions: [...display.permissions] }, {
+    // Binding v2 : les règles projet approuvées sont liées par empreinte.
+    assert.equal(exact.normalizedArgs.version, "goal-mode-dev-approval-binding-v2");
+    assert.match(exact.normalizedArgs.rulesFingerprint, /^sha256:[0-9a-f]{64}$/);
+    assert.deepEqual({ ...display, permissions: [...display.permissions], projectRules: [...display.projectRules] }, {
       goalTitle: "SYNTHETIC_GOAL_TITLE",
       instruction: "SYNTHETIC_PRIVATE_OBJECTIVE",
       repositoryRoot: f.repositoryRoot,
@@ -837,9 +853,10 @@ test("4C-1C approbation liée au contrat exact : identité, durée, affichage lo
       maxEstimatedCost: 0.4,
       maxProviderCalls: 2,
       maxDuration: 300_000,
+      projectRules: ["SYNTHETIC_PROJECT_RULE"],
     });
     for (const value of ["SYNTHETIC_GOAL_TITLE", "SYNTHETIC_PRIVATE_OBJECTIVE", f.repositoryRoot,
-      "READ_WRITE_WORKSPACE", "NETWORK", "0.4 USD", "Appels maximum : 2", "Durée maximale : 300 s"]) {
+      "READ_WRITE_WORKSPACE", "NETWORK", "0.4 USD", "Appels maximum : 2", "Durée maximale : 300 s", "Règles projet : 1"]) {
       assert.equal(approval.summary.includes(value), true, value);
     }
     // Rien de l'affichage n'est persisté : ni ligne d'approbation, ni audit, ni état du run.
@@ -1567,5 +1584,100 @@ test("journal fiable : crash entre CAS et façade → MAY_HAVE_STARTED avec jour
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
     f.close();
+  }
+});
+
+test("B1 règles projet : résolues au prepare, liées au binding v2, envoyées à l'identique", async () => {
+  const { rulesFingerprint } = require("../services/goals/goal-mode-dev-approval-action");
+  const f = fixture();
+  try {
+    f.rules.list = ["Ne jamais pousser automatiquement.", "Préserver la structure."];
+    const service = f.makeService();
+    const prepared = f.prepare(service);
+    assert.deepEqual({ ...f.rules.lastInput, constraints: [...f.rules.lastInput.constraints] },
+      { workspaceId: "workspace-1", projectId: "project-1", constraints: [] });
+    const exact = f.approvalEngine.getPreparedGoalModeDevDispatchExactAction({
+      approvalId: prepared.approval.id, resumeToken: prepared.resumeToken,
+    });
+    assert.equal(exact.normalizedArgs.rulesFingerprint, rulesFingerprint(f.rules.list));
+    assert.deepEqual([...prepared.display.projectRules], f.rules.list);
+    await resume(service, prepared);
+    assert.deepEqual(f.calls[0].payload.projectInstructions, f.rules.list);
+    f.calls[0].payload.projectInstructions.push("forged");
+    assert.deepEqual([...prepared.display.projectRules], ["Ne jamais pousser automatiquement.", "Préserver la structure."]);
+    // Rien des règles n'est persisté (approbation, audit, état du run).
+    const persisted = JSON.stringify([f.approvalRow(prepared.approval.id), f.audit, f.latest().state]);
+    assert.equal(persisted.includes("Ne jamais pousser"), false);
+  } finally { f.close(); }
+});
+
+test("B1 règles modifiées après l'approbation : RULES_CHANGED au pré-contrôle, approbation intacte, sans CAS", async () => {
+  const f = fixture();
+  try {
+    const service = f.makeService();
+    const prepared = f.prepare(service);
+    f.rules.list = ["SYNTHETIC_PROJECT_RULE", "NEW_RULE"];
+    await assert.rejects(() => resume(service, prepared), { code: "GOAL_MODE_DEV_DISPATCH_RULES_CHANGED" });
+    assert.equal(f.approvalRow(prepared.approval.id).status, "pending");
+    assert.equal(f.status(), "PREPARED");
+    assert.equal(f.calls.length, 0);
+    f.rules.list = ["SYNTHETIC_PROJECT_RULE"];
+    f.rules.throws = true;
+    await assert.rejects(() => resume(service, prepared), { code: "GOAL_MODE_DEV_DISPATCH_RULES_UNAVAILABLE" });
+    assert.equal(f.status(), "PREPARED");
+    // Règles rétablies à l'identique : la même approbation reste utilisable.
+    f.rules.throws = false;
+    await resume(service, prepared);
+    assert.equal(f.calls.length, 1);
+  } finally { f.close(); }
+});
+
+test("B1 règles modifiées entre préconditions et recheck interne : refus avant consommation et CAS", async () => {
+  const f = fixture();
+  try {
+    const service = f.makeService();
+    const prepared = f.prepare(service);
+    const base = f.rules.calls;
+    // Appels : pré-contrôle (+1), préconditions (+2), recheck interne (+3).
+    f.rules.onResolve = (calls) => {
+      if (calls === base + 3) f.rules.list = ["CHANGED_BEFORE_CAS"];
+    };
+    await assert.rejects(() => resume(service, prepared), { code: "GOAL_MODE_DEV_DISPATCH_RULES_CHANGED" });
+    assert.equal(f.approvalRow(prepared.approval.id).status, "failed");
+    assert.equal(f.status(), "PREPARED");
+    assert.equal(f.calls.length, 0);
+  } finally { f.close(); }
+
+  const g = fixture();
+  try {
+    const service = g.makeService();
+    const prepared = g.prepare(service);
+    const base = g.rules.calls;
+    // Changement visible dès les préconditions : approval_stale.
+    g.rules.onResolve = (calls) => {
+      if (calls === base + 2) g.rules.list = ["CHANGED_AT_PRECONDITIONS"];
+    };
+    await assert.rejects(() => resume(service, prepared), { code: "approval_stale" });
+    assert.equal(g.status(), "PREPARED");
+    assert.equal(g.calls.length, 0);
+  } finally { g.close(); }
+});
+
+test("B1 règles indisponibles ou invalides au prepare : réservation à libérer, aucune approbation", () => {
+  for (const setup of [
+    (f) => { f.rules.throws = true; },
+    (f) => { f.rules.list = [42]; },
+    (f) => { f.rules.list = ["  "]; },
+    (f) => { f.rules.list = Array.from({ length: 21 }, (_, index) => `rule-${index}`); },
+    (f) => { f.rules.list = ["x".repeat(2_001)]; },
+  ]) {
+    const f = fixture();
+    try {
+      setup(f);
+      assert.throws(() => f.prepare(f.makeService()), (error) =>
+        error.code === "GOAL_MODE_DEV_DISPATCH_RULES_UNAVAILABLE" && error.details.releaseRequired === true);
+      assert.equal(f.status(), "PREPARED");
+      assert.equal(f.audit.some((item) => item.event === "approval.created"), false);
+    } finally { f.close(); }
   }
 });

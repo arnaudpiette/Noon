@@ -1,17 +1,24 @@
 # Goal Mode — exécution DEV (réservation, dispatch, libération)
 
-## Prérequis avant branchement serveur
+## Branchement serveur et activation
 
-Le service `services/goals/goal-mode-dev-dispatch-service.js` n'est **pas** câblé à `server.js`. Avant de le brancher sur un vrai `nativeDevFacade`, il reste la **tranche de branchement** :
+**Activation réelle du flag `goals.mode-dev` : interdite tant que 4C-2 (réconciliation et coûts) et B3 (UI d'approbation) ne sont pas livrés.** Sans 4C-2, une réservation `MAY_HAVE_STARTED` ou `UNKNOWN` ne peut pas être réconciliée. Sans B3, aucune approbation exacte ne peut être donnée par l'utilisateur.
 
-- surface HTTP (contrat de normalisation sur le modèle du retry, `decision` obligatoire, aucun `taskId` ni chemin fourni par le client, jeton renvoyé seulement par `prepare` et `renew`) ;
-- assemblage du service et vraie source de permissions ;
-- adaptateur `nativeDevFacade` avec les règles projet ;
-- routes derrière un feature flag désactivé par défaut ;
-- UI d'approbation ;
-- **appeler `recoverInterrupted` au démarrage** (façade B3 et coordinateur) : aujourd'hui, seul `transactionalExecutionEngine.recoverInterrupted()` est appelé. Les tâches Native DEV interrompues, et les fichiers de journal illisibles, ne sont donc signalés qu'à la demande.
+- **B1, livré : runtime composé, non exposé.** `services/goals/goal-mode-dev-runtime.js` assemble toute la chaîne : runs, planning, propositions, admission, projection, réservation, approbation et dispatch. Il s'appuie sur les services canoniques du serveur : `personalDatabase`, `devCostBudgetService`, `nativeDevJournal`, `approvalManager`, `operationalSecurityPolicy`, `devProjectRuleResolver`, la façade Native DEV B3, et le routage fournisseur déjà utilisé par Native DEV.
+  - **Flag `goals.mode-dev`** : `OFF` par défaut, exige `goals.engine` et `dev.native-core`, et figure dans le test de gel. Il est lu **au démarrage** : le changer exige un redémarrage. Quand il est `OFF`, le runtime n'est pas construit.
+  - **Robustesse** : un échec de composition est audité (`goals.mode-dev.runtime_unavailable`) et n'empêche jamais Noon de démarrer.
+  - **Permissions vivantes**, intersectées par le dispatch :
+    - écriture du repository = repository couvert par une racine `read-write` du workspace ;
+    - réseau = `OperationalSecurityPolicy` (ni `DENY` ni `UNAVAILABLE`) **et** `dev.native-core` en `LIMITED` ;
+    - écriture Git et actions destructives : jamais.
+  - **Règles projet** : résolues dans `prepare` depuis le workspace autoritatif, liées au binding v2 (`rulesFingerprint`) et à l'affichage local, envoyées à l'identique, et revérifiées avant la consommation. Un changement donne `RULES_CHANGED`, sans CAS.
+  - **Tâches Native DEV interrompues** : signalées une fois au démarrage (façade B3 et coordinateur), par un audit sans contenu (compteurs seulement), sans aucune action. Ce signalement n'est pas exécuté en safe mode (`NOON_SAFE_MODE=1`), qui suspend aussi les travaux de fond.
+  - **Planning** : il fait un appel fournisseur payant, déclenché seulement par une demande explicite (B2), flag actif. Les tests utilisent toujours un fournisseur factice.
+- **B2, à venir : surface HTTP**, derrière le flag. Contrat de normalisation sur le modèle du retry : `decision` obligatoire, aucun `taskId` ni chemin fourni par le client, jeton renvoyé seulement par `prepare` et `renew`. Test de bout en bout avec un fournisseur et une façade factices.
+- **B3, à venir : UI d'approbation.** Carte dédiée, affichage local, aucun jeton dans `localStorage`.
+- **4C-2, à venir : réconciliation et coûts.**
 
-*Livrés : le contrôle des routes d'annulation, de statut, de budget et de preuves (4C-1D), et le journal Native DEV fiable (voir plus bas).*
+*Livrés avant le branchement : le contrôle des routes d'annulation, de statut, de budget et de preuves (4C-1D), et le journal Native DEV fiable (voir plus bas).*
 
 ## Cycle de vie d'une réservation DEV
 
@@ -93,7 +100,7 @@ Une nouvelle réservation exige que toutes les précédentes soient closes (`REC
   Un journal qui connaît la tâche (`PRESENT`) ou illisible refuse l'opération. Comme la réservation de démarrage précède tout `await`, une réservation `MAY_HAVE_STARTED` avec un journal `ABSENT` et un ledger à 0 prouve, après un redémarrage, que la façade n'a jamais lancé la tâche : c'est une base pour 4C-2.
 - **Limite de downgrade.** Une version de Noon antérieure ne connaît que les noms `safeId`. Elle ne voit pas les fichiers `task-<sha256>.json` : elle traite ces tâches comme inconnues à l'affichage, et pourrait relancer un même `taskId` (comportement antérieur). Les données ne sont pas corrompues.
 - **Pas de nettoyage.** Le dossier grossit sans rotation ni purge. Toute purge future devra préserver les tâches Goal Mode non réconciliées. Un fichier illisible bloque son `taskId` pour toujours (fail-closed) : il faut un diagnostic, jamais un effacement automatique.
-- **`recoverInterrupted` n'est pas appelé au démarrage** : c'est à traiter dans la tranche de branchement (voir les prérequis).
+- **`recoverInterrupted` est appelé au démarrage depuis B1** (audit sans contenu, aucune action, pas en safe mode).
 
 ## Libération explicite (`RELEASED`)
 
@@ -121,4 +128,5 @@ La réservation de planning est hors périmètre : elle garde son modèle actuel
 - `test/goal-mode-execution-release.test.js` : RELEASED (transitions, forme, ledger, course, SQLite, compatibilité ancien ↔ nouveau code).
 - `test/dev-task-journal-reliability.test.js` : réservation de démarrage exclusive, ordre des `fsync` (y compris dans le repli), lecture stricte, noms exacts, anciens fichiers, `interrupted`.
 - `test/native-dev-facade-journal.test.js` : réservation de démarrage avant tout `await`, état terminal, relance refusée après redémarrage, `JOURNAL_UNREADABLE` explicite.
+- `test/goal-mode-dev-runtime.test.js` : composition B1, permissions vivantes, règles projet, signalement des tâches interrompues, câblage serveur et flag.
 - `test/dev-task-id-namespace.test.js` : espace réservé, inventaire des appelants de `runTask`, `cancelTask`, `getTaskStatus` et `projectDecisionEvidence`, câblage des routes.

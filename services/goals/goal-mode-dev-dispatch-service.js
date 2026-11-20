@@ -32,6 +32,7 @@ const {
   SKILL_NAME: APPROVAL_SKILL_NAME,
   canonicalJson,
   contractFingerprint,
+  rulesFingerprint,
 } = require("./goal-mode-dev-approval-action");
 
 const VERSION = "goal-mode-dev-dispatch-v1";
@@ -42,6 +43,9 @@ const APPROVAL_DEADLINE_MARGIN_MS = 1_000;
 // 4C-1D : statuts d'arrêt traités comme une pause (approbations annulées).
 const HALT_STATUSES = Object.freeze(["PAUSED", "BLOCKED", "CANCELLED"]);
 const RESUMABLE_STATUSES = Object.freeze(["PAUSED", "BLOCKED"]);
+// Branchement B1 : règles projet bornées, comme le service DEV historique.
+const MAX_PROJECT_RULES = 20;
+const MAX_PROJECT_RULE_LENGTH = 2_000;
 const ALLOWED_DEV_PERMISSIONS = Object.freeze(["READ_WRITE_WORKSPACE", "TERMINAL_SAFE"]);
 const TARGET_MAX_ENTRIES = 5_000;
 const TARGET_MAX_BYTES = 64 * 1024 * 1024;
@@ -188,6 +192,7 @@ function createGoalModeDevDispatchService({
   dispatcher,
   approvalEngine,
   devTaskJournal,
+  projectRulesResolver,
   targetInspector = defaultTargetInspector,
   now = () => new Date(),
   approvalTtlMs = APPROVAL_TTL_MS,
@@ -207,6 +212,7 @@ function createGoalModeDevDispatchService({
       typeof approvalEngine?.getPreparedGoalModeDevDispatchExactAction !== "function" ||
       typeof approvalEngine?.cancel !== "function" ||
       typeof devTaskJournal?.lookup !== "function" ||
+      typeof projectRulesResolver?.resolve !== "function" ||
       typeof targetInspector !== "function" ||
       typeof now !== "function" ||
       !Number.isSafeInteger(approvalTtlMs) || approvalTtlMs < 1) {
@@ -233,6 +239,26 @@ function createGoalModeDevDispatchService({
       fail("GOAL_MODE_DEV_TARGET_UNINSPECTABLE", "Empreinte de cible invalide.");
     }
     return fingerprint;
+  }
+
+  // Règles projet du workspace autoritatif, pour la tâche exacte. Jamais
+  // fournies par l'appelant : résolues ici, au prepare puis au dispatch.
+  function resolveRules(projection) {
+    const resolved = projectRulesResolver.resolve(Object.freeze({
+      workspaceId: projection.taskRef.workspaceId,
+      projectId: projection.taskRef.projectId,
+      constraints: Object.freeze([...(projection.devContract.devInput.constraints || [])]),
+    }));
+    if (!Array.isArray(resolved) || resolved.length > MAX_PROJECT_RULES ||
+        resolved.some((rule) => typeof rule !== "string" || !rule.trim() ||
+          rule.length > MAX_PROJECT_RULE_LENGTH)) {
+      fail("GOAL_MODE_DEV_DISPATCH_RULES_INVALID", "Règles projet invalides.");
+    }
+    return Object.freeze(resolved.map((rule) => rule.trim()));
+  }
+
+  function currentRulesFingerprint(internal) {
+    return rulesFingerprint(resolveRules(internal.handoff.exactProjection));
   }
 
   function approvalTtl(state) {
@@ -271,6 +297,7 @@ function createGoalModeDevDispatchService({
       maxEstimatedCost: devInput.maxEstimatedCost,
       maxProviderCalls: devInput.maxProviderCalls,
       maxDuration: devInput.maxDuration,
+      projectRules: internal.projectInstructions,
     });
   }
 
@@ -283,6 +310,7 @@ function createGoalModeDevDispatchService({
       `Coût maximal : ${view.maxEstimatedCost} USD`,
       `Appels maximum : ${view.maxProviderCalls}`,
       `Durée maximale : ${Math.round(Number(view.maxDuration) / 1000)} s`,
+      `Règles projet : ${view.projectRules.length}`,
     ].join(" · ");
   }
 
@@ -296,6 +324,7 @@ function createGoalModeDevDispatchService({
       goalId: internal.binding.goalId,
       goalVersion: internal.binding.goalVersion,
       goalStatus: "ACTIVE",
+      rulesFingerprint: internal.binding.rulesFingerprint,
     };
   }
 
@@ -314,6 +343,7 @@ function createGoalModeDevDispatchService({
         goalId: goal?.goalId ?? null,
         goalVersion: goal?.version ?? null,
         goalStatus: goal?.status ?? null,
+        rulesFingerprint: currentRulesFingerprint(internal),
       };
     } catch {
       return {};
@@ -406,6 +436,18 @@ function createGoalModeDevDispatchService({
       reservationId: handoff.reservationId,
       reservedRevision: handoff.reservedRevision,
     });
+    // Règles projet résolues après la réservation (taskId et contraintes
+    // exacts) : échec = réservation PREPARED sans ticket, libération explicite.
+    let projectInstructions;
+    try {
+      projectInstructions = resolveRules(projection);
+    } catch (error) {
+      fail("GOAL_MODE_DEV_DISPATCH_RULES_UNAVAILABLE", "Règles projet indisponibles.", {
+        reservationId: handoff.reservationId,
+        causeCode: typeof error?.code === "string" ? error.code.slice(0, 80) : null,
+        releaseRequired: true,
+      });
+    }
     const binding = Object.freeze({
       version: APPROVAL_BINDING_VERSION,
       runId,
@@ -418,8 +460,11 @@ function createGoalModeDevDispatchService({
       proposalFingerprint: projection.stepRef.proposalFingerprint,
       contractFingerprint: contractFingerprint(projection),
       targetFingerprint: targetBaseline,
+      rulesFingerprint: rulesFingerprint(projectInstructions),
     });
-    const internal = { ticket, handoff, targetBaseline, binding, approvalId: null };
+    const internal = {
+      ticket, handoff, targetBaseline, binding, projectInstructions, approvalId: null,
+    };
     reservations.set(ticket.reservationId, internal);
     // Échec d'émission : la réservation reste PREPARED ; renouvellement
     // explicite possible, jamais de libération implicite.
@@ -561,7 +606,18 @@ function createGoalModeDevDispatchService({
       fail("GOAL_MODE_DEV_DISPATCH_PERMISSION_REVOKED", "Permission requise retirée depuis la réservation.");
     }
 
-    // 5. Empreinte de la cible.
+    // 5. Règles projet : identiques à celles approuvées, sinon refus sans CAS.
+    let currentRules;
+    try {
+      currentRules = currentRulesFingerprint(internal);
+    } catch {
+      fail("GOAL_MODE_DEV_DISPATCH_RULES_UNAVAILABLE", "Règles projet indisponibles.");
+    }
+    if (currentRules !== internal.binding.rulesFingerprint) {
+      fail("GOAL_MODE_DEV_DISPATCH_RULES_CHANGED", "Règles projet modifiées depuis l'approbation.");
+    }
+
+    // 6. Empreinte de la cible.
     if (inspectTarget(projection.taskRef) !== targetBaseline) {
       fail("GOAL_MODE_DEV_DISPATCH_TARGET_CHANGED", "Cible DEV modifiée depuis la réservation.");
     }
@@ -596,7 +652,11 @@ function createGoalModeDevDispatchService({
       reservationId: ticket.reservationId,
     });
     // Copie neuve : le dispatcher ne peut pas altérer le contrat remis.
-    const payload = structuredClone(devInput);
+    // Règles projet envoyées exactement telles qu'approuvées.
+    const payload = {
+      ...structuredClone(devInput),
+      projectInstructions: [...internal.projectInstructions],
+    };
     let devResult;
     try {
       devResult = await dispatcher.runTask(payload);

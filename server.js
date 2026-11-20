@@ -142,6 +142,8 @@ const { createGoalStrategyEngine } = require("./services/goals/goal-strategy-eng
 const { createGoalDevExecutionService } = require("./services/goals/goal-dev-execution-service");
 const { createGoalDevEvaluatedExecutionService } = require("./services/goals/goal-dev-evaluated-execution-service");
 const { createGoalDevRetryRuntime } = require("./services/goals/goal-dev-retry-runtime");
+const { createGoalModeDevRuntime } = require("./services/goals/goal-mode-dev-runtime");
+const { reportInterruptedNativeDevTasks } = require("./services/dev/native-dev-interrupted-report");
 const {
   goalDevRetryHttpStatus,
   normalizeGoalDevRetryPrepareRequest,
@@ -1133,6 +1135,7 @@ repository: sessionContinuityRepository,
   observability: (event, metadata) => toolAuditLog.append(event, metadata),
 });
 let sessionRecoveryCompleted = false;
+let nativeDevInterruptedReported = false;
 const artifactEngine = createArtifactEngine({
   repository: artifactRepository,
   writableRoots: () => localPermissionStore.roots("read-write"),
@@ -1649,6 +1652,42 @@ const goalDevRetryRuntime =
           metadata
         ),
   });
+
+/*
+ * Branchement B1 — runtime Goal Mode DEV (flag goals.mode-dev, OFF par défaut).
+ * Aucune route ici (B2). Construit seulement si le flag n'est pas OFF au
+ * démarrage ; un échec de composition n'empêche jamais Noon de démarrer.
+ * Activation réelle : exige aussi 4C-2 (réconciliation) et B3 (UI).
+ */
+let goalModeDevRuntime = null;
+try {
+  if (featureFlags.evaluate("goals.mode-dev", {}).mode !== "OFF") {
+    goalModeDevRuntime = createGoalModeDevRuntime({
+      database: personalDatabase,
+      goalStrategyEngine,
+      workspaceEngine,
+      devBudgetService: devCostBudgetService,
+      devTaskJournal: nativeDevJournal,
+      approvalEngine: approvalManager,
+      operationalSecurityPolicy,
+      projectRuleResolver: devProjectRuleResolver,
+      nativeDevFacade: nativeDevB3Facade,
+      featureMode: (flagId, context = {}) => featureFlags.evaluate(flagId, context).mode,
+      selectModelRoute: selectConfiguredModelRoute,
+      estimateCost: estimateModelCost,
+      authorizePrivacy: authorizeOpenAIPrivacy,
+      providerAdapter: openAIProviderAdapter,
+      trackUsage,
+      observability: (event, metadata) => toolAuditLog.append(`goals.mode-dev.${event}`, metadata),
+    });
+  }
+  toolAuditLog.append("goals.mode-dev.runtime_status", { composed: goalModeDevRuntime !== null });
+} catch (error) {
+  goalModeDevRuntime = null;
+  toolAuditLog.append("goals.mode-dev.runtime_unavailable", {
+    code: String(error?.code || error?.name || "COMPOSITION_FAILED").slice(0, 80),
+  });
+}
 
 toolAuditLog.append(
   "goals.dev-retry.runtime_composed",
@@ -10317,6 +10356,20 @@ async function startNoonServer({
   }
 
   await reliabilityEngine.diagnose();
+
+  // Branchement B1 : tâches Native DEV interrompues signalées une fois au
+  // démarrage (audit sans contenu, aucune action). Pas en safe mode, qui
+  // suspend aussi les travaux de fond.
+  if (!nativeDevInterruptedReported && process.env.NOON_SAFE_MODE !== "1") {
+    nativeDevInterruptedReported = true;
+    reportInterruptedNativeDevTasks({
+      sources: [
+        { name: "b3", recover: () => nativeDevB3Facade.recoverInterrupted() },
+        { name: "coordinator", recover: () => nativeDevCoordinator.recoverInterrupted() },
+      ],
+      audit: (event, metadata) => toolAuditLog.append(event, metadata),
+    });
+  }
 
   // Le safe mode conserve le serveur local mais suspend les travaux autonomes.
   if (process.env.NOON_SAFE_MODE !== "1") backgroundJobEngine?.start();

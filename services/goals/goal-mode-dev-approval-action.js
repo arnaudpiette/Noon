@@ -11,7 +11,8 @@ const crypto = require("node:crypto");
 
 const SKILL_NAME = "goal_mode_dev";
 const OPERATION = "dispatch_exact_contract";
-const BINDING_VERSION = "goal-mode-dev-approval-binding-v1";
+// v2 (branchement B1) : le binding lie aussi l'empreinte des règles projet.
+const BINDING_VERSION = "goal-mode-dev-approval-binding-v2";
 
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -32,10 +33,16 @@ function contractFingerprint(exactProjection) {
   return sha256(canonicalJson(exactProjection));
 }
 
+// Empreinte des règles projet approuvées (liste ordonnée de textes).
+function rulesFingerprint(rules) {
+  return sha256(canonicalJson(rules));
+}
+
 module.exports = {
   BINDING_VERSION,
   OPERATION,
   SKILL_NAME,
   canonicalJson,
   contractFingerprint,
+  rulesFingerprint,
 };

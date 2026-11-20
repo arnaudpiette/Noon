@@ -80,6 +80,7 @@ test("inventaire : tout appel runTask de production est audité", () => {
     ["services/dev/benchmark/native-noon-benchmark-participant.js", "benchmark : refus réservé"],
     ["services/dev/native-dev-orchestrator-facade.js", "interne : façade → orchestrateur"],
     ["services/goals/goal-mode-dev-dispatch-service.js", "Goal Mode : réservation + CAS (non câblé)"],
+    ["services/goals/goal-mode-dev-runtime.js", "Goal Mode B1 : adaptateur joignable seulement par le dispatch (réservation, approbation exacte, CAS)"],
   ]);
   const found = new Set();
   const files = [
@@ -114,6 +115,7 @@ test("4C-1D inventaire : tout appel cancelTask / getTaskStatus / projectDecision
     ["services/dev/benchmark/native-noon-benchmark-participant.js", "benchmark Native : refus de l'espace réservé"],
     ["services/dev/native-dev-orchestrator-facade.js", "interne : façade → orchestrateur"],
     ["services/goals/goal-mode-dev-dispatch-service.js", "Goal Mode : cancelExecution / executionStatus"],
+    ["services/goals/goal-mode-dev-runtime.js", "Goal Mode B1 : adaptateur du dispatch (taskId issus de la réservation)"],
     ["services/delegation/dev-delegation-runner.js", "hors Native DEV : délégation Codex"],
     ["services/dev/benchmark/codex-benchmark-participant.js", "hors Native DEV : benchmark Codex"],
   ]);
