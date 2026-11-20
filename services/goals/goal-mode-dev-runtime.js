@@ -125,9 +125,11 @@ function createGoalModeDevRuntime({
     devTaskJournal,
     now: nowIso,
   });
+  // Le store des propositions horodate avec une chaîne ISO (une Date perdrait
+  // les millisecondes et ferait précéder la réconciliation du planning).
   const stepProposalStore = createGoalModeStepProposalStore({
     repository: createGoalModeStepProposalRepository(database),
-    now,
+    now: nowIso,
   });
   const nextStepPlanner = createGoalModeNextStepPlanner({ goalStrategyEngine, runStore, now });
   // Planning : appel fournisseur explicite seulement (déclenché par B2, flag actif).

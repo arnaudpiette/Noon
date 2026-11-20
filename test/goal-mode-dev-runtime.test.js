@@ -266,9 +266,19 @@ test("B1 câblage serveur : flag OFF par défaut, composition protégée, signal
     assert.ok(block.includes(dependency), dependency);
   }
   assert.match(block, /catch \(error\) \{\s*goalModeDevRuntime = null;\s*toolAuditLog\.append\("goals\.mode-dev\.runtime_unavailable"/);
-  // Aucune route Goal Mode DEV en B1.
+  // B2 : aucun accès direct au dispatch depuis server.js, seulement via le handler HTTP.
   assert.equal(/goalModeDevRuntime\s*\.\s*dispatchService/.test(source), false);
-  assert.equal(/\/api\/goals\/mode-dev/.test(source), false);
+  const httpStart = source.indexOf("const goalModeDevHttp = createGoalModeDevHttpHandler({");
+  assert.notEqual(httpStart, -1);
+  const httpBlock = source.slice(httpStart, source.indexOf('"goals.dev-retry.runtime_composed"', httpStart));
+  assert.match(httpBlock, /enabled: \(\) => goalModeDevRuntime !== null && featureFlags\.evaluate\("goals\.mode-dev", \{\}\)\.mode !== "OFF"/);
+  assert.match(httpBlock, /req\.headers\["x-noon-request"\] !== "1"/);
+  assert.match(httpBlock, /executionPreference: \(\) => runtimeConfig\.get\("runtime\.executionPreference", \{\}\)\.value/);
+  // Aiguillage unique, avant les routes /api/goals génériques (GET et POST).
+  const routing = source.indexOf("if (requestPath.startsWith(GOAL_MODE_DEV_HTTP_PREFIX)) {");
+  assert.notEqual(routing, -1);
+  assert.ok(routing < source.indexOf('if (req.method === "GET" && req.url.startsWith("/api/goals")) {'));
+  assert.ok(routing < source.indexOf('if (req.method === "POST" && req.url.startsWith("/api/goals/")) {'));
   // Signalement unique au démarrage, hors safe mode, B3 et coordinateur.
   const startup = source.slice(source.indexOf("await reliabilityEngine.diagnose();"));
   assert.match(startup, /if \(!nativeDevInterruptedReported && process\.env\.NOON_SAFE_MODE !== "1"\) \{\s*nativeDevInterruptedReported = true;\s*reportInterruptedNativeDevTasks\(/);

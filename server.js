@@ -143,6 +143,7 @@ const { createGoalDevExecutionService } = require("./services/goals/goal-dev-exe
 const { createGoalDevEvaluatedExecutionService } = require("./services/goals/goal-dev-evaluated-execution-service");
 const { createGoalDevRetryRuntime } = require("./services/goals/goal-dev-retry-runtime");
 const { createGoalModeDevRuntime } = require("./services/goals/goal-mode-dev-runtime");
+const { createGoalModeDevHttpHandler, GOAL_MODE_DEV_HTTP_PREFIX } = require("./services/goals/goal-mode-dev-http-routes");
 const { reportInterruptedNativeDevTasks } = require("./services/dev/native-dev-interrupted-report");
 const {
   goalDevRetryHttpStatus,
@@ -1688,6 +1689,25 @@ try {
     code: String(error?.code || error?.name || "COMPOSITION_FAILED").slice(0, 80),
   });
 }
+
+/*
+ * Branchement B2 — routes HTTP Goal Mode DEV. 404 si le runtime n'est pas
+ * composé ou si goals.mode-dev vaut OFF au moment de la requête.
+ */
+const goalModeDevHttp = createGoalModeDevHttpHandler({
+  runtime: goalModeDevRuntime,
+  goalStrategyEngine,
+  enabled: () => goalModeDevRuntime !== null && featureFlags.evaluate("goals.mode-dev", {}).mode !== "OFF",
+  // Même exigence que requireTrustedDevUi (déclarée dans le gestionnaire HTTP).
+  requireTrustedUi: (req) => {
+    if (req.headers["x-noon-request"] !== "1") {
+      throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403, code: "TRUSTED_UI_REQUIRED" });
+    }
+  },
+  readJsonBody,
+  executionPreference: () => runtimeConfig.get("runtime.executionPreference", {}).value,
+  audit: (event, metadata) => toolAuditLog.append(event, metadata),
+});
 
 toolAuditLog.append(
   "goals.dev-retry.runtime_composed",
@@ -8072,6 +8092,11 @@ if (req.method === "POST" && req.url.startsWith("/api/context/ambient/")) {
 
 // Une comparaison produit uniquement une recommandation structurée. Cette
 // route ne transmet jamais le résultat aux outils d'exécution.
+// Branchement B2 : avant toutes les routes /api/goals génériques (GET et POST).
+if (requestPath.startsWith(GOAL_MODE_DEV_HTTP_PREFIX)) {
+  return goalModeDevHttp.handle(req, res, requestPath);
+}
+
 if (req.method === "GET" && req.url.startsWith("/api/goals")) {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);

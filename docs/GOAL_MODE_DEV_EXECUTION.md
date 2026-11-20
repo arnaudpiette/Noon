@@ -14,7 +14,25 @@
   - **Règles projet** : résolues dans `prepare` depuis le workspace autoritatif, liées au binding v2 (`rulesFingerprint`) et à l'affichage local, envoyées à l'identique, et revérifiées avant la consommation. Un changement donne `RULES_CHANGED`, sans CAS.
   - **Tâches Native DEV interrompues** : signalées une fois au démarrage (façade B3 et coordinateur), par un audit sans contenu (compteurs seulement), sans aucune action. Ce signalement n'est pas exécuté en safe mode (`NOON_SAFE_MODE=1`), qui suspend aussi les travaux de fond.
   - **Planning** : il fait un appel fournisseur payant, déclenché seulement par une demande explicite (B2), flag actif. Les tests utilisent toujours un fournisseur factice.
-- **B2, à venir : surface HTTP**, derrière le flag. Contrat de normalisation sur le modèle du retry : `decision` obligatoire, aucun `taskId` ni chemin fourni par le client, jeton renvoyé seulement par `prepare` et `renew`. Test de bout en bout avec un fournisseur et une façade factices.
+- **B2, livré : surface HTTP**, `services/goals/goal-mode-dev-http-routes.js` et `goal-mode-dev-http-contract.js`, préfixe `/api/goals/mode-dev/`.
+  - **Aiguillage** : une seule ligne dans `server.js`, placée **avant** les blocs `GET /api/goals*` et `POST /api/goals/*` génériques. Le serveur n'appelle jamais le dispatch directement : il passe toujours par le handler.
+  - **Garde-fous** : `404 GOAL_MODE_DEV_DISABLED` si le runtime n'est pas composé ou si le flag vaut `OFF` **au moment de la requête** (coupe-circuit dynamique), puis en-tête `x-noon-request: 1` obligatoire (sinon 403). Corps limité à 8 Kio, clés exactes.
+  - **Routes** :
+
+    | Méthode | Chemin |
+    |---|---|
+    | `POST` | `runs`, `runs/start`, `planning`, `dispatch/prepare`, `dispatch/resume`, `dispatch/renew`, `runs/pause`, `runs/resume`, `runs/stop`, `dispatch/cancel`, `dispatch/release` |
+    | `GET` | `runs/:runId`, `runs/:runId/proposals/:stepId`, `runs/:runId/reservations/:reservationId` |
+
+    Réponse en cas de succès : `{status: "ok", result}`. En cas d'erreur : `{status: "error", code, message}` (message générique), avec seulement des détails sûrs (`reservationId`, statut).
+  - **Aucune autorité client** : `taskId`, chemins, permissions, `capabilityCeilings`, `projectInstructions` et `localOnly` sont refusés (400). `decision` est **obligatoire** (`approve` ou `reject`), sans valeur par défaut. Le planning exige `confirmProviderCall: true`. Le jeton et l'affichage ne sont renvoyés que par `prepare` et `renew`, et aucune réponse ne contient de `taskId`.
+  - **Plafonds de capacités fixés par le serveur** : `network: true`, `gitWrite: false`, `destructiveActions: false`.
+  - **`localOnly` dérivé des politiques existantes**, jamais codé en dur : sensibilité du Goal (`LOCAL_ONLY`) ou préférence utilisateur `runtime.executionPreference = LOCAL_ONLY`. Une préférence illisible est traitée comme `LOCAL_ONLY`. Le refus `422 LOCAL_ONLY_REQUIRED` intervient avant la création du run, avant le planning, avant `prepare`, et avant un `resume approve`, sans toucher à l'approbation. *Limite* : il n'existe aujourd'hui aucun champ de confidentialité explicite sur un projet ou un workspace. Le jour où il existera, il faudra l'ajouter à cette dérivation.
+  - **`resume` est synchrone** : la requête reste ouverte pendant toute la tâche Native DEV.
+    - Le serveur garde les délais par défaut de Node : `requestTimeout` 300 s (réception de la requête seulement), `headersTimeout` 60 s, `keepAliveTimeout` 5 s, `timeout` 0. **Aucune limite côté serveur ne coupe une réponse longue** : c'est vérifié par un test.
+    - La limite réelle est celle du client (UI ou `fetch`). Une déconnexion ne coupe pas le dispatch (vérifié par un test), et l'état reste lisible par `GET runs/:runId/reservations/:reservationId`.
+  - **Audit** : route, statut HTTP et code seulement. Jamais de corps, de jeton, d'affichage ni de règles.
+  - **Activer le flag** exige `LIMITED` avec un pourcentage ou une liste d'autorisation pour `goals.engine`, `dev.native-core` et `goals.mode-dev`. Sans contexte de workspace, un `LIMITED` sans pourcentage reste `OFF`.
 - **B3, à venir : UI d'approbation.** Carte dédiée, affichage local, aucun jeton dans `localStorage`.
 - **4C-2, à venir : réconciliation et coûts.**
 
@@ -128,5 +146,8 @@ La réservation de planning est hors périmètre : elle garde son modèle actuel
 - `test/goal-mode-execution-release.test.js` : RELEASED (transitions, forme, ledger, course, SQLite, compatibilité ancien ↔ nouveau code).
 - `test/dev-task-journal-reliability.test.js` : réservation de démarrage exclusive, ordre des `fsync` (y compris dans le repli), lecture stricte, noms exacts, anciens fichiers, `interrupted`.
 - `test/native-dev-facade-journal.test.js` : réservation de démarrage avant tout `await`, état terminal, relance refusée après redémarrage, `JOURNAL_UNREADABLE` explicite.
+- `test/goal-mode-dev-http-contract.test.js` : contrat B2 (clés exactes, `decision`, projections, statuts, erreurs minimales).
+- `test/goal-mode-dev-http-transport.test.js` : bout en bout B2 au niveau transport (vrai serveur HTTP de test, vrai runtime, fournisseur et façade factices), délais d'attente et déconnexion.
+- `test/goal-mode-dev-http-server.test.js` : garde-fous B2 sur le vrai serveur, dans un processus enfant sans `.env` ni clés de fournisseurs.
 - `test/goal-mode-dev-runtime.test.js` : composition B1, permissions vivantes, règles projet, signalement des tâches interrompues, câblage serveur et flag.
 - `test/dev-task-id-namespace.test.js` : espace réservé, inventaire des appelants de `runTask`, `cancelTask`, `getTaskStatus` et `projectDecisionEvidence`, câblage des routes.
