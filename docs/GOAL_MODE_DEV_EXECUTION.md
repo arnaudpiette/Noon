@@ -26,10 +26,10 @@ Une réservation est stockée dans l'état du Goal Run (`executionReservations`)
 
 Une nouvelle réservation exige que toutes les précédentes soient closes (`RECONCILED` ou `RELEASED`) et qu'il n'existe aucun `UNKNOWN`.
 
-## Garanties du dispatch (4C-1B)
+## Garanties du dispatch (4C-1B, 4C-1C)
 
-- `prepare()` réserve via `reserveExecutionWithExactProjection`, puis mesure l'empreinte bornée du repository cible. Les chemins protégés par AGENTS.md ne sont jamais ni lus ni hashés : `benchmark-workspaces/`, `dev-cost-ledger.json`, `dev-task-journal/`, secrets, bases personnelles, `node_modules`, caches et builds. Ils sont exclus par pathspec Git et par un filtre local.
-- `dispatch()` revérifie tout de façon synchrone, avant le premier `await` :
+- `prepare()` réserve via `reserveExecutionWithExactProjection`, mesure l'empreinte bornée du repository cible, puis émet une approbation `ApprovalEngine` liée au contrat exact (voir ci-dessous). Les chemins protégés par AGENTS.md ne sont jamais ni lus ni hashés : `benchmark-workspaces/`, `dev-cost-ledger.json`, `dev-task-journal/`, secrets, bases personnelles, `node_modules`, caches et builds. Ils sont exclus par pathspec Git et par un filtre local.
+- `resume()` est la **seule entrée publique** : `dispatch` est interne et n'est appelé que par `ApprovalEngine`, après une approbation exacte. Il revérifie tout de façon synchrone, avant le premier `await` :
   - le statut et le binding de la réservation ;
   - le ledger DEV (0 appel) ;
   - le run (`RUNNING`) et le Goal (`ACTIVE`, confirmé, même version) ;
@@ -37,9 +37,24 @@ Une nouvelle réservation exige que toutes les précédentes soient closes (`REC
   - les permissions, par intersection ;
   - l'empreinte de la cible.
 
-  Il passe ensuite `PREPARED → MAY_HAVE_STARTED` par CAS, **avant** d'appeler une seule fois le dispatcher, sans jamais réessayer.
+  Il **consomme** ensuite l'approbation, passe `PREPARED → MAY_HAVE_STARTED` par CAS, puis appelle une seule fois le dispatcher, sans jamais réessayer.
 - `MAY_HAVE_STARTED` et `UNKNOWN` partent en réconciliation (4C-2), jamais en rejeu.
 - L'espace de `taskId` `goal-mode-dev-` est réservé. Toutes les entrées HTTP, UI, retry et benchmark qui atteignent Native DEV le refusent, après normalisation (trim, NFKC, casse, caractères invisibles, tirets) : voir `services/dev/dev-task-id-namespace.js`. Un test d'inventaire échoue dès qu'un appelant de `runTask` apparaît sans avoir été audité.
+
+## Approbation exacte (4C-1C)
+
+- **Liaison.** `prepare()` crée une approbation `ApprovalEngine` (`skillName: "goal_mode_dev"`, `operation: "dispatch_exact_contract"`, `target = taskId`). Ses arguments exacts contiennent `runId`, `reservationId`, `reservedRevision`, `stepId`, `taskId`, `goalId`, `goalVersion`, `proposalFingerprint`, l'**empreinte du contrat** (sha256 canonique de toute la copie gelée de 4C-1A) et l'**empreinte de la cible**. Ses préconditions (statut et révision de la réservation, empreinte de la cible, statut et version du Goal) sont recalculées en direct au moment de reprendre. Une approbation ne vaut donc ni pour un autre contrat, ni pour une autre réservation, ni pour un rejeu.
+- **Reprise.** `resume({ approvalId, resumeToken, decision })` enchaîne :
+  1. une lecture bornée (`getPreparedGoalModeDevDispatchExactAction`), qui n'approuve rien ;
+  2. la comparaison de l'action avec le contrat interne ;
+  3. un pré-contrôle aux codes précis : un refus à ce stade ne touche pas l'approbation ;
+  4. `resumeApprovedAction` avec l'option `consumeAtBoundary`.
+- **Usage unique, consommé avant le CAS.** Avec l'option `consumeAtBoundary` (désactivée par défaut, sans effet sur les autres appelants), l'approbation est consommée de façon durable **juste avant** le CAS. Il n'y a donc jamais de dispatch sans approbation consommée. Un CAS perdu après consommation « brûle » l'approbation, et une erreur après consommation la laisse consommée, avec un code d'échec audité.
+- **Expirée, refusée, annulée, en échec.** Aucun CAS, la réservation reste `PREPARED`, **sans libération implicite**. La suite passe par un renouvellement explicite ou par `releaseExecution`.
+- **Renouvellement.** `renewApproval({ reservationId })` est explicite et audité (`approval.cancelled` avec `supersededBy`, `approval.created`). Il est réservé à une réservation encore `PREPARED` à sa révision, et jamais après une tentative de dispatch. L'ancien jeton devient inutilisable.
+- **Durée de validité.** 5 minutes, plafonnées par l'échéance du run moins 1 s. Une préparation trop proche de l'échéance est refusée **avant** la réservation.
+- **Affichage local, rien de persisté.** L'approbation montre le titre du Goal, la consigne exacte du step, le repository, les permissions accordées, le coût maximal, le nombre d'appels maximal et la durée maximale. Le dépôt d'approbations et l'audit ne conservent que des identifiants, des empreintes et des statuts.
+- **Redémarrage.** `ApprovalEngine` annule toute approbation en attente (`RESTART_RECONFIRMATION_REQUIRED`). La réservation reste `PREPARED`, sans contexte de reprise : il faut la libérer explicitement.
 
 ## Libération explicite (`RELEASED`)
 
@@ -62,6 +77,7 @@ La réservation de planning est hors périmètre : elle garde son modèle actuel
 ## Tests de référence
 
 - `test/goal-mode-execution-reservation.test.js` : 4C-0 / 4C-1A.
-- `test/goal-mode-dev-dispatch-service.test.js` : 4C-1B, empreinte, Goal, RELEASED × dispatch.
+- `test/goal-mode-dev-dispatch-service.test.js` : 4C-1B (par `resume`), 4C-1C, empreinte, Goal, RELEASED × dispatch.
+- `test/approval-engine-consume-boundary.test.js` : option `consumeAtBoundary` et lecture bornée Goal Mode d'`ApprovalEngine`.
 - `test/goal-mode-execution-release.test.js` : RELEASED (transitions, forme, ledger, course, SQLite, compatibilité ancien ↔ nouveau code).
 - `test/dev-task-id-namespace.test.js` : espace réservé et inventaire des appelants de `runTask`.

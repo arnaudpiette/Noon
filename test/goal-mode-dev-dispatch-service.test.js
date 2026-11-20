@@ -18,6 +18,10 @@ const {
   defaultGoalModeDevTargetInspector,
 } = require("../services/goals/goal-mode-dev-dispatch-service");
 const { createPersonalDatabase } = require("../services/persistence/database");
+const { createApprovalEngine } = require("../services/approvals/approval-engine");
+const {
+  createApprovalRepository,
+} = require("../services/persistence/repositories/approval-repository");
 const {
   createGoalModeRunRepository,
 } = require("../services/persistence/repositories/goal-mode-run-repository");
@@ -61,6 +65,13 @@ function createRepository(directory) {
   return fs.realpathSync(root);
 }
 
+// 4C-1C : resume est la seule entrée publique vers le dispatch.
+function resume(service, prepared, decision = "approve") {
+  return service.resume({
+    approvalId: prepared.approval.id, resumeToken: prepared.resumeToken, decision,
+  });
+}
+
 function fixture({ realRepository = false } = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "noon-50d4c1b-"));
   const file = path.join(directory, "run.sqlite");
@@ -72,6 +83,8 @@ function fixture({ realRepository = false } = {}) {
   const live = { network: true, gitWrite: false, destructiveActions: false, repositoryWrite: true };
   let targetFingerprint = FINGERPRINT;
   let onInspect = null;
+  let onInspectSkip = 0;
+  let engineTime = null;
   let capabilityOverride = null;
   let storeA;
   const proposalFingerprint = `sha256:${"a".repeat(64)}`;
@@ -110,7 +123,7 @@ function fixture({ realRepository = false } = {}) {
             taskId, repositoryRoot, branch: "main",
             objective: "SYNTHETIC_PRIVATE_OBJECTIVE",
             allowedPaths: [repositoryRoot],
-            maxEstimatedCost: 0.4, maxProviderCalls: 2,
+            maxEstimatedCost: 0.4, maxProviderCalls: 2, maxDuration: 300_000,
             localOnly: false, permissions: ["READ_WRITE_WORKSPACE", "TERMINAL_SAFE"],
           },
         },
@@ -147,16 +160,29 @@ function fixture({ realRepository = false } = {}) {
     taskProviderCalls: () => budget.calls,
   };
   const permissionSource = { current: () => ({ ...live }) };
-  const goal = { goalId: "goal-dispatch", status: "ACTIVE", userConfirmed: true, version: 2 };
+  const goal = { goalId: "goal-dispatch", title: "SYNTHETIC_GOAL_TITLE", status: "ACTIVE", userConfirmed: true, version: 2 };
   const goalStrategyEngine = { registry: { get: (goalId) => (goalId === goal.goalId ? { ...goal } : null) } };
   const syntheticInspector = () => {
+    if (onInspect && onInspectSkip > 0) {
+      onInspectSkip -= 1;
+      return targetFingerprint;
+    }
     const callback = onInspect;
     onInspect = null;
     callback?.();
     return targetFingerprint;
   };
+  const audit = [];
+  const approvalRepository = createApprovalRepository(dbA);
+  const makeEngine = (repository = approvalRepository) => createApprovalEngine({
+    repository,
+    auditLog: { append(event, metadata) { audit.push({ event, metadata }); } },
+    now: () => Date.parse(engineTime ?? clock),
+  });
+  const approvalEngine = makeEngine();
   const makeService = (store = storeA, overrides = {}) => createGoalModeDevDispatchService({
     runStore: store, goalStrategyEngine, devBudgetService, permissionSource, dispatcher,
+    approvalEngine,
     targetInspector: realRepository ? defaultGoalModeDevTargetInspector : syntheticInspector,
     now: () => new Date(clock),
     ...overrides,
@@ -164,6 +190,7 @@ function fixture({ realRepository = false } = {}) {
   return {
     file, directory, repositoryRoot, repositoryA, repositoryB, storeA, storeB, running,
     budget, live, goal, goalStrategyEngine, calls, dispatcher, makeStore, makeService,
+    approvalEngine, approvalRepository, makeEngine, audit, dbA,
     prepare(service) {
       return service.prepare(running.state.runId, {
         expectedRevision: storeA.get(running.state.runId).revision, stepId: "step-dispatch",
@@ -173,7 +200,9 @@ function fixture({ realRepository = false } = {}) {
     status() { return repositoryB.latest(running.state.runId).state.executionReservations?.at(-1)?.status; },
     setTime(value) { clock = value; },
     setTargetFingerprint(value) { targetFingerprint = value; },
-    setOnInspect(value) { onInspect = value; },
+    setOnInspect(value, skip = 0) { onInspect = value; onInspectSkip = skip; },
+    setEngineTime(value) { engineTime = value; },
+    approvalRow(id) { return approvalRepository.get(id); },
     setCapabilityOverride(value) { capabilityOverride = value; },
     close() {
       dbA.close(); dbB.close();
@@ -186,13 +215,14 @@ test("4C-1B dispatch unique : CAS MAY_HAVE_STARTED avant l'effet, contrat exact 
   const f = fixture();
   try {
     const service = f.makeService();
-    const ticket = f.prepare(service);
+    const prepared = f.prepare(service);
+    const ticket = prepared.ticket;
     assert.equal(Object.isFrozen(ticket), true);
     assert.equal(JSON.stringify(ticket).includes("SYNTHETIC_PRIVATE_OBJECTIVE"), false);
     assert.equal(f.status(), "PREPARED");
     f.live.gitWrite = true; // un état vivant plus large n'élève rien
     f.live.destructiveActions = true;
-    const result = await service.dispatch(ticket);
+    const result = await resume(service, prepared);
     assert.equal(f.calls.length, 1);
     assert.equal(f.calls[0].persistedStatus, "MAY_HAVE_STARTED");
     const sent = f.calls[0].payload;
@@ -206,10 +236,12 @@ test("4C-1B dispatch unique : CAS MAY_HAVE_STARTED avant l'effet, contrat exact 
     assert.equal(result.reservationId, ticket.reservationId);
     assert.equal(result.mayHaveStartedRevision, ticket.reservedRevision + 1);
     assert.equal(result.reconciliationRequired, true);
-    assert.deepEqual(result.authority, { capabilitiesGranted: false, approvalGranted: false });
+    assert.deepEqual(result.authority, { approvalConsumedBy: "ApprovalEngine", capabilitiesGranted: false });
+    assert.equal(result.approvalId, prepared.approval.id);
+    assert.equal(f.approvalRow(prepared.approval.id).status, "consumed");
     assert.equal(f.status(), "MAY_HAVE_STARTED");
-    await assert.rejects(() => service.dispatch(ticket),
-      { code: "GOAL_MODE_DEV_DISPATCH_ALREADY_ATTEMPTED" });
+    // 4C-1C : un second resume bute sur l'approbation consommée (usage unique).
+    await assert.rejects(() => resume(service, prepared), { code: "APPROVAL_CONSUMED" });
     assert.equal(f.calls.length, 1);
     assert.equal(JSON.stringify(f.latest().state).includes("SYNTHETIC_PRIVATE_OBJECTIVE"), false);
   } finally { f.close(); }
@@ -219,34 +251,39 @@ test("4C-1B double appel concurrent : un seul dispatch, même ticket ou autre co
   const f = fixture();
   try {
     const service = f.makeService();
-    const ticket = f.prepare(service);
-    const outcomes = await Promise.allSettled([service.dispatch(ticket), service.dispatch(ticket)]);
+    const prepared = f.prepare(service);
+    const ticket = prepared.ticket;
+    const outcomes = await Promise.allSettled([resume(service, prepared), resume(service, prepared)]);
     assert.deepEqual(outcomes.map((item) => item.status).sort(), ["fulfilled", "rejected"]);
+    // 4C-1C : la seconde reprise simultanée bute sur l'approbation en vol.
     assert.equal(outcomes.find((item) => item.status === "rejected").reason.code,
-      "GOAL_MODE_DEV_DISPATCH_ALREADY_ATTEMPTED");
+      "APPROVAL_INVALID");
     assert.equal(f.calls.length, 1);
   } finally { f.close(); }
 
   const g = fixture();
   try {
     const service = g.makeService();
-    const ticket = g.prepare(service);
+    const prepared = g.prepare(service);
+    const ticket = prepared.ticket;
     // Une autre connexion franchit la frontière pendant le recheck de A
     // (après la lecture du statut, avant le CAS) : le CAS de A doit perdre.
+    // 4C-1C : 3e mesure = recheck interne, juste avant consommation et CAS.
     let interposed = false;
     g.setOnInspect(() => {
       interposed = true;
       g.storeB.markExecutionMayHaveStarted(g.running.state.runId, {
         expectedRevision: ticket.reservedRevision, reservationId: ticket.reservationId,
       });
-    });
-    await assert.rejects(() => service.dispatch(ticket), { code: "GOAL_MODE_RUN_PERSISTENCE_CONFLICT" });
+    }, 2);
+    await assert.rejects(() => resume(service, prepared), { code: "GOAL_MODE_RUN_PERSISTENCE_CONFLICT" });
     assert.equal(interposed, true);
     assert.equal(g.calls.length, 0);
     assert.equal(g.status(), "MAY_HAVE_STARTED");
     assert.equal(g.latest().revision, ticket.reservedRevision + 1);
-    await assert.rejects(() => service.dispatch(ticket),
-      { code: "GOAL_MODE_DEV_DISPATCH_ALREADY_ATTEMPTED" });
+    // Approbation consommée avant le CAS perdu : brûlée, jamais réutilisable.
+    assert.equal(g.approvalRow(prepared.approval.id).status, "consumed");
+    await assert.rejects(() => resume(service, prepared), { code: "APPROVAL_CONSUMED" });
     assert.equal(g.calls.length, 0);
   } finally { g.close(); }
 });
@@ -263,21 +300,25 @@ test("4C-1B crash entre CAS et dispatch : aucun replay, réconciliation requise 
       },
     });
     const service = f.makeService(crashing);
-    const ticket = f.prepare(service);
-    await assert.rejects(() => service.dispatch(ticket), { code: "SYNTHETIC_CRASH" });
+    const prepared = f.prepare(service);
+    const ticket = prepared.ticket;
+    await assert.rejects(() => resume(service, prepared), { code: "SYNTHETIC_CRASH" });
     assert.equal(f.calls.length, 0);
     assert.equal(f.status(), "MAY_HAVE_STARTED");
-    await assert.rejects(() => service.dispatch(ticket),
-      { code: "GOAL_MODE_DEV_DISPATCH_ALREADY_ATTEMPTED" });
+    assert.equal(f.approvalRow(prepared.approval.id).status, "consumed");
+    await assert.rejects(() => resume(service, prepared), { code: "APPROVAL_CONSUMED" });
 
     const reopenedDatabase = createPersonalDatabase(f.file);
     try {
       const reopenedStore = f.makeStore(createGoalModeRunRepository(reopenedDatabase));
-      const restarted = f.makeService(reopenedStore);
-      await assert.rejects(() => restarted.dispatch(ticket),
-        { code: "GOAL_MODE_DEV_DISPATCH_TICKET_UNKNOWN" });
-      await assert.rejects(() => restarted.dispatch({ ...ticket }),
-        { code: "GOAL_MODE_DEV_DISPATCH_TICKET_UNKNOWN" });
+      const restarted = f.makeService(reopenedStore, {
+        approvalEngine: f.makeEngine(createApprovalRepository(reopenedDatabase)),
+      });
+      await assert.rejects(() => resume(restarted, prepared), { code: "APPROVAL_NOT_FOUND" });
+      await assert.rejects(() => restarted.resume({
+        approvalId: `approval_${"0".repeat(8)}-0000-0000-0000-${"0".repeat(12)}`,
+        resumeToken: prepared.resumeToken,
+      }), { code: "APPROVAL_NOT_FOUND" });
       assert.throws(() => restarted.prepare(f.running.state.runId, {
         expectedRevision: f.latest().revision, stepId: "step-dispatch",
       }), { code: "GOAL_MODE_EXECUTION_IN_FLIGHT" });
@@ -292,7 +333,8 @@ test("4C-1B MAY_HAVE_STARTED ou UNKNOWN externe part en réconciliation, jamais 
     const f = fixture();
     try {
       const service = f.makeService();
-      const ticket = f.prepare(service);
+      const prepared = f.prepare(service);
+    const ticket = prepared.ticket;
       let snapshot = f.storeB.markExecutionMayHaveStarted(f.running.state.runId, {
         expectedRevision: ticket.reservedRevision, reservationId: ticket.reservationId,
       });
@@ -301,7 +343,7 @@ test("4C-1B MAY_HAVE_STARTED ou UNKNOWN externe part en réconciliation, jamais 
           expectedRevision: snapshot.revision, reservationId: ticket.reservationId,
         });
       }
-      await assert.rejects(() => service.dispatch(ticket), (error) => {
+      await assert.rejects(() => resume(service, prepared), (error) => {
         assert.equal(error.code, "GOAL_MODE_DEV_DISPATCH_RECONCILIATION_REQUIRED");
         assert.equal(error.details.status, finalStatus);
         assert.equal(error.details.reservationId, ticket.reservationId);
@@ -318,27 +360,35 @@ test("4C-1B budget épuisé ou ledger engagé entre préparation et dispatch : r
   const f = fixture();
   try {
     const service = f.makeService();
-    const ticket = f.prepare(service);
+    const prepared = f.prepare(service);
+    const ticket = prepared.ticket;
     f.budget.remaining = 0.39;
-    await assert.rejects(() => service.dispatch(ticket),
+    await assert.rejects(() => resume(service, prepared),
       { code: "GOAL_MODE_DEV_DISPATCH_BUDGET_EXHAUSTED" });
     f.budget.remaining = Number.NaN;
-    await assert.rejects(() => service.dispatch(ticket),
+    await assert.rejects(() => resume(service, prepared),
       { code: "GOAL_MODE_DEV_DISPATCH_BUDGET_EXHAUSTED" });
     f.budget.remaining = 10;
     f.budget.calls = 1;
-    await assert.rejects(() => service.dispatch(ticket),
+    await assert.rejects(() => resume(service, prepared),
       { code: "GOAL_MODE_DEV_DISPATCH_RECONCILIATION_REQUIRED" });
     f.budget.calls = 0;
     f.setTime("2026-10-13T12:09:59.500Z"); // < 1 s avant l'échéance du run
-    await assert.rejects(() => service.dispatch(ticket),
+    // 4C-1C : l'approbation (TTL plafonné par l'échéance − 1 s) expire avant.
+    await assert.rejects(() => resume(service, prepared), { code: "approval_expired" });
+    // Garde temporelle du recheck, isolée par une horloge d'approbation décalée.
+    f.setEngineTime("2026-10-13T12:00:03.000Z");
+    await assert.rejects(() => resume(service, prepared),
       { code: "GOAL_MODE_DEV_DISPATCH_TIME_BUDGET_BLOCKED" });
     assert.equal(f.calls.length, 0);
     assert.equal(f.status(), "PREPARED");
     assert.equal(f.latest().revision, ticket.reservedRevision);
-    // Rien n'ayant été engagé, le même ticket reste dispatchable une fois rétabli.
+    // Pré-contrôles refusés : l'approbation n'est ni consommée ni brûlée.
+    assert.equal(f.approvalRow(prepared.approval.id).status, "pending");
+    // Rien n'ayant été engagé, la même approbation reste utilisable une fois rétabli.
+    f.setEngineTime(null);
     f.setTime("2026-10-13T12:00:03.000Z");
-    await service.dispatch(ticket);
+    await resume(service, prepared);
     assert.equal(f.calls.length, 1);
   } finally { f.close(); }
 });
@@ -347,16 +397,17 @@ test("4C-1B permission retirée ou contrat élargi : refus sans CAS ni dispatch"
   const f = fixture();
   try {
     const service = f.makeService();
-    const ticket = f.prepare(service);
+    const prepared = f.prepare(service);
+    const ticket = prepared.ticket;
     f.live.network = false;
-    await assert.rejects(() => service.dispatch(ticket),
+    await assert.rejects(() => resume(service, prepared),
       { code: "GOAL_MODE_DEV_DISPATCH_PERMISSION_REVOKED" });
     f.live.network = true;
     f.live.repositoryWrite = false;
-    await assert.rejects(() => service.dispatch(ticket),
+    await assert.rejects(() => resume(service, prepared),
       { code: "GOAL_MODE_DEV_DISPATCH_PERMISSION_REVOKED" });
     f.live.repositoryWrite = "yes"; // seule la valeur true compte
-    await assert.rejects(() => service.dispatch(ticket),
+    await assert.rejects(() => resume(service, prepared),
       { code: "GOAL_MODE_DEV_DISPATCH_PERMISSION_REVOKED" });
     assert.equal(f.calls.length, 0);
     assert.equal(f.status(), "PREPARED");
@@ -369,8 +420,9 @@ test("4C-1B permission retirée ou contrat élargi : refus sans CAS ni dispatch"
     try {
       g.setCapabilityOverride(override);
       const service = g.makeService();
-      const ticket = g.prepare(service);
-      await assert.rejects(() => service.dispatch(ticket),
+      const prepared = g.prepare(service);
+    const ticket = prepared.ticket;
+      await assert.rejects(() => resume(service, prepared),
         { code: "GOAL_MODE_DEV_DISPATCH_PERMISSION_ESCALATION" });
       assert.equal(g.calls.length, 0);
       assert.equal(g.status(), "PREPARED");
@@ -383,9 +435,10 @@ test("4C-1B fichier cible modifié après préparation : refus sans CAS (reposit
   try {
     // Fichier suivi propre modifié ; la réservation refusée sort par UNKNOWN.
     const service = f.makeService();
-    const ticket = f.prepare(service);
+    const prepared = f.prepare(service);
+    const ticket = prepared.ticket;
     fs.writeFileSync(path.join(f.repositoryRoot, "target.js"), "module.exports = 2;\n");
-    await assert.rejects(() => service.dispatch(ticket),
+    await assert.rejects(() => resume(service, prepared),
       { code: "GOAL_MODE_DEV_DISPATCH_TARGET_CHANGED" });
     assert.equal(f.calls.length, 0);
     assert.equal(f.status(), "PREPARED");
@@ -405,9 +458,10 @@ test("4C-1B fichier cible modifié après préparation : refus sans CAS (reposit
     try {
       fs.writeFileSync(path.join(g.repositoryRoot, "target.js"), "module.exports = 2;\n");
       const service = g.makeService();
-      const ticket = g.prepare(service);
+      const prepared = g.prepare(service);
+    const ticket = prepared.ticket;
       mutate(g.repositoryRoot);
-      await assert.rejects(() => service.dispatch(ticket),
+      await assert.rejects(() => resume(service, prepared),
         { code: "GOAL_MODE_DEV_DISPATCH_TARGET_CHANGED" });
       assert.equal(g.calls.length, 0);
       assert.equal(g.status(), "PREPARED");
@@ -417,8 +471,9 @@ test("4C-1B fichier cible modifié après préparation : refus sans CAS (reposit
   const h = fixture({ realRepository: true });
   try {
     const service = h.makeService();
-    const ticket = h.prepare(service);
-    await service.dispatch(ticket); // cible inchangée : dispatch autorisé
+    const prepared = h.prepare(service);
+    const ticket = prepared.ticket;
+    await resume(service, prepared); // cible inchangée : dispatch autorisé
     assert.equal(h.calls.length, 1);
   } finally { h.close(); }
 });
@@ -448,8 +503,9 @@ test("4C-1B issue dispatcher en erreur : incertaine, jamais rejouée, sans fuite
       throw Object.assign(new Error("SYNTHETIC_PRIVATE_OBJECTIVE leaked"), { code: "NATIVE_DEV_FAILED" });
     };
     const service = f.makeService();
-    const ticket = f.prepare(service);
-    await assert.rejects(() => service.dispatch(ticket), (error) => {
+    const prepared = f.prepare(service);
+    const ticket = prepared.ticket;
+    await assert.rejects(() => resume(service, prepared), (error) => {
       assert.equal(error.code, "GOAL_MODE_DEV_DISPATCH_OUTCOME_UNCERTAIN");
       assert.equal(error.details.causeCode, "NATIVE_DEV_FAILED");
       assert.equal(error.details.reconciliationRequired, true);
@@ -459,27 +515,49 @@ test("4C-1B issue dispatcher en erreur : incertaine, jamais rejouée, sans fuite
     });
     assert.equal(f.calls.length, 1);
     assert.equal(f.status(), "MAY_HAVE_STARTED");
-    await assert.rejects(() => service.dispatch(ticket),
-      { code: "GOAL_MODE_DEV_DISPATCH_ALREADY_ATTEMPTED" });
+    // Erreur après consommation : l'approbation reste consommée, code audité.
+    const row = f.approvalRow(prepared.approval.id);
+    assert.equal(row.status, "consumed");
+    assert.equal(row.failure_code, "GOAL_MODE_DEV_DISPATCH_OUTCOME_UNCERTAIN");
+    await assert.rejects(() => resume(service, prepared), { code: "APPROVAL_CONSUMED" });
     assert.equal(f.calls.length, 1);
   } finally { f.close(); }
 });
 
-test("4C-1B ticket forgé ou d'une autre instance refusé ; dépendances requises", async () => {
+test("4C-1B/1C approbation forgée, jeton faux ou autre instance refusés ; dispatch interne ; dépendances requises", async () => {
   const f = fixture();
   try {
     const serviceA = f.makeService();
     const serviceB = f.makeService(f.storeB);
-    const ticket = f.prepare(serviceA);
-    await assert.rejects(() => serviceA.dispatch({ ...ticket }),
-      { code: "GOAL_MODE_DEV_DISPATCH_TICKET_UNKNOWN" });
-    await assert.rejects(() => serviceB.dispatch(ticket),
-      { code: "GOAL_MODE_DEV_DISPATCH_TICKET_UNKNOWN" });
-    await assert.rejects(() => serviceA.dispatch(null),
+    const prepared = f.prepare(serviceA);
+    // dispatch n'est plus public (4C-1C) : resume est la seule entrée.
+    assert.equal(serviceA.dispatch, undefined);
+    await assert.rejects(() => serviceA.resume({
+      approvalId: `approval_${"1".repeat(8)}-1111-1111-1111-${"1".repeat(12)}`,
+      resumeToken: prepared.resumeToken,
+    }), { code: "APPROVAL_NOT_FOUND" });
+    await assert.rejects(() => serviceA.resume({
+      approvalId: prepared.approval.id, resumeToken: "A".repeat(43),
+    }), { code: "APPROVAL_TOKEN_INVALID" });
+    await assert.rejects(() => serviceA.resume({}), { code: "APPROVAL_NOT_FOUND" });
+    await assert.rejects(() => serviceA.resume({
+      approvalId: prepared.approval.id, resumeToken: prepared.resumeToken, decision: "maybe",
+    }), { code: "GOAL_MODE_DEV_DISPATCH_DECISION_INVALID" });
+    // Même moteur d'approbation, autre instance de service : réservation inconnue.
+    await assert.rejects(() => resume(serviceB, prepared),
       { code: "GOAL_MODE_DEV_DISPATCH_TICKET_UNKNOWN" });
     assert.equal(f.calls.length, 0);
     assert.equal(f.status(), "PREPARED");
+    assert.equal(f.approvalRow(prepared.approval.id).status, "pending");
     assert.throws(() => createGoalModeDevDispatchService({}), TypeError);
+    const { approvalEngine, ...withoutApprovals } = {
+      runStore: f.storeA, goalStrategyEngine: f.goalStrategyEngine,
+      devBudgetService: { effectiveRemaining: () => 1, taskProviderCalls: () => 0 },
+      permissionSource: { current: () => ({}) }, dispatcher: f.dispatcher,
+      approvalEngine: f.approvalEngine,
+    };
+    assert.ok(approvalEngine);
+    assert.throws(() => createGoalModeDevDispatchService(withoutApprovals), TypeError);
   } finally { f.close(); }
 });
 
@@ -487,7 +565,8 @@ test("4C-1B Goal en pause, archivé, non confirmé ou en nouvelle version : refu
   const f = fixture();
   try {
     const service = f.makeService();
-    const ticket = f.prepare(service);
+    const prepared = f.prepare(service);
+    const ticket = prepared.ticket;
     const changes = [
       { status: "PAUSED" }, { status: "ABANDONED" }, { status: "SUPERSEDED" },
       { status: "ACHIEVED" }, { status: "DRAFT" }, { version: 3 },
@@ -496,7 +575,7 @@ test("4C-1B Goal en pause, archivé, non confirmé ou en nouvelle version : refu
     for (const change of changes) {
       const saved = { ...f.goal };
       Object.assign(f.goal, change);
-      await assert.rejects(() => service.dispatch(ticket),
+      await assert.rejects(() => resume(service, prepared),
         { code: "GOAL_MODE_DEV_DISPATCH_GOAL_STALE" }, JSON.stringify(change));
       Object.assign(f.goal, saved);
     }
@@ -504,7 +583,7 @@ test("4C-1B Goal en pause, archivé, non confirmé ou en nouvelle version : refu
     assert.equal(f.status(), "PREPARED");
     assert.equal(f.latest().revision, ticket.reservedRevision);
     // Goal rétabli à l'identique : rien n'ayant été engagé, le dispatch passe.
-    await service.dispatch(ticket);
+    await resume(service, prepared);
     assert.equal(f.calls.length, 1);
   } finally { f.close(); }
 
@@ -521,9 +600,10 @@ test("4C-1B Goal en pause, archivé, non confirmé ou en nouvelle version : refu
         },
       },
     });
-    const ticket = g.prepare(service);
+    const prepared = g.prepare(service);
+    const ticket = prepared.ticket;
     fail = true;
-    await assert.rejects(() => service.dispatch(ticket), { code: "GOAL_MODE_DEV_DISPATCH_GOAL_STALE" });
+    await assert.rejects(() => resume(service, prepared), { code: "GOAL_MODE_DEV_DISPATCH_GOAL_STALE" });
     assert.equal(g.calls.length, 0);
     assert.equal(g.status(), "PREPARED");
   } finally { g.close(); }
@@ -576,7 +656,7 @@ test("4C-1B chemins protégés : jamais ouverts ni hashés, leur modification ne
     const service = f.makeService();
     const inspectNow = () => defaultGoalModeDevTargetInspector({ repositoryRoot: root, branch: "main" });
     const inspect = () => { recording = true; try { return inspectNow(); } finally { recording = false; } };
-    const ticket = await observed(() => f.prepare(service));
+    const prepared = await observed(() => f.prepare(service));
     const baseline = inspect();
 
     for (const relative of protectedFiles) write(relative, "SYNTHETIC_PROTECTED_V2_LONGER");
@@ -592,7 +672,7 @@ test("4C-1B chemins protégés : jamais ouverts ni hashés, leur modification ne
     fs.writeFileSync(path.join(root, "target.js"), "module.exports = 1;\n");
     assert.equal(inspect(), baseline);
 
-    await observed(() => service.dispatch(ticket));
+    await observed(() => resume(service, prepared));
     assert.equal(f.calls.length, 1);
     const leaked = accessed.filter((item) =>
       /benchmark-workspaces|dev-cost-ledger|dev-task-journal|\.env|node_modules|\.sqlite|credentials|state\.db/
@@ -645,10 +725,11 @@ test("RELEASED × dispatch : aucune libération automatique, ticket invalidé, c
   const f = fixture();
   try {
     const service = f.makeService();
-    assert.deepEqual(Object.keys(service).sort(), ["dispatch", "prepare"]);
-    const ticket = f.prepare(service);
+    assert.deepEqual(Object.keys(service).sort(), ["prepare", "renewApproval", "resume"]);
+    const prepared = f.prepare(service);
+    const ticket = prepared.ticket;
     f.live.network = false;
-    await assert.rejects(() => service.dispatch(ticket),
+    await assert.rejects(() => resume(service, prepared),
       { code: "GOAL_MODE_DEV_DISPATCH_PERMISSION_REVOKED" });
     assert.equal(f.status(), "PREPARED"); // refus avant CAS : pas de libération implicite
     f.live.network = true;
@@ -657,7 +738,7 @@ test("RELEASED × dispatch : aucune libération automatique, ticket invalidé, c
       expectedRevision: ticket.reservedRevision, reservationId: ticket.reservationId,
     });
     assert.equal(f.status(), "RELEASED");
-    await assert.rejects(() => service.dispatch(ticket),
+    await assert.rejects(() => resume(service, prepared),
       { code: "GOAL_MODE_DEV_DISPATCH_RESERVATION_CLOSED" });
     assert.equal(f.calls.length, 0);
   } finally { f.close(); }
@@ -665,14 +746,16 @@ test("RELEASED × dispatch : aucune libération automatique, ticket invalidé, c
   const g = fixture();
   try {
     const service = g.makeService();
-    const ticket = g.prepare(service);
-    // Libération par une autre connexion pendant le recheck : le CAS du dispatch perd.
+    const prepared = g.prepare(service);
+    const ticket = prepared.ticket;
+    // Libération par une autre connexion pendant le recheck interne (3e mesure,
+    // après pré-contrôle et préconditions) : le CAS du dispatch perd.
     g.setOnInspect(() => {
       g.storeB.releaseExecution(g.running.state.runId, {
         expectedRevision: ticket.reservedRevision, reservationId: ticket.reservationId,
       });
-    });
-    await assert.rejects(() => service.dispatch(ticket), { code: "GOAL_MODE_RUN_PERSISTENCE_CONFLICT" });
+    }, 2);
+    await assert.rejects(() => resume(service, prepared), { code: "GOAL_MODE_RUN_PERSISTENCE_CONFLICT" });
     assert.equal(g.calls.length, 0);
     assert.equal(g.status(), "RELEASED");
   } finally { g.close(); }
@@ -680,8 +763,9 @@ test("RELEASED × dispatch : aucune libération automatique, ticket invalidé, c
   const h = fixture();
   try {
     const service = h.makeService();
-    const ticket = h.prepare(service);
-    await service.dispatch(ticket);
+    const prepared = h.prepare(service);
+    const ticket = prepared.ticket;
+    await resume(service, prepared);
     assert.throws(() => h.storeB.releaseExecution(h.running.state.runId, {
       expectedRevision: ticket.reservedRevision, reservationId: ticket.reservationId,
     }), { code: "GOAL_MODE_RUN_PERSISTENCE_CONFLICT" });
@@ -691,4 +775,278 @@ test("RELEASED × dispatch : aucune libération automatique, ticket invalidé, c
     assert.equal(h.status(), "MAY_HAVE_STARTED");
     assert.equal(h.calls.length, 1);
   } finally { h.close(); }
+});
+
+test("4C-1C approbation liée au contrat exact : identité, durée, affichage local", () => {
+  const f = fixture();
+  try {
+    const service = f.makeService();
+    const prepared = f.prepare(service);
+    const { ticket, approval, display } = prepared;
+    assert.equal(Object.isFrozen(prepared), true);
+    assert.equal(approval.skillName, "goal_mode_dev");
+    assert.equal(approval.operation, "dispatch_exact_contract");
+    assert.equal(approval.target, ticket.taskId);
+    assert.equal(approval.status, "pending");
+    assert.equal(Object.hasOwn(approval, "resumeToken"), false);
+    assert.match(prepared.resumeToken, /^[A-Za-z0-9_-]{43}$/);
+    assert.equal(Date.parse(approval.expiresAt) - Date.parse(approval.createdAt), 5 * 60_000);
+    const exact = f.approvalEngine.getPreparedGoalModeDevDispatchExactAction({
+      approvalId: approval.id, resumeToken: prepared.resumeToken,
+    });
+    assert.equal(exact.normalizedArgs.reservationId, ticket.reservationId);
+    assert.equal(exact.normalizedArgs.reservedRevision, ticket.reservedRevision);
+    assert.equal(exact.normalizedArgs.taskId, ticket.taskId);
+    assert.equal(exact.normalizedArgs.targetFingerprint, FINGERPRINT);
+    assert.match(exact.normalizedArgs.contractFingerprint, /^sha256:[0-9a-f]{64}$/);
+    assert.deepEqual({ ...display, permissions: [...display.permissions] }, {
+      goalTitle: "SYNTHETIC_GOAL_TITLE",
+      instruction: "SYNTHETIC_PRIVATE_OBJECTIVE",
+      repositoryRoot: f.repositoryRoot,
+      branch: "main",
+      permissions: ["READ_WRITE_WORKSPACE", "TERMINAL_SAFE", "NETWORK"],
+      maxEstimatedCost: 0.4,
+      maxProviderCalls: 2,
+      maxDuration: 300_000,
+    });
+    for (const value of ["SYNTHETIC_GOAL_TITLE", "SYNTHETIC_PRIVATE_OBJECTIVE", f.repositoryRoot,
+      "READ_WRITE_WORKSPACE", "NETWORK", "0.4 USD", "Appels maximum : 2", "Durée maximale : 300 s"]) {
+      assert.equal(approval.summary.includes(value), true, value);
+    }
+    // Rien de l'affichage n'est persisté : ni ligne d'approbation, ni audit, ni état du run.
+    const persisted = JSON.stringify([f.approvalRow(approval.id), f.audit, f.latest().state]);
+    for (const secret of ["SYNTHETIC_GOAL_TITLE", "SYNTHETIC_PRIVATE_OBJECTIVE", f.repositoryRoot]) {
+      assert.equal(persisted.includes(secret), false, secret);
+    }
+  } finally { f.close(); }
+});
+
+test("4C-1C durée : 5 min plafonnées par l'échéance du run moins 1 s ; refus avant réservation", () => {
+  const f = fixture();
+  try {
+    f.setTime("2026-10-13T12:07:00.000Z"); // échéance 12:10:00
+    const prepared = f.prepare(f.makeService());
+    assert.equal(prepared.approval.expiresAt, "2026-10-13T12:09:59.000Z");
+  } finally { f.close(); }
+
+  const g = fixture();
+  try {
+    g.setTime("2026-10-13T12:09:59.500Z");
+    assert.throws(() => g.prepare(g.makeService()),
+      { code: "GOAL_MODE_DEV_DISPATCH_TIME_BUDGET_BLOCKED" });
+    assert.equal(g.latest().state.executionReservations, undefined);
+  } finally { g.close(); }
+});
+
+test("4C-1C approbation d'un autre contrat ou d'une autre réservation : refus sans consommation ni CAS", async () => {
+  for (const field of ["reservationId", "reservedRevision", "contractFingerprint",
+    "targetFingerprint", "taskId", "goalVersion"]) {
+    const f = fixture();
+    try {
+      // Moteur dont la lecture renverrait une action différente du contrat
+      // remis : le service ne doit jamais l'accepter.
+      const engine = f.approvalEngine;
+      const tampered = {
+        ...engine,
+        getPreparedGoalModeDevDispatchExactAction(input) {
+          const exact = engine.getPreparedGoalModeDevDispatchExactAction(input);
+          const value = exact.normalizedArgs[field];
+          return {
+            ...exact,
+            normalizedArgs: {
+              ...exact.normalizedArgs,
+              [field]: typeof value === "number" ? value + 1 : `${value}-other`,
+            },
+          };
+        },
+      };
+      const service = f.makeService(f.storeA, { approvalEngine: tampered });
+      const prepared = f.prepare(service);
+      await assert.rejects(() => resume(service, prepared),
+        { code: "GOAL_MODE_DEV_DISPATCH_APPROVAL_MISMATCH" }, field);
+      assert.equal(f.approvalRow(prepared.approval.id).status, "pending");
+      assert.equal(f.status(), "PREPARED");
+      assert.equal(f.calls.length, 0);
+    } finally { f.close(); }
+  }
+});
+
+test("4C-1C changement entre pré-contrôle et préconditions : approval_stale, sans consommation ni CAS", async () => {
+  const f = fixture();
+  try {
+    const service = f.makeService();
+    const prepared = f.prepare(service);
+    // 2e mesure = recheckPreconditions d'ApprovalEngine.
+    f.setOnInspect(() => f.setTargetFingerprint(`sha256:${"d".repeat(64)}`), 1);
+    await assert.rejects(() => resume(service, prepared), { code: "approval_stale" });
+    assert.equal(f.approvalRow(prepared.approval.id).status, "failed");
+    assert.equal(f.status(), "PREPARED");
+    assert.equal(f.calls.length, 0);
+    await assert.rejects(() => resume(service, prepared), { code: "APPROVAL_INVALID" });
+  } finally { f.close(); }
+});
+
+test("4C-1C ordre : consommation durable avant le CAS, CAS avant le dispatcher", async () => {
+  const f = fixture();
+  try {
+    const order = [];
+    const observing = Object.freeze({
+      ...f.storeA,
+      markExecutionMayHaveStarted(...args) {
+        order.push(["cas", f.approvalRow(prepared.approval.id).status]);
+        return f.storeA.markExecutionMayHaveStarted(...args);
+      },
+    });
+    f.dispatcher.behaviour = (payload) => {
+      order.push(["dispatch", f.approvalRow(prepared.approval.id).status, f.status()]);
+      return { taskId: payload.taskId };
+    };
+    const service = f.makeService(observing);
+    const prepared = f.prepare(service);
+    await resume(service, prepared);
+    assert.deepEqual(order, [["cas", "consumed"], ["dispatch", "consumed", "MAY_HAVE_STARTED"]]);
+    assert.ok(f.audit.some((item) => item.event === "approval.consumed" &&
+      item.metadata.approvalId === prepared.approval.id && item.metadata.boundary === true));
+  } finally { f.close(); }
+});
+
+test("4C-1C stockage indisponible à la consommation : ni CAS ni dispatch", async () => {
+  const f = fixture();
+  try {
+    let casCalls = 0;
+    const counting = Object.freeze({
+      ...f.storeA,
+      markExecutionMayHaveStarted(...args) { casCalls += 1; return f.storeA.markExecutionMayHaveStarted(...args); },
+    });
+    const failingRepository = {
+      ...f.approvalRepository,
+      save(record) {
+        if (record.status === "consumed") throw new Error("SYNTHETIC_APPROVAL_STORAGE_FAILURE");
+        return f.approvalRepository.save(record);
+      },
+    };
+    const service = f.makeService(counting, { approvalEngine: f.makeEngine(failingRepository) });
+    const prepared = f.prepare(service);
+    await assert.rejects(() => resume(service, prepared), { code: "APPROVAL_STORAGE_ERROR" });
+    assert.equal(casCalls, 0);
+    assert.equal(f.calls.length, 0);
+    assert.equal(f.status(), "PREPARED");
+    assert.notEqual(f.approvalRow(prepared.approval.id).status, "consumed");
+  } finally { f.close(); }
+});
+
+test("4C-1C CAS perdu après consommation : approbation brûlée, aucun rejeu", async () => {
+  const f = fixture();
+  try {
+    const service = f.makeService();
+    const prepared = f.prepare(service);
+    const { ticket } = prepared;
+    f.setOnInspect(() => {
+      f.storeB.releaseExecution(f.running.state.runId, {
+        expectedRevision: ticket.reservedRevision, reservationId: ticket.reservationId,
+      });
+    }, 2);
+    await assert.rejects(() => resume(service, prepared), { code: "GOAL_MODE_RUN_PERSISTENCE_CONFLICT" });
+    const row = f.approvalRow(prepared.approval.id);
+    assert.equal(row.status, "consumed");
+    assert.equal(row.failure_code, "GOAL_MODE_RUN_PERSISTENCE_CONFLICT");
+    assert.equal(f.status(), "RELEASED");
+    await assert.rejects(() => resume(service, prepared), { code: "APPROVAL_CONSUMED" });
+    assert.throws(() => service.renewApproval({ reservationId: ticket.reservationId }),
+      { code: "GOAL_MODE_DEV_DISPATCH_RENEW_UNAVAILABLE" });
+    assert.equal(f.calls.length, 0);
+  } finally { f.close(); }
+});
+
+test("4C-1C expiration, refus et renouvellement explicite audité ; ancien jeton inutilisable", async () => {
+  const f = fixture();
+  const events = [];
+  try {
+    const service = f.makeService(f.storeA, {
+      observability: (event, metadata) => events.push({ event, metadata }),
+    });
+    const first = f.prepare(service);
+    const reservationId = first.ticket.reservationId;
+    // Expiration : refus, réservation intacte, aucune libération implicite.
+    f.setEngineTime("2026-10-13T12:05:03.000Z");
+    await assert.rejects(() => resume(service, first), { code: "approval_expired" });
+    assert.equal(f.status(), "PREPARED");
+    f.setEngineTime(null);
+    // Renouvellement après expiration.
+    const second = service.renewApproval({ reservationId });
+    assert.notEqual(second.approval.id, first.approval.id);
+    await assert.rejects(() => resume(service, first),
+      (error) => ["approval_expired", "APPROVAL_INVALID"].includes(error.code));
+    // Refus explicite : la réservation reste PREPARED, renouvellement possible.
+    const rejected = await resume(service, second, "reject");
+    assert.equal(rejected.status, "rejected");
+    assert.equal(f.approvalRow(second.approval.id).status, "rejected");
+    assert.equal(f.status(), "PREPARED");
+    // Renouvellement pendant qu'une approbation est encore en attente.
+    const third = service.renewApproval({ reservationId });
+    const fourth = service.renewApproval({ reservationId });
+    const superseded = f.approvalRow(third.approval.id);
+    assert.equal(superseded.status, "cancelled");
+    assert.equal(superseded.superseded_by, fourth.approval.id);
+    await assert.rejects(() => resume(service, third), { code: "APPROVAL_INVALID" });
+    assert.ok(f.audit.some((item) => item.event === "approval.cancelled" &&
+      item.metadata.approvalId === third.approval.id &&
+      item.metadata.supersededBy === fourth.approval.id));
+    assert.deepEqual(events.map((item) => item.event), [
+      "goal_mode_dev.approval_issued", "goal_mode_dev.approval_renewed",
+      "goal_mode_dev.approval_renewed", "goal_mode_dev.approval_renewed",
+    ]);
+    assert.equal(JSON.stringify(events).includes("SYNTHETIC_PRIVATE_OBJECTIVE"), false);
+    assert.equal(f.calls.length, 0);
+    // Seule la dernière approbation ouvre le dispatch, une fois.
+    await resume(service, fourth);
+    assert.equal(f.calls.length, 1);
+    assert.throws(() => service.renewApproval({ reservationId }),
+      { code: "GOAL_MODE_DEV_DISPATCH_RENEW_UNAVAILABLE" });
+    assert.throws(() => service.renewApproval({ reservationId: "goal-dev-execution-unknown" }),
+      { code: "GOAL_MODE_DEV_DISPATCH_TICKET_UNKNOWN" });
+  } finally { f.close(); }
+});
+
+test("4C-1C renouvellement refusé hors PREPARED (libérée par ailleurs)", () => {
+  const f = fixture();
+  try {
+    const service = f.makeService();
+    const prepared = f.prepare(service);
+    f.setTime("2026-10-13T12:00:03.000Z");
+    f.storeB.releaseExecution(f.running.state.runId, {
+      expectedRevision: prepared.ticket.reservedRevision, reservationId: prepared.ticket.reservationId,
+    });
+    assert.throws(() => service.renewApproval({ reservationId: prepared.ticket.reservationId }),
+      { code: "GOAL_MODE_DEV_DISPATCH_RENEW_UNAVAILABLE" });
+    assert.equal(f.approvalRow(prepared.approval.id).status, "pending");
+  } finally { f.close(); }
+});
+
+test("4C-1C redémarrage : approbation annulée, reprise impossible, libération explicite possible", async () => {
+  const f = fixture();
+  try {
+    const service = f.makeService();
+    const prepared = f.prepare(service);
+    const reopenedDatabase = createPersonalDatabase(f.file);
+    try {
+      const engine = f.makeEngine(createApprovalRepository(reopenedDatabase));
+      const row = createApprovalRepository(reopenedDatabase).get(prepared.approval.id);
+      assert.equal(row.status, "cancelled");
+      assert.equal(row.failure_code, "RESTART_RECONFIRMATION_REQUIRED");
+      const reopenedStore = f.makeStore(createGoalModeRunRepository(reopenedDatabase));
+      const restarted = f.makeService(reopenedStore, { approvalEngine: engine });
+      await assert.rejects(() => resume(restarted, prepared), { code: "APPROVAL_NOT_FOUND" });
+      assert.throws(() => restarted.renewApproval({ reservationId: prepared.ticket.reservationId }),
+        { code: "GOAL_MODE_DEV_DISPATCH_TICKET_UNKNOWN" });
+      assert.equal(f.status(), "PREPARED");
+      f.setTime("2026-10-13T12:00:03.000Z");
+      reopenedStore.releaseExecution(f.running.state.runId, {
+        expectedRevision: prepared.ticket.reservedRevision,
+        reservationId: prepared.ticket.reservationId,
+      });
+      assert.equal(f.status(), "RELEASED");
+      assert.equal(f.calls.length, 0);
+    } finally { reopenedDatabase.close(); }
+  } finally { f.close(); }
 });

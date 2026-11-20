@@ -1,15 +1,19 @@
 "use strict";
 
 /*
- * 5.0D-4C-1B — Recheck et dispatch unique d'une réservation DEV.
+ * 5.0D-4C-1B/1C — Recheck, approbation exacte et dispatch unique.
  *
- * - prepare() réserve via 4C-1A (CAS) et capture une empreinte de la cible.
- * - dispatch() revérifie tout, puis passe PREPARED → MAY_HAVE_STARTED par CAS
- *   AVANT tout effet. Le dispatcher est appelé au plus une fois par
- *   réservation, jamais rejoué. MAY_HAVE_STARTED ou UNKNOWN partent en
- *   réconciliation (4C-2), jamais en replay.
- * - Aucune permission n'est accordée ici : le contrat remis est envoyé tel
- *   quel, et toute capacité effective est l'intersection des sources.
+ * - prepare() réserve via 4C-1A (CAS), capture une empreinte de la cible et
+ *   émet une approbation ApprovalEngine liée au contrat exact (empreinte du
+ *   contrat, reservationId, reservedRevision, empreinte de la cible).
+ * - resume() est la seule entrée publique : lecture bornée de l'action
+ *   exacte, pré-contrôle, puis ApprovalEngine (consumeAtBoundary) appelle le
+ *   dispatch interne qui revérifie tout, CONSOMME l'approbation, passe
+ *   PREPARED → MAY_HAVE_STARTED par CAS, puis appelle une seule fois le
+ *   dispatcher. Jamais de replay ; MAY_HAVE_STARTED/UNKNOWN → réconciliation.
+ * - renewApproval() est explicite, audité, réservé à une réservation encore
+ *   PREPARED ; l'ancien jeton devient inutilisable.
+ * - Aucune permission n'est accordée ici, aucune libération implicite.
  * - Le service n'est pas câblé au serveur : le dispatcher est injecté.
  */
 
@@ -17,9 +21,19 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
+const {
+  BINDING_VERSION: APPROVAL_BINDING_VERSION,
+  OPERATION: APPROVAL_OPERATION,
+  SKILL_NAME: APPROVAL_SKILL_NAME,
+  canonicalJson,
+  contractFingerprint,
+} = require("./goal-mode-dev-approval-action");
 
 const VERSION = "goal-mode-dev-dispatch-v1";
 const MIN_REMAINING_DURATION_MS = 1_000;
+// 4C-1C : approbation de 5 min, plafonnée par l'échéance du run moins 1 s.
+const APPROVAL_TTL_MS = 5 * 60_000;
+const APPROVAL_DEADLINE_MARGIN_MS = 1_000;
 const ALLOWED_DEV_PERMISSIONS = Object.freeze(["READ_WRITE_WORKSPACE", "TERMINAL_SAFE"]);
 const TARGET_MAX_ENTRIES = 5_000;
 const TARGET_MAX_BYTES = 64 * 1024 * 1024;
@@ -164,8 +178,11 @@ function createGoalModeDevDispatchService({
   devBudgetService,
   permissionSource,
   dispatcher,
+  approvalEngine,
   targetInspector = defaultTargetInspector,
   now = () => new Date(),
+  approvalTtlMs = APPROVAL_TTL_MS,
+  observability = null,
 } = {}) {
   if (typeof runStore?.reserveExecutionWithExactProjection !== "function" ||
       typeof goalStrategyEngine?.registry?.get !== "function" ||
@@ -175,16 +192,27 @@ function createGoalModeDevDispatchService({
       typeof devBudgetService?.taskProviderCalls !== "function" ||
       typeof permissionSource?.current !== "function" ||
       typeof dispatcher?.runTask !== "function" ||
+      typeof approvalEngine?.prepareAction !== "function" ||
+      typeof approvalEngine?.resumeApprovedAction !== "function" ||
+      typeof approvalEngine?.getPreparedGoalModeDevDispatchExactAction !== "function" ||
+      typeof approvalEngine?.cancel !== "function" ||
       typeof targetInspector !== "function" ||
-      typeof now !== "function") {
+      typeof now !== "function" ||
+      !Number.isSafeInteger(approvalTtlMs) || approvalTtlMs < 1) {
     throw new TypeError("Dépendances Goal Mode DEV Dispatch requises.");
   }
 
-  // Tickets émis par CETTE instance : un ticket forgé, copié ou issu d'un
-  // processus antérieur n'ouvre aucun dispatch.
-  const tickets = new WeakMap();
-  // Garde in-process ; l'autorité inter-processus reste le CAS SQLite.
+  // Réservations préparées par CETTE instance (aucune après redémarrage) :
+  // reservationId → contexte interne ; approvalId → reservationId.
+  const reservations = new Map();
+  const approvals = new Map();
+  // Gardes in-process ; l'autorité inter-processus reste le CAS SQLite.
   const attempted = new Set();
+  const resuming = new Set();
+
+  function emit(event, metadata) {
+    try { observability?.(event, metadata); } catch {}
+  }
 
   function inspectTarget(taskRef) {
     const fingerprint = targetInspector(Object.freeze({
@@ -196,19 +224,168 @@ function createGoalModeDevDispatchService({
     return fingerprint;
   }
 
+  function approvalTtl(state) {
+    const at = new Date(now()).getTime();
+    const deadline = Date.parse(state?.contract?.admittedAt) + state?.contract?.limits?.maxDuration;
+    const remaining = deadline - at - APPROVAL_DEADLINE_MARGIN_MS;
+    if (!Number.isFinite(remaining) || remaining < 1) {
+      fail("GOAL_MODE_DEV_DISPATCH_TIME_BUDGET_BLOCKED", "Temps restant du Goal Run insuffisant.");
+    }
+    return Math.min(approvalTtlMs, Math.floor(remaining));
+  }
+
+  function goalTitle(goalId) {
+    try {
+      const goal = goalStrategyEngine.registry.get(goalId);
+      return typeof goal?.title === "string" ? goal.title : null;
+    } catch { return null; }
+  }
+
+  // Affichage local uniquement : jamais persisté (le dépôt d'approbations ne
+  // conserve que identifiants, empreintes et statuts).
+  function display(internal) {
+    const projection = internal.handoff.exactProjection;
+    const devInput = projection.devContract.devInput;
+    const network = projection.devContract.capabilities?.networkAllowed === true &&
+      devInput.localOnly === false;
+    return Object.freeze({
+      goalTitle: goalTitle(internal.binding.goalId),
+      instruction: devInput.objective,
+      repositoryRoot: projection.taskRef.repositoryRoot,
+      branch: projection.taskRef.branch ?? null,
+      permissions: Object.freeze([
+        ...(Array.isArray(devInput.permissions) ? devInput.permissions : []),
+        ...(network ? ["NETWORK"] : []),
+      ]),
+      maxEstimatedCost: devInput.maxEstimatedCost,
+      maxProviderCalls: devInput.maxProviderCalls,
+      maxDuration: devInput.maxDuration,
+    });
+  }
+
+  function summary(view) {
+    return [
+      `Goal « ${view.goalTitle ?? "sans titre"} »`,
+      `Consigne : ${view.instruction}`,
+      `Repository : ${view.repositoryRoot}`,
+      `Permissions : ${view.permissions.join(", ") || "aucune"}`,
+      `Coût maximal : ${view.maxEstimatedCost} USD`,
+      `Appels maximum : ${view.maxProviderCalls}`,
+      `Durée maximale : ${Math.round(Number(view.maxDuration) / 1000)} s`,
+    ].join(" · ");
+  }
+
+  function expectedPreconditions(internal) {
+    return {
+      reservationId: internal.ticket.reservationId,
+      reservedRevision: internal.ticket.reservedRevision,
+      reservationStatus: "PREPARED",
+      latestReservationId: internal.ticket.reservationId,
+      targetFingerprint: internal.targetBaseline,
+      goalId: internal.binding.goalId,
+      goalVersion: internal.binding.goalVersion,
+      goalStatus: "ACTIVE",
+    };
+  }
+
+  function currentPreconditions(internal) {
+    try {
+      const snapshot = runStore.get(internal.ticket.runId);
+      const records = snapshot.state.executionReservations || [];
+      const record = records.find((item) => item.reservationId === internal.ticket.reservationId);
+      const goal = goalStrategyEngine.registry.get(internal.binding.goalId);
+      return {
+        reservationId: record?.reservationId ?? null,
+        reservedRevision: snapshot.revision,
+        reservationStatus: record?.status ?? null,
+        latestReservationId: records.at(-1)?.reservationId ?? null,
+        targetFingerprint: inspectTarget(internal.handoff.exactProjection.taskRef),
+        goalId: goal?.goalId ?? null,
+        goalVersion: goal?.version ?? null,
+        goalStatus: goal?.status ?? null,
+      };
+    } catch {
+      return {};
+    }
+  }
+
+  function assertStillPrepared(internal, code) {
+    const snapshot = runStore.get(internal.ticket.runId);
+    const record = snapshot?.state?.executionReservations?.at(-1);
+    if (record?.reservationId !== internal.ticket.reservationId || record.status !== "PREPARED" ||
+        snapshot.revision !== internal.ticket.reservedRevision) {
+      fail(code, "La réservation DEV n'est plus PREPARED.");
+    }
+    return snapshot;
+  }
+
+  // Émet une approbation pour le contrat exact ; en renouvellement, l'ancienne
+  // est annulée (supersededBy) et son jeton devient inutilisable.
+  function issueApproval(internal, renewal) {
+    const snapshot = assertStillPrepared(internal, "GOAL_MODE_DEV_DISPATCH_RENEW_UNAVAILABLE");
+    const ttlMs = approvalTtl(snapshot.state);
+    const view = display(internal);
+    const approval = approvalEngine.prepareAction({
+      executionId: `goal-mode-dev:${internal.ticket.runId}:${internal.ticket.reservationId}`,
+      skillName: APPROVAL_SKILL_NAME,
+      operation: APPROVAL_OPERATION,
+      normalizedArgs: internal.binding,
+      target: internal.ticket.taskId,
+      permissionLevel: "write",
+      title: "Lancer une tâche DEV Goal Mode",
+      sanitizedSummary: summary(view),
+      riskLevel: "high",
+      strengthened: true,
+      preconditions: expectedPreconditions(internal),
+      contextRef: {
+        reservationId: internal.ticket.reservationId,
+        contractFingerprint: internal.binding.contractFingerprint,
+      },
+      ttlMs,
+    });
+    const previous = internal.approvalId;
+    if (previous) {
+      try {
+        approvalEngine.cancel(previous, approval.id);
+      } catch (error) {
+        try { approvalEngine.cancel(approval.id); } catch {}
+        throw error;
+      }
+      approvals.delete(previous);
+    }
+    internal.approvalId = approval.id;
+    approvals.set(approval.id, internal.ticket.reservationId);
+    emit(renewal ? "goal_mode_dev.approval_renewed" : "goal_mode_dev.approval_issued", {
+      reservationId: internal.ticket.reservationId,
+      approvalId: approval.id,
+      supersededApprovalId: previous || null,
+    });
+    const { resumeToken, ...publicApproval } = approval;
+    return Object.freeze({
+      ticket: internal.ticket,
+      approval: Object.freeze(publicApproval),
+      resumeToken,
+      display: view,
+    });
+  }
+
   function prepare(runId, input = {}) {
+    // Refus avant réservation si le run ne laisse plus le temps d'approuver
+    // (un run absent est laissé à la réservation, qui le refuse).
+    const before = runStore.get(runId);
+    if (before) approvalTtl(before.state);
     const handoff = runStore.reserveExecutionWithExactProjection(runId, input);
     const projection = handoff?.exactProjection;
     if (!projection?.taskRef || !projection?.devContract?.devInput ||
         typeof handoff.reservationId !== "string" ||
         !Number.isSafeInteger(handoff.reservedRevision)) {
       // La réservation existe déjà : sans ticket elle reste PREPARED et
-      // bloquante jusqu'à la réconciliation.
+      // bloquante jusqu'à la libération explicite ou la réconciliation.
       fail("GOAL_MODE_DEV_DISPATCH_HANDOFF_INVALID", "Remise DEV incomplète.", {
         reconciliationRequired: true,
       });
     }
-    // Échec ici : même règle, PREPARED orphelin → markExecutionUnknown.
+    // Échec ici : même règle, PREPARED orphelin → releaseExecution ou UNKNOWN.
     const targetBaseline = inspectTarget(projection.taskRef);
     const ticket = Object.freeze({
       version: VERSION,
@@ -218,8 +395,35 @@ function createGoalModeDevDispatchService({
       reservationId: handoff.reservationId,
       reservedRevision: handoff.reservedRevision,
     });
-    tickets.set(ticket, Object.freeze({ handoff, targetBaseline }));
-    return ticket;
+    const binding = Object.freeze({
+      version: APPROVAL_BINDING_VERSION,
+      runId,
+      reservationId: handoff.reservationId,
+      reservedRevision: handoff.reservedRevision,
+      stepId: projection.stepRef.stepId,
+      taskId: projection.taskRef.taskId,
+      goalId: projection.runRef.goalId,
+      goalVersion: projection.runRef.goalVersion,
+      proposalFingerprint: projection.stepRef.proposalFingerprint,
+      contractFingerprint: contractFingerprint(projection),
+      targetFingerprint: targetBaseline,
+    });
+    const internal = { ticket, handoff, targetBaseline, binding, approvalId: null };
+    reservations.set(ticket.reservationId, internal);
+    // Échec d'émission : la réservation reste PREPARED ; renouvellement
+    // explicite possible, jamais de libération implicite.
+    return issueApproval(internal, false);
+  }
+
+  function renewApproval({ reservationId } = {}) {
+    const internal = typeof reservationId === "string" ? reservations.get(reservationId) : null;
+    if (!internal) {
+      fail("GOAL_MODE_DEV_DISPATCH_TICKET_UNKNOWN", "Réservation DEV inconnue de ce processus.");
+    }
+    if (attempted.has(reservationId) || resuming.has(reservationId)) {
+      fail("GOAL_MODE_DEV_DISPATCH_RENEW_UNAVAILABLE", "Dispatch DEV déjà engagé pour cette réservation.");
+    }
+    return issueApproval(internal, true);
   }
 
   function recheck(ticket, internal) {
@@ -336,18 +540,26 @@ function createGoalModeDevDispatchService({
     return devInput;
   }
 
-  async function dispatch(ticket) {
-    const internal = tickets.get(ticket);
-    if (!internal) {
-      fail("GOAL_MODE_DEV_DISPATCH_TICKET_UNKNOWN", "Ticket DEV inconnu de ce processus.");
+  function assertExactBinding(exactAction, internal) {
+    const expected = internal.binding;
+    if (exactAction?.skillName !== APPROVAL_SKILL_NAME ||
+        exactAction?.operation !== APPROVAL_OPERATION ||
+        exactAction?.target !== internal.ticket.taskId ||
+        canonicalJson(exactAction?.normalizedArgs) !== canonicalJson(expected) ||
+        contractFingerprint(internal.handoff.exactProjection) !== expected.contractFingerprint) {
+      fail("GOAL_MODE_DEV_DISPATCH_APPROVAL_MISMATCH",
+        "L'approbation ne correspond pas exactement à ce contrat DEV.");
     }
-    if (attempted.has(ticket.reservationId)) {
-      fail("GOAL_MODE_DEV_DISPATCH_ALREADY_ATTEMPTED", "Dispatch DEV déjà tenté.", {
-        reservationId: ticket.reservationId,
-      });
-    }
-    // Recheck et CAS sont synchrones : aucun await avant la frontière.
+  }
+
+  // Interne : appelé uniquement par ApprovalEngine après approbation exacte.
+  // Recheck, consommation, CAS sont synchrones ; l'effet vient ensuite.
+  async function dispatch(internal, boundary) {
+    const { ticket } = internal;
     const devInput = recheck(ticket, internal);
+    // Consommation durable AVANT le CAS : jamais de dispatch sans approbation
+    // consommée ; un CAS raté après consommation « brûle » l'approbation.
+    boundary.consume();
     attempted.add(ticket.reservationId);
     // CAS PREPARED → MAY_HAVE_STARTED avant tout effet. En cas d'échec
     // (conflit, budget, erreur SQLite), aucun dispatch n'a lieu.
@@ -372,17 +584,69 @@ function createGoalModeDevDispatchService({
     return Object.freeze({
       version: VERSION,
       reservationId: ticket.reservationId,
+      approvalId: internal.approvalId,
       mayHaveStartedRevision: started.revision,
       devResult,
       reconciliationRequired: true,
-      authority: Object.freeze({ capabilitiesGranted: false, approvalGranted: false }),
+      authority: Object.freeze({
+        approvalConsumedBy: "ApprovalEngine",
+        capabilitiesGranted: false,
+      }),
     });
   }
 
-  return Object.freeze({ prepare, dispatch });
+  async function resume({ approvalId, resumeToken, decision = "approve" } = {}) {
+    if (!["approve", "reject"].includes(decision)) {
+      fail("GOAL_MODE_DEV_DISPATCH_DECISION_INVALID", "Décision d'approbation invalide.");
+    }
+    // Lecture bornée : jeton, statut pending, action Goal Mode. N'approuve rien.
+    const exactAction = approvalEngine.getPreparedGoalModeDevDispatchExactAction({
+      approvalId, resumeToken,
+    });
+    const reservationId = approvals.get(approvalId);
+    const internal = reservationId ? reservations.get(reservationId) : null;
+    if (!internal || internal.approvalId !== approvalId) {
+      fail("GOAL_MODE_DEV_DISPATCH_TICKET_UNKNOWN", "Réservation DEV inconnue de ce processus.");
+    }
+    assertExactBinding(exactAction, internal);
+    if (decision === "reject") {
+      // Aucune libération implicite : la réservation reste PREPARED.
+      await approvalEngine.resumeApprovedAction({
+        approvalId, resumeToken, decision: "reject", exactAction,
+      });
+      return Object.freeze({ status: "rejected", reservationId, approvalId });
+    }
+    if (attempted.has(reservationId)) {
+      fail("GOAL_MODE_DEV_DISPATCH_ALREADY_ATTEMPTED", "Dispatch DEV déjà tenté.", { reservationId });
+    }
+    if (resuming.has(reservationId)) {
+      fail("GOAL_MODE_DEV_DISPATCH_IN_PROGRESS", "Dispatch DEV déjà en cours.", { reservationId });
+    }
+    // Pré-contrôle aux codes précis : un refus ici ne touche pas l'approbation.
+    recheck(internal.ticket, internal);
+    resuming.add(reservationId);
+    try {
+      const outcome = await approvalEngine.resumeApprovedAction({
+        approvalId,
+        resumeToken,
+        decision: "approve",
+        exactAction,
+        consumeAtBoundary: true,
+        recheckPreconditions: () => currentPreconditions(internal),
+        execute: (_args, _record, boundary) => dispatch(internal, boundary),
+      });
+      return outcome.result;
+    } finally {
+      resuming.delete(reservationId);
+    }
+  }
+
+  return Object.freeze({ prepare, renewApproval, resume });
 }
 
 module.exports = {
+  APPROVAL_DEADLINE_MARGIN_MS,
+  APPROVAL_TTL_MS,
   PROTECTED_TARGET_GLOBS,
   TARGET_STATUS_ARGS,
   VERSION,

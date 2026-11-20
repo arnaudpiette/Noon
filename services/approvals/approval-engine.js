@@ -5,6 +5,10 @@ const {
   SKILL_NAME: GOAL_DEV_RETRY_SKILL,
   OPERATION: GOAL_DEV_RETRY_OPERATION,
 } = require("../goals/goal-dev-retry-permit-service");
+const {
+  SKILL_NAME: GOAL_MODE_DEV_SKILL,
+  OPERATION: GOAL_MODE_DEV_OPERATION,
+} = require("../goals/goal-mode-dev-approval-action");
 
 const BLOCKED_ACTIONS = new Set([
   "git_push_force", "git_reset_hard", "delete_remote_branch", "rewrite_history",
@@ -269,6 +273,36 @@ function createApprovalEngine({
     });
   }
 
+  // Surface serveur bornée au dispatch DEV Goal Mode (4C-1C), symétrique de
+  // celle du Retry : une lecture n'approuve ni ne consomme.
+  function getPreparedGoalModeDevDispatchExactAction({ approvalId, resumeToken } = {}) {
+    if (typeof approvalId !== "string" || !/^approval_[0-9a-f-]{36}$/.test(approvalId)) {
+      throw new ApprovalError("APPROVAL_NOT_FOUND", "Approbation absente ou indisponible après redémarrage.");
+    }
+    const record = actions.get(approvalId);
+    if (!record) throw new ApprovalError("APPROVAL_NOT_FOUND", "Approbation absente ou indisponible après redémarrage.");
+    if (typeof resumeToken !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(resumeToken)
+      || !safeEqual(record.resumeTokenHash, tokenHash(resumeToken))) {
+      throw new ApprovalError("APPROVAL_TOKEN_INVALID", "Jeton de reprise invalide.");
+    }
+    if (record.status === "expired" || Date.parse(record.expiresAt) <= now()) {
+      throw new ApprovalError("approval_expired", "Cette approbation a expiré.");
+    }
+    if (record.status === "consumed") throw new ApprovalError("APPROVAL_CONSUMED", "Cette action a déjà été exécutée.");
+    if (record.status !== "pending" || inFlight.has(approvalId)) {
+      throw new ApprovalError("APPROVAL_INVALID", "Cette approbation n’est plus active.");
+    }
+    if (record.skillName !== GOAL_MODE_DEV_SKILL || record.operation !== GOAL_MODE_DEV_OPERATION) {
+      throw new ApprovalError("APPROVAL_ACTION_CHANGED", "Cette approbation ne concerne pas le dispatch DEV Goal Mode.");
+    }
+    return deepFreeze({
+      skillName: record.skillName,
+      operation: record.operation,
+      target: record.target,
+      normalizedArgs: normalizeArgs(record.normalizedArgs),
+    });
+  }
+
   function confirm(id) {
     const record = getRecord(id);
     if (record.status === "expired") throw new ApprovalError("approval_expired", "Autorisation expirée.");
@@ -337,7 +371,7 @@ function createApprovalEngine({
   async function resumeApprovedAction({
     approvalId, resumeToken, decision, exactAction = null,
     recheckHardRules, recheckPermission, recheckConnector, recheckPreconditions,
-    execute,
+    execute, consumeAtBoundary = false,
   } = {}) {
     const id = String(approvalId);
     if (inFlight.has(id)) {
@@ -389,6 +423,7 @@ function createApprovalEngine({
         }
       }
       if (typeof execute !== "function") throw new ApprovalError("APPROVAL_EXECUTOR_REQUIRED", "Exécuteur de reprise absent.");
+      if (consumeAtBoundary === true) return executeWithBoundary(record, execute);
       try {
         const result = await execute(record.normalizedArgs, record);
         record.status = "consumed";
@@ -410,6 +445,59 @@ function createApprovalEngine({
     }
   }
 
+  /*
+   * Option consumeAtBoundary (désactivée par défaut) : l'exécuteur consomme
+   * lui-même l'approbation, une seule fois, de façon durable, juste avant son
+   * effet (ex. CAS d'une réservation). Une erreur après consommation laisse
+   * l'approbation consommée (code d'échec audité) ; un exécuteur qui termine
+   * sans avoir consommé est refusé.
+   */
+  async function executeWithBoundary(record, execute) {
+    let consumed = false;
+    const consume = () => {
+      if (consumed) throw new ApprovalError("APPROVAL_CONSUMED", "Cette action a déjà été exécutée.");
+      if (record.status !== "approved") throw new ApprovalError("APPROVAL_INVALID", "Cette approbation n’est plus active.");
+      if (Date.parse(record.expiresAt) <= now()) {
+        throw new ApprovalError("approval_expired", "Cette approbation a expiré.");
+      }
+      record.status = "consumed";
+      record.consumedAt = new Date(now()).toISOString();
+      try { save(record); } catch (error) {
+        record.status = "approved";
+        record.consumedAt = null;
+        throw error;
+      }
+      consumed = true;
+      audit("approval.consumed", record, { boundary: true });
+      return true;
+    };
+    let result;
+    try {
+      result = await execute(record.normalizedArgs, record, Object.freeze({ consume }));
+    } catch (error) {
+      const code = String(error?.code || error?.name || "EXECUTION_FAILED").slice(0, 100);
+      if (consumed) {
+        record.failureCode = code;
+        try { save(record); } catch {}
+        audit("approval.failed_after_consume", record, { code });
+      } else {
+        record.status = "failed";
+        record.failureCode = code;
+        try { save(record); } catch {}
+        audit("approval.failed", record, { code });
+      }
+      throw error;
+    }
+    if (!consumed) {
+      record.status = "failed";
+      record.failureCode = "APPROVAL_BOUNDARY_NOT_REACHED";
+      try { save(record); } catch {}
+      audit("approval.failed", record, { code: record.failureCode });
+      throw new ApprovalError("APPROVAL_BOUNDARY_NOT_REACHED", "L’exécution n’a pas consommé son approbation.");
+    }
+    return { status: "consumed", approval: publicApproval(record), result };
+  }
+
   function listPending({ executionId = null } = {}) {
     const list = [];
     for (const record of actions.values()) {
@@ -427,6 +515,7 @@ function createApprovalEngine({
   return {
     prepareAction, requestApproval, confirm, consumeApproval, rejectApproval,
     resumeApprovedAction, getPreparedGoalDevRetryExactAction,
+    getPreparedGoalModeDevDispatchExactAction,
     listPending, activeApprovalId, cancel,
     get: (id) => publicApproval(getRecord(id)),
     cleanup: () => repository?.cleanup(new Date(now() - retentionMs).toISOString()) || 0,
