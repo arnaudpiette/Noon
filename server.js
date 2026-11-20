@@ -233,6 +233,7 @@ const { createBackgroundJobEngine } = require("./services/jobs/background-job-en
 const { createNotificationAttentionEngine, createNotificationStore } = require("./services/notifications");
 const { createCapabilityRegistry, createLocalIntelligenceRuntime, createLocalModelAdapter } = require("./services/runtime");
 const { createExtensionRegistry, createExtensionRuntime } = require("./services/extensions");
+const { createMcpService } = require("./services/mcp");
 const { createControlCenterService } = require("./services/control-center");
 const noonExampleSearchExtension = require("./services/extensions/sample/noon-example-search");
 const { createArtifactEngine } = require("./services/artifacts/artifact-engine");
@@ -1823,6 +1824,18 @@ const extensionRegistry = createExtensionRegistry({
   observability: (event, metadata) => toolAuditLog.append(`extensions.${event}`, metadata),
 });
 extensionRuntime.bindRegistry(extensionRegistry);
+// Client MCP (flag connectors.mcp, OFF par défaut) : outils en lecture seule
+// validés par l'utilisateur, jetons dans le coffre safeStorage existant.
+const mcpService = createMcpService({
+  enabled: featureFlags.evaluate("connectors.mcp").enabled && !UI_VALIDATION_MODE && process.env.NOON_SMOKE_TEST !== "1",
+  dataDirectory: DATA_DIRECTORY,
+  tokenStore: integrationTokenStore,
+  skillRegistry,
+  clientVersion: require("./package.json").version,
+  // Mode local uniquement / hors ligne : aucun serveur MCP distant (Figma = REMOTE_FIGMA).
+  isRemoteAllowed: (capabilityId) => localIntelligenceRuntime.preflight({ requiredCapabilities: [capabilityId] }).status === "AVAILABLE",
+  observability: (event, metadata) => toolAuditLog.append(event, metadata),
+});
 // L'extension de démonstration reste disponible pour les tests de développement,
 // mais ne doit jamais concurrencer la vraie recherche publique en production.
 if (process.env.NOON_ENABLE_EXAMPLE_SEARCH_EXTENSION === "true") {
@@ -8051,6 +8064,10 @@ if (req.method === "POST" && req.url === "/api/runtime/mode") {
   }
 }
 
+if (mcpService.matches(requestPath)) {
+  return mcpService.handle(req, res, { requestPath, readJsonBody });
+}
+
 if (req.method === "GET" && req.url === "/api/extensions") {
   res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
   return res.end(JSON.stringify({ status: "ok", isolation: "IN_PROCESS_TRUSTED", extensions: extensionRegistry.list() }));
@@ -10455,6 +10472,9 @@ async function startNoonServer({
   // Le safe mode conserve le serveur local mais suspend les travaux autonomes.
   if (process.env.NOON_SAFE_MODE !== "1") backgroundJobEngine?.start();
 
+  // Reconnexion silencieuse des serveurs MCP déjà autorisés (flag connectors.mcp).
+  if (process.env.NOON_SAFE_MODE !== "1") void mcpService.startup().catch(() => {});
+
   if (server.listening) return Promise.resolve(server);
 
   return new Promise((resolve, reject) => {
@@ -10477,6 +10497,7 @@ async function startNoonServer({
 function stopNoonServer() {
   backgroundJobEngine?.stop();
   try { dataDirectoryLock.release(); } catch {}
+  void mcpService.closeAll().catch(() => {});
   if (!server.listening) return Promise.resolve();
 
   return new Promise((resolve, reject) => {

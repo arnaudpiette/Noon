@@ -182,7 +182,7 @@ function assertUiValidationDataDirectory({ env = process.env, dataDirectory, pat
 
 function isUiValidationExternalRequest(requestPath) {
   return requestPath !== "/integrations/status" &&
-    (requestPath.startsWith("/integrations/") || requestPath.startsWith("/realtime/") || requestPath.startsWith("/api/dev/"));
+    (requestPath.startsWith("/integrations/") || requestPath.startsWith("/realtime/") || requestPath.startsWith("/api/dev/") || requestPath.startsWith("/api/mcp/"));
 }
 
 module.exports = { PROFILE_ARGUMENT, PROFILE_MARKER, SENSITIVE_ENVIRONMENT_NAMES, UI_VALIDATION_PROFILE_PATH, UI_VALIDATION_FIXTURES, applyUiValidationProfile, assertDirectoryPath, assertUiValidationDataDirectory, isUiValidationExternalRequest, isUiValidationMode, isUiValidationWorkspaceId, prepareUiValidationBootstrap, resolveUiValidationFixtures };
