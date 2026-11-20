@@ -41,9 +41,15 @@ const PLANNING_UNKNOWN_REASONS = Object.freeze([
 
 const MAX_PLANNING_RESERVATIONS = 1000;
 const MAX_EXECUTION_RESERVATIONS = 1000;
+// RELEASED : réservation PREPARED libérée explicitement, jamais passée en
+// MAY_HAVE_STARTED. Elle ne consomme rien. Statut additif : les lignes
+// persistées existantes restent valides ; une version antérieure de Noon
+// refuse de relire un run qui contient RELEASED (limite de downgrade
+// documentée, option A).
 const EXECUTION_STATUSES = Object.freeze([
-  "PREPARED", "MAY_HAVE_STARTED", "RECONCILED", "UNKNOWN",
+  "PREPARED", "MAY_HAVE_STARTED", "RECONCILED", "UNKNOWN", "RELEASED",
 ]);
+const EXECUTION_CLOSED_STATUSES = Object.freeze(["RECONCILED", "RELEASED"]);
 const EXECUTION_UNKNOWN_REASONS = Object.freeze([
   "OUTCOME_UNCERTAIN", "USAGE_INCOMPLETE", "TIMEOUT",
   "CANCELLED", "PERSISTENCE_UNCERTAIN",
@@ -418,7 +424,9 @@ function assertExecutionRecord(record, state) {
          record.observedActualCost !== record.accountedCost) ||
         record.unknownReasonCode !== null)) ||
       (record.status === "UNKNOWN" &&
-       (closedAt === null || !EXECUTION_UNKNOWN_REASONS.includes(record.unknownReasonCode)))) {
+       (closedAt === null || !EXECUTION_UNKNOWN_REASONS.includes(record.unknownReasonCode))) ||
+      (record.status === "RELEASED" &&
+       (startedAt !== null || closedAt === null || !unobserved || record.unknownReasonCode !== null))) {
     fail("GOAL_MODE_EXECUTION_STATE_INVALID", "État de réservation DEV incohérent.");
   }
 }
@@ -1542,6 +1550,24 @@ function markGoalModeExecutionUnknown(state, {
   return deepFreeze(next);
 }
 
+/*
+ * Libération explicite d'une réservation PREPARED jamais engagée.
+ * Le contrôle du ledger DEV (0 appel) et le CAS restent au store.
+ * Aucune consommation ; le même step ne peut pas être réservé de nouveau
+ * (identité déterministe), une nouvelle proposition est requise.
+ */
+function releaseGoalModeExecution(state, { reservationId, releasedAt } = {}) {
+  openExecutionRecord(state, reservationId, ["PREPARED"]);
+  const at = executionTimestamp(state, releasedAt);
+  const next = clone(state);
+  const record = next.executionReservations.at(-1);
+  record.status = "RELEASED";
+  record.closedAt = at;
+  next.updatedAt = at;
+  assertGoalModeRunState(next);
+  return deepFreeze(next);
+}
+
 function immutableProjection(
   state
 ) {
@@ -1748,7 +1774,7 @@ function assertGoalModeRunForward(
       executionExposure(previous);
       assertReservationAccountingOwned(previous);
       if (previous.status !== "RUNNING" || usageChanged ||
-          oldExecutions.some((record) => record.status !== "RECONCILED") ||
+          oldExecutions.some((record) => !EXECUTION_CLOSED_STATUSES.includes(record.status)) ||
           added.status !== "PREPARED" ||
           (currentRevision !== null && added.binding.runRevision !== currentRevision)) {
         fail("GOAL_MODE_EXECUTION_TRANSITION_INVALID", "Ajout DEV invalide.");
@@ -1775,14 +1801,14 @@ function assertGoalModeRunForward(
         "reservedProviderCalls", "reservedCost", "reservedAt",
       ];
       const permitted = oldRecord?.status === "PREPARED"
-        ? ["MAY_HAVE_STARTED", "UNKNOWN"]
+        ? ["MAY_HAVE_STARTED", "UNKNOWN", "RELEASED"]
         : oldRecord?.status === "MAY_HAVE_STARTED"
           ? ["RECONCILED", "UNKNOWN"]
           : [];
       if (!oldRecord || !newRecord || !permitted.includes(newRecord.status) ||
           immutableKeys.some((key) => !same(oldRecord[key], newRecord[key])) ||
           (oldRecord.status === "PREPARED" && newRecord.mayHaveStartedAt !== null &&
-           newRecord.status === "UNKNOWN") ||
+           ["UNKNOWN", "RELEASED"].includes(newRecord.status)) ||
           (oldRecord.status === "MAY_HAVE_STARTED" &&
            oldRecord.mayHaveStartedAt !== newRecord.mayHaveStartedAt)) {
         fail("GOAL_MODE_EXECUTION_TRANSITION_INVALID", "Transition DEV invalide.");
@@ -1936,6 +1962,7 @@ module.exports = {
   markGoalModePlanningUnknown,
   reconcileGoalModePlanning,
   reconcileGoalModeExecution,
+  releaseGoalModeExecution,
   reserveGoalModeExecution,
   reserveGoalModePlanning,
   transitionGoalModeRun,

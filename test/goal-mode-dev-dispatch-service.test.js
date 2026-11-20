@@ -119,6 +119,7 @@ function fixture({ realRepository = false } = {}) {
   };
   const makeStore = (repository) => createGoalModeRunStore({
     repository, now: () => clock, devProjectionService: projectionService,
+    devTaskLedger: { taskProviderCalls: () => budget.calls },
   });
   const repositoryA = createGoalModeRunRepository(dbA);
   const repositoryB = createGoalModeRunRepository(dbB);
@@ -638,4 +639,56 @@ test("4C-1B pathspec Git : les chemins protégés ne sont pas inspectés par git
     for (const relative of files) assert.ok(unfiltered.includes(relative), relative);
     assert.deepEqual(list(TARGET_STATUS_ARGS), ["visible.js"]);
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("RELEASED × dispatch : aucune libération automatique, ticket invalidé, course à un seul gagnant", async () => {
+  const f = fixture();
+  try {
+    const service = f.makeService();
+    assert.deepEqual(Object.keys(service).sort(), ["dispatch", "prepare"]);
+    const ticket = f.prepare(service);
+    f.live.network = false;
+    await assert.rejects(() => service.dispatch(ticket),
+      { code: "GOAL_MODE_DEV_DISPATCH_PERMISSION_REVOKED" });
+    assert.equal(f.status(), "PREPARED"); // refus avant CAS : pas de libération implicite
+    f.live.network = true;
+    f.setTime("2026-10-13T12:00:03.000Z");
+    f.storeB.releaseExecution(f.running.state.runId, {
+      expectedRevision: ticket.reservedRevision, reservationId: ticket.reservationId,
+    });
+    assert.equal(f.status(), "RELEASED");
+    await assert.rejects(() => service.dispatch(ticket),
+      { code: "GOAL_MODE_DEV_DISPATCH_RESERVATION_CLOSED" });
+    assert.equal(f.calls.length, 0);
+  } finally { f.close(); }
+
+  const g = fixture();
+  try {
+    const service = g.makeService();
+    const ticket = g.prepare(service);
+    // Libération par une autre connexion pendant le recheck : le CAS du dispatch perd.
+    g.setOnInspect(() => {
+      g.storeB.releaseExecution(g.running.state.runId, {
+        expectedRevision: ticket.reservedRevision, reservationId: ticket.reservationId,
+      });
+    });
+    await assert.rejects(() => service.dispatch(ticket), { code: "GOAL_MODE_RUN_PERSISTENCE_CONFLICT" });
+    assert.equal(g.calls.length, 0);
+    assert.equal(g.status(), "RELEASED");
+  } finally { g.close(); }
+
+  const h = fixture();
+  try {
+    const service = h.makeService();
+    const ticket = h.prepare(service);
+    await service.dispatch(ticket);
+    assert.throws(() => h.storeB.releaseExecution(h.running.state.runId, {
+      expectedRevision: ticket.reservedRevision, reservationId: ticket.reservationId,
+    }), { code: "GOAL_MODE_RUN_PERSISTENCE_CONFLICT" });
+    assert.throws(() => h.storeB.releaseExecution(h.running.state.runId, {
+      expectedRevision: h.latest().revision, reservationId: ticket.reservationId,
+    }), { code: "GOAL_MODE_EXECUTION_TRANSITION_INVALID" });
+    assert.equal(h.status(), "MAY_HAVE_STARTED");
+    assert.equal(h.calls.length, 1);
+  } finally { h.close(); }
 });

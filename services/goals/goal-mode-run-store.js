@@ -11,6 +11,7 @@ const {
   markGoalModePlanningUnknown,
   reconcileGoalModePlanning,
   reconcileGoalModeExecution,
+  releaseGoalModeExecution,
   reserveGoalModeExecution,
   reserveGoalModePlanning,
   transitionGoalModeRun,
@@ -86,6 +87,7 @@ function createGoalModeRunStore({
   planningIdFactory = () => `goal-planning-${crypto.randomUUID()}`,
   devProjectionService = null,
   devObservationReader = null,
+  devTaskLedger = null,
   now =
     () =>
       new Date().toISOString(),
@@ -527,6 +529,35 @@ function createGoalModeRunStore({
     return repository.save(next, { expectedRevision: current.revision });
   }
 
+  /*
+   * Libération explicite (jamais automatique) d'une réservation PREPARED.
+   * Exige : backend atomique, révision exacte (CAS), dernière réservation
+   * PREPARED, et ledger DEV à 0 appel pour sa tâche. Sans ledger, refus.
+   * Une réservation MAY_HAVE_STARTED ou UNKNOWN n'est jamais libérable.
+   */
+  function releaseExecution(runId, input = {}) {
+    const current = executionCurrent(runId, input);
+    const record = current.state.executionReservations?.at(-1);
+    if (!record || record.reservationId !== input.reservationId ||
+        record.status !== "PREPARED") {
+      fail("GOAL_MODE_EXECUTION_TRANSITION_INVALID", "Libération DEV indisponible.");
+    }
+    if (typeof devTaskLedger?.taskProviderCalls !== "function") {
+      fail("GOAL_MODE_EXECUTION_RELEASE_LEDGER_REQUIRED", "Ledger DEV canonique requis.");
+    }
+    let calls;
+    try { calls = devTaskLedger.taskProviderCalls(record.binding.taskId); } catch { calls = null; }
+    if (!Number.isSafeInteger(calls) || calls !== 0) {
+      fail("GOAL_MODE_EXECUTION_RELEASE_LEDGER_ENGAGED",
+        "Le ledger DEV ne prouve pas l'absence d'engagement de cette tâche.");
+    }
+    const next = releaseGoalModeExecution(current.state, {
+      reservationId: input.reservationId,
+      releasedAt: now(),
+    });
+    return repository.save(next, { expectedRevision: current.revision });
+  }
+
   function markExecutionUnknown(runId, input = {}) {
     const current = executionCurrent(runId, input);
     const record = current.state.executionReservations?.at(-1);
@@ -556,6 +587,7 @@ function createGoalModeRunStore({
     persistenceCapabilities,
     reconcilePlanning,
     reconcileExecution,
+    releaseExecution,
     reserveExecution,
     reserveExecutionWithExactProjection,
     reservePlanning,
