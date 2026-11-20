@@ -753,15 +753,21 @@ function createNativeDevCoordinator({
           ? failure.code
           : "FAIL";
 
-      if (
-        taskId &&
-        journal.load(taskId)
-      ) {
-        journal.finish(
-          taskId,
-          finalVerdict,
-          failure.code
-        );
+      // Lecture stricte : un journal illisible n'est
+      // pas finalisé, il reste signalé comme tel.
+      try {
+        if (
+          taskId &&
+          journal.load(taskId)
+        ) {
+          journal.finish(
+            taskId,
+            finalVerdict,
+            failure.code
+          );
+        }
+      } catch {
+        // L'échec de tâche reste la cause rapportée.
       }
 
       const result = {
@@ -868,17 +874,40 @@ function createNativeDevCoordinator({
       results.get(
         String(taskId)
       ) ||
-      journal.load(
+      strictJournalStatus(
         String(taskId)
-      ) ||
-      null
+      )
     );
+  }
+
+  function strictJournalStatus(
+    taskId
+  ) {
+    try {
+      return journal.load(taskId) || null;
+    } catch {
+      return {
+        taskId,
+        status: "JOURNAL_UNREADABLE",
+        finalVerdict: null,
+        failureCategory:
+          "JOURNAL_UNREADABLE",
+      };
+    }
   }
 
   function recoverInterrupted() {
     return journal
       .interrupted()
-      .map((record) => ({
+      .map((record) => record?.unreadable === true ? ({
+        taskId: null,
+        status: "JOURNAL_UNREADABLE",
+        finalVerdict: null,
+        failureCategory:
+          "JOURNAL_UNREADABLE",
+        file: record.file,
+        requiresUserDecision: true,
+      }) : ({
         taskId:
           record.taskId,
         status:

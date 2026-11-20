@@ -92,8 +92,16 @@ function fixture() {
       return ledger.calls;
     },
   };
+  // Journal Native DEV contrôlable : ABSENT par défaut.
+  const journal = { status: "ABSENT", throws: false };
+  const devTaskJournal = {
+    lookup() {
+      if (journal.throws) throw new Error("journal unavailable");
+      return { status: journal.status };
+    },
+  };
   const makeStore = (repository, overrides = {}) => createGoalModeRunStore({
-    repository, now: tick, devProjectionService: projection, devTaskLedger, ...overrides,
+    repository, now: tick, devProjectionService: projection, devTaskLedger, devTaskJournal, ...overrides,
   });
   const repositoryA = createGoalModeRunRepository(dbA);
   const repositoryB = createGoalModeRunRepository(dbB);
@@ -106,7 +114,7 @@ function fixture() {
   const runId = running.state.runId;
   return {
     file, sqlite: dbA.database, repositoryA, repositoryB, storeA, storeB, running, runId,
-    ledger, makeStore, tick,
+    ledger, journal, makeStore, tick,
     projections: () => projections,
     setAfterProjection(value) { afterProjection = value; },
     latest: () => repositoryB.latest(runId),
@@ -416,4 +424,47 @@ test("compatibilité : ancien code ↔ nouveau code, et limite de downgrade", (t
       { code: "GOAL_MODE_EXECUTION_INVALID" });
     assert.doesNotThrow(() => runState.assertGoalModeRunState(released.state));
   } finally { g.close(); }
+});
+
+test("journal fiable : libération exigeant un journal ABSENT, journal obligatoire", () => {
+  for (const [setup, code] of [
+    [(f) => { f.journal.status = "PRESENT"; }, "GOAL_MODE_EXECUTION_RELEASE_JOURNAL_ENGAGED"],
+    [(f) => { f.journal.status = "UNREADABLE"; }, "GOAL_MODE_EXECUTION_RELEASE_JOURNAL_UNREADABLE"],
+    [(f) => { f.journal.throws = true; }, "GOAL_MODE_EXECUTION_RELEASE_JOURNAL_UNREADABLE"],
+  ]) {
+    const f = fixture();
+    try {
+      const prepared = f.reserve();
+      setup(f);
+      assert.throws(() => f.release(), { code });
+      assert.equal(f.latest().revision, prepared.revision);
+      assert.equal(f.last().status, "PREPARED");
+    } finally { f.close(); }
+  }
+  const g = fixture();
+  try {
+    g.reserve();
+    const noJournal = g.makeStore(g.repositoryA, { devTaskJournal: null });
+    assert.throws(() => g.release(noJournal), { code: "GOAL_MODE_EXECUTION_RELEASE_JOURNAL_REQUIRED" });
+    assert.equal(g.last().status, "PREPARED");
+  } finally { g.close(); }
+});
+
+test("journal fiable : réservation exacte exige le journal ; 4C-0 le vérifie s'il est configuré", () => {
+  const f = fixture();
+  try {
+    const noJournal = f.makeStore(f.repositoryA, { devTaskJournal: null });
+    assert.throws(() => noJournal.reserveExecutionWithExactProjection(f.runId, {
+      expectedRevision: f.latest().revision, stepId: "step-a",
+    }), { code: "GOAL_MODE_EXECUTION_JOURNAL_REQUIRED" });
+    assert.equal(f.latest().state.executionReservations, undefined);
+    f.journal.status = "PRESENT";
+    assert.throws(() => f.reserve("step-a"), { code: "GOAL_MODE_EXECUTION_JOURNAL_ENGAGED" });
+    assert.equal(f.latest().state.executionReservations, undefined);
+    // 4C-0 sans journal configuré : comportement historique inchangé.
+    const prepared = noJournal.reserveExecution(f.runId, {
+      expectedRevision: f.latest().revision, stepId: "step-a",
+    });
+    assert.equal(prepared.state.executionReservations.at(-1).status, "PREPARED");
+  } finally { f.close(); }
 });

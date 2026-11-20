@@ -88,6 +88,7 @@ function createGoalModeRunStore({
   devProjectionService = null,
   devObservationReader = null,
   devTaskLedger = null,
+  devTaskJournal = null,
   now =
     () =>
       new Date().toISOString(),
@@ -374,6 +375,19 @@ function createGoalModeRunStore({
     return current;
   }
 
+  function assertJournalAbsent(taskId, prefix) {
+    if (typeof devTaskJournal?.lookup !== "function") {
+      fail(`${prefix}_JOURNAL_REQUIRED`, "Journal Native DEV canonique requis.");
+    }
+    let found;
+    try { found = devTaskJournal.lookup(taskId); } catch { found = { status: "UNREADABLE" }; }
+    if (found?.status === "ABSENT") return;
+    if (found?.status === "PRESENT") {
+      fail(`${prefix}_JOURNAL_ENGAGED`, "Le journal Native DEV connaît déjà cette tâche.");
+    }
+    fail(`${prefix}_JOURNAL_UNREADABLE`, "Journal Native DEV illisible pour cette tâche.");
+  }
+
   function reserveExecutionInternal(runId, input, includeExactProjection) {
     const current = executionCurrent(runId, input);
     if (typeof input.stepId !== "string" || !input.stepId.trim() ||
@@ -417,6 +431,12 @@ function createGoalModeRunStore({
         typeof upper?.estimatedCost !== "number" ||
         !Number.isFinite(upper.estimatedCost) || upper.estimatedCost <= 0) {
       fail("GOAL_MODE_EXECUTION_PROJECTION_INVALID", "Projection DEV incohérente.");
+    }
+    // Journal Native DEV : obligatoire pour la remise exacte (prepare Goal
+    // Mode), vérifié aussi en 4C-0 s'il est configuré. Une tâche déjà connue
+    // ou un journal illisible refuse la réservation, avant toute écriture.
+    if (includeExactProjection || devTaskJournal) {
+      assertJournalAbsent(taskId, "GOAL_MODE_EXECUTION");
     }
     const binding = {
       runId, runRevision: current.revision,
@@ -551,6 +571,8 @@ function createGoalModeRunStore({
       fail("GOAL_MODE_EXECUTION_RELEASE_LEDGER_ENGAGED",
         "Le ledger DEV ne prouve pas l'absence d'engagement de cette tâche.");
     }
+    // Journal obligatoire : aucune trace de démarrage pour cette tâche.
+    assertJournalAbsent(record.binding.taskId, "GOAL_MODE_EXECUTION_RELEASE");
     const next = releaseGoalModeExecution(current.state, {
       reservationId: input.reservationId,
       releasedAt: now(),

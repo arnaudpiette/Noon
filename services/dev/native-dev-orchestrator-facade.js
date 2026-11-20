@@ -4,6 +4,10 @@ const crypto =
   require("node:crypto");
 
 const {
+  TERMINAL_STATES,
+} = require("./dev-task-journal");
+
+const {
   adaptNativeDevResult,
 } = require("./native-dev-result-adapter");
 
@@ -76,6 +80,64 @@ function createNativeDevOrchestratorFacade({
     );
   }
 
+  /*
+   * Fin de runTask (succès ou échec) : tout
+   * enregistrement encore non terminal passe à un
+   * état terminal, y compris un échec ou une
+   * annulation pendant l'analyse. Un échec ici ne
+   * masque pas le résultat : l'enregistrement reste
+   * non terminal et sera signalé par interrupted().
+   */
+  function finalizeJournal(
+    taskId,
+    task
+  ) {
+    if (
+      typeof journal?.lookup !==
+        "function" ||
+      typeof journal?.finish !==
+        "function"
+    ) {
+      return;
+    }
+
+    try {
+      const found =
+        journal.lookup(taskId);
+
+      if (
+        found.status !== "PRESENT" ||
+        TERMINAL_STATES.has(
+          found.record.state
+        )
+      ) {
+        return;
+      }
+
+      const verdict =
+        task?.status === "CANCELLED"
+          ? "CANCELLED"
+          : TERMINAL_STATES.has(
+            task?.finalVerdict
+          )
+            ? task.finalVerdict
+            : "FAIL";
+
+      journal.finish(
+        taskId,
+        verdict,
+        verdict === "PASS"
+          ? null
+          : String(
+            task?.failureCategory ||
+              verdict
+          ).slice(0, 100)
+      );
+    } catch {
+      // Laissé non terminal : visible comme interrompu.
+    }
+  }
+
   async function runTask(
     input = {}
   ) {
@@ -117,6 +179,51 @@ function createNativeDevOrchestratorFacade({
           createTaskId()
       );
 
+    /*
+     * Enregistrement de démarrage synchrone, avant
+     * tout await : une tâche lancée est visible dans
+     * le journal persistant dès cet instant, y compris
+     * après un redémarrage. Échec = aucun lancement.
+     */
+    if (
+      typeof journal?.claim ===
+        "function"
+    ) {
+      try {
+        journal.claim(
+          taskId,
+          {
+            source: "B3",
+            workspaceId:
+              typeof input.workspaceId ===
+                "string"
+                ? input.workspaceId
+                : null,
+          }
+        );
+      } catch (error) {
+        return adapt({
+          taskId,
+          status: "FAILED",
+          finalVerdict: "FAIL",
+          failureCategory:
+            error?.code ===
+              "DEV_TASK_ALREADY_EXISTS"
+              ? "DEV_TASK_ALREADY_EXISTS"
+              : "DEV_TASK_JOURNAL_UNAVAILABLE",
+          startedAt:
+            new Date(now())
+              .toISOString(),
+          endedAt:
+            new Date(now())
+              .toISOString(),
+          implementation: {
+            backendReached: false,
+          },
+        });
+      }
+    }
+
     try {
       const task =
         await orchestrator.runTask({
@@ -124,12 +231,31 @@ function createNativeDevOrchestratorFacade({
           taskId,
         });
 
+      finalizeJournal(
+        taskId,
+        task
+      );
+
       return adapt(task);
     } catch (error) {
       const task =
         orchestrator.getTaskStatus(
           taskId
         );
+
+      finalizeJournal(
+        taskId,
+        task ||
+          {
+            status: "FAILED",
+            finalVerdict: "FAIL",
+            failureCategory:
+              String(
+                error?.code ||
+                  "DEV_ORCHESTRATION_FAILURE"
+              ).slice(0, 100),
+          }
+      );
 
       if (task) {
         return adapt(task);
@@ -181,10 +307,21 @@ function createNativeDevOrchestratorFacade({
      * Même fallback que NativeDevCoordinator :
      * après restart, le journal persistant reste lisible.
      */
-    return (
-      journal?.load(id) ||
-      null
-    );
+    try {
+      return (
+        journal?.load(id) ||
+        null
+      );
+    } catch {
+      // Lecture stricte : jamais « inconnu » sur une erreur.
+      return {
+        taskId: id,
+        status: "JOURNAL_UNREADABLE",
+        finalVerdict: null,
+        failureCategory:
+          "JOURNAL_UNREADABLE",
+      };
+    }
   }
 
   function projectDecisionEvidence({
@@ -250,7 +387,15 @@ function createNativeDevOrchestratorFacade({
 
     return journal
       .interrupted()
-      .map((record) => ({
+      .map((record) => record?.unreadable === true ? ({
+        taskId: null,
+        status: "JOURNAL_UNREADABLE",
+        finalVerdict: null,
+        failureCategory:
+          "JOURNAL_UNREADABLE",
+        file: record.file,
+        requiresUserDecision: true,
+      }) : ({
         taskId:
           record.taskId,
         status:

@@ -187,6 +187,7 @@ function createGoalModeDevDispatchService({
   permissionSource,
   dispatcher,
   approvalEngine,
+  devTaskJournal,
   targetInspector = defaultTargetInspector,
   now = () => new Date(),
   approvalTtlMs = APPROVAL_TTL_MS,
@@ -205,6 +206,7 @@ function createGoalModeDevDispatchService({
       typeof approvalEngine?.resumeApprovedAction !== "function" ||
       typeof approvalEngine?.getPreparedGoalModeDevDispatchExactAction !== "function" ||
       typeof approvalEngine?.cancel !== "function" ||
+      typeof devTaskJournal?.lookup !== "function" ||
       typeof targetInspector !== "function" ||
       typeof now !== "function" ||
       !Number.isSafeInteger(approvalTtlMs) || approvalTtlMs < 1) {
@@ -477,6 +479,23 @@ function createGoalModeDevDispatchService({
       fail("GOAL_MODE_DEV_DISPATCH_RECONCILIATION_REQUIRED",
         "Le ledger DEV indique un engagement antérieur de cette tâche.", {
           reservationId: ticket.reservationId, status: record.status,
+        });
+    }
+    // Journal Native DEV : la façade y écrit un enregistrement de démarrage
+    // avant tout await. Une trace existante = tâche déjà lancée ; illisible =
+    // refus. Jamais de dispatch sur un journal qui ne prouve pas l'absence.
+    let journalState;
+    try { journalState = devTaskJournal.lookup(binding.taskId); } catch { journalState = null; }
+    if (journalState?.status === "PRESENT") {
+      fail("GOAL_MODE_DEV_DISPATCH_RECONCILIATION_REQUIRED",
+        "Le journal Native DEV connaît déjà cette tâche.", {
+          reservationId: ticket.reservationId, status: record.status, journal: "PRESENT",
+        });
+    }
+    if (journalState?.status !== "ABSENT") {
+      fail("GOAL_MODE_DEV_DISPATCH_JOURNAL_UNREADABLE",
+        "Journal Native DEV illisible pour cette tâche.", {
+          reservationId: ticket.reservationId,
         });
     }
 

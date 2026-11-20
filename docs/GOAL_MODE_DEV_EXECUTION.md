@@ -2,22 +2,16 @@
 
 ## Prérequis avant branchement serveur
 
-Le service `services/goals/goal-mode-dev-dispatch-service.js` n'est **pas** câblé à `server.js`. Avant de le brancher sur un vrai `nativeDevFacade`, ces tranches doivent être livrées :
+Le service `services/goals/goal-mode-dev-dispatch-service.js` n'est **pas** câblé à `server.js`. Avant de le brancher sur un vrai `nativeDevFacade`, il reste la **tranche de branchement** :
 
-1. **Journal Native DEV fiable** (`services/dev/dev-task-journal.js` et chemin B3) :
-   - **enregistrement de démarrage synchrone** à l'entrée de `runTask` (façade ou orchestrateur), **avant tout `await`** : aujourd'hui, sur le chemin B3, `journal.start` n'est écrit qu'après l'analyse du codebase (`baselineTask`). Une tâche en cours d'analyse est invisible, et elle ne laisse aucune trace après un redémarrage ;
-   - **lecture qui refuse en cas d'erreur** : `load()` renvoie aujourd'hui `null` sur un fichier illisible ou corrompu, ce qui revient à « tâche inconnue » ;
-   - **correspondance exacte entre `taskId` et fichier** : `safeId` remplace et tronque les caractères, et le `taskId` stocké n'est pas comparé à celui demandé.
+- surface HTTP (contrat de normalisation sur le modèle du retry, `decision` obligatoire, aucun `taskId` ni chemin fourni par le client, jeton renvoyé seulement par `prepare` et `renew`) ;
+- assemblage du service et vraie source de permissions ;
+- adaptateur `nativeDevFacade` avec les règles projet ;
+- routes derrière un feature flag désactivé par défaut ;
+- UI d'approbation ;
+- **appeler `recoverInterrupted` au démarrage** (façade B3 et coordinateur) : aujourd'hui, seul `transactionalExecutionEngine.recoverInterrupted()` est appelé. Les tâches Native DEV interrompues, et les fichiers de journal illisibles, ne sont donc signalés qu'à la demande.
 
-   Une fois livré, ce journal servira de contrôle supplémentaire dans `dispatch()` et `releaseExecution()`, en plus du ledger DEV.
-2. **Tranche de branchement** :
-   - surface HTTP (contrat de normalisation sur le modèle du retry, `decision` obligatoire, aucun `taskId` ni chemin fourni par le client, jeton renvoyé seulement par `prepare` et `renew`) ;
-   - assemblage du service et vraie source de permissions ;
-   - adaptateur `nativeDevFacade` avec les règles projet ;
-   - routes derrière un feature flag désactivé par défaut ;
-   - UI d'approbation.
-
-*Livré en 4C-1D : le contrôle des routes d'annulation, de statut, de budget et de preuves (voir plus bas).*
+*Livrés : le contrôle des routes d'annulation, de statut, de budget et de preuves (4C-1D), et le journal Native DEV fiable (voir plus bas).*
 
 ## Cycle de vie d'une réservation DEV
 
@@ -83,6 +77,24 @@ Une nouvelle réservation exige que toutes les précédentes soient closes (`REC
 - **`executionStatus`** renvoie une projection minimale : statut du run et de la réservation, et statut, verdict et catégorie Native DEV. Jamais de consigne, de chemin ni de contenu.
 - **Routes fermées à l'espace `goal-mode-dev-`** (même normalisation) : `GET /api/dev/native/tasks/:id`, `POST …/cancel`, `GET /api/dev/budget?taskId=`, les fonctions `get` et `cancel` de l'UI Native DEV, les preuves de décision (`devDecisionConsumer`) et l'arrêt du benchmark Native. Un test d'inventaire couvre aussi `cancelTask`, `getTaskStatus` et `projectDecisionEvidence`.
 
+## Journal Native DEV fiable
+
+`services/dev/dev-task-journal.js` tient un fichier JSON par `taskId`, dans `DATA_DIRECTORY/dev-task-journal`.
+
+- **Enregistrement de démarrage synchrone.** `facade.runTask` appelle `journal.claim(taskId)` **avant tout `await`**, avant l'orchestrateur. Une tâche lancée est donc visible sur disque dès cet instant, y compris pendant l'analyse et après un redémarrage. Si le `taskId` est déjà connu (`DEV_TASK_ALREADY_EXISTS`) ou si le journal est indisponible (`DEV_TASK_JOURNAL_UNAVAILABLE`), l'orchestrateur n'est jamais appelé. En fin de `runTask`, tout enregistrement encore non terminal passe à `FAIL`, `CANCELLED` ou au verdict de la tâche.
+- **Écriture durable et exclusive.** Le fichier temporaire complet est écrit avec `fsync`, puis lié au nom final par `link` (refusé s'il existe déjà), puis le dossier parent reçoit un `fsync`. Repli sans lien physique : création exclusive `wx`, `fsync` du fichier, puis `fsync` du dossier. Un enregistrement n'est **jamais écrasé** : `start` ne fait que prolonger un enregistrement `CLAIMED`, ou crée de façon exclusive (chemin du coordinateur).
+- **Lecture stricte.** `lookup` renvoie `ABSENT` (fichier inexistant seulement), `PRESENT` (`taskId` exact) ou `UNREADABLE` (corrompu, illisible, `taskId` différent). `load` renvoie `null` seulement si le fichier est absent, et lève une erreur sinon. À l'affichage, `getTaskStatus` et `recoverInterrupted` renvoient un statut explicite `JOURNAL_UNREADABLE`, jamais « inconnu ».
+- **Correspondance exacte.** Nom de fichier `task-<sha256(taskId)>.json`. Les anciens fichiers `safeId` sont relus **seulement si leur `taskId` est exactement celui demandé**. Ils ne sont jamais réécrits ni renommés : toute mise à jour donne `DEV_TASK_JOURNAL_LEGACY_READ_ONLY`.
+- **Goal Mode.** Le journal est **obligatoire** :
+  - pour la réservation remise par 4C-1A (donc `prepare`) ;
+  - pour le dispatch, au pré-contrôle comme à la revérification interne avant consommation ;
+  - pour `releaseExecution`.
+
+  Un journal qui connaît la tâche (`PRESENT`) ou illisible refuse l'opération. Comme la réservation de démarrage précède tout `await`, une réservation `MAY_HAVE_STARTED` avec un journal `ABSENT` et un ledger à 0 prouve, après un redémarrage, que la façade n'a jamais lancé la tâche : c'est une base pour 4C-2.
+- **Limite de downgrade.** Une version de Noon antérieure ne connaît que les noms `safeId`. Elle ne voit pas les fichiers `task-<sha256>.json` : elle traite ces tâches comme inconnues à l'affichage, et pourrait relancer un même `taskId` (comportement antérieur). Les données ne sont pas corrompues.
+- **Pas de nettoyage.** Le dossier grossit sans rotation ni purge. Toute purge future devra préserver les tâches Goal Mode non réconciliées. Un fichier illisible bloque son `taskId` pour toujours (fail-closed) : il faut un diagnostic, jamais un effacement automatique.
+- **`recoverInterrupted` n'est pas appelé au démarrage** : c'est à traiter dans la tranche de branchement (voir les prérequis).
+
 ## Libération explicite (`RELEASED`)
 
 `runStore.releaseExecution(runId, { expectedRevision, reservationId })` :
@@ -107,4 +119,6 @@ La réservation de planning est hors périmètre : elle garde son modèle actuel
 - `test/goal-mode-dev-dispatch-service.test.js` : 4C-1B (par `resume`), 4C-1C, empreinte, Goal, RELEASED × dispatch.
 - `test/approval-engine-consume-boundary.test.js` : option `consumeAtBoundary` et lecture bornée Goal Mode d'`ApprovalEngine`.
 - `test/goal-mode-execution-release.test.js` : RELEASED (transitions, forme, ledger, course, SQLite, compatibilité ancien ↔ nouveau code).
+- `test/dev-task-journal-reliability.test.js` : réservation de démarrage exclusive, ordre des `fsync` (y compris dans le repli), lecture stricte, noms exacts, anciens fichiers, `interrupted`.
+- `test/native-dev-facade-journal.test.js` : réservation de démarrage avant tout `await`, état terminal, relance refusée après redémarrage, `JOURNAL_UNREADABLE` explicite.
 - `test/dev-task-id-namespace.test.js` : espace réservé, inventaire des appelants de `runTask`, `cancelTask`, `getTaskStatus` et `projectDecisionEvidence`, câblage des routes.

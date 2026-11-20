@@ -19,6 +19,8 @@ const {
 } = require("../services/goals/goal-mode-dev-dispatch-service");
 const { createPersonalDatabase } = require("../services/persistence/database");
 const { createApprovalEngine } = require("../services/approvals/approval-engine");
+const { createDevTaskJournal } = require("../services/dev/dev-task-journal");
+const { createNativeDevOrchestratorFacade } = require("../services/dev/native-dev-orchestrator-facade");
 const {
   createApprovalRepository,
 } = require("../services/persistence/repositories/approval-repository");
@@ -130,9 +132,18 @@ function fixture({ realRepository = false } = {}) {
       };
     },
   };
+  // Journal Native DEV contrôlable (états par taskId, ABSENT par défaut).
+  const journalStates = new Map();
+  const devTaskJournal = {
+    lookup(taskId) {
+      const state = journalStates.get(taskId);
+      if (state === "THROW") throw new Error("journal unavailable");
+      return { status: state || "ABSENT" };
+    },
+  };
   const makeStore = (repository) => createGoalModeRunStore({
     repository, now: () => clock, devProjectionService: projectionService,
-    devTaskLedger: { taskProviderCalls: () => budget.calls },
+    devTaskLedger: { taskProviderCalls: () => budget.calls }, devTaskJournal,
   });
   const repositoryA = createGoalModeRunRepository(dbA);
   const repositoryB = createGoalModeRunRepository(dbB);
@@ -195,7 +206,7 @@ function fixture({ realRepository = false } = {}) {
   const approvalEngine = makeEngine();
   const makeService = (store = storeA, overrides = {}) => createGoalModeDevDispatchService({
     runStore: store, goalStrategyEngine, devBudgetService, permissionSource, dispatcher,
-    approvalEngine,
+    approvalEngine, devTaskJournal,
     targetInspector: realRepository ? defaultGoalModeDevTargetInspector : syntheticInspector,
     now: () => new Date(clock),
     ...overrides,
@@ -203,7 +214,7 @@ function fixture({ realRepository = false } = {}) {
   return {
     file, directory, repositoryRoot, repositoryA, repositoryB, storeA, storeB, running,
     budget, live, goal, goalStrategyEngine, calls, cancels, dispatcher, makeStore, makeService,
-    approvalEngine, approvalRepository, makeEngine, audit, dbA,
+    approvalEngine, approvalRepository, makeEngine, audit, dbA, devTaskJournal, journalStates,
     prepare(service) {
       return service.prepare(running.state.runId, {
         expectedRevision: storeA.get(running.state.runId).revision, stepId: "step-dispatch",
@@ -1429,4 +1440,132 @@ test("4C-1D executionStatus : projection minimale, sans donnée privée", async 
     gate.resolve({ taskId: prepared.ticket.taskId });
     await running;
   } finally { f.close(); }
+});
+
+test("journal fiable : dispatch refusé si le journal connaît la tâche ou est illisible, approbation intacte", async () => {
+  for (const [state, code] of [
+    ["PRESENT", "GOAL_MODE_DEV_DISPATCH_RECONCILIATION_REQUIRED"],
+    ["UNREADABLE", "GOAL_MODE_DEV_DISPATCH_JOURNAL_UNREADABLE"],
+    ["THROW", "GOAL_MODE_DEV_DISPATCH_JOURNAL_UNREADABLE"],
+  ]) {
+    const f = fixture();
+    try {
+      const service = f.makeService();
+      const prepared = f.prepare(service);
+      f.journalStates.set(prepared.ticket.taskId, state);
+      await assert.rejects(() => resume(service, prepared), { code }, state);
+      assert.equal(f.approvalRow(prepared.approval.id).status, "pending", state);
+      assert.equal(f.status(), "PREPARED", state);
+      assert.equal(f.calls.length, 0, state);
+    } finally { f.close(); }
+  }
+});
+
+test("journal fiable : trace apparue entre pré-contrôle et recheck interne → refus avant consommation et CAS", async () => {
+  const f = fixture();
+  try {
+    const service = f.makeService();
+    const prepared = f.prepare(service);
+    // 2e mesure = préconditions d'ApprovalEngine, entre pré-contrôle et execute.
+    f.setOnInspect(() => f.journalStates.set(prepared.ticket.taskId, "PRESENT"), 1);
+    await assert.rejects(() => resume(service, prepared),
+      { code: "GOAL_MODE_DEV_DISPATCH_RECONCILIATION_REQUIRED" });
+    assert.equal(f.approvalRow(prepared.approval.id).status, "failed");
+    assert.equal(f.status(), "PREPARED");
+    assert.equal(f.calls.length, 0);
+  } finally { f.close(); }
+});
+
+test("journal fiable : prepare refusé dès la réservation si le journal connaît déjà la tâche", () => {
+  for (const [state, code] of [
+    ["PRESENT", "GOAL_MODE_EXECUTION_JOURNAL_ENGAGED"],
+    ["UNREADABLE", "GOAL_MODE_EXECUTION_JOURNAL_UNREADABLE"],
+  ]) {
+    const f = fixture();
+    try {
+      const taskId = deterministicGoalModeDevTaskId(
+        f.running.state.runId, "step-dispatch", `sha256:${"a".repeat(64)}`
+      );
+      f.journalStates.set(taskId, state);
+      assert.throws(() => f.prepare(f.makeService()), { code }, state);
+      assert.equal(f.latest().state.executionReservations, undefined, state);
+      assert.equal(f.latest().revision, f.running.revision, state);
+    } finally { f.close(); }
+  }
+  const g = fixture();
+  try {
+    const { devTaskJournal, ...withoutJournal } = {
+      runStore: g.storeA, goalStrategyEngine: g.goalStrategyEngine,
+      devBudgetService: { effectiveRemaining: () => 1, taskProviderCalls: () => 0 },
+      permissionSource: { current: () => ({}) }, dispatcher: g.dispatcher,
+      approvalEngine: g.approvalEngine, devTaskJournal: g.devTaskJournal,
+    };
+    assert.ok(devTaskJournal);
+    assert.throws(() => createGoalModeDevDispatchService(withoutJournal), TypeError);
+  } finally { g.close(); }
+});
+
+test("journal fiable : intégration façade réelle — CAS avant l'enregistrement de démarrage", async () => {
+  const f = fixture();
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "noon-goal-journal-"));
+  try {
+    const journal = createDevTaskJournal({ directory });
+    const seen = [];
+    const facade = createNativeDevOrchestratorFacade({
+      journal,
+      featureMode: () => "LIMITED",
+      orchestrator: {
+        async runTask(input) {
+          seen.push({
+            reservation: f.status(),
+            journal: journal.lookup(input.taskId).record?.state,
+          });
+          return {
+            taskId: input.taskId, status: "COMPLETED", finalVerdict: "PASS", failureCategory: null,
+            startedAt: "2026-10-13T12:00:03.000Z", endedAt: "2026-10-13T12:00:04.000Z",
+            implementation: { backendReached: true, providerCalls: [], validations: [] },
+            review: { finalVerdict: "PASS", changedFiles: [], validations: [] },
+          };
+        },
+        getTaskStatus() { return null; },
+        cancelTask() { return { cancelled: false }; },
+      },
+    });
+    const service = f.makeService(f.storeA, { dispatcher: facade, devTaskJournal: journal });
+    const prepared = f.prepare(service);
+    assert.equal(journal.lookup(prepared.ticket.taskId).status, "ABSENT");
+    await resume(service, prepared);
+    assert.deepEqual(seen, [{ reservation: "MAY_HAVE_STARTED", journal: "CLAIMED" }]);
+    assert.equal(journal.load(prepared.ticket.taskId).state, "PASS");
+    assert.equal(f.status(), "MAY_HAVE_STARTED");
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+    f.close();
+  }
+});
+
+test("journal fiable : crash entre CAS et façade → MAY_HAVE_STARTED avec journal ABSENT (preuve pour 4C-2)", async () => {
+  const f = fixture();
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "noon-goal-journal-"));
+  try {
+    const journal = createDevTaskJournal({ directory });
+    let facadeCalls = 0;
+    const facade = { async runTask() { facadeCalls += 1; } };
+    const crashing = Object.freeze({
+      ...f.storeA,
+      markExecutionMayHaveStarted(...args) {
+        f.storeA.markExecutionMayHaveStarted(...args);
+        throw Object.assign(new Error("synthetic crash"), { code: "SYNTHETIC_CRASH" });
+      },
+    });
+    const service = f.makeService(crashing, { dispatcher: facade, devTaskJournal: journal });
+    const prepared = f.prepare(service);
+    await assert.rejects(() => resume(service, prepared), { code: "SYNTHETIC_CRASH" });
+    assert.equal(facadeCalls, 0);
+    assert.equal(f.status(), "MAY_HAVE_STARTED");
+    assert.equal(createDevTaskJournal({ directory }).lookup(prepared.ticket.taskId).status, "ABSENT");
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+    f.close();
+  }
 });

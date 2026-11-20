@@ -117,13 +117,15 @@ function fixture() {
       return observed === null ? null : { ...binding, ...observed };
     },
   };
+  // Journal Native DEV (obligatoire pour la remise exacte depuis le journal fiable).
+  const devTaskJournal = { lookup: () => ({ status: "ABSENT" }) };
   storeA = createGoalModeRunStore({
     repository: repositoryA, now: () => clock,
-    devProjectionService: projection, devObservationReader: reader,
+    devProjectionService: projection, devObservationReader: reader, devTaskJournal,
   });
   const storeB = createGoalModeRunStore({
     repository: repositoryB, now: () => clock,
-    devProjectionService: projection, devObservationReader: reader,
+    devProjectionService: projection, devObservationReader: reader, devTaskJournal,
   });
   const created = storeA.create(contract());
   const running = storeA.transition(created.state.runId, "RUNNING", {
@@ -141,7 +143,7 @@ function fixture() {
     });
   };
   return {
-    file, sqlite: dbA.database, repositoryA, repositoryB, storeA, storeB, running,
+    file, sqlite: dbA.database, repositoryA, repositoryB, storeA, storeB, running, devTaskJournal,
     reserve, start, projection,
     setTime(value) { clock = value; },
     setUpper(value) { upper = value; },
