@@ -239,6 +239,8 @@ const {
 } = require("./services/selfdev");
 const { createSelfDevReviewService } = require("./services/selfdev/selfdev-review-service");
 const { createSelfDevHttpRoutes } = require("./services/selfdev/selfdev-http-routes");
+const { createRemoteLanService } = require("./services/remote/remote-lan-service");
+const { createRemoteLanHttpRoutes } = require("./services/remote/remote-lan-http-routes");
 const { createControlCenterService } = require("./services/control-center");
 const noonExampleSearchExtension = require("./services/extensions/sample/noon-example-search");
 const { createArtifactEngine } = require("./services/artifacts/artifact-engine");
@@ -1722,6 +1724,24 @@ const selfDevHttpRoutes = createSelfDevHttpRoutes({
   isEnabled: () => featureFlags.evaluate("selfdev.v1", {}).mode !== "OFF" &&
     !UI_VALIDATION_MODE && process.env.NOON_SMOKE_TEST !== "1" && process.env.NOON_SAFE_MODE !== "1",
   services: selfDevServices,
+  observability: (event, metadata) => toolAuditLog.append(event, metadata),
+});
+
+// Compagnon iPhone (IP-3, flag remote.lan OFF par défaut) : passerelle LAN démarrée
+// uniquement à la demande depuis le Control Center ; identité du Mac dans le coffre safeStorage.
+const remoteLanEnabled = () => featureFlags.evaluate("remote.lan", {}).mode !== "OFF" &&
+  !UI_VALIDATION_MODE && process.env.NOON_SMOKE_TEST !== "1" && process.env.NOON_SAFE_MODE !== "1";
+let remoteLanService = null;
+const remoteLanHttpRoutes = createRemoteLanHttpRoutes({
+  isEnabled: remoteLanEnabled,
+  service: () => {
+    remoteLanService ||= createRemoteLanService({
+      isEnabled: remoteLanEnabled, databaseWrapper: personalDatabase, secureStore: integrationTokenStore,
+      port: Number(process.env.NOON_REMOTE_LAN_PORT) || undefined,
+      observability: (event, metadata) => toolAuditLog.append(event, metadata),
+    });
+    return remoteLanService;
+  },
   observability: (event, metadata) => toolAuditLog.append(event, metadata),
 });
 
@@ -6785,6 +6805,11 @@ if (req.method === "GET" && req.url === "/selfdev-ui.js") {
   return res.end(fs.readFileSync(path.join(__dirname, "public", "selfdev-ui.js")));
 }
 
+if (req.method === "GET" && req.url === "/iphone-companion-ui.js") {
+  res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", "X-Content-Type-Options": "nosniff" });
+  return res.end(fs.readFileSync(path.join(__dirname, "public", "iphone-companion-ui.js")));
+}
+
 if (req.method === "GET" && req.url === "/mcp-connectors-ui.js") {
   res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", "X-Content-Type-Options": "nosniff" });
   return res.end(fs.readFileSync(path.join(__dirname, "public", "mcp-connectors-ui.js")));
@@ -8127,6 +8152,10 @@ if (req.method === "POST" && req.url === "/api/runtime/mode") {
     res.writeHead(error.statusCode || 400, { "Content-Type": "application/json" });
     return res.end(JSON.stringify({ status: "error", message: error.message }));
   }
+}
+
+if (remoteLanHttpRoutes.matches(requestPath)) {
+  return remoteLanHttpRoutes.handle(req, res, { requestPath, readJsonBody });
 }
 
 if (selfDevHttpRoutes.matches(requestPath)) {

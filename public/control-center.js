@@ -23,9 +23,11 @@
   // que Goal Mode DEV, entrée visible seulement si leur flag est actif, jamais vidés ici.
   const MCP_SECTION = "mcp-connectors";
   const SELFDEV_SECTION = "selfdev";
+  const IPHONE_SECTION = "iphone-companion";
   const clientPanels = {
     [MCP_SECTION]: { container: document.getElementById("controlCenterMcp"), available: false, refresh: () => window.NoonMcpConnectors?.refresh?.() },
     [SELFDEV_SECTION]: { container: document.getElementById("controlCenterSelfDev"), available: false, refresh: () => window.NoonSelfDev?.refresh?.() },
+    [IPHONE_SECTION]: { container: document.getElementById("controlCenterIphone"), available: false, refresh: () => window.NoonIphoneCompanion?.refresh?.() },
   };
   const isClientPanel = (id) => Object.prototype.hasOwnProperty.call(clientPanels, id);
   const hideClientPanels = (except = null) => { for (const [id, panel] of Object.entries(clientPanels)) if (id !== except && panel.container) panel.container.hidden = true; };
@@ -40,6 +42,7 @@
     [GOAL_MODE_DEV_SECTION]: "Goal Mode DEV",
     [MCP_SECTION]: "Connecteurs MCP",
     [SELFDEV_SECTION]: "SelfDev",
+    [IPHONE_SECTION]: "Compagnon iPhone",
   });
   const actionLabels = Object.freeze({
     RUN_QUICK_DIAGNOSTIC: "Vérifier", CHECK_CONNECTION: "Tester", CHECK_EXTENSION: "Tester",
@@ -217,6 +220,7 @@
   const setMcpAvailable = (value) => setClientPanelAvailable(MCP_SECTION, value);
   const showSelfDev = () => showClientPanel(SELFDEV_SECTION);
   const setSelfDevAvailable = (value) => setClientPanelAvailable(SELFDEV_SECTION, value);
+  const setIphoneCompanionAvailable = (value) => setClientPanelAvailable(IPHONE_SECTION, value);
 
   async function load(sectionId = "overview", force = false) {
     activeSection = sectionId;
@@ -258,5 +262,5 @@
   refreshButton.addEventListener("click", reload);
   viewSelect.addEventListener("change", reload);
   dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
-  window.NoonControlCenter = Object.freeze({ open, refresh: reload, setGoalModeDevAvailable, showGoalModeDev, setMcpAvailable, showMcp, setSelfDevAvailable, showSelfDev });
+  window.NoonControlCenter = Object.freeze({ open, refresh: reload, setGoalModeDevAvailable, showGoalModeDev, setMcpAvailable, showMcp, setSelfDevAvailable, showSelfDev, setIphoneCompanionAvailable });
 })();

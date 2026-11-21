@@ -1,6 +1,6 @@
 # Compagnon iPhone V1 — audit et design
 
-**Statut au 21/11/2026 : design, aucun code.** Chantier parallèle V2 de la roadmap (chapitre 8,
+**Statut au 22/11/2026 : GELÉ** (Roadmap V3, voir `docs/DECISIONS.md`). Côté Mac livré jusqu'à IP-3 (flag `remote.lan` OFF) ; application iOS non commencée. Chantier parallèle V2 de la roadmap (chapitre 8,
 « non décalable en V3 »). Ce document s'appuie sur ce qui existe déjà côté Mac
 (`MULTI_DEVICE_SYNC.md`, `REMOTE_INTERACTION_HANDOFF.md`) et décrit ce qui manque pour un
 premier usage réel. Il ne crée ni compte, ni service cloud, ni accès distant au shell.
@@ -125,9 +125,26 @@ réseau ; l'iPhone affiche explicitement « hors ligne » et l'âge des données
    `remote.lan` (OFF), invitation QR et code de vérification, routes bornées, réseau local
    uniquement. Tests avec un client Node qui imite l'iPhone : clés brutes enveloppées en SPKI,
    JSON canonique, appairage, rejeu, révocation, origine non privée refusée.
-2. **IP-2 — Vecteurs d'interopérabilité.** Fichier de vecteurs (clés, enveloppes, signatures)
-   généré par Node et rejoué par les tests Swift.
-3. **IP-3 — Section « Appareils » du Control Center.** Invitation, liste, scopes, révocation.
+2. **IP-2 — Vecteurs d'interopérabilité.** *Livré le 21/11/2026* :
+   `test/fixtures/remote-interop-vectors.v1.json`, produit de façon déterministe par
+   `services/remote/remote-interop-vectors.js` (`npm run remote:vectors`, `--check` pour vérifier)
+   à partir du code de production. Contenu : clés brutes et PEM des deux appareils, JSON
+   canonique, empreinte du QR, code de vérification, QR complet, corps de `pair/begin`, deux
+   enveloppes (iPhone → Mac, Mac → iPhone) avec chaque étape intermédiaire (secret X25519, clé
+   HKDF, AAD, octets signés) et trois enveloppes altérées à refuser. Clés de test publiques.
+   `test/remote-interop-vectors.test.js` les revérifie indépendamment ; les tests Swift (IP-4)
+   rejoueront le même fichier.
+3. **IP-3 — Section « Compagnon iPhone » du Control Center.** *Livré le 21/11/2026* :
+   `services/remote/remote-lan-service.js` (composition), `remote-lan-http-routes.js`
+   (`/api/remote-lan/*`, serveur local uniquement), `public/iphone-companion-ui.js`.
+   Démarrage **manuel uniquement** (jamais automatique, rien n'écoute avant le clic),
+   écoute liée à l'adresse IPv4 privée du Mac (en0 en priorité, jamais `0.0.0.0`, port 47830,
+   `NOON_REMOTE_LAN_PORT` pour le changer), identité du Mac dans le coffre safeStorage (refus de
+   démarrer sans coffre persistant), invitation en QR (SVG dessiné côté interface, dépendance
+   `qrcode-generator` MIT sans dépendance), comparaison du code, scopes cochés explicitement,
+   refus, révocation, kill switch. Seule enveloppe traitée : `remote.ping` ; le reste répond
+   `REMOTE_LAN_NOT_SUPPORTED` jusqu'à IP-4/IP-5. Non vérifié : alerte du pare-feu macOS et
+   comportement dans l'app packagée.
 4. **IP-4 — Application iOS : appairage et Brief.** Projet Xcode, sur le Mac et un iPhone réel.
 5. **IP-5 — Conversations et handoff, puis état des tâches.**
 6. **Validation** du critère de la roadmap sur appareil physique, coupure réseau comprise.

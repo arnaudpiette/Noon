@@ -1,0 +1,354 @@
+{
+  "version": 1,
+  "warning": "Clés de test publiques : ne jamais les utiliser hors des tests.",
+  "conventions": {
+    "spkiPrefixHex": {
+      "ed25519": "302a300506032b6570032100",
+      "x25519": "302a300506032b656e032100"
+    },
+    "pem": "PEM = '-----BEGIN PUBLIC KEY-----\\n' + base64(SPKI DER), lignes de 64 caractères + '\\n-----END PUBLIC KEY-----\\n'",
+    "canonicalJson": "clés triées récursivement, sans espaces, '/' non échappé, caractères non ASCII en UTF-8 brut",
+    "binary": "base64 standard (avec '=') dans les enveloppes ; base64url sans '=' pour le QR et le jeton"
+  },
+  "devices": {
+    "mac": {
+      "deviceId": "device_interop_mac",
+      "deviceType": "MAC_PRIMARY",
+      "displayName": "Mac de test",
+      "keyId": "device-key:5f252683ca81846eadf1443057903242",
+      "signing": {
+        "rawPrivateHex": "c9beea2b270e51fab24a40fe8aaa6b9412acd5fa2448af68f1270545a28004dd",
+        "rawPublicHex": "530d00fa07ba6773a970572f82d6cacffdf9ee4775309bab896b0171fe0fe029",
+        "publicPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAUw0A+ge6Z3OpcFcvgtbKz/357kd1MJuriWsBcf4P4Ck=\n-----END PUBLIC KEY-----\n"
+      },
+      "encryption": {
+        "rawPrivateHex": "2b2e1de819f99045135e4eb0f9c3928247f8cc1184b5a87cb62980e1e88793c5",
+        "rawPublicHex": "b4d489b6ae36da060d3bbe79a00e56b1aa3c569e28adbecc4a5078a85980e205",
+        "publicPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEAtNSJtq422gYNO755oA5Wsao8Vp4orb7MSlB4qFmA4gU=\n-----END PUBLIC KEY-----\n"
+      }
+    },
+    "iphone": {
+      "deviceId": "device_interop_iphone",
+      "deviceType": "IPHONE",
+      "displayName": "iPhone de test",
+      "keyId": "device-key:3039199683c846874860b4057b246bf0",
+      "signing": {
+        "rawPrivateHex": "8499fbe3980732fece58c06d2ccc9a44b574c71e4f58fa30088954a2dda9c567",
+        "rawPublicHex": "965b7da3e7a5fe7168638a9f572d14b900098b7eb2801b0af5053b3eb8647b75",
+        "publicPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAllt9o+el/nFoY4qfVy0UuQAJi36ygBsK9QU7Prhke3U=\n-----END PUBLIC KEY-----\n"
+      },
+      "encryption": {
+        "rawPrivateHex": "4af744ebd237211081edb309199cfdd59ab98468c6f07029b9c25318f72876d9",
+        "rawPublicHex": "62f1548956ba23b656aca5f1aab28a0e8ff4b0d9d6562b21967df5a195f4d246",
+        "publicPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEAYvFUiVa6I7ZWrKXxqrKKDo/0sNnWVishln31oZX00kY=\n-----END PUBLIC KEY-----\n"
+      }
+    }
+  },
+  "canonicalJson": [
+    {
+      "input": {
+        "b": 1,
+        "a": {
+          "d": [
+            3,
+            {
+              "z": true,
+              "y": null
+            }
+          ],
+          "c": "x"
+        }
+      },
+      "expected": "{\"a\":{\"c\":\"x\",\"d\":[3,{\"y\":null,\"z\":true}]},\"b\":1}"
+    },
+    {
+      "input": {
+        "path": "a/b",
+        "text": "Café — « ok »\n\"quoted\" \\ end",
+        "emoji": "🌙"
+      },
+      "expected": "{\"emoji\":\"🌙\",\"path\":\"a/b\",\"text\":\"Café — « ok »\\n\\\"quoted\\\" \\\\ end\"}"
+    },
+    {
+      "input": {
+        "n": -42,
+        "big": 9007199254740991,
+        "empty": {},
+        "list": []
+      },
+      "expected": "{\"big\":9007199254740991,\"empty\":{},\"list\":[],\"n\":-42}"
+    }
+  ],
+  "pairing": {
+    "invitationToken": "ql_PmV55SAwlPOZKoOus3bWdD4Jzc4Ns_b9Dwk1pDAk",
+    "macKeyFingerprint": "09f208ff466387ffbefd494bd6ee40109f2eebd34ac5feeae6bd24eb6d126f6f",
+    "macKeyFingerprintInput": "SHA-256 hex de publicSigningKey PEM + publicEncryptionKey PEM du Mac, concaténés",
+    "verificationCode": "021320",
+    "verificationCodeInput": "SHA-256 de `${macSigningPem}\\n${deviceSigningPem}\\n${token}` → 4 premiers octets big-endian % 1 000 000, sur 6 chiffres",
+    "qrPayload": {
+      "v": 1,
+      "host": "192.168.1.20",
+      "port": 47830,
+      "macDeviceId": "device_interop_mac",
+      "macKeyFingerprint": "09f208ff466387ffbefd494bd6ee40109f2eebd34ac5feeae6bd24eb6d126f6f",
+      "token": "ql_PmV55SAwlPOZKoOus3bWdD4Jzc4Ns_b9Dwk1pDAk",
+      "expiresAt": "2026-11-21T10:05:00.000Z"
+    },
+    "qrJson": "{\"v\":1,\"host\":\"192.168.1.20\",\"port\":47830,\"macDeviceId\":\"device_interop_mac\",\"macKeyFingerprint\":\"09f208ff466387ffbefd494bd6ee40109f2eebd34ac5feeae6bd24eb6d126f6f\",\"token\":\"ql_PmV55SAwlPOZKoOus3bWdD4Jzc4Ns_b9Dwk1pDAk\",\"expiresAt\":\"2026-11-21T10:05:00.000Z\"}",
+    "qr": "noon-pair:eyJ2IjoxLCJob3N0IjoiMTkyLjE2OC4xLjIwIiwicG9ydCI6NDc4MzAsIm1hY0RldmljZUlkIjoiZGV2aWNlX2ludGVyb3BfbWFjIiwibWFjS2V5RmluZ2VycHJpbnQiOiIwOWYyMDhmZjQ2NjM4N2ZmYmVmZDQ5NGJkNmVlNDAxMDlmMmVlYmQzNGFjNWZlZWFlNmJkMjRlYjZkMTI2ZjZmIiwidG9rZW4iOiJxbF9QbVY1NVNBd2xQT1pLb091czNiV2RENEp6YzROc19iOUR3azFwREFrIiwiZXhwaXJlc0F0IjoiMjAyNi0xMS0yMVQxMDowNTowMC4wMDBaIn0",
+    "beginRequest": {
+      "protocolVersion": 1,
+      "invitationToken": "ql_PmV55SAwlPOZKoOus3bWdD4Jzc4Ns_b9Dwk1pDAk",
+      "device": {
+        "deviceId": "device_interop_iphone",
+        "deviceType": "IPHONE",
+        "displayName": "iPhone de test",
+        "platform": "iOS",
+        "appVersion": "0.1.0",
+        "publicSigningKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAllt9o+el/nFoY4qfVy0UuQAJi36ygBsK9QU7Prhke3U=\n-----END PUBLIC KEY-----\n",
+        "publicEncryptionKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEAYvFUiVa6I7ZWrKXxqrKKDo/0sNnWVishln31oZX00kY=\n-----END PUBLIC KEY-----\n",
+        "requestedScopes": [
+          "CONVERSATIONS",
+          "REMOTE_TEXT"
+        ],
+        "capabilities": [
+          "text"
+        ]
+      }
+    }
+  },
+  "envelopes": [
+    {
+      "name": "iphone-to-mac-request",
+      "from": "device_interop_iphone",
+      "to": "device_interop_mac",
+      "entropy": {
+        "ephemeralRawPrivateHex": "f0d6e3641d8bd941d2c9d4b0493597f23847799d009fd9ffe8343d9d0a5f5761",
+        "ephemeralRawPublicHex": "83ebee174f344e1877afe7d7487f5fb324e4766a530d17a7f009909664a47e3d",
+        "saltHex": "4fbbad5042735384af8ecd1e0170be58",
+        "nonceHex": "4395ebe8da2c09b29b7caa70"
+      },
+      "payload": {
+        "text": "Bonjour Noon — où en est le Brief ?",
+        "clientSequence": 1
+      },
+      "payloadCanonicalJson": "{\"clientSequence\":1,\"text\":\"Bonjour Noon — où en est le Brief ?\"}",
+      "steps": {
+        "sharedSecretHex": "4aa78ab96775a9f5ea2a6ac4d379bbd40fd477afc692a89bef34fef2048d8d7c",
+        "hkdfInfo": "noon-sync-envelope-v1",
+        "aesKeyHex": "dd11d4fb8950082b438d7e7e7824d4d0ffdc6c906bbed138848ca6cc0090e506",
+        "aadCanonicalJson": "{\"createdAt\":\"2026-11-21T10:00:00.000Z\",\"entityId\":\"conversation_interop\",\"entityType\":\"remote.text\",\"entityVersion\":1,\"envelopeId\":\"envelope_interop_request\",\"keyId\":\"device-key:3039199683c846874860b4057b246bf0\",\"operation\":\"UPSERT\",\"protocolVersion\":1,\"schemaVersion\":1,\"sourceDeviceId\":\"device_interop_iphone\",\"targetDeviceId\":\"device_interop_mac\"}",
+        "signedCanonicalJson": "{\"authTag\":\"u3+zBHZqLIzJL7PpG8gf7w==\",\"ciphertext\":\"9b1qICmr3XFGk3a5VLBH0fqc8eIuvOpyUMa2KPelzszORUokfNGjnu0c8anvNxnlvm+kKQ2QYqxH6Se+T+yzi/4R0b8=\",\"createdAt\":\"2026-11-21T10:00:00.000Z\",\"entityId\":\"conversation_interop\",\"entityType\":\"remote.text\",\"entityVersion\":1,\"envelopeId\":\"envelope_interop_request\",\"ephemeralPublicKey\":\"-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VuAyEAg+vuF080Thh3r+fXSH9fsyTkdmpTDRen8AmQlmSkfj0=\\n-----END PUBLIC KEY-----\\n\",\"keyId\":\"device-key:3039199683c846874860b4057b246bf0\",\"nonce\":\"Q5Xr6NosCbKbfKpw\",\"operation\":\"UPSERT\",\"protocolVersion\":1,\"salt\":\"T7utUEJzU4Svjs0eAXC+WA==\",\"schemaVersion\":1,\"sourceDeviceId\":\"device_interop_iphone\",\"targetDeviceId\":\"device_interop_mac\"}"
+      },
+      "envelope": {
+        "envelopeId": "envelope_interop_request",
+        "sourceDeviceId": "device_interop_iphone",
+        "targetDeviceId": "device_interop_mac",
+        "entityType": "remote.text",
+        "entityId": "conversation_interop",
+        "operation": "UPSERT",
+        "entityVersion": 1,
+        "createdAt": "2026-11-21T10:00:00.000Z",
+        "keyId": "device-key:3039199683c846874860b4057b246bf0",
+        "protocolVersion": 1,
+        "schemaVersion": 1,
+        "ephemeralPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEAg+vuF080Thh3r+fXSH9fsyTkdmpTDRen8AmQlmSkfj0=\n-----END PUBLIC KEY-----\n",
+        "salt": "T7utUEJzU4Svjs0eAXC+WA==",
+        "nonce": "Q5Xr6NosCbKbfKpw",
+        "authTag": "u3+zBHZqLIzJL7PpG8gf7w==",
+        "ciphertext": "9b1qICmr3XFGk3a5VLBH0fqc8eIuvOpyUMa2KPelzszORUokfNGjnu0c8anvNxnlvm+kKQ2QYqxH6Se+T+yzi/4R0b8=",
+        "signature": "uIjRK3KA2iPMTWbXL2wWtUXN4pUBXoOz3QCNxENtnnOlxINemATAj2TgOpAZI3bO6qoJiXhEIs81jpL/9ehAAQ=="
+      },
+      "rejections": [
+        {
+          "name": "ciphertext-bit-flip",
+          "envelope": {
+            "envelopeId": "envelope_interop_request",
+            "sourceDeviceId": "device_interop_iphone",
+            "targetDeviceId": "device_interop_mac",
+            "entityType": "remote.text",
+            "entityId": "conversation_interop",
+            "operation": "UPSERT",
+            "entityVersion": 1,
+            "createdAt": "2026-11-21T10:00:00.000Z",
+            "keyId": "device-key:3039199683c846874860b4057b246bf0",
+            "protocolVersion": 1,
+            "schemaVersion": 1,
+            "ephemeralPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEAg+vuF080Thh3r+fXSH9fsyTkdmpTDRen8AmQlmSkfj0=\n-----END PUBLIC KEY-----\n",
+            "salt": "T7utUEJzU4Svjs0eAXC+WA==",
+            "nonce": "Q5Xr6NosCbKbfKpw",
+            "authTag": "u3+zBHZqLIzJL7PpG8gf7w==",
+            "ciphertext": "9L1qICmr3XFGk3a5VLBH0fqc8eIuvOpyUMa2KPelzszORUokfNGjnu0c8anvNxnlvm+kKQ2QYqxH6Se+T+yzi/4R0b8=",
+            "signature": "uIjRK3KA2iPMTWbXL2wWtUXN4pUBXoOz3QCNxENtnnOlxINemATAj2TgOpAZI3bO6qoJiXhEIs81jpL/9ehAAQ=="
+          },
+          "expectedCode": "SYNC_SIGNATURE_INVALID"
+        },
+        {
+          "name": "header-changed",
+          "envelope": {
+            "envelopeId": "envelope_interop_request",
+            "sourceDeviceId": "device_interop_iphone",
+            "targetDeviceId": "device_interop_mac",
+            "entityType": "remote.text",
+            "entityId": "conversation_interop-x",
+            "operation": "UPSERT",
+            "entityVersion": 1,
+            "createdAt": "2026-11-21T10:00:00.000Z",
+            "keyId": "device-key:3039199683c846874860b4057b246bf0",
+            "protocolVersion": 1,
+            "schemaVersion": 1,
+            "ephemeralPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEAg+vuF080Thh3r+fXSH9fsyTkdmpTDRen8AmQlmSkfj0=\n-----END PUBLIC KEY-----\n",
+            "salt": "T7utUEJzU4Svjs0eAXC+WA==",
+            "nonce": "Q5Xr6NosCbKbfKpw",
+            "authTag": "u3+zBHZqLIzJL7PpG8gf7w==",
+            "ciphertext": "9b1qICmr3XFGk3a5VLBH0fqc8eIuvOpyUMa2KPelzszORUokfNGjnu0c8anvNxnlvm+kKQ2QYqxH6Se+T+yzi/4R0b8=",
+            "signature": "uIjRK3KA2iPMTWbXL2wWtUXN4pUBXoOz3QCNxENtnnOlxINemATAj2TgOpAZI3bO6qoJiXhEIs81jpL/9ehAAQ=="
+          },
+          "expectedCode": "SYNC_SIGNATURE_INVALID"
+        },
+        {
+          "name": "protocol-version",
+          "envelope": {
+            "envelopeId": "envelope_interop_request",
+            "sourceDeviceId": "device_interop_iphone",
+            "targetDeviceId": "device_interop_mac",
+            "entityType": "remote.text",
+            "entityId": "conversation_interop",
+            "operation": "UPSERT",
+            "entityVersion": 1,
+            "createdAt": "2026-11-21T10:00:00.000Z",
+            "keyId": "device-key:3039199683c846874860b4057b246bf0",
+            "protocolVersion": 2,
+            "schemaVersion": 1,
+            "ephemeralPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEAg+vuF080Thh3r+fXSH9fsyTkdmpTDRen8AmQlmSkfj0=\n-----END PUBLIC KEY-----\n",
+            "salt": "T7utUEJzU4Svjs0eAXC+WA==",
+            "nonce": "Q5Xr6NosCbKbfKpw",
+            "authTag": "u3+zBHZqLIzJL7PpG8gf7w==",
+            "ciphertext": "9b1qICmr3XFGk3a5VLBH0fqc8eIuvOpyUMa2KPelzszORUokfNGjnu0c8anvNxnlvm+kKQ2QYqxH6Se+T+yzi/4R0b8=",
+            "signature": "uIjRK3KA2iPMTWbXL2wWtUXN4pUBXoOz3QCNxENtnnOlxINemATAj2TgOpAZI3bO6qoJiXhEIs81jpL/9ehAAQ=="
+          },
+          "expectedCode": "SYNC_PROTOCOL_INCOMPATIBLE"
+        }
+      ]
+    },
+    {
+      "name": "mac-to-iphone-response",
+      "from": "device_interop_mac",
+      "to": "device_interop_iphone",
+      "entropy": {
+        "ephemeralRawPrivateHex": "4e164e0a1315cdb867aa80ea44f0e7f9f45720a5277e775b67dbb2731912ef02",
+        "ephemeralRawPublicHex": "3d482a4d91d76311e2408c34e3cb8cd7fb6d54dbbda76a7ad1bfe79856ab0b44",
+        "saltHex": "f0b613c0bc62dafc2aad443667228c7b",
+        "nonceHex": "889e4b5c2d244be1876d4ed3"
+      },
+      "payload": {
+        "status": "ok",
+        "reply": "Le Brief est prêt.",
+        "items": [
+          {
+            "id": "a/1",
+            "done": false
+          }
+        ]
+      },
+      "payloadCanonicalJson": "{\"items\":[{\"done\":false,\"id\":\"a/1\"}],\"reply\":\"Le Brief est prêt.\",\"status\":\"ok\"}",
+      "steps": {
+        "sharedSecretHex": "16e87c9a67d56c20707e167e6423b0692b6869a1a05ecb3980c9edf40be0494e",
+        "hkdfInfo": "noon-sync-envelope-v1",
+        "aesKeyHex": "186afc44e6aa9931d614d036bf7f91fff85200b89df0478dd74b8dc8ead8ec68",
+        "aadCanonicalJson": "{\"createdAt\":\"2026-11-21T10:00:01.000Z\",\"entityId\":\"conversation_interop\",\"entityType\":\"remote.text.response\",\"entityVersion\":1,\"envelopeId\":\"envelope_interop_response\",\"keyId\":\"device-key:5f252683ca81846eadf1443057903242\",\"operation\":\"UPSERT\",\"protocolVersion\":1,\"schemaVersion\":1,\"sourceDeviceId\":\"device_interop_mac\",\"targetDeviceId\":\"device_interop_iphone\"}",
+        "signedCanonicalJson": "{\"authTag\":\"TgYJTnqHC84CRr9yHNj4hw==\",\"ciphertext\":\"BO2i/j6ExH1TrkFoMu4aCI0dSeqqwaMCE48LlU9XhBHIwJlcGy50a7qR2EiNn3PhfX/qtde0w5ZA283oZ+j/EkMhgwQ7AxxvVFtooa4HjUio\",\"createdAt\":\"2026-11-21T10:00:01.000Z\",\"entityId\":\"conversation_interop\",\"entityType\":\"remote.text.response\",\"entityVersion\":1,\"envelopeId\":\"envelope_interop_response\",\"ephemeralPublicKey\":\"-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VuAyEAPUgqTZHXYxHiQIw048uM1/ttVNu9p2p60b/nmFarC0Q=\\n-----END PUBLIC KEY-----\\n\",\"keyId\":\"device-key:5f252683ca81846eadf1443057903242\",\"nonce\":\"iJ5LXC0kS+GHbU7T\",\"operation\":\"UPSERT\",\"protocolVersion\":1,\"salt\":\"8LYTwLxi2vwqrUQ2ZyKMew==\",\"schemaVersion\":1,\"sourceDeviceId\":\"device_interop_mac\",\"targetDeviceId\":\"device_interop_iphone\"}"
+      },
+      "envelope": {
+        "envelopeId": "envelope_interop_response",
+        "sourceDeviceId": "device_interop_mac",
+        "targetDeviceId": "device_interop_iphone",
+        "entityType": "remote.text.response",
+        "entityId": "conversation_interop",
+        "operation": "UPSERT",
+        "entityVersion": 1,
+        "createdAt": "2026-11-21T10:00:01.000Z",
+        "keyId": "device-key:5f252683ca81846eadf1443057903242",
+        "protocolVersion": 1,
+        "schemaVersion": 1,
+        "ephemeralPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEAPUgqTZHXYxHiQIw048uM1/ttVNu9p2p60b/nmFarC0Q=\n-----END PUBLIC KEY-----\n",
+        "salt": "8LYTwLxi2vwqrUQ2ZyKMew==",
+        "nonce": "iJ5LXC0kS+GHbU7T",
+        "authTag": "TgYJTnqHC84CRr9yHNj4hw==",
+        "ciphertext": "BO2i/j6ExH1TrkFoMu4aCI0dSeqqwaMCE48LlU9XhBHIwJlcGy50a7qR2EiNn3PhfX/qtde0w5ZA283oZ+j/EkMhgwQ7AxxvVFtooa4HjUio",
+        "signature": "6E7zBJrwYd8Po4JZm7ZWK7SStUd6ycar0THamfOBN1fuMakro//ZVcjOabw4yifPsDUCaMwfoLGHuI2LvQpeCg=="
+      },
+      "rejections": [
+        {
+          "name": "ciphertext-bit-flip",
+          "envelope": {
+            "envelopeId": "envelope_interop_response",
+            "sourceDeviceId": "device_interop_mac",
+            "targetDeviceId": "device_interop_iphone",
+            "entityType": "remote.text.response",
+            "entityId": "conversation_interop",
+            "operation": "UPSERT",
+            "entityVersion": 1,
+            "createdAt": "2026-11-21T10:00:01.000Z",
+            "keyId": "device-key:5f252683ca81846eadf1443057903242",
+            "protocolVersion": 1,
+            "schemaVersion": 1,
+            "ephemeralPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEAPUgqTZHXYxHiQIw048uM1/ttVNu9p2p60b/nmFarC0Q=\n-----END PUBLIC KEY-----\n",
+            "salt": "8LYTwLxi2vwqrUQ2ZyKMew==",
+            "nonce": "iJ5LXC0kS+GHbU7T",
+            "authTag": "TgYJTnqHC84CRr9yHNj4hw==",
+            "ciphertext": "Be2i/j6ExH1TrkFoMu4aCI0dSeqqwaMCE48LlU9XhBHIwJlcGy50a7qR2EiNn3PhfX/qtde0w5ZA283oZ+j/EkMhgwQ7AxxvVFtooa4HjUio",
+            "signature": "6E7zBJrwYd8Po4JZm7ZWK7SStUd6ycar0THamfOBN1fuMakro//ZVcjOabw4yifPsDUCaMwfoLGHuI2LvQpeCg=="
+          },
+          "expectedCode": "SYNC_SIGNATURE_INVALID"
+        },
+        {
+          "name": "header-changed",
+          "envelope": {
+            "envelopeId": "envelope_interop_response",
+            "sourceDeviceId": "device_interop_mac",
+            "targetDeviceId": "device_interop_iphone",
+            "entityType": "remote.text.response",
+            "entityId": "conversation_interop-x",
+            "operation": "UPSERT",
+            "entityVersion": 1,
+            "createdAt": "2026-11-21T10:00:01.000Z",
+            "keyId": "device-key:5f252683ca81846eadf1443057903242",
+            "protocolVersion": 1,
+            "schemaVersion": 1,
+            "ephemeralPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEAPUgqTZHXYxHiQIw048uM1/ttVNu9p2p60b/nmFarC0Q=\n-----END PUBLIC KEY-----\n",
+            "salt": "8LYTwLxi2vwqrUQ2ZyKMew==",
+            "nonce": "iJ5LXC0kS+GHbU7T",
+            "authTag": "TgYJTnqHC84CRr9yHNj4hw==",
+            "ciphertext": "BO2i/j6ExH1TrkFoMu4aCI0dSeqqwaMCE48LlU9XhBHIwJlcGy50a7qR2EiNn3PhfX/qtde0w5ZA283oZ+j/EkMhgwQ7AxxvVFtooa4HjUio",
+            "signature": "6E7zBJrwYd8Po4JZm7ZWK7SStUd6ycar0THamfOBN1fuMakro//ZVcjOabw4yifPsDUCaMwfoLGHuI2LvQpeCg=="
+          },
+          "expectedCode": "SYNC_SIGNATURE_INVALID"
+        },
+        {
+          "name": "protocol-version",
+          "envelope": {
+            "envelopeId": "envelope_interop_response",
+            "sourceDeviceId": "device_interop_mac",
+            "targetDeviceId": "device_interop_iphone",
+            "entityType": "remote.text.response",
+            "entityId": "conversation_interop",
+            "operation": "UPSERT",
+            "entityVersion": 1,
+            "createdAt": "2026-11-21T10:00:01.000Z",
+            "keyId": "device-key:5f252683ca81846eadf1443057903242",
+            "protocolVersion": 2,
+            "schemaVersion": 1,
+            "ephemeralPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEAPUgqTZHXYxHiQIw048uM1/ttVNu9p2p60b/nmFarC0Q=\n-----END PUBLIC KEY-----\n",
+            "salt": "8LYTwLxi2vwqrUQ2ZyKMew==",
+            "nonce": "iJ5LXC0kS+GHbU7T",
+            "authTag": "TgYJTnqHC84CRr9yHNj4hw==",
+            "ciphertext": "BO2i/j6ExH1TrkFoMu4aCI0dSeqqwaMCE48LlU9XhBHIwJlcGy50a7qR2EiNn3PhfX/qtde0w5ZA283oZ+j/EkMhgwQ7AxxvVFtooa4HjUio",
+            "signature": "6E7zBJrwYd8Po4JZm7ZWK7SStUd6ycar0THamfOBN1fuMakro//ZVcjOabw4yifPsDUCaMwfoLGHuI2LvQpeCg=="
+          },
+          "expectedCode": "SYNC_PROTOCOL_INCOMPATIBLE"
+        }
+      ]
+    }
+  ]
+}

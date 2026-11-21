@@ -11407,6 +11407,16 @@ if (selfDevPanel && window.NoonSelfDevUi) {
   window.NoonSelfDev = Object.freeze({ refresh: () => selfDevUi.refresh() });
   void selfDevUi.init().then((available) => window.NoonControlCenter?.setSelfDevAvailable?.(available === true));
 }
+// Compagnon iPhone : entrée visible seulement si remote.lan est actif (sinon 404).
+const iphoneCompanionPanel = document.getElementById("iphoneCompanionPanel");
+if (iphoneCompanionPanel && window.NoonIphoneCompanionUi) {
+  const iphoneCompanionUi = window.NoonIphoneCompanionUi.createIphoneCompanionController({
+    elements: { root: iphoneCompanionPanel },
+    api: window.NoonIphoneCompanionUi.createIphoneCompanionApi({ fetchImpl: window.fetch.bind(window) }),
+  });
+  window.NoonIphoneCompanion = Object.freeze({ refresh: () => iphoneCompanionUi.refresh() });
+  void iphoneCompanionUi.init().then((available) => window.NoonControlCenter?.setIphoneCompanionAvailable?.(available === true));
+}
 loadAutomations();
 refreshWakeWordSettings();
 refreshOpenAIKeyStatus();

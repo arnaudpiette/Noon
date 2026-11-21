@@ -31,12 +31,14 @@ function deriveKey(privateKey, publicKey, salt) {
   return crypto.hkdfSync("sha256", shared, Buffer.from(salt, "base64"), Buffer.from("noon-sync-envelope-v1"), 32);
 }
 
-function createSyncCrypto({ identity } = {}) {
+// `entropy` n'existe que pour les vecteurs d'interopérabilité (IP-2) : il fixe la clé
+// éphémère, le sel et le nonce afin de produire des enveloppes reproductibles.
+function createSyncCrypto({ identity, entropy = null } = {}) {
   if (!identity?.privateSigningKey || !identity?.privateEncryptionKey) throw new TypeError("Identité cryptographique locale requise.");
   function seal({ targetDevice, header, payload }) {
     if (!targetDevice?.publicEncryptionKey) throw new TypeError("Clé publique de destination requise.");
-    const ephemeral = crypto.generateKeyPairSync("x25519");
-    const salt = crypto.randomBytes(16); const nonce = crypto.randomBytes(12);
+    const ephemeral = entropy ? entropy.ephemeral() : crypto.generateKeyPairSync("x25519");
+    const salt = entropy ? entropy.salt() : crypto.randomBytes(16); const nonce = entropy ? entropy.nonce() : crypto.randomBytes(12);
     const ephemeralPublicKey = ephemeral.publicKey.export({ type: "spki", format: "pem" });
     const key = deriveKey(ephemeral.privateKey, targetDevice.publicEncryptionKey, salt.toString("base64"));
     const cipher = crypto.createCipheriv("aes-256-gcm", key, nonce);
