@@ -27,6 +27,14 @@ contextBridge.exposeInMainWorld("noon", Object.freeze({
   revealArtifact: (targetPath) => invoke("noon:reveal-artifact", targetPath),
   previewArtifact: (targetPath) => invoke("noon:preview-artifact", targetPath),
   downloadArtifact: (targetPath) => invoke("noon:download-artifact", targetPath),
+  recorder: Object.freeze({
+    list: () => invoke("noon:recorder-list"),
+    create: (options) => invoke("noon:recorder-create", options),
+    append: (id, chunk) => invoke("noon:recorder-append", id, chunk),
+    state: (id, state) => invoke("noon:recorder-state", id, state),
+    chunk: (id, index) => invoke("noon:recorder-chunk", id, index),
+    exportAudio: (id) => invoke("noon:recorder-export", id),
+  }),
   onDeepLink: (callback) => {
     if (typeof callback !== "function") return () => {};
     const listener = (_event, value) => callback(value);
