@@ -6,6 +6,7 @@
   const open = document.getElementById("openRecorder");
   const close = document.getElementById("closeRecorder");
   const startButton = document.getElementById("recorderStart");
+  const importButton = document.getElementById("recorderImport");
   const pauseButton = document.getElementById("recorderPause");
   const stopButton = document.getElementById("recorderStop");
   const name = document.getElementById("recorderName");
@@ -39,6 +40,7 @@
   const message = (text) => { status.textContent = text; };
   function controls(active, paused = false) {
     startButton.disabled = active;
+    importButton.disabled = active;
     pauseButton.disabled = !active;
     pauseButton.textContent = paused ? "Reprendre" : "Pause";
     stopButton.disabled = !active;
@@ -83,7 +85,7 @@
       const row = document.createElement("div");
       row.className = "recorder-item";
       const label = document.createElement("span");
-      label.textContent = `${item.title} · ${new Date(item.createdAt).toLocaleString("fr-FR")} · ${formatDuration(item.durationMs)} · ${item.state === "interrupted" ? "interrompu, segments récupérés" : item.state}${item.missingSegments ? ` · ${item.missingSegments} segment(s) manquant(s)` : ""}`;
+      label.textContent = `${item.title} · ${new Date(item.createdAt).toLocaleString("fr-FR")} · ${item.inputLabel === "Fichier importé" ? "durée à déterminer" : formatDuration(item.durationMs)} · ${item.state === "interrupted" ? "interrompu, segments récupérés" : item.state}${item.missingSegments ? ` · ${item.missingSegments} segment(s) manquant(s)` : ""}`;
       const play = document.createElement("button");
       play.type = "button";
       play.textContent = "Écouter";
@@ -325,6 +327,18 @@
   });
   close.addEventListener("click", () => dialog.close());
   startButton.addEventListener("click", () => { void begin(); });
+  importButton.addEventListener("click", async () => {
+    if (!bridge || session || opening) return;
+    importButton.disabled = true;
+    try {
+      const result = await bridge.importAudio();
+      if (!result.canceled) {
+        message("Audio importé localement. Vérifie sa lecture avant de le transcrire.");
+        await renderLibrary();
+      }
+    } catch (error) { message(`Import impossible : ${error.message}`); }
+    finally { importButton.disabled = false; }
+  });
   pauseButton.addEventListener("click", async () => {
     if (!session || !media) return;
     if (media.state === "recording") {
