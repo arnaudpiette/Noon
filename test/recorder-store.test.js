@@ -72,3 +72,19 @@ test("importe une piste locale en segments puis restitue les octets d'origine", 
     assert.throws(() => store.importAudio(source, "audio/webm", "invalid"), /audio valide/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test("renomme puis supprime uniquement une prise terminée", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "noon-recorder-"));
+  try {
+    const store = createRecorderStore(root);
+    const record = store.create({ mimeType: "audio/webm" });
+    assert.throws(() => store.remove(record.id), /active/);
+    store.append(record.id, { index: 0, durationMs: 1000, data: Buffer.from("audio").toString("base64") });
+    store.setState(record.id, "available");
+    store.rename(record.id, "Entretien");
+    assert.equal(store.list()[0].title, "Entretien");
+    store.remove(record.id);
+    assert.equal(store.list().length, 0);
+    assert.throws(() => store.remove("../outside"), /invalide/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
