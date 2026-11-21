@@ -1,6 +1,6 @@
 "use strict";
 
-const { buildManagedEvent, dateKey, deduplicateActions, findFreeSlots, normalizeAction, occurrenceKey, prioritizeActions, sourceState } = require("../../lib/morning-brief");
+const { buildManagedEvent, dateKey, deduplicateActions, findFreeSlots, localPlanningDay, normalizeAction, occurrenceKey, prioritizeActions, sourceState } = require("../../lib/morning-brief");
 const { localDateRange } = require("../connectors/google-calendar");
 
 function importantText(value) { return /\b(urgent|important|échéance|deadline|avant le|répondre|réponse attendue|relance|soutenance|livrable|rendez-vous|rdv)\b/i.test(String(value || "")); }
@@ -97,7 +97,7 @@ function createMorningBriefService(deps) {
         const partAction = partCount === 1 ? action : { ...action, sourceId: `${action.sourceId || action.id}:part:${partIndex + 1}`, title: `${action.title} (${partIndex + 1}/${partCount})`, estimatedDurationMinutes: partDuration };
         let selected = null;
         for (let offset = 0; offset < 7 && !selected; offset += 1) {
-          const day = new Date(now.getTime() + offset * 86_400_000);
+          const day = localPlanningDay(now, offset, settings.timeZone || "Europe/Paris");
           selected = findFreeSlots({ day, events: busy, settings, durationMinutes: partDuration, dueAt: action.dueAt, notBefore: offset === 0 ? now : null })[0] || null;
         }
         if (!selected) { scheduled.push({ actionId: action.id, title: partAction.title, status: "not-scheduled", reason: "Aucun créneau disponible avant l’échéance." }); break; }

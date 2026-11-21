@@ -85,3 +85,25 @@ test("un e-mail actionnable peut créer un brouillon mais n'est jamais envoyé",
   assert.equal(drafts[0].status, "created");
   assert.deepEqual(calls.map((call) => call.operation), ["draft"]);
 });
+
+test("changement d'heure : les créneaux couvrent chaque jour local, sans saut ni doublon, pause protégée", async () => {
+  const { localPlanningDay, findFreeSlots } = require("../lib/morning-brief");
+  const { createTimeSlotService } = require("../services/scheduling/time-slot-service");
+  const day = (value) => new Intl.DateTimeFormat("fr-CA", { timeZone: "Europe/Paris" }).format(value);
+  // 27/03/2027 23:30 à Paris (UTC+1) ; passage à l'heure d'été le 28/03 ; 30/10/2027 23:30, retour à l'heure d'hiver le 31/10.
+  for (const [nowIso, expected] of [["2027-03-27T22:30:00Z", ["2027-03-27", "2027-03-28", "2027-03-29", "2027-03-30"]], ["2027-10-30T21:30:00Z", ["2027-10-30", "2027-10-31", "2027-11-01", "2027-11-02"]]]) {
+    const now = new Date(nowIso);
+    assert.deepEqual([0, 1, 2, 3].map((offset) => day(localPlanningDay(now, offset))), expected, nowIso);
+    const everyDay = { workingDays: [0, 1, 2, 3, 4, 5, 6] };
+    const slots = await createTimeSlotService(null).suggest({ durationMinutes: 30, events: [], now, days: 4, maximumResults: 100, offline: true, settings: everyDay });
+    const covered = [...new Set(slots.map((slot) => day(new Date(slot.start))))];
+    assert.deepEqual(covered, expected.slice(1), "jour de départ déjà terminé, puis chaque jour sans saut");
+    for (const target of expected.slice(1)) {
+      const hm = (iso) => new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
+      const local = findFreeSlots({ day: localPlanningDay(new Date(`${target}T10:00:00Z`)), events: [], durationMinutes: 30, settings: everyDay })
+        .map((slot) => ({ start: hm(slot.start), end: hm(slot.end) }));
+      assert.equal(local[0].start, "09:00", `${target} : début de journée à l'heure locale`);
+      assert.equal(local.some((slot) => slot.start < "13:30" && slot.end > "12:30"), false, `${target} : pause 12:30-13:30 protégée`);
+    }
+  }
+});
