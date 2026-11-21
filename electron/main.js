@@ -450,6 +450,19 @@ function registerIpc() {
     trustedOrigin: NOON_ORIGIN,
   });
   registerTrustedHandler("noon:recorder-list", () => recorderStore.list());
+  registerTrustedHandler("noon:recorder-import", async () => {
+    const selection = await dialog.showOpenDialog(mainWindow, {
+      title: "Importer un fichier audio",
+      properties: ["openFile"],
+      filters: [{ name: "Fichiers audio", extensions: ["webm", "m4a", "mp4", "ogg", "mp3", "wav"] }],
+    });
+    if (selection.canceled || !selection.filePaths[0]) return { canceled: true };
+    const source = selection.filePaths[0];
+    const mime = { ".webm": "audio/webm", ".m4a": "audio/mp4", ".mp4": "audio/mp4",
+      ".ogg": "audio/ogg", ".mp3": "audio/mpeg", ".wav": "audio/wav" }[path.extname(source).toLowerCase()];
+    if (!mime) throw new Error("Format audio refusé.");
+    return { canceled: false, record: recorderStore.importAudio(source, mime, path.basename(source)) };
+  });
   registerTrustedHandler("noon:recorder-create", (_event, options) => recorderStore.create(options));
   registerTrustedHandler("noon:recorder-append", (_event, id, chunk) => recorderStore.append(id, chunk));
   registerTrustedHandler("noon:recorder-state", (_event, id, state) => recorderStore.setState(id, state));
@@ -501,7 +514,8 @@ function registerIpc() {
   registerTrustedHandler("noon:recorder-export", async (_event, id) => {
     const record = recorderStore.list().find((item) => item.id === id);
     if (!record || !record.chunks.length) throw new Error("Aucun audio à exporter.");
-    const extension = record.mimeType.includes("mp4") ? "m4a" : record.mimeType.includes("ogg") ? "ogg" : "webm";
+    const extension = record.mimeType.includes("mp4") ? "m4a" : record.mimeType.includes("ogg") ? "ogg"
+      : record.mimeType.includes("mpeg") ? "mp3" : record.mimeType.includes("wav") ? "wav" : "webm";
     const selection = await dialog.showSaveDialog(mainWindow, {
       title: "Exporter l'enregistrement",
       defaultPath: path.join(app.getPath("downloads"), `noon-${id}.${extension}`),
