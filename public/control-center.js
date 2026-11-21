@@ -13,6 +13,13 @@
   const openButton = document.getElementById("openControlCenterButton");
   const closeButton = document.getElementById("closeControlCenter");
   const refreshButton = document.getElementById("refreshControlCenter");
+  // B4b : Goal Mode DEV vit dans le Control Center (le panneau Approbations de la
+  // barre latérale est masqué par le CSS). Le conteneur est hors des zones que
+  // ce module vide (overview, section) : l'état du panneau survit à la navigation.
+  const GOAL_MODE_DEV_SECTION = "goal-mode-dev";
+  const goalModeDevContainer = document.getElementById("controlCenterGoalModeDev");
+  let goalModeDevAvailable = false;
+  let lastSectionIds = [];
   const labels = Object.freeze({
     overview: "Vue d’ensemble", connections: "Connexions", jobs: "Travaux", approvals: "Validations",
     reliability: "Fiabilité", memory: "Mémoire", rules: "Règles permanentes", workspaces: "Espaces de travail",
@@ -20,6 +27,7 @@
     extensions: "Extensions", permissions: "Permissions", notifications: "Notifications", privacy: "Confidentialité",
     offline: "Local et hors ligne", configuration: "Configuration", backups: "Sauvegardes",
     evaluations: "Évaluations", diagnostics: "Diagnostics",
+    [GOAL_MODE_DEV_SECTION]: "Goal Mode DEV",
   });
   const actionLabels = Object.freeze({
     RUN_QUICK_DIAGNOSTIC: "Vérifier", CHECK_CONNECTION: "Tester", CHECK_EXTENSION: "Tester",
@@ -132,18 +140,45 @@
   }
 
   function renderNavigation(sectionIds) {
+    lastSectionIds = sectionIds;
     navigation.replaceChildren();
-    for (const id of ["overview", ...sectionIds]) {
+    const goalModeDev = goalModeDevAvailable && goalModeDevContainer ? [GOAL_MODE_DEV_SECTION] : [];
+    for (const id of ["overview", ...sectionIds.filter((item) => item !== GOAL_MODE_DEV_SECTION), ...goalModeDev]) {
       const button = element("button", id === activeSection ? "active" : "", labels[id] || id);
       button.type = "button";
       button.dataset.section = id;
-      button.addEventListener("click", () => load(id));
+      button.addEventListener("click", () => (id === GOAL_MODE_DEV_SECTION ? showGoalModeDev() : load(id)));
       navigation.append(button);
+    }
+  }
+
+  function markActive(sectionId) {
+    [...navigation.querySelectorAll("button")].forEach((button) => button.classList.toggle("active", button.dataset.section === sectionId));
+  }
+
+  // Affiche le panneau Goal Mode DEV, monté une seule fois par app.js : aucun
+  // rechargement, le jeton d'approbation en mémoire est conservé.
+  function showGoalModeDev() {
+    if (!goalModeDevAvailable || !goalModeDevContainer) return load("overview");
+    activeSection = GOAL_MODE_DEV_SECTION;
+    loading.hidden = true; overview.hidden = true; section.hidden = true;
+    goalModeDevContainer.hidden = false;
+    markActive(GOAL_MODE_DEV_SECTION);
+    return Promise.resolve();
+  }
+
+  function setGoalModeDevAvailable(value) {
+    goalModeDevAvailable = value === true;
+    if (navigation.childNodes.length) renderNavigation(lastSectionIds);
+    if (!goalModeDevAvailable && activeSection === GOAL_MODE_DEV_SECTION) {
+      if (goalModeDevContainer) goalModeDevContainer.hidden = true;
+      if (dialog.open) void load("overview");
     }
   }
 
   async function load(sectionId = "overview", force = false) {
     activeSection = sectionId;
+    if (goalModeDevContainer) goalModeDevContainer.hidden = true;
     loading.hidden = false; overview.hidden = true; section.hidden = true;
     const query = new URLSearchParams({ view: viewSelect.value });
     if (force) query.set("refresh", "1");
@@ -158,7 +193,7 @@
         renderNavigation(data.snapshot.availableSections || []);
         renderOverview(data.snapshot); overview.hidden = false;
       } else {
-        [...navigation.querySelectorAll("button")].forEach((button) => button.classList.toggle("active", button.dataset.section === sectionId));
+        markActive(sectionId);
         renderSection(data.section); section.hidden = false;
       }
     } catch (error) {
@@ -176,8 +211,9 @@
 
   openButton?.addEventListener("click", () => { document.getElementById("quickSettings").hidden = true; void open(); });
   closeButton.addEventListener("click", () => dialog.close());
-  refreshButton.addEventListener("click", () => load(activeSection, true));
-  viewSelect.addEventListener("change", () => load(activeSection, true));
+  const reload = () => (activeSection === GOAL_MODE_DEV_SECTION ? showGoalModeDev() : load(activeSection, true));
+  refreshButton.addEventListener("click", reload);
+  viewSelect.addEventListener("change", reload);
   dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
-  window.NoonControlCenter = Object.freeze({ open, refresh: () => load(activeSection, true) });
+  window.NoonControlCenter = Object.freeze({ open, refresh: reload, setGoalModeDevAvailable, showGoalModeDev });
 })();

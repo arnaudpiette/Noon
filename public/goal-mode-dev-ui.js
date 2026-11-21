@@ -45,6 +45,14 @@
     GOAL_MODE_DEV_LOCK_TAKEOVER_BUSY: "Une reprise du verrou est déjà en cours.",
     GOAL_MODE_DEV_LOCK_HELD: "Le verrou a été obtenu par une autre instance.",
     GOAL_MODE_DEV_RECONCILE_LOCK_REQUIRED: "Verrou des données requis : reprenez-le d'abord.",
+    // B4b : refus de préparation rencontrés au premier essai réel.
+    GOAL_MODE_DEV_REMOTE_REASONING_BLOCKED: "Native DEV raisonne à distance : le réseau n'est pas autorisé pour ce run (traitement local imposé ou plafond).",
+    GOAL_MODE_LOCAL_ONLY_NETWORK_CONFLICT: "Ce Goal impose désormais un traitement local : Goal Mode DEV distant indisponible.",
+    GOAL_MODE_DEV_CAPABILITY_UNSUPPORTED: "La proposition demande une écriture Git ou une action destructive : refusée.",
+    GOAL_MODE_DEV_TIME_BUDGET_BLOCKED: "Temps du run écoulé ou insuffisant : créez un nouveau run.",
+    GOAL_MODE_DEV_DISPATCH_TIME_BUDGET_BLOCKED: "Temps du run écoulé ou insuffisant : créez un nouveau run.",
+    GOAL_MODE_DEV_PROVIDER_BUDGET_STALE: "Appels restants du run insuffisants pour cette proposition.",
+    GOAL_MODE_DEV_COST_BUDGET_STALE: "Budget restant du run insuffisant pour cette proposition.",
   });
 
   const LOCK_LABELS = Object.freeze({
@@ -62,6 +70,23 @@
     ESTIMATED_UPPER_BOUND: "coût estimé (borne haute)",
     NEVER_LAUNCHED: "jamais lancée — rien consommé",
   });
+
+  // B4b : coûts lisibles (« 0,002918 USD ») au lieu du flottant brut.
+  const USD_FORMAT = new Intl.NumberFormat("fr-FR", { maximumSignificantDigits: 4 });
+  function formatUsd(value) {
+    return typeof value === "number" && Number.isFinite(value) ? `${USD_FORMAT.format(value)} USD` : "coût inconnu";
+  }
+
+  // B4b : échéance d'un run (maxDuration court depuis la création du run).
+  function deadlineText(deadline, nowMs) {
+    const at = Date.parse(deadline);
+    if (!Number.isFinite(at)) return null;
+    const time = new Date(at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+    const remaining = at - nowMs;
+    return remaining > 0
+      ? `Échéance ${time} · reste ${Math.ceil(remaining / 60_000)} min`
+      : `Échéance ${time} · dépassée`;
+  }
 
   function messageFor(code) {
     if (typeof code !== "string" || !code) return "Opération Goal Mode DEV refusée.";
@@ -124,6 +149,8 @@
     let lockState = null;
     let goalsById = new Map();
     const approvalRegion = region("approval");
+    // B4b : run auquel se rapporte la proposition ou la carte affichée.
+    let approvalRunId = null;
     const resultRegion = region("result");
     const statusRegion = region("status");
     statusRegion.setAttribute("role", "status");
@@ -323,7 +350,7 @@
         maxSteps: numberInput("maxSteps", 4, "Étapes max"),
         maxRetries: numberInput("maxRetries", 1, "Essais max"),
         maxProviderCalls: numberInput("maxProviderCalls", 4, "Appels max"),
-        maxDurationMinutes: numberInput("maxDurationMinutes", 30, "Durée max (min)"),
+        maxDurationMinutes: numberInput("maxDurationMinutes", 30, "Durée max du run, depuis sa création (min)"),
         maxEstimatedCost: numberInput("maxEstimatedCost", 1, "Coût max (USD)"),
       };
       const submit = actionButton("Créer et démarrer", "create-run", () => createRun({
@@ -342,7 +369,21 @@
         ...Object.values(fields).map((field) => field.wrapper), submit);
     }
 
+    // B4b : une proposition ou une carte d'un run qui n'est plus RUNNING est retirée
+    // (et ses jetons oubliés) : plus de « Préparer » sur un run arrêté.
+    function clearStaleApproval(runs) {
+      if (approvalRunId === null) return;
+      const run = runs.find((item) => item.runId === approvalRunId);
+      if (run?.status === "RUNNING") return;
+      for (const [approvalId, entry] of tokens) {
+        if (entry.runId === approvalRunId) tokens.delete(approvalId);
+      }
+      approvalRegion.replaceChildren();
+      approvalRunId = null;
+    }
+
     function renderRuns(runs) {
+      clearStaleApproval(runs);
       runsRegion.replaceChildren();
       if (!runs.length) {
         runsRegion.append(text("p", "Aucun run Goal Mode DEV."));
@@ -353,8 +394,10 @@
         item.className = "goal-mode-dev__run";
         item.append(
           text("strong", `${goalsById.get(run.goalId)?.title || run.goalId} · ${run.status}`),
-          text("small", `Révision ${run.revision} · ${run.usage.providerCalls} appels · ${run.usage.estimatedCost} USD`),
+          text("small", `Révision ${run.revision} · ${run.usage.providerCalls} appels · ${formatUsd(run.usage.estimatedCost)}`),
         );
+        const deadline = run.status === "RUNNING" ? deadlineText(run.deadline, now()) : null;
+        if (deadline) item.append(text("small", deadline, "goal-mode-dev__deadline"));
         const controls = document.createElement("div");
         controls.className = "goal-mode-dev__controls";
         if (run.status === "RUNNING") {
@@ -420,19 +463,26 @@
         return null;
       }
       const confirmed = confirmAction(
-        `Planifier appelle un fournisseur de modèle (payant). Coût maximal estimé : ${estimate.body.maxEstimatedCost} USD. Continuer ?`
+        `Planifier appelle un fournisseur de modèle (payant). Coût maximal estimé : ${formatUsd(estimate.body.maxEstimatedCost)}. Continuer ?`
       );
       if (confirmed !== true) {
         setStatus("Planification annulée.");
         return null;
       }
       const planned = await api.post("planning", { runId, confirmProviderCall: true });
-      if (!planned.ok) return fail(planned);
+      if (!planned.ok) {
+        fail(planned);
+        await refreshRuns(); // un appel a pu être compté malgré l'erreur
+        return null;
+      }
       if (planned.body.status !== "PROPOSED" || !planned.body.stepId) {
         setStatus(`Planification : ${planned.body.status}.`);
+        await refreshRuns();
         return planned.body;
       }
       await showProposal(runId, planned.body.stepId);
+      // B4b : l'usage du run (appel de planning) est relu, pas laissé à 0.
+      await refreshRuns();
       return planned.body;
     }
 
@@ -447,10 +497,21 @@
         text("small", `Résultat attendu : ${proposal.body.expectedOutcome}`),
         text("small", `Admission : ${proposal.body.admission?.decision || "inconnue"}`),
       );
+      // B4b : capacités, telles que le serveur les traitera (B4a).
+      const requested = proposal.body.requestedCapabilities || {};
+      card.append(text("small", requested.network === true
+        ? "Réseau : requis par Native DEV, accordé par le serveur (demandé par la proposition)."
+        : "Réseau : requis par Native DEV, accordé par le serveur (non demandé par la proposition).",
+      "goal-mode-dev__capabilities"));
+      if (requested.gitWrite === true || requested.destructiveActions === true) {
+        card.append(text("small", "La proposition demande une écriture Git ou une action destructive : la préparation sera refusée.",
+          "goal-mode-dev__capabilities"));
+      }
       if (proposal.body.admission?.decision === "ADMIT") {
         card.append(actionButton("Préparer", `prepare:${stepId}`, () => prepare(runId, stepId)));
       }
       approvalRegion.replaceChildren(card);
+      approvalRunId = runId;
       return proposal.body;
     }
 
@@ -482,7 +543,7 @@
         text("p", view.instruction, "goal-mode-dev__instruction"),
         text("p", `Repository : ${view.repositoryRoot}${view.branch ? ` (${view.branch})` : ""}`),
         text("p", `Permissions : ${(view.permissions || []).join(", ") || "aucune"}`),
-        text("p", `Coût maximal : ${view.maxEstimatedCost} USD`),
+        text("p", `Coût maximal : ${formatUsd(view.maxEstimatedCost)}`),
         text("p", `Appels maximum : ${view.maxProviderCalls}`),
         text("p", `Durée maximale : ${Math.round(Number(view.maxDuration) / 1000)} s`),
         text("p", `Expire à : ${new Date(prepared.approval.expiresAt).toLocaleTimeString("fr-FR")}`),
@@ -501,6 +562,7 @@
       );
       card.append(actions);
       approvalRegion.replaceChildren(card);
+      approvalRunId = runId;
     }
 
     async function renew(reservationId, runId) {
@@ -536,6 +598,7 @@
       }
       stopPolling();
       approvalRegion.replaceChildren();
+      approvalRunId = null;
       if (result.body.status === "rejected") {
         setStatus("Approbation refusée. La réservation reste préparée.");
       } else {
@@ -558,7 +621,7 @@
       card.append(text("strong", `Réconciliation : ${reconciliation.outcome}`));
       if (reconciliation.outcome === "RECONCILED" && reconciliation.accounting) {
         card.append(text("p",
-          `${reconciliation.accounting.providerCalls} appels · ${reconciliation.accounting.accountedCost} USD`));
+          `${reconciliation.accounting.providerCalls} appels · ${formatUsd(reconciliation.accounting.accountedCost)}`));
       }
       if (BASIS_LABELS[reconciliation.basis]) {
         card.append(text("p", BASIS_LABELS[reconciliation.basis], "goal-mode-dev__basis"));
@@ -702,6 +765,8 @@
     POLL_INTERVAL_MS,
     createGoalModeDevApi,
     createGoalModeDevController,
+    deadlineText,
+    formatUsd,
     messageFor,
   });
 })(typeof window !== "undefined" ? window : globalThis);

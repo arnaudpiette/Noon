@@ -174,7 +174,7 @@ test("UI : Planifier affiche le coût maximal estimé et exige la confirmation",
   const refused = await ready(baseRoutes(), { confirm: false });
   refused.api.calls.length = 0;
   await refused.controller.plan("run-1");
-  assert.ok(refused.confirmations[0].includes("0.12 USD"));
+  assert.ok(refused.confirmations[0].includes("0,12 USD"));
   assert.ok(refused.confirmations[0].includes("payant"));
   assert.equal(refused.api.calls.some((call) => call.route === "planning"), false);
   const h = await ready(baseRoutes());
@@ -191,7 +191,7 @@ test("UI : carte d'approbation en textContent, jeton jamais dans le DOM ni le st
   assert.equal(approvalId, APPROVAL);
   const text = h.root.textContent;
   for (const value of ["SYNTHETIC_GOAL_TITLE", "<img src=x onerror=alert(1)> Corriger le bug", "Repository : /Users/x/repo (main)",
-    "Permissions : READ_WRITE_WORKSPACE, NETWORK", "Coût maximal : 0.4 USD", "Appels maximum : 2",
+    "Permissions : READ_WRITE_WORKSPACE, NETWORK", "Coût maximal : 0,4 USD", "Appels maximum : 2",
     "Durée maximale : 300 s", "Règles projet (2)", "<b>Règle</b> A", "Règle B"]) {
     assert.ok(text.includes(value), value);
   }
@@ -223,7 +223,7 @@ test("UI : Approuver envoie une decision explicite, efface le jeton et affiche �
   const text = h.root.textContent;
   assert.ok(text.includes("Réconciliation : RECONCILED"));
   assert.ok(text.includes("coût estimé (borne haute)"));
-  assert.ok(text.includes("2 appels · 0.12 USD"));
+  assert.ok(text.includes("2 appels · 0,12 USD"));
   assert.equal(h.root.serialize().includes(TOKEN), false);
   assert.deepEqual(h.touched, []);
 });
@@ -367,18 +367,22 @@ test("UI : client API (en-tête de confiance, JSON, enveloppe, erreur réseau)",
   assert.equal((await api.get("broken")).code, "NETWORK_UNAVAILABLE");
 });
 
-test("UI contrat source : panneau dans index.html, script avant app.js, assemblage et filtre générique", () => {
+test("UI contrat source : panneau dans le Control Center (B4b), script avant app.js, assemblage et filtre générique", () => {
   const root = path.join(__dirname, "..", "public");
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
-  assert.match(html, /<section id="goalModeDevPanel" class="goal-mode-dev" hidden aria-label="Goal Mode DEV"><\/section>/);
-  const panel = html.indexOf('id="approvalsPanel"');
-  assert.ok(panel > 0 && html.indexOf('id="goalModeDevPanel"') > panel);
+  assert.match(html, /<div id="controlCenterGoalModeDev" class="control-center__goal-mode-dev" hidden><section id="goalModeDevPanel" class="goal-mode-dev" hidden aria-label="Goal Mode DEV"><\/section><\/div>/);
+  assert.equal(html.split('id="goalModeDevPanel"').length, 2, "un seul panneau");
+  // Plus dans le panneau Approbations de la barre latérale (masqué par le CSS).
+  assert.match(html, /<div id="approvalsPanel" class="operations-content" hidden><div id="approvalsList">Aucune action\.<\/div><\/div>/);
+  const dialog = html.indexOf('<dialog id="controlCenter"');
+  assert.ok(dialog > 0 && html.indexOf('id="goalModeDevPanel"') > dialog);
   const ui = html.indexOf('<script src="goal-mode-dev-ui.js"></script>');
   const app = html.indexOf('<script src="app.js"></script>');
   assert.ok(ui > 0 && app > ui, "goal-mode-dev-ui.js chargé avant app.js");
   const appSource = fs.readFileSync(path.join(root, "app.js"), "utf8");
   assert.match(appSource, /document\.getElementById\("goalModeDevPanel"\)/);
   assert.match(appSource, /createGoalModeDevApi\(\{ fetchImpl: window\.fetch\.bind\(window\) \}\)/);
+  assert.match(appSource, /goalModeDevUi\.init\(\)\.then\(\(available\) => window\.NoonControlCenter\?\.setGoalModeDevAvailable\?\.\(available === true\)\)/);
   assert.match(appSource, /data\.approvals\.filter\(\(item\) => item\.skillName !== "goal_mode_dev"\)/);
   // Le module (hors commentaires) : ni innerHTML, ni stockage navigateur, ni cookie, ni console, ni eval.
   const code = SOURCE.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
@@ -475,4 +479,108 @@ test("UI verrou : annulation, détenteur vivant (aucun bouton), refus serveur tr
   assert.deepEqual(unreadable.api.calls.find((call) => call.route === "maintenance/lock-takeover").body, { confirm: true, expectedHolderPid: null });
   const unavailable = await ready(baseRoutes());
   assert.ok(unavailable.root.textContent.includes("État du verrou indisponible."));
+});
+
+// ---- B4b : finitions d'affichage ----
+
+test("B4b UI : coûts formatés (fr-FR, 4 chiffres significatifs), jamais le flottant brut", async () => {
+  const { ui } = load();
+  assert.equal(ui.formatUsd(0.0029180000000000005), "0,002918 USD");
+  assert.equal(ui.formatUsd(0.015286), "0,01529 USD");
+  assert.equal(ui.formatUsd(0.5), "0,5 USD");
+  assert.equal(ui.formatUsd(0), "0 USD");
+  for (const invalid of [null, undefined, Number.NaN, Infinity, "0.1"]) assert.equal(ui.formatUsd(invalid), "coût inconnu");
+  const h = await ready(baseRoutes({ "GET runs": ok({ runs: [{ ...RUN, usage: { ...RUN.usage, estimatedCost: 0.0029180000000000005 } }] }) }));
+  assert.ok(h.root.textContent.includes("1 appels · 0,002918 USD"));
+  assert.equal(h.root.textContent.includes("0.0029180000000000005"), false);
+});
+
+test("B4b UI : Planifier relit la liste des runs (usage du planning visible)", async () => {
+  let planned = false;
+  const h = await ready(baseRoutes({
+    "GET runs": () => ok({ runs: [{ ...RUN, usage: { ...RUN.usage, providerCalls: planned ? 2 : 1 } }] }),
+    "POST planning": () => { planned = true; return ok({ status: "PROPOSED", stepId: "step-1", recovered: false }); },
+  }));
+  h.api.calls.length = 0;
+  await h.controller.plan("run-1");
+  const routes = h.api.calls.map((call) => `${call.method} ${call.route}`);
+  assert.ok(routes.indexOf("GET runs") > routes.indexOf("POST planning"), routes.join(" | "));
+  assert.ok(h.root.textContent.includes("Révision 4 · 2 appels"));
+  // Refus du planning : la liste est aussi relue (un appel a pu être compté).
+  const refused = await ready(baseRoutes({ "POST planning": err("GOAL_MODE_PLANNING_UNKNOWN_BLOCKED", 409) }));
+  refused.api.calls.length = 0;
+  await refused.controller.plan("run-1");
+  assert.deepEqual(refused.api.calls.map((call) => `${call.method} ${call.route}`).slice(-2), ["POST planning", "GET runs"]);
+});
+
+test("B4b UI : capacités sur la proposition (réseau accordé par le serveur, Git ou destructif signalé)", async () => {
+  for (const [requestedCapabilities, expected, warning] of [
+    [{ network: false, gitWrite: false, destructiveActions: false }, "accordé par le serveur (non demandé par la proposition)", false],
+    [{ network: true, gitWrite: false, destructiveActions: false }, "accordé par le serveur (demandé par la proposition)", false],
+    [{ network: true, gitWrite: true, destructiveActions: false }, "accordé par le serveur (demandé par la proposition)", true],
+    [undefined, "accordé par le serveur (non demandé par la proposition)", false],
+  ]) {
+    const h = await ready(baseRoutes({
+      "GET runs/run-1/proposals/step-1": ok({ objective: "Objectif", expectedOutcome: "Résultat", requestedCapabilities, admission: { decision: "ADMIT" } }),
+    }));
+    await h.controller.plan("run-1");
+    const text = h.root.textContent;
+    assert.ok(text.includes(`Réseau : requis par Native DEV, ${expected}`), expected);
+    assert.equal(text.includes("la préparation sera refusée"), warning);
+  }
+});
+
+test("B4b UI : proposition et carte retirées quand le run n'est plus RUNNING (jetons oubliés)", async () => {
+  let status = "RUNNING";
+  const routes = baseRoutes({ "GET runs": () => ok({ runs: [{ ...RUN, status }] }), "GET runs/run-1": () => ok({ ...RUN, status }) });
+  // Proposition affichée puis run arrêté : plus de « Préparer ».
+  const h = await ready(routes);
+  await h.controller.plan("run-1");
+  assert.equal(h.root.buttons("Préparer").length, 1);
+  status = "CANCELLED";
+  await h.controller.refreshRuns();
+  assert.equal(h.root.buttons("Préparer").length, 0);
+  assert.equal(h.root.textContent.includes("Objectif"), false);
+  // Carte d'approbation affichée puis run en pause : carte retirée, jeton oublié.
+  status = "RUNNING";
+  const g = await ready(routes);
+  await g.controller.prepare("run-1", "step-1");
+  assert.equal(g.controller.hasToken(APPROVAL), true);
+  await g.controller.refreshRuns();
+  assert.equal(g.root.buttons("Approuver").length, 1, "run toujours RUNNING : carte conservée");
+  status = "PAUSED";
+  await g.controller.refreshRuns();
+  assert.equal(g.root.buttons("Approuver").length, 0);
+  assert.equal(g.controller.hasToken(APPROVAL), false);
+  assert.equal(g.root.serialize().includes(TOKEN), false);
+});
+
+test("B4b UI : échéance du run (depuis sa création) et libellé explicite de la durée", async () => {
+  const h = await ready(baseRoutes({
+    "GET runs": ok({ runs: [
+      { ...RUN, deadline: "2026-10-13T12:10:00.000Z" },
+      { ...RUN, runId: "run-2", deadline: "2026-10-13T11:59:00.000Z" },
+      { ...RUN, runId: "run-3", status: "CANCELLED", deadline: "2026-10-13T12:10:00.000Z" },
+      { ...RUN, runId: "run-4", deadline: "pas une date" },
+    ] }),
+  }));
+  const deadlines = h.root.all().filter((node) => node.className === "goal-mode-dev__deadline").map((node) => node.textContent);
+  assert.equal(deadlines.length, 2);
+  assert.match(deadlines[0], /^Échéance \d{2}:\d{2} · reste 10 min$/);
+  assert.match(deadlines[1], /^Échéance \d{2}:\d{2} · dépassée$/);
+  assert.ok(h.root.textContent.includes("Durée max du run, depuis sa création (min)"));
+  const { ui } = load();
+  assert.equal(ui.deadlineText("2026-10-13T12:00:30.000Z", Date.parse("2026-10-13T12:00:00.000Z")).endsWith("reste 1 min"), true);
+  assert.equal(ui.deadlineText(null, 0), null);
+});
+
+test("B4b UI : refus de préparation du premier essai traduits", () => {
+  const { ui } = load();
+  for (const code of ["GOAL_MODE_DEV_REMOTE_REASONING_BLOCKED", "GOAL_MODE_LOCAL_ONLY_NETWORK_CONFLICT",
+    "GOAL_MODE_DEV_CAPABILITY_UNSUPPORTED", "GOAL_MODE_DEV_TIME_BUDGET_BLOCKED", "GOAL_MODE_DEV_DISPATCH_TIME_BUDGET_BLOCKED",
+    "GOAL_MODE_DEV_PROVIDER_BUDGET_STALE", "GOAL_MODE_DEV_COST_BUDGET_STALE"]) {
+    const message = ui.messageFor(code);
+    assert.equal(message.startsWith("Opération refusée"), false, code);
+    assert.equal(message.includes(code), false, code);
+  }
 });

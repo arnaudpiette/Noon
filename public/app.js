@@ -7195,7 +7195,7 @@ async function refreshLocalFolderPermissions() {
 addLocalFolderButton.addEventListener("click", async () => {
   const result = await window.noon?.addLocalPermission?.({ mode: localFolderModeSelect.value });
   if (result?.canceled) return;
-  await refreshLocalFolderPermissions(); await loadFocusProjects();
+  await refreshLocalFolderPermissions(); await loadLocalProjects();
   updateActivity("Dossier local autorisé.");
 });
 
@@ -11383,7 +11383,8 @@ if (goalModeDevPanel && window.NoonGoalModeDevUi) {
     elements: { root: goalModeDevPanel },
     api: window.NoonGoalModeDevUi.createGoalModeDevApi({ fetchImpl: window.fetch.bind(window) }),
   });
-  void goalModeDevUi.init();
+  // B4b : l'entrée « Goal Mode DEV » du Control Center n'apparaît que flag actif.
+  void goalModeDevUi.init().then((available) => window.NoonControlCenter?.setGoalModeDevAvailable?.(available === true));
 }
 loadAutomations();
 refreshWakeWordSettings();

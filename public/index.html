@@ -74,7 +74,7 @@
           <div id="integrationsList"></div>
         </div>
         <button class="operations-toggle" type="button" data-panel="approvalsPanel" aria-expanded="false">Actions en attente</button>
-        <div id="approvalsPanel" class="operations-content" hidden><div id="approvalsList">Aucune action.</div><section id="goalModeDevPanel" class="goal-mode-dev" hidden aria-label="Goal Mode DEV"></section></div>
+        <div id="approvalsPanel" class="operations-content" hidden><div id="approvalsList">Aucune action.</div></div>
         <button class="operations-toggle" type="button" data-panel="automationsPanel" aria-expanded="false">Automatisations</button>
         <div id="automationsPanel" class="operations-content" hidden><div id="automationsList">Chargement…</div></div>
         <button class="operations-toggle" type="button" data-panel="productionPanel" aria-expanded="false">Production</button>
@@ -1151,6 +1151,7 @@
           <p id="noonVoicePolicy" role="status" data-state="LIVE_READY">Voix actuelle : Cedar · Arbor sera activée uniquement après disponibilité API vérifiée · aucun fallback automatique</p>
           <section id="controlCenterOverview" aria-live="polite"></section>
           <section id="controlCenterSection" aria-live="polite" hidden></section>
+          <div id="controlCenterGoalModeDev" class="control-center__goal-mode-dev" hidden><section id="goalModeDevPanel" class="goal-mode-dev" hidden aria-label="Goal Mode DEV"></section></div>
         </main>
       </div>
     </div>
