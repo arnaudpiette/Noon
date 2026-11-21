@@ -1,0 +1,299 @@
+"use strict";
+
+// UI des connecteurs MCP sans navigateur : vm + faux DOM (innerHTML interdit).
+
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const test = require("node:test");
+const vm = require("node:vm");
+
+const PUBLIC = path.join(__dirname, "..", "public");
+const UI_SOURCE = fs.readFileSync(path.join(PUBLIC, "mcp-connectors-ui.js"), "utf8");
+
+class FakeElement {
+  constructor(tag, id = null) {
+    this.tagName = String(tag).toUpperCase();
+    this.id = id;
+    this.children = [];
+    this.hidden = false;
+    this.disabled = false;
+    this.checked = false;
+    this.className = "";
+    this.dataset = {};
+    this.listeners = {};
+    this.attributes = {};
+    this.ownText = "";
+    this.open = false;
+    this.type = "";
+    const element = this;
+    this.classList = {
+      toggle(name, force) {
+        const names = new Set(element.className.split(/\s+/).filter(Boolean));
+        if (force === undefined ? !names.has(name) : force) names.add(name); else names.delete(name);
+        element.className = [...names].join(" ");
+      },
+      contains: (name) => element.className.split(/\s+/).includes(name),
+    };
+  }
+  get childNodes() { return this.children; }
+  get textContent() { return this.ownText + this.children.map((child) => child.textContent).join(""); }
+  set textContent(value) { this.children = []; this.ownText = String(value); }
+  set innerHTML(_) { throw new Error("innerHTML interdit"); }
+  get innerHTML() { throw new Error("innerHTML interdit"); }
+  insertAdjacentHTML() { throw new Error("insertAdjacentHTML interdit"); }
+  append(...nodes) { this.children.push(...nodes); }
+  prepend(...nodes) { this.children.unshift(...nodes); }
+  replaceChildren(...nodes) { this.children = [...nodes]; this.ownText = ""; }
+  setAttribute(name, value) { this.attributes[name] = String(value); }
+  getAttribute(name) { return this.attributes[name] ?? null; }
+  addEventListener(type, handler) { (this.listeners[type] ||= []).push(handler); }
+  dispatch(type) { for (const handler of this.listeners[type] || []) handler({ target: this }); }
+  click() { this.dispatch("click"); }
+  querySelectorAll(selector) {
+    if (selector !== "button") throw new Error(`sélecteur non pris en charge : ${selector}`);
+    return all(this).filter((node) => node.tagName === "BUTTON");
+  }
+  showModal() { this.open = true; }
+  close() { this.open = false; }
+}
+
+const all = (node) => node.children.flatMap((child) => [child, ...all(child)]);
+const find = (root, predicate) => all(root).find(predicate);
+const buttonByText = (root, text) => find(root, (node) => node.tagName === "BUTTON" && node.textContent === text);
+const checkboxFor = (root, name) => find(root, (node) => node.tagName === "LABEL" && node.textContent === name)?.children[0];
+const settle = async () => { for (let index = 0; index < 8; index += 1) await new Promise((resolve) => setImmediate(resolve)); };
+
+function loadUi() {
+  const document = { createElement: (tag) => new FakeElement(tag) };
+  const context = { document, URL, Promise, Object, String, Array, Set, Map, Number, JSON, Error, TypeError, setTimeout: () => 0 };
+  context.window = context;
+  vm.runInNewContext(UI_SOURCE, context);
+  return { ui: context.window.NoonMcpConnectorsUi, document };
+}
+
+const FIGMA = Object.freeze({
+  id: "figma", displayName: "Figma", url: "https://mcp.figma.com/mcp", auth: "oauth", dataClass: "PRIVATE",
+  note: "Serveur distant officiel.", readOnlyTools: ["get_metadata", "get_screenshot", "whoami"],
+});
+
+function harness({ responses = {}, openExternal = null, confirm = () => true } = {}) {
+  const { ui, document } = loadUi();
+  const calls = [];
+  let listBody = responses.list || { status: "ok", catalog: [{ ...FIGMA, installed: false }], servers: [] };
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url, method: options.method, headers: { ...(options.headers || {}) }, body: options.body ? JSON.parse(options.body) : undefined });
+    const key = `${options.method} ${url}`;
+    const reply = typeof responses[key] === "function" ? responses[key]() : responses[key];
+    if (options.method === "GET") {
+      if (responses.listStatus) return { ok: false, status: responses.listStatus, json: async () => ({ status: "error", code: "MCP_DISABLED" }) };
+      const body = typeof listBody === "function" ? listBody() : listBody;
+      return { ok: true, status: 200, json: async () => body };
+    }
+    if (reply?.error) return { ok: false, status: reply.status || 400, json: async () => ({ status: "error", code: reply.error, message: "brut serveur" }) };
+    return { ok: true, status: 200, json: async () => reply || { status: "ok" } };
+  };
+  const scheduled = [];
+  const root = new FakeElement("section", "mcpConnectorsPanel");
+  root.ownerDocument = document;
+  root.hidden = true;
+  const controller = ui.createMcpConnectorsController({
+    elements: { root }, api: ui.createMcpConnectorsApi({ fetchImpl }), openExternal, confirmImpl: confirm,
+    schedule: (fn) => { scheduled.push(fn); },
+  });
+  return { ui, controller, root, calls, scheduled, setList: (body) => { listBody = body; } };
+}
+
+const installedFigma = (overrides = {}) => ({
+  ...FIGMA, installed: true, userApprovedReadOnly: [], status: { state: "NOT_CONNECTED", lastError: null, toolCount: 0, hasCredentials: false },
+  tools: { exposed: [], hidden: [] }, ...overrides,
+});
+
+test("flag OFF (404) : panneau masqué, init renvoie false, GET sans en-tête d'action", async () => {
+  const h = harness({ responses: { listStatus: 404 } });
+  assert.equal(await h.controller.init(), false);
+  assert.equal(h.root.hidden, true);
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.calls[0].method, "GET");
+  assert.equal(h.calls[0].headers["X-Noon-Request"], undefined);
+});
+
+test("catalogue : installation par POST avec X-Noon-Request ; valeurs serveur rendues en texte", async () => {
+  const hostile = { ...FIGMA, displayName: "<img src=x onerror=alert(1)>", installed: false };
+  const h = harness({ responses: { list: { status: "ok", catalog: [hostile], servers: [] } } });
+  assert.equal(await h.controller.init(), true);
+  assert.equal(h.root.hidden, false);
+  assert.ok(h.root.textContent.includes("<img src=x onerror=alert(1)>"), "nom affiché tel quel, en texte");
+  buttonByText(h.root, "Installer").click();
+  await settle();
+  const post = h.calls.find((call) => call.method === "POST");
+  assert.equal(post.url, "/api/mcp/servers/figma/install");
+  assert.equal(post.headers["X-Noon-Request"], "1");
+  assert.deepEqual(post.body, {});
+});
+
+test("connexion OAuth : seule une URL https est ouverte, puis l'état est relu jusqu'à CONNECTED", async () => {
+  const opened = [];
+  let state = "NOT_CONNECTED";
+  const h = harness({
+    openExternal: async (url) => { opened.push(url); },
+    responses: {
+      list: () => ({ status: "ok", catalog: [{ ...FIGMA, installed: true }], servers: [installedFigma({ status: { state, toolCount: state === "CONNECTED" ? 12 : 0 } })] }),
+      "POST /api/mcp/servers/figma/connect": { status: "AUTH_REQUIRED", authorizationUrl: "https://www.figma.com/oauth?client_id=c&state=s" },
+    },
+  });
+  await h.controller.init();
+  buttonByText(h.root, "Connecter").click();
+  await settle();
+  assert.deepEqual(opened, ["https://www.figma.com/oauth?client_id=c&state=s"]);
+  assert.ok(h.root.textContent.includes("Termine l'autorisation Figma dans ton navigateur"));
+  assert.equal(h.scheduled.length, 1, "relecture planifiée");
+  state = "CONNECTED";
+  await h.scheduled.shift()();
+  await settle();
+  assert.ok(h.root.textContent.includes("Connecté. Valide ensuite les outils à exposer."));
+  assert.equal(h.scheduled.length, 0, "relecture arrêtée une fois connecté");
+});
+
+test("connexion OAuth : une URL non https n'est jamais ouverte", async () => {
+  for (const authorizationUrl of ["http://evil.example/oauth", "javascript:alert(1)", "https://user:pw@evil.example/", "file:///etc/passwd"]) {
+    const opened = [];
+    const h = harness({
+      openExternal: async (url) => { opened.push(url); },
+      responses: {
+        list: { status: "ok", catalog: [], servers: [installedFigma()] },
+        "POST /api/mcp/servers/figma/connect": { status: "AUTH_REQUIRED", authorizationUrl },
+      },
+    });
+    await h.controller.init();
+    buttonByText(h.root, "Connecter").click();
+    await settle();
+    assert.deepEqual(opened, [], authorizationUrl);
+    assert.ok(h.root.textContent.includes("Adresse d'autorisation invalide"), authorizationUrl);
+    assert.equal(h.scheduled.length, 0);
+  }
+});
+
+test("mode local uniquement : message dédié, sans reprendre le message brut du serveur", async () => {
+  const h = harness({
+    responses: {
+      list: { status: "ok", catalog: [], servers: [installedFigma()] },
+      "POST /api/mcp/servers/figma/connect": { error: "MCP_REMOTE_BLOCKED", status: 409 },
+    },
+  });
+  await h.controller.init();
+  buttonByText(h.root, "Connecter").click();
+  await settle();
+  assert.ok(h.root.textContent.includes("Serveur distant bloqué : Noon est en mode local uniquement ou hors ligne."));
+  assert.equal(h.root.textContent.includes("brut serveur"), false);
+});
+
+test("outils : cases à cocher, enregistrement explicite par PUT dans l'ordre du catalogue", async () => {
+  const h = harness({
+    responses: {
+      list: { status: "ok", catalog: [], servers: [installedFigma({
+        status: { state: "CONNECTED", toolCount: 3 }, userApprovedReadOnly: ["whoami"],
+        tools: { exposed: [{ name: "whoami" }], hidden: [{ name: "get_metadata", level: "WRITE", reason: "READ_ONLY_NOT_APPROVED_BY_USER" }, { name: "get_screenshot", level: "WRITE", reason: "SERVER_DECLARES_WRITE" }] },
+      })] },
+    },
+  });
+  await h.controller.init();
+  assert.ok(h.root.textContent.includes("exposé à Noon"));
+  assert.ok(h.root.textContent.includes("masqué : le serveur le déclare en écriture"));
+  const save = () => buttonByText(h.root, "Enregistrer les outils validés");
+  assert.equal(save().disabled, true, "rien à enregistrer tant que rien ne change");
+  const metadata = checkboxFor(h.root, "get_metadata");
+  metadata.checked = true; metadata.dispatch("change");
+  assert.equal(save().disabled, false);
+  save().click();
+  await settle();
+  const put = h.calls.find((call) => call.method === "PUT");
+  assert.equal(put.url, "/api/mcp/servers/figma/read-only-tools");
+  assert.equal(put.headers["X-Noon-Request"], "1");
+  assert.deepEqual(put.body, { tools: ["get_metadata", "whoami"] });
+});
+
+test("désinstallation : confirmation obligatoire, aucun DELETE si refusée", async () => {
+  for (const accepted of [false, true]) {
+    const h = harness({ confirm: () => accepted, responses: { list: { status: "ok", catalog: [], servers: [installedFigma()] } } });
+    await h.controller.init();
+    buttonByText(h.root, "Désinstaller").click();
+    await settle();
+    assert.equal(h.calls.some((call) => call.method === "DELETE"), accepted);
+  }
+});
+
+test("contrat source : aucun innerHTML, aucun stockage navigateur ni jeton manipulé", () => {
+  assert.equal(/innerHTML|insertAdjacentHTML|localStorage|sessionStorage|document\.cookie/.test(UI_SOURCE), false);
+  assert.equal(/access_token|refresh_token/.test(UI_SOURCE), false);
+});
+
+// ---- Control Center : entrée « Connecteurs MCP » ----
+
+function loadControlCenter() {
+  const ids = ["controlCenter", "controlCenterNavigation", "controlCenterOverview", "controlCenterSection",
+    "controlCenterLoading", "controlCenterView", "openControlCenterButton", "closeControlCenter",
+    "refreshControlCenter", "quickSettings", "controlCenterGoalModeDev", "controlCenterMcp"];
+  const nodes = Object.fromEntries(ids.map((id) => [id, new FakeElement(id === "controlCenter" ? "dialog" : "div", id)]));
+  nodes.controlCenterView.value = "USER";
+  nodes.controlCenterGoalModeDev.hidden = true;
+  nodes.controlCenterMcp.hidden = true;
+  const sentinel = new FakeElement("section", "mcpConnectorsPanel");
+  nodes.controlCenterMcp.append(sentinel);
+  const urls = [];
+  let refreshes = 0;
+  const fetch = async (url) => {
+    urls.push(url);
+    const body = url.includes("/overview")
+      ? { snapshot: { availableSections: ["approvals", "goals"], sections: {}, needsAttention: [], overallStatus: "OK" } }
+      : { section: { sectionId: "goals", summary: "Objectifs", status: "OK", items: [] } };
+    return { ok: true, json: async () => body };
+  };
+  const window = { NoonMcpConnectors: { refresh: async () => { refreshes += 1; } } };
+  const document = { getElementById: (id) => nodes[id] || null, createElement: (tag) => new FakeElement(tag) };
+  vm.runInNewContext(fs.readFileSync(path.join(PUBLIC, "control-center.js"), "utf8"), { window, document, fetch, URLSearchParams, encodeURIComponent, Promise, Object, String, Array });
+  const navLabels = () => nodes.controlCenterNavigation.children.map((button) => button.textContent);
+  const navButton = (label) => nodes.controlCenterNavigation.children.find((button) => button.textContent === label);
+  return { api: window.NoonControlCenter, nodes, sentinel, urls, navLabels, navButton, refreshes: () => refreshes };
+}
+
+test("Control Center : entrée MCP seulement si disponible, panneau jamais vidé, cohabitation avec Goal Mode DEV", async () => {
+  const h = loadControlCenter();
+  await h.api.open();
+  assert.deepEqual(h.navLabels(), ["Vue d’ensemble", "Validations", "Objectifs"]);
+  h.api.setMcpAvailable(true);
+  h.api.setGoalModeDevAvailable(true);
+  assert.deepEqual(h.navLabels(), ["Vue d’ensemble", "Validations", "Objectifs", "Goal Mode DEV", "Connecteurs MCP"]);
+  h.navButton("Connecteurs MCP").click();
+  await settle();
+  assert.equal(h.nodes.controlCenterMcp.hidden, false);
+  assert.equal(h.nodes.controlCenterGoalModeDev.hidden, true);
+  assert.equal(h.nodes.controlCenterOverview.hidden, true);
+  assert.equal(h.refreshes(), 1, "état relu à l'ouverture du panneau");
+  assert.equal(h.urls.some((url) => url.includes("mcp")), false, "aucune section serveur « mcp » demandée");
+  h.navButton("Goal Mode DEV").click();
+  await settle();
+  assert.equal(h.nodes.controlCenterMcp.hidden, true);
+  assert.equal(h.nodes.controlCenterGoalModeDev.hidden, false);
+  h.navButton("Objectifs").click();
+  await settle();
+  assert.equal(h.nodes.controlCenterMcp.hidden, true);
+  assert.deepEqual(h.nodes.controlCenterMcp.children, [h.sentinel]);
+  h.navButton("Connecteurs MCP").click();
+  await settle();
+  h.api.setMcpAvailable(false);
+  await settle();
+  assert.deepEqual(h.navLabels(), ["Vue d’ensemble", "Validations", "Objectifs", "Goal Mode DEV"]);
+  assert.equal(h.nodes.controlCenterMcp.hidden, true);
+  assert.equal(h.nodes.controlCenterOverview.hidden, false);
+});
+
+test("câblage : script chargé avant app.js, conteneur dans le Control Center, route servie", () => {
+  const index = fs.readFileSync(path.join(PUBLIC, "index.html"), "utf8");
+  assert.ok(index.indexOf('<script src="mcp-connectors-ui.js"></script>') < index.indexOf('<script src="app.js"></script>'));
+  assert.match(index, /<div id="controlCenterMcp" class="control-center__mcp" hidden><section id="mcpConnectorsPanel"/);
+  const app = fs.readFileSync(path.join(PUBLIC, "app.js"), "utf8");
+  assert.match(app, /window\.NoonControlCenter\?\.setMcpAvailable\?\.\(available === true\)/);
+  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
+  assert.match(server, /req\.url === "\/mcp-connectors-ui\.js"/);
+});

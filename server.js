@@ -6725,6 +6725,11 @@ if (req.method === "GET" && req.url === "/dev-project-rules-ui.js") {
 }
 
 // B3a : sert le contrôleur de l'UI d'approbation Goal Mode DEV (masqué si flag OFF).
+if (req.method === "GET" && req.url === "/mcp-connectors-ui.js") {
+  res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", "X-Content-Type-Options": "nosniff" });
+  return res.end(fs.readFileSync(path.join(__dirname, "public", "mcp-connectors-ui.js")));
+}
+
 if (req.method === "GET" && req.url === "/goal-mode-dev-ui.js") {
   const filePath = path.join(__dirname, "public", "goal-mode-dev-ui.js");
   res.writeHead(200, {

@@ -19,6 +19,10 @@
   const GOAL_MODE_DEV_SECTION = "goal-mode-dev";
   const goalModeDevContainer = document.getElementById("controlCenterGoalModeDev");
   let goalModeDevAvailable = false;
+  // Connecteurs MCP : même principe, entrée visible seulement flag connectors.mcp actif.
+  const MCP_SECTION = "mcp-connectors";
+  const mcpContainer = document.getElementById("controlCenterMcp");
+  let mcpAvailable = false;
   let lastSectionIds = [];
   const labels = Object.freeze({
     overview: "Vue d’ensemble", connections: "Connexions", jobs: "Travaux", approvals: "Validations",
@@ -28,6 +32,7 @@
     offline: "Local et hors ligne", configuration: "Configuration", backups: "Sauvegardes",
     evaluations: "Évaluations", diagnostics: "Diagnostics",
     [GOAL_MODE_DEV_SECTION]: "Goal Mode DEV",
+    [MCP_SECTION]: "Connecteurs MCP",
   });
   const actionLabels = Object.freeze({
     RUN_QUICK_DIAGNOSTIC: "Vérifier", CHECK_CONNECTION: "Tester", CHECK_EXTENSION: "Tester",
@@ -143,11 +148,12 @@
     lastSectionIds = sectionIds;
     navigation.replaceChildren();
     const goalModeDev = goalModeDevAvailable && goalModeDevContainer ? [GOAL_MODE_DEV_SECTION] : [];
-    for (const id of ["overview", ...sectionIds.filter((item) => item !== GOAL_MODE_DEV_SECTION), ...goalModeDev]) {
+    const mcp = mcpAvailable && mcpContainer ? [MCP_SECTION] : [];
+    for (const id of ["overview", ...sectionIds.filter((item) => item !== GOAL_MODE_DEV_SECTION && item !== MCP_SECTION), ...goalModeDev, ...mcp]) {
       const button = element("button", id === activeSection ? "active" : "", labels[id] || id);
       button.type = "button";
       button.dataset.section = id;
-      button.addEventListener("click", () => (id === GOAL_MODE_DEV_SECTION ? showGoalModeDev() : load(id)));
+      button.addEventListener("click", () => (id === GOAL_MODE_DEV_SECTION ? showGoalModeDev() : id === MCP_SECTION ? showMcp() : load(id)));
       navigation.append(button);
     }
   }
@@ -162,9 +168,31 @@
     if (!goalModeDevAvailable || !goalModeDevContainer) return load("overview");
     activeSection = GOAL_MODE_DEV_SECTION;
     loading.hidden = true; overview.hidden = true; section.hidden = true;
+    if (mcpContainer) mcpContainer.hidden = true;
     goalModeDevContainer.hidden = false;
     markActive(GOAL_MODE_DEV_SECTION);
     return Promise.resolve();
+  }
+
+  // Panneau MCP, monté une fois par app.js et jamais vidé ici (cases cochées conservées).
+  function showMcp() {
+    if (!mcpAvailable || !mcpContainer) return load("overview");
+    activeSection = MCP_SECTION;
+    loading.hidden = true; overview.hidden = true; section.hidden = true;
+    if (goalModeDevContainer) goalModeDevContainer.hidden = true;
+    mcpContainer.hidden = false;
+    markActive(MCP_SECTION);
+    window.NoonMcpConnectors?.refresh?.()?.catch?.(() => {});
+    return Promise.resolve();
+  }
+
+  function setMcpAvailable(value) {
+    mcpAvailable = value === true;
+    if (navigation.childNodes.length) renderNavigation(lastSectionIds);
+    if (!mcpAvailable && activeSection === MCP_SECTION) {
+      if (mcpContainer) mcpContainer.hidden = true;
+      if (dialog.open) void load("overview");
+    }
   }
 
   function setGoalModeDevAvailable(value) {
@@ -179,6 +207,7 @@
   async function load(sectionId = "overview", force = false) {
     activeSection = sectionId;
     if (goalModeDevContainer) goalModeDevContainer.hidden = true;
+    if (mcpContainer) mcpContainer.hidden = true;
     loading.hidden = false; overview.hidden = true; section.hidden = true;
     const query = new URLSearchParams({ view: viewSelect.value });
     if (force) query.set("refresh", "1");
@@ -211,9 +240,9 @@
 
   openButton?.addEventListener("click", () => { document.getElementById("quickSettings").hidden = true; void open(); });
   closeButton.addEventListener("click", () => dialog.close());
-  const reload = () => (activeSection === GOAL_MODE_DEV_SECTION ? showGoalModeDev() : load(activeSection, true));
+  const reload = () => (activeSection === GOAL_MODE_DEV_SECTION ? showGoalModeDev() : activeSection === MCP_SECTION ? showMcp() : load(activeSection, true));
   refreshButton.addEventListener("click", reload);
   viewSelect.addEventListener("change", reload);
   dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
-  window.NoonControlCenter = Object.freeze({ open, refresh: reload, setGoalModeDevAvailable, showGoalModeDev });
+  window.NoonControlCenter = Object.freeze({ open, refresh: reload, setGoalModeDevAvailable, showGoalModeDev, setMcpAvailable, showMcp });
 })();

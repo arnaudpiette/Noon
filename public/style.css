@@ -2570,6 +2570,16 @@ body.dev-preview-resizing *{
 
 /* B3a — Goal Mode DEV */
 .goal-mode-dev { display: grid; gap: 12px; margin-top: 16px; }
+.mcp-connectors { display: grid; gap: 12px; }
+.mcp-connectors__subtitle { margin: 8px 0 0; font-size: 15px; }
+.mcp-connectors__tools { margin: 12px 0 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }
+.mcp-connectors__tools legend { font-weight: 600; padding: 0 4px; }
+.mcp-connectors__hint { margin: 0 0 8px; color: var(--muted); font-size: 13px; }
+.mcp-connectors__tool-list { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 6px; }
+.mcp-connectors__tool-list li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; font-size: 13px; }
+.mcp-connectors__tool-list label { display: flex; align-items: center; gap: 6px; }
+.mcp-connectors__tool-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.mcp-connectors__tool-status { color: var(--muted); }
 .goal-mode-dev__new-run, .goal-mode-dev__controls, .goal-mode-dev__actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .goal-mode-dev__run, .goal-mode-dev__approval, .goal-mode-dev__proposal, .goal-mode-dev__reconciliation {
   display: grid; gap: 6px; padding: 12px; border: 1px solid var(--border, rgba(127, 127, 127, 0.3)); border-radius: 10px;
