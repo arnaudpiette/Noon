@@ -34,6 +34,10 @@ contextBridge.exposeInMainWorld("noon", Object.freeze({
     state: (id, state) => invoke("noon:recorder-state", id, state),
     chunk: (id, index) => invoke("noon:recorder-chunk", id, index),
     exportAudio: (id) => invoke("noon:recorder-export", id),
+    saveTranscript: (id, text, source) => invoke("noon:recorder-transcript", id, text, source),
+    exportTranscript: (id, format) => invoke("noon:recorder-export-transcript", id, format),
+    saveAnalysis: (id, analysis, revision) => invoke("noon:recorder-analysis", id, analysis, revision),
+    exportReport: (id, format) => invoke("noon:recorder-report", id, format),
   }),
   onDeepLink: (callback) => {
     if (typeof callback !== "function") return () => {};
