@@ -3752,6 +3752,7 @@ const PUBLIC_ROUTES = new Set([
   "/app",
   "/style.css",
   "/app.js",
+  "/recorder.js",
   "/ui-utils.js",
   "/control-center.js",
   "/live-voice-core.js",
@@ -4560,6 +4561,11 @@ if (req.method === "GET" && req.url === "/app.js") {
   });
 
   return res.end(fs.readFileSync(filePath));
+}
+
+if (req.method === "GET" && req.url === "/recorder.js") {
+  res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", "X-Content-Type-Options": "nosniff" });
+  return res.end(fs.readFileSync(path.join(__dirname, "public", "recorder.js")));
 }
 
 // Sert les fonctions d'échappement partagées par le renderer.
