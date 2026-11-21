@@ -100,4 +100,4 @@ async function generateArtifact({ format, title, content, outputDirectory, proje
   catch (error) { try { fs.unlinkSync(temporary); } catch {} throw error; }
 }
 
-module.exports = { FORMATS, generateArtifact, verifyArtifact };
+module.exports = { FORMATS, generateArtifact, verifyArtifact, buildBuffer };
