@@ -463,6 +463,8 @@ function registerIpc() {
     if (!mime) throw new Error("Format audio refusé.");
     return { canceled: false, record: recorderStore.importAudio(source, mime, path.basename(source)) };
   });
+  registerTrustedHandler("noon:recorder-rename", (_event, id, title) => recorderStore.rename(id, title));
+  registerTrustedHandler("noon:recorder-delete", (_event, id) => recorderStore.remove(id));
   registerTrustedHandler("noon:recorder-create", (_event, options) => recorderStore.create(options));
   registerTrustedHandler("noon:recorder-append", (_event, id, chunk) => recorderStore.append(id, chunk));
   registerTrustedHandler("noon:recorder-state", (_event, id, state) => recorderStore.setState(id, state));
