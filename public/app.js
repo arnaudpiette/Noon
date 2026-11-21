@@ -3559,7 +3559,7 @@ async function devTerminalRequest(
         : JSON.stringify(body),
   });
 
-  let data = null;
+  let data;
 
   try {
     data = await response.json();
@@ -6777,6 +6777,7 @@ devWorkspaceAgentRun.addEventListener("click", async () => {
 
         return;
       } catch (legacyError) {
+        // eslint-disable-next-line no-ex-assign -- l'échec du mode classique remplace celui du mode natif
         error =
           legacyError;
       }
@@ -9860,18 +9861,8 @@ longTermMemoryEnabledInput.addEventListener("change", () => memoryAction("enable
 addMemoryButton.addEventListener("click", async () => { if (!newMemoryTextInput.value.trim()) return; await memoryAction("add", { text: newMemoryTextInput.value }); newMemoryTextInput.value = ""; await loadLongTermMemories(); updateActivity("Souvenir ajouté."); });
 clearMemoriesButton.addEventListener("click", async () => { if (!window.confirm("Vider toute la mémoire durable de Noon ?")) return; await memoryAction("clear"); await loadLongTermMemories(); updateActivity("Mémoire durable vidée."); });
 
-function memoryValueLabel(memory) {
-  if (typeof memory.value === "string") return memory.value;
-  if (memory.value?.text) return String(memory.value.text);
-  if (memory.value?.rule) return String(memory.value.rule);
-  return JSON.stringify(memory.value || {});
-}
 function statusLabel(status) {
   return ({ confirmed: "Confirmé", candidate: "Candidat", pending_review: "À vérifier", historical: "Historique", superseded: "Remplacé", deleted: "Supprimé", inferred: "J’en déduis · à confirmer", temporary: "Information temporaire", blocked: "Information bloquée", expired: "Expirée", rejected: "Refusée" })[status] || status;
-}
-async function structuredMemoryAction(action, payload = {}) {
-  const response = await fetch("/personal-intelligence/memories", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
-  const data = await response.json(); if (!response.ok) throw new Error(data.message || "Mémoire structurée indisponible."); return data.result;
 }
 let privateMemoryShowAll = false;
 let visiblePrivateMemoryIds = new Set();
@@ -9997,10 +9988,6 @@ async function updatePrivateMemorySettings() {
   updateActivity("Préférences de mémoire enregistrées localement.");
 }
 
-async function loadPrivateMemoryWhy() {
-  const response = await fetch("/private-memory/why", { cache: "no-store" }); const data = await response.json();
-  if (response.ok) privateMemoryWhy.textContent = data.reason || "Aucune mémoire privée utilisée.";
-}
 async function loadLivingProjects() {
   const response=await fetch("/personal-intelligence/projects",{cache:"no-store"});const data=await response.json();if(!response.ok)throw new Error(data.message);livingProjectsList.replaceChildren();
   if(!data.projects.length){livingProjectsList.textContent="Aucune fiche projet structurée.";return;}
@@ -10069,7 +10056,7 @@ function prepareTextForSpeech(text) {
     .replace(/^#{1,6}\s+/gm, "")
     .replace(/^\s*[-•]\s+/gm, "")
     .replace(/^\s*\d+\.\s+/gm, "")
-    .replace(/[\*_~>]/g, "")
+    .replace(/[*_~>]/g, "")
     .replace(/\s+/g, " ")
     .trim();
 
@@ -10801,7 +10788,6 @@ let mediaRecorder = null;
 let audioChunks = [];
 let recordingTimer = null;
 let recordingStartedAt = 0;
-let isListening = false;
 let discardRecording = false;
 let silenceAudioContext = null;
 let silenceAnalyser = null;
@@ -10842,7 +10828,6 @@ function finishVoiceRecording() {
     mediaRecorder &&
     mediaRecorder.state === "recording"
   ) {
-    isListening = false;
     micButton.classList.remove("active");
     micButton.setAttribute("aria-pressed", "false");
     updateActivity("Noon transcrit…");
@@ -11025,8 +11010,6 @@ async function startRecording() {
       async () => {
         stopSilenceDetection();
         window.clearTimeout(recordingTimer);
-
-        isListening = false;
         micButton.classList.remove("active");
         micButton.setAttribute("aria-pressed", "false");
 
@@ -11074,8 +11057,6 @@ async function startRecording() {
 
     mediaRecorder.start();
     startSilenceDetection(mediaStream);
-
-    isListening = true;
     recordingStartedAt = Date.now();
 
     micButton.classList.add("active");
@@ -11093,8 +11074,6 @@ async function startRecording() {
     );
   } catch (error) {
     releaseMicrophone();
-
-    isListening = false;
     micButton.classList.remove("active");
     micButton.setAttribute("aria-pressed", "false");
 
@@ -11513,8 +11492,6 @@ function stopNoonAudio() {
   if (window.noonLiveVoice) {
     window.noonLiveVoice.disconnect({ announce: false });
   }
-
-  isListening = false;
   micButton?.classList.remove("active");
   micButton?.setAttribute("aria-pressed", "false");
 

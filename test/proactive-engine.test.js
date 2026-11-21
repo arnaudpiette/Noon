@@ -8,7 +8,6 @@ const path = require("path");
 const { createPriorityEngine } = require("../services/personal-intelligence/priority-engine");
 const { createDeduplicationService } = require("../services/personal-intelligence/deduplication-service");
 const { createProactiveEngine } = require("../services/proactive/proactive-engine");
-const { createSignalAdapters } = require("../services/proactive/signal-adapters");
 const { createPersonalDatabase } = require("../services/persistence/database");
 const { createPersonalIntelligenceRepository } = require("../services/persistence/repositories/personal-intelligence-repository");
 

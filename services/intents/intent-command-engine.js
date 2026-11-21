@@ -7,7 +7,7 @@ const { adaptInput } = require("./input-adapters");
 const { createCommandRegistry } = require("./command-registry");
 const { createRecentEntityContext } = require("./recent-entity-context");
 const { parseTemporal } = require("./temporal-parser");
-const { INTENT_POLICY_VERSION, IntentError, validateNormalizedIntent } = require("./intent-schema");
+const { INTENT_POLICY_VERSION, validateNormalizedIntent } = require("./intent-schema");
 const { resolveResearchScope } = require("../research/research-resolver");
 
 const MODE_PATTERN = /\b(?:passe\s+en\s+|active\s+le\s+|mets?\s+le\s+)?mode\s+(dev|da|soutenance|focus|normal)\b|\bretour\s+(?:au\s+)?normal\b/i;

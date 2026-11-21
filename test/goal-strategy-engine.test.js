@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { createGoalRegistry, createGoalStrategyEngine, GoalError } = require("../services/goals");
+const { createGoalRegistry, createGoalStrategyEngine } = require("../services/goals");
 const { createDecisionSupportEngine } = require("../services/decision/decision-support-engine");
 const { normalizeDecisionRequestV2 } = require("../services/decision/decision-schema");
 

@@ -289,7 +289,6 @@ test("4C-1B double appel concurrent : un seul dispatch, même ticket ou autre co
   try {
     const service = f.makeService();
     const prepared = f.prepare(service);
-    const ticket = prepared.ticket;
     const outcomes = await Promise.allSettled([resume(service, prepared), resume(service, prepared)]);
     assert.deepEqual(outcomes.map((item) => item.status).sort(), ["fulfilled", "rejected"]);
     // 4C-1C : la seconde reprise simultanée bute sur l'approbation en vol.
@@ -338,7 +337,6 @@ test("4C-1B crash entre CAS et dispatch : aucun replay, réconciliation requise 
     });
     const service = f.makeService(crashing);
     const prepared = f.prepare(service);
-    const ticket = prepared.ticket;
     await assert.rejects(() => resume(service, prepared), { code: "SYNTHETIC_CRASH" });
     assert.equal(f.calls.length, 0);
     assert.equal(f.status(), "MAY_HAVE_STARTED");
@@ -458,7 +456,6 @@ test("4C-1B permission retirée ou contrat élargi : refus sans CAS ni dispatch"
       g.setCapabilityOverride(override);
       const service = g.makeService();
       const prepared = g.prepare(service);
-    const ticket = prepared.ticket;
       await assert.rejects(() => resume(service, prepared),
         { code: "GOAL_MODE_DEV_DISPATCH_PERMISSION_ESCALATION" });
       assert.equal(g.calls.length, 0);
@@ -511,7 +508,6 @@ test("4C-1B fichier cible modifié après préparation : refus sans CAS (reposit
       fs.writeFileSync(path.join(g.repositoryRoot, "target.js"), "module.exports = 2;\n");
       const service = g.makeService();
       const prepared = g.prepare(service);
-    const ticket = prepared.ticket;
       mutate(g.repositoryRoot);
       await assert.rejects(() => resume(service, prepared),
         { code: "GOAL_MODE_DEV_DISPATCH_TARGET_CHANGED" });
@@ -524,7 +520,6 @@ test("4C-1B fichier cible modifié après préparation : refus sans CAS (reposit
   try {
     const service = h.makeService();
     const prepared = h.prepare(service);
-    const ticket = prepared.ticket;
     await resume(service, prepared); // cible inchangée : dispatch autorisé
     assert.equal(h.calls.length, 1);
   } finally { h.close(); }
@@ -556,7 +551,6 @@ test("4C-1B issue dispatcher en erreur : incertaine, jamais rejouée, sans fuite
     };
     const service = f.makeService();
     const prepared = f.prepare(service);
-    const ticket = prepared.ticket;
     await assert.rejects(() => resume(service, prepared), (error) => {
       assert.equal(error.code, "GOAL_MODE_DEV_DISPATCH_OUTCOME_UNCERTAIN");
       assert.equal(error.details.causeCode, "NATIVE_DEV_FAILED");
@@ -653,7 +647,6 @@ test("4C-1B Goal en pause, archivé, non confirmé ou en nouvelle version : refu
       },
     });
     const prepared = g.prepare(service);
-    const ticket = prepared.ticket;
     fail = true;
     await assert.rejects(() => resume(service, prepared), { code: "GOAL_MODE_DEV_DISPATCH_GOAL_STALE" });
     assert.equal(g.calls.length, 0);

@@ -27,7 +27,7 @@ function redact(value) {
     .replace(/sk-[A-Za-z0-9_-]{8,}/g, "[SECRET]")
     .replace(/Bearer\s+[^\s]+/gi, "Bearer [REDACTED]")
     .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[EMAIL]")
-    .replace(/\/(?:Users|home)\/[^\s:'\"]+/g, (match) => `${path.sep}[PRIVATE_PATH]${path.extname(match)}`)
+    .replace(/\/(?:Users|home)\/[^\s:'"]+/g, (match) => `${path.sep}[PRIVATE_PATH]${path.extname(match)}`)
     .replace(/[A-Za-z0-9_-]*(?:token|secret|api[_-]?key)[A-Za-z0-9_-]*\s*[:=]\s*[^\s,;]+/gi, "secret=[REDACTED]")
     .slice(0, 500);
 }

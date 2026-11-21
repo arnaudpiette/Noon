@@ -32,7 +32,7 @@ class ProviderPrivacyError extends Error {
 const SECRET_PATTERNS = Object.freeze([
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i,
   /\b(?:sk|ghp|github_pat)_[A-Za-z0-9_-]{16,}\b/,
-  /\bBearer\s+[A-Za-z0-9._~+\/-]{12,}=*\b/i,
+  /\bBearer\s+[A-Za-z0-9._~+/-]{12,}=*\b/i,
   /\b(?:client_secret|access_token|refresh_token|authorization_code|code_verifier|password|session_secret)\b\s*[:=]\s*[^\s,;]{6,}/i,
   /\bsafe_?storage_?payload\b\s*[:=]\s*[^\s,;]{6,}/i,
   /(?:^|[\\/])(?:\.env(?:\.[^\\/]+)?|credentials?(?:\.json)?|token-store(?:\.json)?)(?:$|[\\/])/i,

@@ -62,7 +62,7 @@
         options.body = JSON.stringify(body || {});
       }
       const response = await fetchImpl(path, options);
-      let payload = {};
+      let payload;
       try { payload = await response.json(); } catch { payload = {}; }
       if (!response.ok) throw apiError(response.status, payload);
       return payload;

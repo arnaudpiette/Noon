@@ -44,7 +44,7 @@ function createMcpClientManager({
   // soumis à la politique locale, y compris pour la reconnexion silencieuse.
   function assertRemoteAllowed(server) {
     if (LOOPBACK_HOSTS.has(new URL(server.url).hostname)) return;
-    let allowed = false;
+    let allowed;
     try { allowed = Boolean(server.remoteCapability) && isRemoteAllowed(server.remoteCapability) === true; } catch { allowed = false; }
     if (!allowed) {
       emit("mcp.remote_blocked", { serverId: server.id });

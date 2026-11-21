@@ -677,7 +677,7 @@ function parseDevProblems(
     // src/file.js:12:5: error message
     const compact =
       line.match(
-        /^(.+?):(\d+):(\d+)\s*[:\-]?\s*(error|warning)\s+(.+)$/i
+        /^(.+?):(\d+):(\d+)\s*[:-]?\s*(error|warning)\s+(.+)$/i
       );
 
     if (compact) {

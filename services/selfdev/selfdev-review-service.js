@@ -48,7 +48,7 @@ function createSelfDevReviewService({ worktreeService, evidenceService, runRevie
 
   async function review(id, { signal = null } = {}) {
     const manifest = worktreeService.describe(id);
-    let allowed = false;
+    let allowed;
     try { allowed = isRemoteAllowed() === true; } catch { allowed = false; }
     if (!allowed) throw reviewError("SELFDEV_REVIEW_BLOCKED", "Relecture distante bloquée par le mode local uniquement ou l'absence de réseau.");
     const policy = worktreeService.check(id);

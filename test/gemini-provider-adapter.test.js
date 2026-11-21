@@ -1,7 +1,6 @@
 "use strict";
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { EventEmitter } = require("node:events");
 const { PROVIDERS } = require("../services/models/model-registry");
 const { createProviderPrivacyPolicy } = require("../services/security/provider-privacy-policy");
 const { createGeminiProviderAdapter, normalizeError, toGeminiRequest } = require("../services/models/providers/gemini-provider");

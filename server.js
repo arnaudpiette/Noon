@@ -633,7 +633,6 @@ const REALTIME_MAX_SESSION_MS = Number(
 const REALTIME_IDLE_TIMEOUT_MS = Number(
   process.env.NOON_REALTIME_IDLE_TIMEOUT_MS || 2 * 60 * 1000
 );
-const MAX_REALTIME_SDP_BYTES = 128 * 1024;
 const rememberedRealtimeTurns = new Set();
 const creativeBriefStore = createCreativeBriefStore(path.join(DATA_DIRECTORY, "creative-brief.json"));
 const personalBriefStore = createCreativeBriefStore(path.join(DATA_DIRECTORY, "personal-brief.json"));
@@ -1940,7 +1939,7 @@ const benchmarkDevDelegationRunner = createDevDelegationRunner({
   operationalSecurityPolicy,
   observability: (event, metadata) => toolAuditLog.append(`delegation.${event}`, metadata),
 });
-let benchmarkRuntime = null;
+let benchmarkRuntime;
 let benchmarkControlPlane = null;
 try {
   benchmarkRuntime = createBenchmarkRuntime({
@@ -4432,7 +4431,7 @@ async function askAI(
               .map((mail, index) => {
                 const safeSubject = String(
                   mail.subject || "Sans objet"
-                ).replace(/[\[\]]/g, "");
+                ).replace(/[[\]]/g, "");
 
                 const details = [
                   mail.gmailUrl
@@ -5598,8 +5597,6 @@ function saveConversationSummaries() {
 }
 
 const MAX_HISTORY_EXCHANGES = 30;
-const MAX_HISTORY_MESSAGES =
-  MAX_HISTORY_EXCHANGES * 2;
 const MAX_HISTORY_CHARS = 4000;
 
 function normalizeSessionId(value) {
@@ -6177,7 +6174,7 @@ if (req.url.startsWith("/ask")) {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const question = url.searchParams.get("q");
-    const focus = url.searchParams.get("focus");
+    
 
     if (!question) {
       res.writeHead(400);

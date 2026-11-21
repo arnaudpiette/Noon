@@ -627,12 +627,6 @@ test(
        * le crash window entre réconciliation
        * et persistance 5.0D-2.
        */
-      const directPlanner =
-        f.durable;
-
-      const rawService =
-        directPlanner;
-
       // On reproduit le résultat en supprimant
       // volontairement toute proposition durable
       // après l'appel via un StepStore séparé.

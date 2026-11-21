@@ -32,7 +32,7 @@ const definitions = [
   ["proactive.recommend-only", "proactive", { sent: false, recommendation: true }],
   ["daily-brief.offline", "daily-brief", { generated: true, remote: false }],
   ["artifacts.preview-first", "artifacts", { preview: true, written: false }],
-  ["voice.identity", "voice", { voice: "arbor", identityStable: true }, {}, "voice"],
+  ["voice.identity", "voice", { voice: "cedar", identityStable: true }, {}, "voice"],
   ["reliability.degraded", "reliability", { degradedGracefully: true }],
   ["privacy.redaction", "privacy", { secretLogged: false, redacted: true }],
   ["performance.smoke", "performance", { bounded: true }, {}, "contract", { latencyMs: 25 }],

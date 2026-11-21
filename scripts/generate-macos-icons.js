@@ -17,28 +17,6 @@ const montserratUltraBold = path.join(
   "Montserrat-Black.ttf"
 );
 
-async function transparentLetter(width, height) {
-  const { data, info } = await sharp(source)
-    .trim({ background: "#ffffff", threshold: 14 })
-    .resize({ width, height, fit: "inside" })
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-
-  for (let index = 0; index < data.length; index += 4) {
-    const distanceFromWhite = 255 - Math.min(
-      data[index],
-      data[index + 1],
-      data[index + 2]
-    );
-    data[index + 3] = Math.round(
-      data[index + 3] * distanceFromWhite / 255
-    );
-  }
-
-  return sharp(data, { raw: info }).png().toBuffer();
-}
-
 async function makeApplicationMaster() {
   // Gabarit Dock macOS : carré arrondi comparable à Chrome et WhatsApp,
   // avec un N Montserrat UltraBold contenu dans les marges existantes.

@@ -200,7 +200,6 @@ async function buildFixture({
 }
 
 let passFixturePromise;
-let failFixturePromise;
 
 function passFixture() {
   passFixturePromise ||= buildFixture({
@@ -211,17 +210,8 @@ function passFixture() {
   return passFixturePromise;
 }
 
-function failFixture() {
-  failFixturePromise ||= buildFixture({
-    functionalStatus: "FAIL",
-    mutateAfterFunctional: false,
-  });
-
-  return failFixturePromise;
-}
-
 after(async () => {
-  for (const promise of [passFixturePromise, failFixturePromise]) {
+  for (const promise of [passFixturePromise]) {
     if (!promise) continue;
 
     const fixture = await promise;

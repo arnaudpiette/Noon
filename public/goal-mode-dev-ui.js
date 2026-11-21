@@ -108,7 +108,7 @@
       } catch {
         return { ok: false, status: 0, code: "NETWORK_UNAVAILABLE", body: null };
       }
-      let json = null;
+      let json;
       try { json = await response.json(); } catch { json = null; }
       if (response.ok) return { ok: true, status: response.status, body: json?.result ?? json };
       return { ok: false, status: response.status, code: json?.code || null, body: json };

@@ -561,7 +561,7 @@ function createGoalModeDevDispatchService({
       fail("GOAL_MODE_DEV_DISPATCH_RUN_NOT_RUNNING", "Le Goal Run n'est plus RUNNING.");
     }
     const goalRef = state.contract?.goalRef;
-    let goal = null;
+    let goal;
     try { goal = goalStrategyEngine.registry.get(goalRef?.goalId); } catch { goal = null; }
     if (!goal || goal.goalId !== goalRef.goalId || goal.status !== "ACTIVE" ||
         goal.userConfirmed !== true || goal.version !== goalRef.goalVersion ||

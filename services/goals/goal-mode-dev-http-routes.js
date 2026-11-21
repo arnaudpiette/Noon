@@ -60,7 +60,7 @@ function createGoalModeDevHttpHandler({
   }
 
   function goal(goalId) {
-    let value = null;
+    let value;
     try { value = goalStrategyEngine.registry.get(goalId); } catch { value = null; }
     if (!value) throw httpError("GOAL_MODE_DEV_GOAL_NOT_FOUND");
     return value;

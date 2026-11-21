@@ -275,7 +275,7 @@ function createDevTaskJournal({ directory, now = () => Date.now(), fs = nodeFs }
   function interrupted() {
     const output = [];
     for (const name of fs.readdirSync(root).filter((item) => item.endsWith(".json")).sort()) {
-      let record = null;
+      let record;
       try { record = JSON.parse(fs.readFileSync(path.join(root, name), "utf8")); } catch { record = null; }
       if (!record || typeof record !== "object" || typeof record.taskId !== "string") {
         output.push({ taskId: null, state: "UNREADABLE", unreadable: true, file: name });

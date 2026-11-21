@@ -53,7 +53,7 @@ test("B19L transmet le candidat découvert et l'état structuré au seam de spaw
 });
 
 test("B19L traverse le runner réel avec PATH réduit, extension validée et faux spawn", async () => {
-  const home=root(), file=extension(home,"2.0.0"), workspace=root(), events=[]; fs.mkdirSync(path.join(workspace,"src")); fs.writeFileSync(path.join(workspace,"src","value.js"),"module.exports=1;\n"); fs.writeFileSync(path.join(workspace,"package.json"),JSON.stringify({scripts:{test:"node --test"}}));
+  const home=root(); extension(home,"2.0.0"); const workspace=root(), events=[]; fs.mkdirSync(path.join(workspace,"src")); fs.writeFileSync(path.join(workspace,"src","value.js"),"module.exports=1;\n"); fs.writeFileSync(path.join(workspace,"package.json"),JSON.stringify({scripts:{test:"node --test"}}));
   execFileSync("git",["init","-q"],{cwd:workspace}); execFileSync("git",["config","user.email","fixture@example.test"],{cwd:workspace}); execFileSync("git",["config","user.name","Fixture"],{cwd:workspace}); execFileSync("git",["add","."],{cwd:workspace}); execFileSync("git",["commit","-qm","fixture"],{cwd:workspace});
   const agent=createCodexSpecialistAgent({executableResolver:()=>resolveCodexExecutable({env:{PATH:"/missing"},homeDirectory:home,platform:"darwin",arch:"x64"}),versionProvider:()=>({status:"VERSION_OK",version:"codex-cli fixture"}),spawnProcess:()=>fakeChild(),observability:(event,details)=>events.push({event,details})});
   const policy=createOperationalSecurityPolicy({allowedRootsProvider:()=>[],allowedWriteRootsProvider:()=>[]}); const runner=createDevDelegationRunner({specialistAgent:agent,operationalSecurityPolicy:policy,validationExecutor:async(command)=>({command,status:"PASS",durationMs:0})});

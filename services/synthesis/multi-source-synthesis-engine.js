@@ -114,7 +114,7 @@ function canonicalSubject(value) {
 function extractAtomicClaim(evidence, sentence, index) {
   const clean = String(sentence).trim();
   if (!clean) return null;
-  let subject = ""; let value = ""; let predicate = "value";
+  let subject; let value; let predicate = "value";
   const assignment = clean.match(/^\s*([A-Za-zÀ-ÿ0-9_. -]{2,100})\s*(?:=|:|\best\b|\bdevient\b)\s*([^.;]{1,220})/i);
   if (assignment) {
     subject = canonicalSubject(assignment[1]); value = assignment[2].trim();

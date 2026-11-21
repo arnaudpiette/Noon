@@ -1,7 +1,7 @@
 "use strict";
 
 const {
-  GOAL_STATUSES, GoalError, RELATION_TYPES, STRATEGY_STATUSES, clean, id,
+  GOAL_STATUSES, GoalError, RELATION_TYPES, clean, id,
   normalizeCriterion, normalizeMilestone,
 } = require("./goal-schema");
 const { createGoalRegistry } = require("./goal-registry");
@@ -89,7 +89,7 @@ function createGoalStrategyEngine({
   }
   function evaluateAlignment(subject, scope = {}, evidence = []) { const goals = registry.list({ ...scope }).filter((goal) => goal.status === "ACTIVE"); const result = alignment.strategicSignal(subject, goals, evidence); emit("goal_alignment_evaluated", { alignmentCount: result.alignments.length, knownCount: result.alignments.filter((item) => item.alignment !== "UNKNOWN").length }); return result; }
   function assessProgress(goalId, evidence = {}) { const goal = registry.get(goalId); const assessment = progress.assess(goal, evidence); emit("goal_progress_evaluated", { goalId, method: assessment.progress.method, trajectory: assessment.trajectory }); return assessment; }
-  function reviewGoal(goalId, input = {}) { const goal = registry.get(goalId); const assessment = assessProgress(goalId, input.evidence || {}); const review = Object.freeze({ reviewId: id("goal-review"), goalId, reviewedAt: now().toISOString(), progress: assessment.progress, trajectory: assessment.trajectory, blockerRefs: assessment.blockers, nextMilestoneId: assessment.nextMilestone, strategyFit: ["FIT", "REVIEW_NEEDED", "UNKNOWN"].includes(input.strategyFit) ? input.strategyFit : "UNKNOWN", evidenceRefs: assessment.evidenceRefs, source: input.source || "manual_review" }); registry.putReview(review); emit("goal_review_completed", { goalId, reviewId: review.reviewId, trajectory: review.trajectory }); return review; }
+  function reviewGoal(goalId, input = {}) { registry.get(goalId); const assessment = assessProgress(goalId, input.evidence || {}); const review = Object.freeze({ reviewId: id("goal-review"), goalId, reviewedAt: now().toISOString(), progress: assessment.progress, trajectory: assessment.trajectory, blockerRefs: assessment.blockers, nextMilestoneId: assessment.nextMilestone, strategyFit: ["FIT", "REVIEW_NEEDED", "UNKNOWN"].includes(input.strategyFit) ? input.strategyFit : "UNKNOWN", evidenceRefs: assessment.evidenceRefs, source: input.source || "manual_review" }); registry.putReview(review); emit("goal_review_completed", { goalId, reviewId: review.reviewId, trajectory: review.trajectory }); return review; }
   function relevantGoals({ query = "", projectId = null, workspaceId = null, profileScope = "arnaud", remote = true, limit = 5 } = {}) {
     const words = new Set(String(query).toLocaleLowerCase("fr").split(/[^\p{L}\p{N}]+/u).filter((word) => word.length > 3));
     return registry.list({ profileScope }).filter((goal) => goal.status === "ACTIVE" && (!remote || goal.sensitivity !== "LOCAL_ONLY"))

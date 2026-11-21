@@ -112,7 +112,7 @@ function createDevWorkspaceAgentExecutionLoop({
       terminalId = terminal.id;
     }
     const startedAt = iso();
-    const started = terminalService.runCommand({
+    terminalService.runCommand({
       sessionId: execution.workspaceSessionId,
       terminalId,
       command,

@@ -1,7 +1,7 @@
 "use strict";
 
 const { createCapacityService, fingerprint } = require("./capacity-service");
-const { CAPACITY_HORIZONS, OVERLOAD_STATES, enumValue, id, iso, normalizeGuardrail, normalizePortfolioItem } = require("./portfolio-schema");
+const { CAPACITY_HORIZONS, enumValue, id, iso, normalizeGuardrail, normalizePortfolioItem } = require("./portfolio-schema");
 
 const ACTIVE = new Set(["ACTIVE"]);
 function sumKnown(items, key, capacityType = "USER_TIME") {
@@ -75,7 +75,6 @@ function createPortfolioCapacityEngine({ capacityService = createCapacityService
       dependencyRefs: item.dependencies, blockedUntil: item.blockedUntil, futureCompression: Boolean(item.blockedUntil && item.deadline && Date.parse(item.deadline) > Date.parse(item.blockedUntil)) }));
     const goalView = allocation(items, raw.goals || [], raw.guardrails || []);
     const human = items.filter((item) => item.capacityDemand.capacityType === "USER_TIME");
-    const noon = items.filter((item) => item.capacityDemand.capacityType === "NOON_BACKGROUND");
     const fragments = human.filter((item) => item.capacityDemand.expectedEstimate !== null && item.capacityDemand.expectedEstimate < 60);
     const snapshotId = id("portfolio_snapshot", [capacity.capacitySnapshotId, items.map((item) => item.portfolioItemId), raw.portfolioRevision]);
     const result = Object.freeze({ portfolioSnapshotId: snapshotId, horizon, workspaceRef, profileScope, items, availableCapacity: capacity,

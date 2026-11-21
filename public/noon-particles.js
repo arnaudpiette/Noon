@@ -269,11 +269,6 @@
       );
     }
 
-    const centerX = width / 2;
-    const centerY = height / 2;
-    const dx = particle.x - centerX;
-    const dy = particle.y - centerY;
-    const distance = Math.max(1, Math.hypot(dx, dy));
     let attraction = 0.105;
     let noise = 0.015;
 

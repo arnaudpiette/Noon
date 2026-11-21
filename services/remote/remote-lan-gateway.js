@@ -72,7 +72,7 @@ function createRemoteLanGateway({
     const current = now();
     for (const [token, entry] of invitations) if (entry.expiresAt <= current || entry.used) invitations.delete(token);
     for (const [id, expiresAt] of seenEnvelopes) if (expiresAt <= current) seenEnvelopes.delete(id);
-    for (const [id, entry] of pairings) if (entry.state === "PENDING" && entry.expiresAt <= current) entry.state = "EXPIRED";
+    for (const [, entry] of pairings) if (entry.state === "PENDING" && entry.expiresAt <= current) entry.state = "EXPIRED";
   }
 
   // Côté Mac (Control Center, IP-3) : invitation à afficher en QR.

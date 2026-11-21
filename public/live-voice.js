@@ -185,8 +185,6 @@
 
     buildInstructions() {
       const context = bridge.getContext();
-      const language = elements.language.value;
-      const accent = elements.accent.value.trim() || "none";
       return [
         this.voiceIdentity.styleInstructions,
         context.mode === "DEV"

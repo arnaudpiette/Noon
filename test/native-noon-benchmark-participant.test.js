@@ -248,8 +248,7 @@ test(
     });
 
     assert.equal(
-      received
-        [CONTEXT_MANIFEST_EXPERIMENT],
+      received[CONTEXT_MANIFEST_EXPERIMENT],
       "OFF"
     );
 

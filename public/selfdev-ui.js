@@ -60,7 +60,7 @@
         options.body = JSON.stringify(body || {});
       }
       const response = await fetchImpl(path, options);
-      let payload = {};
+      let payload;
       try { payload = await response.json(); } catch { payload = {}; }
       if (!response.ok) throw Object.assign(new Error(String(payload.message || "Erreur SelfDev.")), { code: String(payload.code || (response.status === 404 ? "SELFDEV_DISABLED" : "SELFDEV_ERROR")), status: response.status });
       return payload;

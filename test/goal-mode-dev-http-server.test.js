@@ -55,7 +55,7 @@ async function startChild({ flags, safeMode = true, sharedRoot = null }) {
       try {
         const log = JSON.parse(require("fs").readFileSync(require("path").join(process.env.NOON_DATA_DIR, "tool-audit.json"), "utf8"));
         const list = Array.isArray(log) ? log : (log.entries || log.events || []);
-        events = list.filter((item) => /goals\.mode-dev\.(reconcile_scan|RECONCILE_SCAN_SKIPPED_LOCK|lock_takeover)/.test(item.event))
+        events = list.filter((item) => /goals\\.mode-dev\\.(reconcile_scan|RECONCILE_SCAN_SKIPPED_LOCK|lock_takeover)/.test(item.event))
           .map((item) => ({ event: item.event, reason: item.details && item.details.reason, mode: item.details && item.details.mode }));
       } catch {}
       process.stdout.write("NOON_AUDIT=" + JSON.stringify(events) + "\\n");
@@ -87,7 +87,7 @@ async function startChild({ flags, safeMode = true, sharedRoot = null }) {
       headers: { "Content-Type": "application/json", ...(trusted ? { "x-noon-request": "1" } : {}) },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    let json = null;
+    let json;
     try { json = await response.json(); } catch { json = null; }
     return { status: response.status, body: json };
   }
@@ -248,7 +248,7 @@ test("B3b serveur réel : verrou périmé sur ce Mac (ESRCH) repris au démarrag
   const stale = JSON.stringify({ pid: deadPid, hostname: os.hostname(), token: "stale-token", createdAt: "2026-10-13T12:00:00.000Z" });
   fs.writeFileSync(path.join(dataDirectory, "noon-data.lock"), stale);
   const first = await startChild({ flags: true, safeMode: false, sharedRoot: root });
-  let firstEvents = 0;
+  let firstEvents;
   try {
     firstEvents = first.audit().length;
     assert.deepEqual(first.audit().map((item) => [item.event, item.mode || null]), [

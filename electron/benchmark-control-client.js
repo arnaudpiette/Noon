@@ -69,7 +69,7 @@ async function executeBenchmarkControlCommand(command, { loadAuthSecret, fetchIm
       body: definition.method === "GET" ? undefined : JSON.stringify(definition.body(command)),
     });
   } catch { throw commandError("NOON_RUNTIME_UNAVAILABLE"); }
-  let payload = null;
+  let payload;
   try { payload = await response.json(); } catch { throw commandError("NOON_RESPONSE_INVALID"); }
   const safePayload = redact(payload, secret);
   if (!response.ok) throw Object.assign(commandError(String(safePayload?.code || "BENCHMARK_CONTROL_FAILED")), { httpStatus: response.status });

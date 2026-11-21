@@ -32,7 +32,7 @@ async function pdfBuffer(title, content) {
 }
 
 async function xlsxBuffer(title, content) {
-  const rows = lines(content).filter((line) => line.length).map((line) => line.split(/\t|,(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)/).map((cell) => cell.replace(/^\"|\"$/g, "")));
+  const rows = lines(content).filter((line) => line.length).map((line) => line.split(/\t|,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map((cell) => cell.replace(/^"|"$/g, "")));
   if (!rows.length) rows.push([title]);
   const columnName = (index) => { let value = index + 1; let output = ""; while (value) { value -= 1; output = String.fromCharCode(65 + value % 26) + output; value = Math.floor(value / 26); } return output; };
   const sheetRows = rows.map((row, rowIndex) => `<row r="${rowIndex + 1}">${row.map((cell, columnIndex) => `<c r="${columnName(columnIndex)}${rowIndex + 1}" t="inlineStr"><is><t xml:space="preserve">${escapeXml(cell)}</t></is></c>`).join("")}</row>`).join("");

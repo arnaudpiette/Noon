@@ -14,7 +14,7 @@ function page(title, message) {
 
 async function createMcpLoopbackReceiver({ timeoutMs = 10 * 60 * 1000, onCallback }) {
   let expectedState = null;
-  let redirectUri = null;
+  let redirectUri;
   let handled = false;
   let timeout = null;
   const server = http.createServer(async (req, res) => {

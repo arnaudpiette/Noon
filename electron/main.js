@@ -27,7 +27,7 @@ const {
 const { createRotatingLogger, migrateLegacyData } = require("../lib/internal-data");
 const { FOCUS_CATALOG } = require("../lib/focus-catalog");
 const { WakeWordService } = require("../services/wake-word-service");
-const { isDueToday, nextRunAt } = require("../lib/creative-brief");
+const { nextRunAt } = require("../lib/creative-brief");
 const { createLocalPermissionStore } = require("../lib/local-permissions");
 const { createPasswordVerifier, verifyPassword } = require("../services/security/local-password-verifier");
 const { executeBenchmarkControlCommand, parseBenchmarkControlCommand, publicCommandError } = require("./benchmark-control-client");
@@ -1029,7 +1029,7 @@ async function startNoon() {
     const response = await fetch(`${NOON_ORIGIN}/health`).catch(() => null);
     if (!response?.ok || (await response.json()).service !== "Noon") {
       logNoonEvent("error", "port-conflict", "Port local 3000 indisponible");
-      throw new Error("Le port 3000 est occupé par une autre application.");
+      throw new Error("Le port 3000 est occupé par une autre application.", { cause: error });
     }
   }
   if (!safeModeRequested && !uiValidationRequested) {

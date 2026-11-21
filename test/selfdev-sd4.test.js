@@ -152,7 +152,6 @@ class FakeElement {
 const all = (node) => node.children.flatMap((child) => [child, ...all(child)]);
 const find = (root, predicate) => all(root).find(predicate);
 const buttonByText = (root, text) => find(root, (node) => node.tagName === "BUTTON" && node.textContent === text);
-const checkboxFor = (root, name) => find(root, (node) => node.tagName === "LABEL" && node.textContent === name)?.children[0];
 const settle = async () => { for (let index = 0; index < 8; index += 1) await new Promise((resolve) => setImmediate(resolve)); };
 
 

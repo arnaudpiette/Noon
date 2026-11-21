@@ -69,7 +69,7 @@ test("B11 an unresolved microphone permission cannot retain core readiness", asy
 test("B11 a stalled optional SafeStorage secret cannot retain core readiness", async () => {
   const stalledSecret = new Promise(() => {});
   let secretSettled = false;
-  let coreReady = false;
+  let coreReady;
 
   startOptionalStartupPhase({
     operation: () => stalledSecret,

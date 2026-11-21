@@ -2,7 +2,6 @@
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
-const path = require("node:path");
 const { validateBoundSession } = require("../dev-benchmark-service");
 
 const AUTHORIZATION_TTL_MS = 20 * 60_000;

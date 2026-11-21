@@ -23,9 +23,7 @@ function createDevProjectRuleRepository(wrapper, { now = () => new Date().toISOS
     return { kind: "sqlite", create, get, update: (input) => change(input), disable: (input) => change({ ...input, status: "DISABLED" }), enable, remove: (input) => change({ ...input, status: "DELETED" }), listActiveForProject: ({ projectId, ownerProfileScope }) => active(clean(projectId), clean(ownerProfileScope)), listForProject: ({ projectId, ownerProfileScope }) => listed(clean(projectId), clean(ownerProfileScope)) };
   }
   function all() { return wrapper.load().dev_project_rules || []; }
-  function save(items) { const state = wrapper.load(); state.dev_project_rules = items; wrapper.save(state); }
   function get(id) { return all().find((item) => item.ruleId === id) || null; }
-  function create(input = {}) { const scope = validateInput(input); const text = assertText(input.text); if (all().filter((x) => x.projectId === scope.projectId && x.ownerProfileScope === scope.ownerProfileScope && x.status === "ACTIVE").length >= MAX_ACTIVE_RULES) throw new DevProjectRuleError("RULE_LIMIT_REACHED", "Nombre maximal de règles actives atteint."); const at = now(); const value = { ruleId: crypto.randomUUID(), schemaVersion: 1, ...scope, kind: "BEHAVIOR", text, status: "ACTIVE", version: 1, createdAt: at, updatedAt: at, deletedAt: null, createdBy: ACTOR, updatedBy: ACTOR }; save([...all(), value]); return value; }
   // rename() protège un fichier écrit, pas une comparaison de version entre processus.
   // Les mutations sont donc refusées : aucune garantie inter-processus n'est simulée.
   function rejectMutation(input = {}) { assertActor(input.actor); validateInput(input); throw new DevProjectRuleError("RULE_MUTATION_STORAGE_UNAVAILABLE", "Mutation de règle indisponible sans stockage transactionnel."); }

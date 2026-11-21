@@ -141,8 +141,8 @@ function inspectPath(request, allowedRoots, allowedWriteRoots, actionClass) {
   const requestedPath = request.args?.path || request.args?.outputDirectory || request.targets?.find((item) => item?.path)?.path;
   if (!requestedPath) return { checked: false, allowed: true, exists: false, symlink: false, pathState: "MISSING", selectedRoots: [] };
   const resolved = path.resolve(String(requestedPath));
-  let checkedPath = resolved;
-  let exists = false;
+  let checkedPath;
+  let exists;
   try {
     exists = fs.existsSync(resolved);
     if (exists) checkedPath = fs.realpathSync(resolved);

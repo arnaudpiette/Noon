@@ -48,42 +48,6 @@ const html =
     "utf8"
   );
 
-function buttonIdFor(label) {
-  const buttons =
-    [...html.matchAll(
-      /<button\b[\s\S]*?<\/button>/gi
-    )].map(
-      (match) => match[0]
-    );
-
-  const button =
-    buttons.find(
-      (candidate) =>
-        candidate
-          .replace(/<[^>]+>/g, " ")
-          .replace(/\s+/g, " ")
-          .trim()
-          .includes(label)
-    );
-
-  assert.ok(
-    button,
-    `${label} doit exister`
-  );
-
-  const id =
-    button.match(
-      /\bid="([^"]+)"/i
-    )?.[1];
-
-  assert.ok(
-    id,
-    `${label} doit avoir un id`
-  );
-
-  return id;
-}
-
 test(
   "un clic de conversation invalide les anciens rendus de sidebar",
   () => {

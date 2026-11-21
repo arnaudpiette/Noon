@@ -1,7 +1,7 @@
 "use strict";
 
 const crypto = require("node:crypto");
-const { DEVICE_SCOPES, DEVICE_STATUSES, DEVICE_TYPES, SYNC_PROTOCOL_VERSION, negotiateProtocol } = require("./sync-schema");
+const { DEVICE_SCOPES, DEVICE_STATUSES, DEVICE_TYPES, negotiateProtocol } = require("./sync-schema");
 
 function digest(value) { return crypto.createHash("sha256").update(String(value)).digest("hex"); }
 function equalDigest(left, right) { const a = Buffer.from(String(left), "hex"); const b = Buffer.from(String(right), "hex"); return a.length === b.length && crypto.timingSafeEqual(a, b); }

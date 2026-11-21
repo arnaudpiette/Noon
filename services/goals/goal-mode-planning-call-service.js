@@ -1065,8 +1065,7 @@ function createGoalModePlanningCallService({
       throw error;
     }
 
-    const started =
-      runStore
+    runStore
         .markPlanningMayHaveStarted(
           runId,
           {
