@@ -11397,6 +11397,16 @@ if (mcpConnectorsPanel && window.NoonMcpConnectorsUi) {
   window.NoonMcpConnectors = Object.freeze({ refresh: () => mcpConnectorsUi.refresh() });
   void mcpConnectorsUi.init().then((available) => window.NoonControlCenter?.setMcpAvailable?.(available === true));
 }
+// SelfDev : entrée du Control Center visible seulement si selfdev.v1 est actif (sinon 404).
+const selfDevPanel = document.getElementById("selfDevPanel");
+if (selfDevPanel && window.NoonSelfDevUi) {
+  const selfDevUi = window.NoonSelfDevUi.createSelfDevController({
+    elements: { root: selfDevPanel },
+    api: window.NoonSelfDevUi.createSelfDevApi({ fetchImpl: window.fetch.bind(window) }),
+  });
+  window.NoonSelfDev = Object.freeze({ refresh: () => selfDevUi.refresh() });
+  void selfDevUi.init().then((available) => window.NoonControlCenter?.setSelfDevAvailable?.(available === true));
+}
 loadAutomations();
 refreshWakeWordSettings();
 refreshOpenAIKeyStatus();

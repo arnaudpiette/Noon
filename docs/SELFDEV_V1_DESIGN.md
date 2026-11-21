@@ -191,7 +191,11 @@ commit, de fusion ou d'application au working tree en V1 : l'utilisateur intègr
    worktree, `forbiddenPaths` SelfDev injectés à la projection, contrôle post-run, flag
    `selfdev.v1` OFF par défaut. Aucune nouvelle autorité : approbations, budget et
    réconciliation inchangés.
-4. **SD-4 — Revue et proposition.** Relecteur en lecture seule, carte de proposition dans le
+4. **SD-4 — Revue et proposition.** *Livré le 21/11/2026* : relecteur Codex Bridge en
+   lecture seule (`selfdev-review-service.js`, refusé en mode local uniquement, avis stocké
+   comme donnée non fiable), carte « SelfDev » du Control Center (`public/selfdev-ui.js` :
+   cible, copies, étapes base / patch / reproduction / relecture, verdict, « jeter »),
+   workspace résolu par le serveur quand il est unique, tests `test/selfdev-sd4.test.js`. Relecteur en lecture seule, carte de proposition dans le
    Control Center (diff, preuves, avis, risques), actions « ouvrir » et « jeter ».
 5. **Validation P2 sur le Mac** : un bug réel de Noon, du signalement à la proposition, avec
    le critère de la roadmap.
@@ -210,7 +214,8 @@ commit, de fusion ou d'application au working tree en V1 : l'utilisateur intègr
 7. `POST …/patched`, puis `POST …/reproduction` (`testFiles`) ; `GET …/verdict`.
 8. Examiner le diff dans la copie ; la garder ou `DELETE …/<id>` (`discardChanges`).
 
-L'interface (carte de proposition, relecteur) arrive en SD-4.
+Depuis SD-4, ces étapes se font depuis la carte « SelfDev » du Control Center ; le
+`workspaceId` est facultatif quand un seul workspace contient la copie.
 
 ## 8. Décisions (21/11/2026)
 

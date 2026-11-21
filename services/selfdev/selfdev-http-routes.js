@@ -7,7 +7,7 @@
 // le dossier est dans une racine read-write du workspace indiqué). Aucun modèle ici : le
 // patch est produit par un run Goal Mode DEV ordinaire sur le projet du worktree.
 
-const ROUTE = /^\/api\/selfdev\/(status|target|worktrees)(?:\/([a-z0-9][a-z0-9-]{5,47})(?:\/(baseline|patched|reproduction|verdict|check))?)?$/;
+const ROUTE = /^\/api\/selfdev\/(status|target|worktrees)(?:\/([a-z0-9][a-z0-9-]{5,47})(?:\/(baseline|patched|reproduction|verdict|check|review))?)?$/;
 const BODY_LIMIT = 16 * 1024;
 
 function httpError(status, code, message) { return Object.assign(new Error(message), { status, code }); }
@@ -25,15 +25,27 @@ function workspaceIdFrom(body) {
   return value;
 }
 
-// services : () => { targetStore, worktreeService | null, evidenceService | null }
+// workspaceId facultatif : sinon, le serveur cherche l'unique workspace dont une racine
+// read-write contient le worktree. Indice seulement : l'exécuteur sandboxé revérifie.
+function resolveWorkspace(current, id, body) {
+  if (body.workspaceId != null) return workspaceIdFrom(body);
+  const found = typeof current.resolveWorkspaceIds === "function"
+    ? current.resolveWorkspaceIds(current.worktreeService.describe(id).worktreePath) : [];
+  if (found.length === 1) return workspaceIdFrom({ workspaceId: found[0] });
+  throw httpError(409, found.length ? "SELFDEV_WORKSPACE_AMBIGUOUS" : "SELFDEV_WORKSPACE_REQUIRED",
+    found.length ? "Plusieurs workspaces contiennent cette copie : précise lequel." : "Lie d'abord la copie à un workspace dont son dossier est une racine en lecture-écriture.");
+}
+
+// services : () => { targetStore, worktreeService | null, evidenceService | null,
+//   reviewService | null, resolveWorkspaceIds(worktreePath) → string[] }
 function createSelfDevHttpRoutes({ isEnabled, services, observability = () => {} } = {}) {
   if (typeof isEnabled !== "function" || typeof services !== "function") throw new TypeError("isEnabled et services requis.");
   const emit = (event, metadata) => { try { observability(event, metadata); } catch {} };
 
   const matches = (requestPath) => ROUTE.test(String(requestPath || ""));
 
-  function context(id, body) {
-    return Object.freeze({ workspaceId: workspaceIdFrom(body), taskId: `selfdev-${id}`, sessionId: `selfdev:${id}`, permissions: Object.freeze(["TERMINAL_SAFE"]) });
+  function context(current, id, body) {
+    return Object.freeze({ workspaceId: resolveWorkspace(current, id, body), taskId: `selfdev-${id}`, sessionId: `selfdev:${id}`, permissions: Object.freeze(["TERMINAL_SAFE"]) });
   }
 
   function requireWorktrees(current) {
@@ -50,7 +62,7 @@ function createSelfDevHttpRoutes({ isEnabled, services, observability = () => {}
     if (resource === "status" && method === "GET" && !id) {
       const target = current.targetStore.get();
       const worktrees = current.worktreeService ? current.worktreeService.list() : [];
-      return { status: "ok", target, worktrees: worktrees.map((item) => ({ ...item, verdict: current.evidenceService?.verdict(item.id) || null })) };
+      return { status: "ok", target, reviewAvailable: Boolean(current.reviewService), worktrees: worktrees.map((item) => ({ ...item, verdict: current.evidenceService?.verdict(item.id) || null, review: current.reviewService?.load(item.id) || null })) };
     }
     if (method !== "GET" && req.headers["x-noon-request"] !== "1") throw httpError(403, "SELFDEV_REQUEST_REFUSED", "Requête Noon refusée.");
 
@@ -83,22 +95,29 @@ function createSelfDevHttpRoutes({ isEnabled, services, observability = () => {}
       if (id && action === "check" && method === "GET") return { status: "ok", check: worktreeService.check(id) };
       if (id && action === "verdict" && method === "GET") return { status: "ok", verdict: evidenceService.verdict(id) };
       if (id && action === "baseline" && method === "POST") {
-        const payload = exactKeys(await body(), ["workspaceId", "commands"], ["workspaceId", "commands"]);
-        const evidence = await evidenceService.runBaseline(id, { commands: payload.commands, context: context(id, payload) });
+        const payload = exactKeys(await body(), ["workspaceId", "commands"], ["commands"]);
+        const evidence = await evidenceService.runBaseline(id, { commands: payload.commands, context: context(current, id, payload) });
         emit("selfdev.baseline_measured", { id, commands: evidence.commands.length });
         return { status: "ok", verdict: evidenceService.verdict(id) };
       }
       if (id && action === "patched" && method === "POST") {
-        const payload = exactKeys(await body(), ["workspaceId"], ["workspaceId"]);
-        await evidenceService.runPatched(id, { context: context(id, payload) });
+        const payload = exactKeys(await body(), ["workspaceId"]);
+        await evidenceService.runPatched(id, { context: context(current, id, payload) });
         emit("selfdev.patch_measured", { id });
         return { status: "ok", verdict: evidenceService.verdict(id) };
       }
       if (id && action === "reproduction" && method === "POST") {
-        const payload = exactKeys(await body(), ["workspaceId", "testFiles"], ["workspaceId", "testFiles"]);
-        const evidence = await evidenceService.runReproduction(id, { testFiles: payload.testFiles, context: context(id, payload) });
+        const payload = exactKeys(await body(), ["workspaceId", "testFiles"], ["testFiles"]);
+        const evidence = await evidenceService.runReproduction(id, { testFiles: payload.testFiles, context: context(current, id, payload) });
         emit("selfdev.reproduction_measured", { id, reproduced: evidence.reproduction.reproduced === true });
         return { status: "ok", verdict: evidenceService.verdict(id) };
+      }
+      if (id && action === "review" && method === "POST") {
+        exactKeys(await body(), []);
+        if (!current.reviewService) throw httpError(409, "SELFDEV_REVIEW_UNAVAILABLE", "Aucun relecteur disponible sur ce Mac.");
+        const review = await current.reviewService.review(id);
+        emit("selfdev.review_completed", { id, provider: review.provider });
+        return { status: "ok", review };
       }
     }
     throw httpError(405, "SELFDEV_METHOD_NOT_ALLOWED", "Méthode non autorisée.");
@@ -112,7 +131,7 @@ function createSelfDevHttpRoutes({ isEnabled, services, observability = () => {}
     } catch (error) {
       const code = String(error?.code || "");
       const known = /^SELFDEV_/.test(code);
-      const status = error.status || (known ? (code === "SELFDEV_PROTECTED_PATH_CHANGED" ? 409 : 400) : 500);
+      const status = error.status || (known ? (["SELFDEV_PROTECTED_PATH_CHANGED", "SELFDEV_REVIEW_BLOCKED"].includes(code) ? 409 : code === "SELFDEV_REVIEW_UNAVAILABLE" ? 503 : 400) : 500);
       return send(status, { status: "error", code: known ? code : "SELFDEV_ERROR", message: known ? error.message : "Erreur SelfDev." });
     }
   }

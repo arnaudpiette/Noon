@@ -19,10 +19,16 @@
   const GOAL_MODE_DEV_SECTION = "goal-mode-dev";
   const goalModeDevContainer = document.getElementById("controlCenterGoalModeDev");
   let goalModeDevAvailable = false;
-  // Connecteurs MCP : même principe, entrée visible seulement flag connectors.mcp actif.
+  // Panneaux clients montés une fois par app.js (connecteurs MCP, SelfDev) : même principe
+  // que Goal Mode DEV, entrée visible seulement si leur flag est actif, jamais vidés ici.
   const MCP_SECTION = "mcp-connectors";
-  const mcpContainer = document.getElementById("controlCenterMcp");
-  let mcpAvailable = false;
+  const SELFDEV_SECTION = "selfdev";
+  const clientPanels = {
+    [MCP_SECTION]: { container: document.getElementById("controlCenterMcp"), available: false, refresh: () => window.NoonMcpConnectors?.refresh?.() },
+    [SELFDEV_SECTION]: { container: document.getElementById("controlCenterSelfDev"), available: false, refresh: () => window.NoonSelfDev?.refresh?.() },
+  };
+  const isClientPanel = (id) => Object.prototype.hasOwnProperty.call(clientPanels, id);
+  const hideClientPanels = (except = null) => { for (const [id, panel] of Object.entries(clientPanels)) if (id !== except && panel.container) panel.container.hidden = true; };
   let lastSectionIds = [];
   const labels = Object.freeze({
     overview: "Vue d’ensemble", connections: "Connexions", jobs: "Travaux", approvals: "Validations",
@@ -33,6 +39,7 @@
     evaluations: "Évaluations", diagnostics: "Diagnostics",
     [GOAL_MODE_DEV_SECTION]: "Goal Mode DEV",
     [MCP_SECTION]: "Connecteurs MCP",
+    [SELFDEV_SECTION]: "SelfDev",
   });
   const actionLabels = Object.freeze({
     RUN_QUICK_DIAGNOSTIC: "Vérifier", CHECK_CONNECTION: "Tester", CHECK_EXTENSION: "Tester",
@@ -148,12 +155,12 @@
     lastSectionIds = sectionIds;
     navigation.replaceChildren();
     const goalModeDev = goalModeDevAvailable && goalModeDevContainer ? [GOAL_MODE_DEV_SECTION] : [];
-    const mcp = mcpAvailable && mcpContainer ? [MCP_SECTION] : [];
-    for (const id of ["overview", ...sectionIds.filter((item) => item !== GOAL_MODE_DEV_SECTION && item !== MCP_SECTION), ...goalModeDev, ...mcp]) {
+    const panels = Object.entries(clientPanels).filter(([, panel]) => panel.available && panel.container).map(([id]) => id);
+    for (const id of ["overview", ...sectionIds.filter((item) => item !== GOAL_MODE_DEV_SECTION && !isClientPanel(item)), ...goalModeDev, ...panels]) {
       const button = element("button", id === activeSection ? "active" : "", labels[id] || id);
       button.type = "button";
       button.dataset.section = id;
-      button.addEventListener("click", () => (id === GOAL_MODE_DEV_SECTION ? showGoalModeDev() : id === MCP_SECTION ? showMcp() : load(id)));
+      button.addEventListener("click", () => (id === GOAL_MODE_DEV_SECTION ? showGoalModeDev() : isClientPanel(id) ? showClientPanel(id) : load(id)));
       navigation.append(button);
     }
   }
@@ -168,31 +175,10 @@
     if (!goalModeDevAvailable || !goalModeDevContainer) return load("overview");
     activeSection = GOAL_MODE_DEV_SECTION;
     loading.hidden = true; overview.hidden = true; section.hidden = true;
-    if (mcpContainer) mcpContainer.hidden = true;
+    hideClientPanels();
     goalModeDevContainer.hidden = false;
     markActive(GOAL_MODE_DEV_SECTION);
     return Promise.resolve();
-  }
-
-  // Panneau MCP, monté une fois par app.js et jamais vidé ici (cases cochées conservées).
-  function showMcp() {
-    if (!mcpAvailable || !mcpContainer) return load("overview");
-    activeSection = MCP_SECTION;
-    loading.hidden = true; overview.hidden = true; section.hidden = true;
-    if (goalModeDevContainer) goalModeDevContainer.hidden = true;
-    mcpContainer.hidden = false;
-    markActive(MCP_SECTION);
-    window.NoonMcpConnectors?.refresh?.()?.catch?.(() => {});
-    return Promise.resolve();
-  }
-
-  function setMcpAvailable(value) {
-    mcpAvailable = value === true;
-    if (navigation.childNodes.length) renderNavigation(lastSectionIds);
-    if (!mcpAvailable && activeSection === MCP_SECTION) {
-      if (mcpContainer) mcpContainer.hidden = true;
-      if (dialog.open) void load("overview");
-    }
   }
 
   function setGoalModeDevAvailable(value) {
@@ -204,10 +190,38 @@
     }
   }
 
+  // Panneau client (MCP, SelfDev), monté une fois par app.js et jamais vidé ici.
+  function showClientPanel(id) {
+    const panel = clientPanels[id];
+    if (!panel?.available || !panel.container) return load("overview");
+    activeSection = id;
+    loading.hidden = true; overview.hidden = true; section.hidden = true;
+    if (goalModeDevContainer) goalModeDevContainer.hidden = true;
+    hideClientPanels(id);
+    panel.container.hidden = false;
+    markActive(id);
+    panel.refresh()?.catch?.(() => {});
+    return Promise.resolve();
+  }
+
+  function setClientPanelAvailable(id, value) {
+    const panel = clientPanels[id];
+    panel.available = value === true;
+    if (navigation.childNodes.length) renderNavigation(lastSectionIds);
+    if (!panel.available && activeSection === id) {
+      if (panel.container) panel.container.hidden = true;
+      if (dialog.open) void load("overview");
+    }
+  }
+  const showMcp = () => showClientPanel(MCP_SECTION);
+  const setMcpAvailable = (value) => setClientPanelAvailable(MCP_SECTION, value);
+  const showSelfDev = () => showClientPanel(SELFDEV_SECTION);
+  const setSelfDevAvailable = (value) => setClientPanelAvailable(SELFDEV_SECTION, value);
+
   async function load(sectionId = "overview", force = false) {
     activeSection = sectionId;
     if (goalModeDevContainer) goalModeDevContainer.hidden = true;
-    if (mcpContainer) mcpContainer.hidden = true;
+    hideClientPanels();
     loading.hidden = false; overview.hidden = true; section.hidden = true;
     const query = new URLSearchParams({ view: viewSelect.value });
     if (force) query.set("refresh", "1");
@@ -240,9 +254,9 @@
 
   openButton?.addEventListener("click", () => { document.getElementById("quickSettings").hidden = true; void open(); });
   closeButton.addEventListener("click", () => dialog.close());
-  const reload = () => (activeSection === GOAL_MODE_DEV_SECTION ? showGoalModeDev() : activeSection === MCP_SECTION ? showMcp() : load(activeSection, true));
+  const reload = () => (activeSection === GOAL_MODE_DEV_SECTION ? showGoalModeDev() : isClientPanel(activeSection) ? showClientPanel(activeSection) : load(activeSection, true));
   refreshButton.addEventListener("click", reload);
   viewSelect.addEventListener("change", reload);
   dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
-  window.NoonControlCenter = Object.freeze({ open, refresh: reload, setGoalModeDevAvailable, showGoalModeDev, setMcpAvailable, showMcp });
+  window.NoonControlCenter = Object.freeze({ open, refresh: reload, setGoalModeDevAvailable, showGoalModeDev, setMcpAvailable, showMcp, setSelfDevAvailable, showSelfDev });
 })();

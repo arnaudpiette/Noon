@@ -237,6 +237,7 @@ const { createMcpService } = require("./services/mcp");
 const {
   createSelfDevEvidenceService, createSelfDevPathPolicyProvider, createSelfDevTargetStore, createSelfDevWorktreeService,
 } = require("./services/selfdev");
+const { createSelfDevReviewService } = require("./services/selfdev/selfdev-review-service");
 const { createSelfDevHttpRoutes } = require("./services/selfdev/selfdev-http-routes");
 const { createControlCenterService } = require("./services/control-center");
 const noonExampleSearchExtension = require("./services/extensions/sample/noon-example-search");
@@ -1694,9 +1695,27 @@ function selfDevServices() {
     const stateDirectory = path.join(selfDevStateDirectory, "worktrees");
     const worktreeService = createSelfDevWorktreeService({ container, stateDirectory });
     const evidenceService = createSelfDevEvidenceService({ worktreeService, executeValidation: sandboxDevValidationExecutor, stateDirectory });
-    selfDevServiceCache = { key: container, value: { worktreeService, evidenceService } };
+    // Relecteur : Codex Bridge en lecture seule s'il est installé ; appel distant soumis
+    // à la politique locale (REMOTE_REASONING).
+    const reviewService = findCodexExecutable() ? createSelfDevReviewService({
+      worktreeService, evidenceService, stateDirectory,
+      runReview: ({ worktreePath, question, signal }) => runCodexAnalysis({ question, projectPath: worktreePath, signal }),
+      isRemoteAllowed: () => localIntelligenceRuntime.preflight({ requiredCapabilities: ["REMOTE_REASONING"] }).status === "AVAILABLE",
+    }) : null;
+    selfDevServiceCache = { key: container, value: { worktreeService, evidenceService, reviewService } };
   }
-  return { targetStore: selfDevTargetStore, ...selfDevServiceCache.value };
+  return { targetStore: selfDevTargetStore, resolveWorkspaceIds: selfDevWorkspaceIds, ...selfDevServiceCache.value };
+}
+// Workspaces dont une racine read-write contient le worktree (indice ; l'exécuteur revérifie).
+function selfDevWorkspaceIds(worktreePath) {
+  const ids = [];
+  for (const workspace of workspaceEngine.list() || []) {
+    try {
+      const roots = (workspaceEngine.context(workspace.id).roots || []).filter((root) => root.mode === "read-write");
+      if (roots.some((root) => worktreePath === root.path || worktreePath.startsWith(`${root.path}${path.sep}`))) ids.push(workspace.id);
+    } catch { /* workspace illisible ignoré */ }
+  }
+  return ids;
 }
 const selfDevPathPolicyProvider = createSelfDevPathPolicyProvider({ getContext: selfDevServices });
 const selfDevHttpRoutes = createSelfDevHttpRoutes({
@@ -6761,6 +6780,11 @@ if (req.method === "GET" && req.url === "/dev-project-rules-ui.js") {
 }
 
 // B3a : sert le contrôleur de l'UI d'approbation Goal Mode DEV (masqué si flag OFF).
+if (req.method === "GET" && req.url === "/selfdev-ui.js") {
+  res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", "X-Content-Type-Options": "nosniff" });
+  return res.end(fs.readFileSync(path.join(__dirname, "public", "selfdev-ui.js")));
+}
+
 if (req.method === "GET" && req.url === "/mcp-connectors-ui.js") {
   res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", "X-Content-Type-Options": "nosniff" });
   return res.end(fs.readFileSync(path.join(__dirname, "public", "mcp-connectors-ui.js")));

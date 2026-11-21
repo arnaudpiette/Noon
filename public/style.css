@@ -2571,6 +2571,15 @@ body.dev-preview-resizing *{
 /* B3a — Goal Mode DEV */
 .goal-mode-dev { display: grid; gap: 12px; margin-top: 16px; }
 .mcp-connectors { display: grid; gap: 12px; }
+.selfdev { display: grid; gap: 12px; }
+.selfdev__field { display: grid; gap: 4px; margin: 8px 0; font-size: 13px; }
+.selfdev__field input { min-height: 34px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; font: inherit; }
+.selfdev__hint { margin: 6px 0; color: var(--muted); font-size: 12px; }
+.selfdev__comparison { margin: 6px 0; padding-left: 18px; font-size: 13px; }
+.selfdev__steps { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.selfdev__review { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }
+.selfdev__review h4 { margin: 0 0 6px; font-size: 13px; }
+.selfdev__review-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
 .mcp-connectors__subtitle { margin: 8px 0 0; font-size: 15px; }
 .mcp-connectors__tools { margin: 12px 0 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }
 .mcp-connectors__tools legend { font-weight: 600; padding: 0 4px; }
