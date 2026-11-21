@@ -115,6 +115,7 @@ test("les données serveur restent dans le profil isolé et HTTP local reste aut
   assert.equal(isUiValidationExternalRequest("/health"), false);
   assert.equal(isUiValidationExternalRequest("/integrations/gmail/connect"), true);
   assert.equal(isUiValidationExternalRequest("/api/mcp/servers/figma/connect"), true);
+  assert.equal(isUiValidationExternalRequest("/api/selfdev/worktrees"), true);
   assert.equal(isUiValidationExternalRequest("/realtime/session"), true);
   assert.equal(isUiValidationExternalRequest("/api/dev/workspace-terminal/sessions"), true);
 });

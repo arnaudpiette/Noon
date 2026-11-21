@@ -82,6 +82,8 @@ function createGoalModeDevRuntime({
   providerAdapter,
   trackUsage = null,
   dataDirectoryLock = null,
+  // SelfDev SD-3 : restreint les chemins d'un dépôt cible (jamais d'élargissement).
+  pathPolicyProvider = null,
   now = () => new Date(),
   observability = null,
 } = {}) {
@@ -156,7 +158,7 @@ function createGoalModeDevRuntime({
   });
   projectionService = createGoalModeDevProjectionService({
     runStore, stepProposalStore, stepAdmissionService, goalStrategyEngine,
-    workspaceEngine, devBudgetService, now,
+    workspaceEngine, devBudgetService, pathPolicyProvider, now,
   });
 
   function workspaceContext(workspaceId) {

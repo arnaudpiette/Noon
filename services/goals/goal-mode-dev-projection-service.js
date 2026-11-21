@@ -366,6 +366,13 @@ function createGoalModeDevProjectionService({
     projectGoalDevExecution,
   repositoryInspector =
     defaultRepositoryInspector,
+  /*
+   * SelfDev SD-3 : politique de chemins facultative, appliquée au dépôt
+   * résolu. Elle ne peut qu'ajouter des forbiddenPaths (restreindre),
+   * jamais élargir allowedPaths ; une erreur fait échouer la projection.
+   */
+  pathPolicyProvider =
+    null,
   now =
     () =>
       new Date(),
@@ -395,6 +402,11 @@ function createGoalModeDevProjectionService({
       "function" ||
     typeof repositoryInspector !==
       "function" ||
+    (
+      pathPolicyProvider !== null &&
+      typeof pathPolicyProvider !==
+        "function"
+    ) ||
     typeof now !==
       "function"
   ) {
@@ -708,6 +720,56 @@ function createGoalModeDevProjectionService({
           roots,
       });
 
+    let forbiddenPaths = [];
+
+    if (pathPolicyProvider) {
+      let policy;
+
+      try {
+        policy =
+          pathPolicyProvider({
+            repositoryRoot:
+              repository
+                .repositoryRoot,
+          });
+      } catch {
+        fail(
+          "GOAL_MODE_DEV_PATH_POLICY_FAILED",
+          "La politique de chemins du dépôt cible a refusé la projection."
+        );
+      }
+
+      if (
+        policy != null &&
+        (
+          !Array.isArray(
+            policy.forbiddenPaths
+          ) ||
+          policy.forbiddenPaths
+            .some(
+              (item) =>
+                typeof item !==
+                  "string" ||
+                !item
+            )
+        )
+      ) {
+        fail(
+          "GOAL_MODE_DEV_PATH_POLICY_FAILED",
+          "La politique de chemins du dépôt cible est invalide."
+        );
+      }
+
+      forbiddenPaths =
+        policy
+          ? [
+              ...new Set(
+                policy.forbiddenPaths
+              ),
+            ].sort()
+          : [];
+    }
+
     const usage =
       state.usage;
 
@@ -915,6 +977,12 @@ function createGoalModeDevProjectionService({
         repository
           .repositoryRoot,
       ],
+
+      ...(
+        forbiddenPaths.length
+          ? { forbiddenPaths }
+          : {}
+      ),
 
       constraints: [
         (

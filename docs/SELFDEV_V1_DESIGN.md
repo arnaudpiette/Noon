@@ -181,7 +181,13 @@ commit, de fusion ou d'application au working tree en V1 : l'utilisateur intègr
    `test/selfdev-sd2.test.js`. Exécution des mêmes validations sur la base et après patch
    via la Sandbox V1, comparaison, détection d'instabilité, vérification que les tests
    n'écrivent pas dans les données utilisateur.
-3. **SD-3 — Branchement Goal Mode DEV.** Run Goal Mode DEV dont le dépôt cible est le
+3. **SD-3 — Branchement Goal Mode DEV.** *Livré le 21/11/2026* : crochet
+   `pathPolicyProvider` de la projection Goal Mode DEV (ne peut qu'ajouter des
+   `forbiddenPaths` ; erreur → projection refusée), politique
+   `selfdev-goal-mode-policy.js` (zones protégées, **chaque test existant** et chaque
+   `AGENTS.md` du worktree interdits dès l'écriture par Native DEV ; dossier inconnu du
+   conteneur → refus), flag `selfdev.v1` (OFF, exige `goals.mode-dev`), routes
+   `/api/selfdev/*` (`selfdev-http-routes.js`), tests `test/selfdev-sd3.test.js`. Run Goal Mode DEV dont le dépôt cible est le
    worktree, `forbiddenPaths` SelfDev injectés à la projection, contrôle post-run, flag
    `selfdev.v1` OFF par défaut. Aucune nouvelle autorité : approbations, budget et
    réconciliation inchangés.
@@ -190,7 +196,23 @@ commit, de fusion ou d'application au working tree en V1 : l'utilisateur intègr
 5. **Validation P2 sur le Mac** : un bug réel de Noon, du signalement à la proposition, avec
    le critère de la roadmap.
 
-## 7. Décisions (21/11/2026)
+## 7. Parcours d'utilisation (SD-3, sans interface)
+
+1. Créer un dossier pour les copies (hors du dépôt Noon) et l'autoriser en lecture-écriture
+   dans Noon ; activer `goals.mode-dev` puis `selfdev.v1` et redémarrer.
+2. `PUT /api/selfdev/target` avec `repositoryRoot`, `baseBranch`, `worktreeContainer`.
+3. `POST /api/selfdev/worktrees` : crée la copie `selfdev/<id>` depuis la base.
+4. Après un scan des projets, la copie apparaît comme projet du dossier autorisé : la lier à
+   un workspace dont ce dossier est une racine read-write.
+5. `POST /api/selfdev/worktrees/<id>/baseline` (`workspaceId`, `commands`) : mesure la base.
+6. Lancer un run Goal Mode DEV sur ce projet (interface existante, approbations exactes) :
+   la projection interdit automatiquement les zones protégées et les tests existants.
+7. `POST …/patched`, puis `POST …/reproduction` (`testFiles`) ; `GET …/verdict`.
+8. Examiner le diff dans la copie ; la garder ou `DELETE …/<id>` (`discardChanges`).
+
+L'interface (carte de proposition, relecteur) arrive en SD-4.
+
+## 8. Décisions (21/11/2026)
 
 - **`node_modules`** : clone APFS depuis le dépôt principal ; ni lien symbolique, ni
   installation implicite.

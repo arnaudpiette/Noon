@@ -8,15 +8,18 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
+const { isPathInsideRoots } = require("../../lib/path-utils");
 
 const BRANCH_PATTERN = /^(?!-)(?!.*\.\.)(?!.*\/\/)[A-Za-z0-9._/-]{1,120}$/;
 
 function storeError(code, message) { return Object.assign(new Error(message), { code }); }
 
-function createSelfDevTargetStore({ filePath, gitExecutable = "git", expectedPackageName = "noon", now = () => new Date() } = {}) {
+// worktreeContainer : dossier des copies isolées, choisi par l'utilisateur, hors du dépôt et,
+// si writableRootsProvider est fourni, dans une racine read-write qu'il a autorisée.
+function createSelfDevTargetStore({ filePath, gitExecutable = "git", expectedPackageName = "noon", writableRootsProvider = null, now = () => new Date() } = {}) {
   if (!filePath) throw storeError("SELFDEV_CONFIG_INVALID", "Fichier de cible requis.");
 
-  function validate({ repositoryRoot, baseBranch }) {
+  function validate({ repositoryRoot, baseBranch, worktreeContainer }) {
     let root;
     try { root = fs.realpathSync(path.resolve(String(repositoryRoot || ""))); } catch { throw storeError("SELFDEV_TARGET_INVALID", "Dépôt introuvable."); }
     let top = "";
@@ -29,7 +32,15 @@ function createSelfDevTargetStore({ filePath, gitExecutable = "git", expectedPac
     if (name !== expectedPackageName) throw storeError("SELFDEV_TARGET_NOT_NOON", "Ce dépôt n'est pas celui de Noon.");
     const branch = String(baseBranch || "");
     if (!BRANCH_PATTERN.test(branch) || branch.endsWith("/") || branch.endsWith(".lock")) throw storeError("SELFDEV_BASE_INVALID", "Branche de base invalide.");
-    return { repositoryRoot: root, baseBranch: branch };
+    let container;
+    try { container = fs.realpathSync(path.resolve(String(worktreeContainer || ""))); if (!fs.statSync(container).isDirectory()) throw new Error("not-directory"); }
+    catch { throw storeError("SELFDEV_CONTAINER_INVALID", "Dossier des copies isolées introuvable."); }
+    if (isPathInsideRoots(container, [root]) || isPathInsideRoots(root, [container])) throw storeError("SELFDEV_CONTAINER_INVALID", "Le dossier des copies doit être hors du dépôt Noon.");
+    if (writableRootsProvider) {
+      const roots = (writableRootsProvider() || []).map((item) => { try { return fs.realpathSync(item); } catch { return null; } }).filter(Boolean);
+      if (!isPathInsideRoots(container, roots)) throw storeError("SELFDEV_CONTAINER_NOT_AUTHORIZED", "Autorise d'abord ce dossier en lecture-écriture dans Noon.");
+    }
+    return { repositoryRoot: root, baseBranch: branch, worktreeContainer: container };
   }
 
   function register(input = {}) {
@@ -46,7 +57,9 @@ function createSelfDevTargetStore({ filePath, gitExecutable = "git", expectedPac
     let saved;
     try { saved = JSON.parse(fs.readFileSync(filePath, "utf8")); } catch { return null; }
     try { return Object.freeze({ ...saved, ...validate(saved) }); }
-    catch (error) { return Object.freeze({ unavailable: true, code: error.code }); }
+    // Cible devenue invalide : on garde le conteneur connu pour que la politique de chemins
+    // continue de protéger les worktrees existants (échec fermé côté Goal Mode DEV).
+    catch (error) { return Object.freeze({ unavailable: true, code: error.code, worktreeContainer: typeof saved?.worktreeContainer === "string" ? saved.worktreeContainer : null }); }
   }
 
   function clear() { fs.rmSync(filePath, { force: true }); return true; }

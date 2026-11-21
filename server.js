@@ -234,6 +234,10 @@ const { createNotificationAttentionEngine, createNotificationStore } = require("
 const { createCapabilityRegistry, createLocalIntelligenceRuntime, createLocalModelAdapter } = require("./services/runtime");
 const { createExtensionRegistry, createExtensionRuntime } = require("./services/extensions");
 const { createMcpService } = require("./services/mcp");
+const {
+  createSelfDevEvidenceService, createSelfDevPathPolicyProvider, createSelfDevTargetStore, createSelfDevWorktreeService,
+} = require("./services/selfdev");
+const { createSelfDevHttpRoutes } = require("./services/selfdev/selfdev-http-routes");
 const { createControlCenterService } = require("./services/control-center");
 const noonExampleSearchExtension = require("./services/extensions/sample/noon-example-search");
 const { createArtifactEngine } = require("./services/artifacts/artifact-engine");
@@ -1671,6 +1675,37 @@ const goalDevRetryRuntime =
 const dataDirectoryLock = createDataDirectoryLock({ directory: DATA_DIRECTORY });
 process.once("exit", () => { try { dataDirectoryLock.release(); } catch {} });
 
+/*
+ * SelfDev V1 (SD-3) — copies isolées du dépôt Noon. La politique de chemins est
+ * toujours fournie à Goal Mode DEV (elle ne fait que restreindre, et échoue fermée
+ * pour un dossier inconnu du conteneur SelfDev) ; les routes exigent selfdev.v1.
+ */
+const selfDevStateDirectory = path.join(DATA_DIRECTORY, "selfdev");
+const selfDevTargetStore = createSelfDevTargetStore({
+  filePath: path.join(selfDevStateDirectory, "selfdev-target.json"),
+  writableRootsProvider: () => localPermissionStore.roots("read-write"),
+});
+let selfDevServiceCache = { key: null, value: null };
+function selfDevServices() {
+  const target = selfDevTargetStore.get();
+  const container = target?.worktreeContainer;
+  if (!container || !fs.existsSync(container)) return { targetStore: selfDevTargetStore, worktreeService: null, evidenceService: null };
+  if (selfDevServiceCache.key !== container) {
+    const stateDirectory = path.join(selfDevStateDirectory, "worktrees");
+    const worktreeService = createSelfDevWorktreeService({ container, stateDirectory });
+    const evidenceService = createSelfDevEvidenceService({ worktreeService, executeValidation: sandboxDevValidationExecutor, stateDirectory });
+    selfDevServiceCache = { key: container, value: { worktreeService, evidenceService } };
+  }
+  return { targetStore: selfDevTargetStore, ...selfDevServiceCache.value };
+}
+const selfDevPathPolicyProvider = createSelfDevPathPolicyProvider({ getContext: selfDevServices });
+const selfDevHttpRoutes = createSelfDevHttpRoutes({
+  isEnabled: () => featureFlags.evaluate("selfdev.v1", {}).mode !== "OFF" &&
+    !UI_VALIDATION_MODE && process.env.NOON_SMOKE_TEST !== "1" && process.env.NOON_SAFE_MODE !== "1",
+  services: selfDevServices,
+  observability: (event, metadata) => toolAuditLog.append(event, metadata),
+});
+
 let goalModeDevRuntime = null;
 try {
   if (featureFlags.evaluate("goals.mode-dev", {}).mode !== "OFF") {
@@ -1691,6 +1726,7 @@ try {
       providerAdapter: openAIProviderAdapter,
       trackUsage,
       dataDirectoryLock,
+      pathPolicyProvider: selfDevPathPolicyProvider,
       observability: (event, metadata) => toolAuditLog.append(`goals.mode-dev.${event}`, metadata),
     });
   }
@@ -8067,6 +8103,10 @@ if (req.method === "POST" && req.url === "/api/runtime/mode") {
     res.writeHead(error.statusCode || 400, { "Content-Type": "application/json" });
     return res.end(JSON.stringify({ status: "error", message: error.message }));
   }
+}
+
+if (selfDevHttpRoutes.matches(requestPath)) {
+  return selfDevHttpRoutes.handle(req, res, { requestPath, readJsonBody });
 }
 
 if (mcpService.matches(requestPath)) {

@@ -91,6 +91,8 @@ function fixture({
   projectorTransform = null,
   admissionDecision =
     "ADMIT",
+  pathPolicyProvider =
+    null,
 } = {}) {
   const root =
     fs.realpathSync(
@@ -391,6 +393,8 @@ function fixture({
           ? projectorTransform(projected)
           : projected;
       },
+
+      pathPolicyProvider,
 
       now:
         () =>
@@ -1057,3 +1061,29 @@ test(
     }
   }
 );
+
+test("SelfDev SD-3 : la politique de chemins ajoute des forbiddenPaths au contrat, sans élargir", () => {
+  let seen = null;
+  const f = fixture({ pathPolicyProvider: ({ repositoryRoot }) => { seen = repositoryRoot; return { forbiddenPaths: [path.join(repositoryRoot, "b"), path.join(repositoryRoot, "a"), path.join(repositoryRoot, "a")] }; } });
+  try {
+    const result = f.service.project(B4A_IDS);
+    assert.equal(seen, f.root);
+    assert.deepEqual(result.devContract.devInput.forbiddenPaths, [path.join(f.root, "a"), path.join(f.root, "b")]);
+    assert.deepEqual(result.devContract.devInput.allowedPaths, [f.root], "allowedPaths inchangé");
+  } finally { f.cleanup(); }
+});
+
+test("SelfDev SD-3 : politique absente ou nulle → contrat inchangé ; erreur ou forme invalide → projection refusée avant le projector", () => {
+  for (const provider of [null, () => null]) {
+    const f = fixture({ pathPolicyProvider: provider });
+    try { assert.equal(f.service.project(B4A_IDS).devContract.devInput.forbiddenPaths, undefined); }
+    finally { f.cleanup(); }
+  }
+  for (const provider of [() => { throw new Error("worktree inconnu"); }, () => ({ forbiddenPaths: "x" }), () => ({ forbiddenPaths: [""] }), () => ({})]) {
+    const f = fixture({ pathPolicyProvider: provider });
+    try {
+      assert.throws(() => f.service.project(B4A_IDS), { code: "GOAL_MODE_DEV_PATH_POLICY_FAILED" });
+      assert.equal(f.projectorCalls(), 0);
+    } finally { f.cleanup(); }
+  }
+});

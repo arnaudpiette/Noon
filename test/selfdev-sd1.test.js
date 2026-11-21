@@ -178,20 +178,30 @@ test("worktree : nettoyage proposé après 14 jours, jamais automatique ; identi
 
 // ---------- Cible ----------
 
-test("cible : seul le dépôt Noon à sa racine est accepté ; revalidée à chaque lecture", () => {
+test("cible : seul le dépôt Noon à sa racine est accepté, avec un conteneur hors dépôt et autorisé ; revalidée à chaque lecture", () => {
   const root = makeRepo();
-  const store = createSelfDevTargetStore({ filePath: path.join(tmp("noon-sd1-target-"), "selfdev-target.json") });
+  const container = tmp("noon-sd1-container-");
+  let writable = [container];
+  const store = createSelfDevTargetStore({ filePath: path.join(tmp("noon-sd1-target-"), "selfdev-target.json"), writableRootsProvider: () => writable });
   assert.equal(store.get(), null);
-  const target = store.register({ repositoryRoot: root, baseBranch: "main" });
+  const target = store.register({ repositoryRoot: root, baseBranch: "main", worktreeContainer: container });
   assert.equal(target.repositoryRoot, root);
-  assert.equal(store.get().baseBranch, "main");
-  assert.throws(() => store.register({ repositoryRoot: path.join(root, "lib"), baseBranch: "main" }), { code: "SELFDEV_TARGET_INVALID" });
-  for (const baseBranch of ["-x", "a..b", "main/", "a b"]) assert.throws(() => store.register({ repositoryRoot: root, baseBranch }), { code: "SELFDEV_BASE_INVALID" }, baseBranch);
+  assert.equal(store.get().worktreeContainer, container);
+  assert.throws(() => store.register({ repositoryRoot: path.join(root, "lib"), baseBranch: "main", worktreeContainer: container }), { code: "SELFDEV_TARGET_INVALID" });
+  for (const baseBranch of ["-x", "a..b", "main/", "a b"]) assert.throws(() => store.register({ repositoryRoot: root, baseBranch, worktreeContainer: container }), { code: "SELFDEV_BASE_INVALID" }, baseBranch);
+  fs.mkdirSync(path.join(root, "copies"));
+  assert.throws(() => store.register({ repositoryRoot: root, baseBranch: "main", worktreeContainer: path.join(root, "copies") }), { code: "SELFDEV_CONTAINER_INVALID" });
+  assert.throws(() => store.register({ repositoryRoot: root, baseBranch: "main", worktreeContainer: path.join(container, "absent") }), { code: "SELFDEV_CONTAINER_INVALID" });
+  writable = [];
+  assert.throws(() => store.register({ repositoryRoot: root, baseBranch: "main", worktreeContainer: container }), { code: "SELFDEV_CONTAINER_NOT_AUTHORIZED" });
+  writable = [container];
   const other = makeRepo();
   fs.writeFileSync(path.join(other, "package.json"), JSON.stringify({ name: "autre" }));
-  assert.throws(() => store.register({ repositoryRoot: other, baseBranch: "main" }), { code: "SELFDEV_TARGET_NOT_NOON" });
+  assert.throws(() => store.register({ repositoryRoot: other, baseBranch: "main", worktreeContainer: container }), { code: "SELFDEV_TARGET_NOT_NOON" });
   fs.rmSync(root, { recursive: true, force: true });
-  assert.equal(store.get().unavailable, true, "un dépôt disparu n'est plus une cible");
+  const unavailable = store.get();
+  assert.equal(unavailable.unavailable, true, "un dépôt disparu n'est plus une cible");
+  assert.equal(unavailable.worktreeContainer, container, "le conteneur reste connu pour protéger les worktrees");
   assert.equal(store.clear(), true);
 });
 

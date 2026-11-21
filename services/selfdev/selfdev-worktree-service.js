@@ -11,7 +11,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { isPathInsideRoots } = require("../../lib/path-utils");
-const { checkSelfDevDiff, TEST_DIRECTORY } = require("./selfdev-path-policy");
+const { checkSelfDevDiff, contractForbiddenPaths, TEST_DIRECTORY } = require("./selfdev-path-policy");
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]{5,47}$/;
 const BRANCH_PREFIX = "selfdev/";
@@ -254,7 +254,33 @@ function createSelfDevWorktreeService({
     return true;
   }
 
-  return Object.freeze({ create, list, diffEntries, check, remove, userTreeFingerprint, describe, createProbe, removeProbe });
+  // SD-3 : retrouve la proposition dont le worktree est exactement ce dossier (null sinon).
+  function findByPath(directory) {
+    let resolved;
+    try { resolved = fs.realpathSync(path.resolve(String(directory || ""))); } catch { return null; }
+    for (const name of fs.readdirSync(stateRoot)) {
+      const id = name.endsWith(".json") ? name.slice(0, -5) : "";
+      if (!ID_PATTERN.test(id)) continue;
+      try { const manifest = readManifest(id); if (manifest.worktreePath === resolved) return describe(id); } catch { /* manifeste illisible ignoré */ }
+    }
+    return null;
+  }
+
+  // SD-3 : forbiddenPaths concrets pour le contrat Native DEV d'un worktree SelfDev :
+  // zones protégées présentes, chaque test existant de la base, chaque AGENTS.md suivi.
+  function contractPolicyPaths(id) {
+    const manifest = readManifest(id);
+    if (!fs.existsSync(manifest.worktreePath)) throw serviceError("SELFDEV_WORKTREE_MISSING", "Worktree SelfDev absent.");
+    const root = fs.realpathSync(manifest.worktreePath);
+    const paths = new Set(contractForbiddenPaths(root));
+    for (const relative of manifest.baseTestFiles || []) paths.add(path.join(root, relative));
+    for (const relative of git(root, ["ls-files", "-z", "--", ":(glob)**/AGENTS.md", ":(glob)**/agents.md"]).split("\0").filter(Boolean)) {
+      paths.add(path.join(root, relative));
+    }
+    return Object.freeze([...paths].sort());
+  }
+
+  return Object.freeze({ containerRoot, create, list, diffEntries, check, remove, userTreeFingerprint, describe, createProbe, removeProbe, findByPath, contractPolicyPaths });
 }
 
 module.exports = { createSelfDevWorktreeService, cloneNodeModulesApfs, RETENTION_DAYS, BRANCH_PREFIX };
