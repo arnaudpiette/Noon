@@ -22,6 +22,8 @@ const { WakeWordService } = require("../services/wake-word-service");
 const { isDueToday, nextRunAt } = require("../lib/creative-brief");
 const { createLocalPermissionStore } = require("../lib/local-permissions");
 const { createRecorderStore } = require("../lib/recorder-store");
+const { reportContent } = require("../lib/recorder-report");
+const { buildBuffer, verifyArtifact } = require("../services/production/artifact-generator");
 
 const smokeArgument = (name) => process.argv.find((value) => value.startsWith(`--${name}=`))?.split("=").slice(1).join("=");
 const smokeModeFromArguments = process.argv.includes("--noon-smoke-test");
@@ -452,6 +454,50 @@ function registerIpc() {
   registerTrustedHandler("noon:recorder-append", (_event, id, chunk) => recorderStore.append(id, chunk));
   registerTrustedHandler("noon:recorder-state", (_event, id, state) => recorderStore.setState(id, state));
   registerTrustedHandler("noon:recorder-chunk", (_event, id, index) => recorderStore.chunk(id, index));
+  registerTrustedHandler("noon:recorder-transcript", (_event, id, text, source) => recorderStore.saveTranscript(id, text, source));
+  registerTrustedHandler("noon:recorder-analysis", (_event, id, analysis, revision) => recorderStore.saveAnalysis(id, analysis, revision));
+  registerTrustedHandler("noon:recorder-report", async (_event, id, format) => {
+    if (!["docx", "xlsx", "pptx", "pdf"].includes(format)) throw new Error("Format refusé.");
+    const record = recorderStore.list().find((item) => item.id === id);
+    if (!record) throw new Error("Enregistrement introuvable.");
+    const content = reportContent(record, format);
+    const selection = await dialog.showSaveDialog(mainWindow, {
+      title: "Exporter l'analyse du Dictaphone",
+      defaultPath: path.join(app.getPath("documents"), `noon-analyse-${id}.${format}`),
+      filters: [{ name: format.toUpperCase(), extensions: [format] }],
+      properties: ["showOverwriteConfirmation", "createDirectory"],
+    });
+    if (selection.canceled || !selection.filePath) return { canceled: true };
+    const target = selection.filePath.endsWith(`.${format}`) ? selection.filePath : `${selection.filePath}.${format}`;
+    const temporary = `${target}.${crypto.randomUUID()}.tmp`;
+    try {
+      fs.writeFileSync(temporary, await buildBuffer(format, record.title, content), { mode: 0o600 });
+      await verifyArtifact(temporary, format);
+      fs.renameSync(temporary, target);
+      return { canceled: false, name: path.basename(target) };
+    } catch (error) {
+      fs.rmSync(temporary, { force: true });
+      throw error;
+    }
+  });
+  registerTrustedHandler("noon:recorder-export-transcript", async (_event, id, format) => {
+    if (!["txt", "md"].includes(format)) throw new Error("Format refusé.");
+    const record = recorderStore.list().find((item) => item.id === id);
+    if (!record?.transcript?.text) throw new Error("Transcription introuvable.");
+    const selection = await dialog.showSaveDialog(mainWindow, {
+      title: "Exporter la transcription",
+      defaultPath: path.join(app.getPath("documents"), `noon-${id}.${format}`),
+      filters: [{ name: format === "md" ? "Markdown" : "Texte", extensions: [format] }],
+      properties: ["showOverwriteConfirmation", "createDirectory"],
+    });
+    if (selection.canceled || !selection.filePath) return { canceled: true };
+    const target = selection.filePath.endsWith(`.${format}`) ? selection.filePath : `${selection.filePath}.${format}`;
+    const text = format === "md"
+      ? `# ${record.title.replace(/[\r\n#]/g, " ")}\n\nSource : ${record.transcript.source} · Révision ${record.transcript.revision}\n\n${record.transcript.text}\n`
+      : `${record.transcript.text}\n`;
+    fs.writeFileSync(target, text, { encoding: "utf8", mode: 0o600 });
+    return { canceled: false, name: path.basename(target) };
+  });
   registerTrustedHandler("noon:recorder-export", async (_event, id) => {
     const record = recorderStore.list().find((item) => item.id === id);
     if (!record || !record.chunks.length) throw new Error("Aucun audio à exporter.");
