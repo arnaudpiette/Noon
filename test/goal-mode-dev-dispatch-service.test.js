@@ -465,6 +465,21 @@ test("4C-1B permission retirée ou contrat élargi : refus sans CAS ni dispatch"
       assert.equal(g.status(), "PREPARED");
     } finally { g.close(); }
   }
+
+  // B4a : le réseau est revérifié au dispatch (plafond ∩ contrat ∩ état vivant).
+  // Un contrat sans réseau n'est jamais complété par le dispatch.
+  for (const override of [{ networkAllowed: false }, { networkAllowed: "true" }]) {
+    const n = fixture();
+    try {
+      n.setCapabilityOverride(override);
+      const service = n.makeService();
+      const prepared = n.prepare(service);
+      await assert.rejects(() => resume(service, prepared),
+        { code: "GOAL_MODE_DEV_DISPATCH_PERMISSION_REVOKED" });
+      assert.equal(n.calls.length, 0);
+      assert.equal(n.status(), "PREPARED");
+    } finally { n.close(); }
+  }
 });
 
 test("4C-1B fichier cible modifié après préparation : refus sans CAS (repository Git réel)", async () => {

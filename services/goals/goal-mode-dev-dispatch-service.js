@@ -407,6 +407,9 @@ function createGoalModeDevDispatchService({
       reservationId: internal.ticket.reservationId,
       approvalId: approval.id,
       supersededApprovalId: previous || null,
+      // B4a : origine du réseau accordé (jamais la proposition du planner).
+      networkSource: internal.handoff.exactProjection.authorization?.networkSource === "NATIVE_DEV_RUNTIME"
+        ? "NATIVE_DEV_RUNTIME" : null,
     });
     const { resumeToken, ...publicApproval } = approval;
     return Object.freeze({

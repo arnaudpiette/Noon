@@ -87,6 +87,8 @@ function fixture({
   workspaceOverrides = {},
   priorProviderCalls = 0,
   devRemaining = 99,
+  goalOverrides = {},
+  projectorTransform = null,
   admissionDecision =
     "ADMIT",
 } = {}) {
@@ -171,6 +173,12 @@ function fixture({
         maxEstimatedCost: 2,
       },
       localOnly: false,
+      // Plafonds fixés par le serveur (FIXED_CAPABILITY_CEILINGS, routes HTTP).
+      capabilityCeilings: {
+        network: true,
+        gitWrite: false,
+        destructiveActions: false,
+      },
       admittedAt:
         "2026-10-13T00:00:00.000Z",
       ...contractOverrides,
@@ -290,7 +298,7 @@ function fixture({
               "goal-50d4b"
             );
 
-            return goal();
+            return goal(goalOverrides);
           },
         },
       },
@@ -374,9 +382,14 @@ function fixture({
           "../services/goals/goal-dev-execution-contract"
         );
 
-        return projectGoalDevExecution(
-          input
-        );
+        const projected =
+          projectGoalDevExecution(
+            input
+          );
+
+        return projectorTransform
+          ? projectorTransform(projected)
+          : projected;
       },
 
       now:
@@ -740,6 +753,112 @@ test(
     }
   }
 );
+
+// B4a : le réseau requis par Native DEV est accordé par le serveur (plafond
+// fixe du run + localOnly === false), jamais par la proposition du planner.
+const B4A_IDS = { runId: "goal-run-50d4b", stepId: "goal-step-50d4b" };
+
+test("B4a proposition sans réseau : accordé par le serveur, source NATIVE_DEV_RUNTIME tracée", () => {
+  for (const requestedCapabilities of [
+    { network: false, gitWrite: false, destructiveActions: false },
+    undefined,
+    { network: true, gitWrite: false, destructiveActions: false },
+  ]) {
+    const f = fixture({ proposalOverrides: { requestedCapabilities } });
+    try {
+      const result = f.service.project(B4A_IDS);
+      assert.equal(result.devContract.capabilities.networkAllowed, true);
+      assert.equal(result.devContract.capabilities.gitWriteAllowed, false);
+      assert.equal(result.devContract.capabilities.destructiveActionsAllowed, false);
+      assert.equal(result.devContract.devInput.localOnly, false);
+      assert.equal(result.authorization.networkRequested, true);
+      assert.equal(result.authorization.networkSource, "NATIVE_DEV_RUNTIME");
+      assert.equal(result.authorization.proposalRequestedNetwork, requestedCapabilities?.network === true);
+      assert.equal(result.authorization.capabilitiesGranted, false);
+      assert.equal(f.projectorCalls(), 1);
+    } finally { f.cleanup(); }
+  }
+});
+
+test("B4a local_only (ou non strictement false) et plafond réseau absent : refus avant le projector", () => {
+  for (const contractOverrides of [
+    { localOnly: true },
+    { localOnly: undefined },
+    { localOnly: "false" },
+    { capabilityCeilings: { network: false, gitWrite: false, destructiveActions: false } },
+    { capabilityCeilings: { network: "true", gitWrite: false, destructiveActions: false } },
+    { capabilityCeilings: undefined },
+  ]) {
+    const f = fixture({
+      contractOverrides,
+      proposalOverrides: { requestedCapabilities: { network: true, gitWrite: false, destructiveActions: false } },
+    });
+    try {
+      assert.throws(() => f.service.project(B4A_IDS),
+        { code: "GOAL_MODE_DEV_REMOTE_REASONING_BLOCKED" }, JSON.stringify(contractOverrides));
+      assert.equal(f.projectorCalls(), 0);
+    } finally { f.cleanup(); }
+  }
+});
+
+test("B4a contrat Goal→DEV sans réseau (Goal devenu LOCAL_ONLY) : refus, jamais de Native DEV sans réseau", () => {
+  const f = fixture({ goalOverrides: { sensitivity: "LOCAL_ONLY" } });
+  try {
+    assert.throws(() => f.service.project(B4A_IDS), { code: "GOAL_MODE_DEV_REMOTE_REASONING_BLOCKED" });
+    assert.equal(f.projectorCalls(), 1);
+  } finally { f.cleanup(); }
+});
+
+test("B4a contrat Goal→DEV modifié (réseau retiré ou local_only) : refus, jamais complété par la projection", () => {
+  for (const transform of [
+    (projected) => ({ ...projected, capabilities: { ...projected.capabilities, networkAllowed: false } }),
+    (projected) => ({ ...projected, capabilities: { ...projected.capabilities, networkAllowed: "true" } }),
+    (projected) => ({ ...projected, devInput: { ...projected.devInput, localOnly: true } }),
+    (projected) => ({ ...projected, devInput: { ...projected.devInput, localOnly: undefined } }),
+  ]) {
+    const f = fixture({ projectorTransform: transform });
+    try {
+      assert.throws(() => f.service.project(B4A_IDS), { code: "GOAL_MODE_DEV_REMOTE_REASONING_BLOCKED" });
+      assert.equal(f.projectorCalls(), 1);
+    } finally { f.cleanup(); }
+  }
+});
+
+test("B4a gitWrite et action destructive toujours refusés, même sans réseau demandé", () => {
+  for (const capability of ["gitWrite", "destructiveActions"]) {
+    const f = fixture({
+      proposalOverrides: {
+        requestedCapabilities: {
+          network: false,
+          gitWrite: capability === "gitWrite",
+          destructiveActions: capability === "destructiveActions",
+        },
+      },
+    });
+    try {
+      assert.throws(() => f.service.project(B4A_IDS), { code: "GOAL_MODE_DEV_CAPABILITY_UNSUPPORTED" });
+      assert.equal(f.projectorCalls(), 0);
+    } finally { f.cleanup(); }
+  }
+});
+
+test("B4a ancien refus REMOTE_REASONING_REQUIRED retiré : plus aucun code ne peut le lever", () => {
+  const roots = ["services", "lib", "public"].map((name) => path.join(__dirname, "..", name));
+  const offenders = [];
+  const walk = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const target = path.join(directory, entry.name);
+      if (entry.isDirectory()) walk(target);
+      else if (entry.name.endsWith(".js") &&
+        fs.readFileSync(target, "utf8").includes("GOAL_MODE_DEV_REMOTE_REASONING_REQUIRED")) offenders.push(target);
+    }
+  };
+  for (const root of roots) walk(root);
+  if (fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8").includes("GOAL_MODE_DEV_REMOTE_REASONING_REQUIRED")) {
+    offenders.push("server.js");
+  }
+  assert.deepEqual(offenders, []);
+});
 
 test(
   "5.0D-4B refuse zéro provider, zéro coût et budget global stale",

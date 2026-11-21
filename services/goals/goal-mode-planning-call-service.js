@@ -95,8 +95,40 @@ const SYSTEM_PROMPT = [
   "Ne produis ni commande shell, ni skillId, ni operation, ni args, ni provider, ni actionClass, ni approval.",
   "usage décrit uniquement l'étape FUTURE proposée, jamais le coût de cet appel de planning.",
   "requestedCapabilities décrit seulement les capacités que l'étape future devrait demander au pipeline de sécurité.",
+  "stepBudget donne les étapes restantes du Goal Run. Si stepBudget.finalStep est vrai, propose l'étape qui atteint directement la cible (la correction elle-même, vérification comprise), jamais un diagnostic préalable seul.",
+  "successCriteria liste les critères de succès du Goal : l'étape proposée doit faire progresser la cible vers eux.",
   "La réponse doit respecter strictement le JSON Schema fourni.",
 ].join("\n");
+
+// B4a : bornes de l'entrée du planner (tronquées côté serveur).
+const PLANNER_MAX_SUCCESS_CRITERIA = 10;
+const PLANNER_MAX_CRITERION_TEXT = 300;
+
+function truncateText(value, max) {
+  return Array.from(typeof value === "string" ? value : "").slice(0, max).join("");
+}
+
+// Budget d'étapes explicite : le planner sait s'il propose la dernière étape.
+function stepBudgetPayload(snapshot) {
+  const maxSteps = snapshot.state.contract.limits.maxSteps;
+  const stepsUsed = snapshot.state.usage.steps;
+  if (!Number.isSafeInteger(maxSteps) || !Number.isSafeInteger(stepsUsed) || maxSteps < 1 || stepsUsed < 0) {
+    fail("GOAL_MODE_PLANNING_STEP_BUDGET_INVALID", "Budget d'étapes du Goal Run invalide.");
+  }
+  const remainingSteps = Math.max(0, maxSteps - stepsUsed);
+  return Object.freeze({ maxSteps, stepsUsed, remainingSteps, finalStep: remainingSteps === 1 });
+}
+
+// Critères de succès du Goal : identifiant, description et statut seulement.
+function successCriteriaPayload(goal) {
+  return Object.freeze((Array.isArray(goal.successCriteria) ? goal.successCriteria : [])
+    .slice(0, PLANNER_MAX_SUCCESS_CRITERIA)
+    .map((criterion) => Object.freeze({
+      criterionId: truncateText(criterion?.criterionId, PLANNER_MAX_CRITERION_TEXT),
+      description: truncateText(criterion?.description, PLANNER_MAX_CRITERION_TEXT),
+      status: truncateText(criterion?.status, 40) || "UNKNOWN",
+    })));
+}
 
 function fail(
   code,
@@ -685,6 +717,8 @@ function createGoalModePlanningCallService({
         outcomeDefinition:
           goal.outcomeDefinition,
         constraints,
+        successCriteria:
+          successCriteriaPayload(goal),
       },
 
       target:
@@ -703,6 +737,9 @@ function createGoalModePlanningCallService({
           snapshot.state
             .usage,
       },
+
+      stepBudget:
+        stepBudgetPayload(snapshot),
     });
   }
 
@@ -1408,8 +1445,12 @@ function createGoalModePlanningCallService({
 }
 
 module.exports = {
+  PLANNER_MAX_CRITERION_TEXT,
+  PLANNER_MAX_SUCCESS_CRITERIA,
   RESPONSE_SCHEMA,
   SYSTEM_PROMPT,
   VERSION,
   createGoalModePlanningCallService,
+  stepBudgetPayload,
+  successCriteriaPayload,
 };

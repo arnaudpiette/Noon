@@ -30,7 +30,12 @@ const {
 );
 
 const {
+  PLANNER_MAX_CRITERION_TEXT,
+  PLANNER_MAX_SUCCESS_CRITERIA,
+  SYSTEM_PROMPT,
   createGoalModePlanningCallService,
+  stepBudgetPayload,
+  successCriteriaPayload,
 } = require(
   "../services/goals/goal-mode-planning-call-service"
 );
@@ -201,6 +206,8 @@ function fixture({
     null,
   privacy =
     null,
+  limits =
+    null,
 } = {}) {
   const directory =
     fs.mkdtempSync(
@@ -261,7 +268,7 @@ function fixture({
           "workspace-noon",
         projectId:
           "project-noon",
-        limits: {
+        limits: limits || {
           maxSteps: 5,
           maxRetries: 1,
           maxProviderCalls: 5,
@@ -1543,3 +1550,82 @@ test(
     }
   }
 );
+
+// B4a : entrée du planner — budget d'étapes et critères de succès bornés.
+function plannerInput(f) {
+  const messages = f.calls.requests[0].request.input;
+  assert.equal(messages[0].role, "system");
+  assert.equal(messages[0].content, SYSTEM_PROMPT);
+  assert.equal(messages[1].role, "user");
+  return JSON.parse(messages[1].content);
+}
+
+test("B4a entrée du planner : forme exacte, stepBudget et critères (sans champ supplémentaire)", async () => {
+  const f = fixture();
+  try {
+    const result = await f.service.planOnce({ runId: "goal-run-50d1" });
+    assert.equal(result.status, "PROPOSED");
+    const input = plannerInput(f);
+    assert.deepEqual(Object.keys(input), ["run", "goal", "target", "capabilityCeilings", "globalBudget", "stepBudget"]);
+    assert.deepEqual(Object.keys(input.goal), ["title", "outcomeDefinition", "constraints", "successCriteria"]);
+    assert.deepEqual(input.goal.successCriteria,
+      [{ criterionId: "criterion-global", description: "Le résultat global est vérifié.", status: "NOT_MET" }]);
+    assert.deepEqual(input.stepBudget, { maxSteps: 5, stepsUsed: 0, remainingSteps: 5, finalStep: false });
+    // Aucune donnée de critère au-delà de l'identifiant, de la description et du statut.
+    for (const key of ["evidenceRefs", "targetValue", "currentValue", "type"]) {
+      assert.equal(JSON.stringify(input.goal.successCriteria).includes(`"${key}"`), false, key);
+    }
+  } finally { f.close(); }
+});
+
+test("B4a entrée du planner : finalStep vrai quand il ne reste qu'une étape", async () => {
+  const f = fixture({
+    limits: { maxSteps: 1, maxRetries: 0, maxProviderCalls: 3, maxDuration: 600_000, maxEstimatedCost: 0.5 },
+  });
+  try {
+    await f.service.planOnce({ runId: "goal-run-50d1" });
+    assert.deepEqual(plannerInput(f).stepBudget, { maxSteps: 1, stepsUsed: 0, remainingSteps: 1, finalStep: true });
+  } finally { f.close(); }
+  const snapshot = (maxSteps, steps) => ({ state: { contract: { limits: { maxSteps } }, usage: { steps } } });
+  assert.deepEqual({ ...stepBudgetPayload(snapshot(3, 2)) }, { maxSteps: 3, stepsUsed: 2, remainingSteps: 1, finalStep: true });
+  assert.deepEqual({ ...stepBudgetPayload(snapshot(3, 1)) }, { maxSteps: 3, stepsUsed: 1, remainingSteps: 2, finalStep: false });
+  assert.deepEqual({ ...stepBudgetPayload(snapshot(2, 2)) }, { maxSteps: 2, stepsUsed: 2, remainingSteps: 0, finalStep: false });
+  for (const [maxSteps, steps] of [[0, 0], [1.5, 0], [2, -1], [2, "1"]]) {
+    assert.throws(() => stepBudgetPayload(snapshot(maxSteps, steps)), { code: "GOAL_MODE_PLANNING_STEP_BUDGET_INVALID" });
+  }
+});
+
+test("B4a entrée du planner : critères tronqués côté serveur (10 entrées, 300 caractères)", async () => {
+  assert.equal(PLANNER_MAX_SUCCESS_CRITERIA, 10);
+  assert.equal(PLANNER_MAX_CRITERION_TEXT, 300);
+  const long = "é".repeat(150) + "🙂".repeat(200); // 350 caractères (points de code)
+  const criteria = Array.from({ length: 12 }, (_, index) => ({
+    criterionId: `criterion-${index}`, description: long, type: "BOOLEAN", targetValue: true,
+    currentValue: false, status: "NOT_MET", evidenceRefs: ["secret-ref"],
+  }));
+  const f = fixture({ currentGoal: goal({ successCriteria: criteria }) });
+  try {
+    await f.service.planOnce({ runId: "goal-run-50d1" });
+    const sent = plannerInput(f).goal.successCriteria;
+    assert.equal(sent.length, 10);
+    assert.deepEqual(sent.map((item) => item.criterionId), criteria.slice(0, 10).map((item) => item.criterionId));
+    for (const item of sent) {
+      assert.deepEqual(Object.keys(item), ["criterionId", "description", "status"]);
+      assert.equal(Array.from(item.description).length, 300);
+      assert.equal(item.description, Array.from(long).slice(0, 300).join(""));
+    }
+    assert.equal(JSON.stringify(sent).includes("secret-ref"), false);
+  } finally { f.close(); }
+  assert.deepEqual(successCriteriaPayload({ successCriteria: [{ criterionId: 7, description: null }] }),
+    [{ criterionId: "", description: "", status: "UNKNOWN" }]);
+  assert.deepEqual(successCriteriaPayload({}), []);
+});
+
+test("B4a prompt du planner : règle de la dernière étape et des critères de succès", () => {
+  assert.match(SYSTEM_PROMPT, /stepBudget\.finalStep est vrai, propose l'étape qui atteint directement la cible/);
+  assert.match(SYSTEM_PROMPT, /jamais un diagnostic préalable seul/);
+  assert.match(SYSTEM_PROMPT, /successCriteria liste les critères de succès du Goal/);
+  // Les règles existantes restent en place.
+  assert.match(SYSTEM_PROMPT, /N'utilise aucun outil\. N'exécute rien\./);
+  assert.match(SYSTEM_PROMPT, /Produis exactement UNE proposition/);
+});

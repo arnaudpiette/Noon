@@ -46,7 +46,7 @@ function goalFixture(overrides = {}) {
   };
 }
 
-async function harness({ goal = goalFixture(), realLock = false } = {}) {
+async function harness({ goal = goalFixture(), realLock = false, proposalNetwork = true } = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "noon-b2-transport-"));
   const writable = path.join(directory, "rw");
   const repository = path.join(writable, "repo");
@@ -140,7 +140,7 @@ async function harness({ goal = goalFixture(), realLock = false } = {}) {
             expectedOutcome: "Le transport est validé.",
             evidenceTargetIds: ["milestone-1", "criterion-m1"],
             usage: { steps: 1, retries: 0, providerCalls: 1, estimatedCost: 0.2 },
-            requestedCapabilities: { network: true, gitWrite: false, destructiveActions: false },
+            requestedCapabilities: { network: proposalNetwork, gitWrite: false, destructiveActions: false },
             requiresUserInput: false,
           }),
           toolCalls: [],
@@ -318,6 +318,63 @@ test("B2 transport : parcours complet run → planning → proposition → prepa
       assert.equal(audit.includes(secret), false, secret);
     }
     assert.ok(h.state.audit.every((item) => Object.keys(item.metadata).sort().join() === "code,route,status"));
+  } finally { await h.close(); }
+});
+
+test("B4a transport : proposition sans réseau → prepare accordé par le serveur, source tracée, dispatch unique", async () => {
+  const h = await harness({ proposalNetwork: false });
+  try {
+    const run = await h.createRunning();
+    const planning = await h.call("POST", "planning", { runId: run.runId, confirmProviderCall: true });
+    assert.equal(planning.status, 200, JSON.stringify(planning.body));
+    const stored = h.runtime.stepProposalStore.get(planning.body.stepId);
+    assert.equal(stored.proposal.requestedCapabilities.network, false);
+    const current = await h.call("GET", `runs/${run.runId}`);
+    const prepared = await h.call("POST", "dispatch/prepare", {
+      runId: run.runId, expectedRevision: current.body.revision, stepId: planning.body.stepId,
+    });
+    assert.equal(prepared.status, 201, JSON.stringify(prepared.body));
+    // La carte montre le réseau ; jamais Git write ni action destructive.
+    assert.ok(prepared.body.display.permissions.includes("NETWORK"));
+    assert.equal(prepared.body.display.permissions.some((item) => /GIT|DESTRUCTIVE/.test(item)), false);
+    const issued = h.state.events.filter((item) => item.event === "goal_mode_dev.approval_issued");
+    assert.equal(issued.length, 1);
+    assert.equal(issued[0].metadata.networkSource, "NATIVE_DEV_RUNTIME");
+    assert.equal(JSON.stringify(h.state.events).includes("SYNTHETIC_PRIVATE_OBJECTIVE"), false);
+    const reservation = h.runtime.runStore.get(run.runId).state.executionReservations
+      .find((item) => item.reservationId === prepared.body.reservationId);
+    assert.equal(reservation.status, "PREPARED");
+    const dispatched = await h.call("POST", "dispatch/resume", {
+      approvalId: prepared.body.approval.approvalId, resumeToken: prepared.body.resumeToken, decision: "approve",
+    });
+    assert.equal(dispatched.status, 200, JSON.stringify(dispatched.body));
+    assert.equal(dispatched.body.status, "DISPATCHED");
+    assert.equal(h.state.facadeCalls.length, 1);
+  } finally { await h.close(); }
+});
+
+test("B4a runtime : Goal devenu LOCAL_ONLY après le planning → prepare refusé avant réservation, zéro appel", async () => {
+  const h = await harness({ proposalNetwork: false });
+  try {
+    const run = await h.createRunning();
+    const planning = await h.call("POST", "planning", { runId: run.runId, confirmProviderCall: true });
+    assert.equal(planning.status, 200, JSON.stringify(planning.body));
+    const callsAfterPlanning = h.state.providerCalls;
+    const before = h.runtime.runStore.get(run.runId);
+    assert.equal(before.state.contract.localOnly, false);
+    // Le Goal passe LOCAL_ONLY (même version), sans traverser le garde HTTP :
+    // l'admission recompose le contrat et refuse (local_only ∩ plafond réseau)
+    // avant la projection ; le refus de la projection est couvert à part.
+    h.goal.sensitivity = "LOCAL_ONLY";
+    assert.throws(() => h.runtime.dispatchService.prepare(run.runId, {
+      expectedRevision: before.revision, stepId: planning.body.stepId,
+    }), { code: "GOAL_MODE_LOCAL_ONLY_NETWORK_CONFLICT" });
+    const after = h.runtime.runStore.get(run.runId);
+    assert.equal(after.revision, before.revision);
+    assert.deepEqual(after.state.executionReservations || [], []);
+    assert.equal(h.state.providerCalls, callsAfterPlanning);
+    assert.equal(h.state.facadeCalls.length, 0);
+    assert.equal(h.state.events.some((item) => item.event === "goal_mode_dev.approval_issued"), false);
   } finally { await h.close(); }
 });
 

@@ -567,9 +567,10 @@ function createGoalModeDevProjectionService({
       );
     }
 
+    // B4a : seul localOnly === false (strict) permet le reasoner distant.
     if (
-      contract.localOnly ===
-        true
+      contract.localOnly !==
+        false
     ) {
       fail(
         "GOAL_MODE_DEV_REMOTE_REASONING_BLOCKED",
@@ -596,21 +597,29 @@ function createGoalModeDevProjectionService({
     }
 
     /*
-     * Native DEV actuel utilise le reasoner distant.
-     * La capacité réseau doit donc avoir été demandée
-     * dans la proposition. 4B ne l'accorde pas :
-     * l'autorisation réelle reste à la tranche suivante.
+     * B4a : Native DEV raisonne à distance. Le réseau est
+     * une exigence du runtime, fixée par le serveur : plafond
+     * fixe du run (network === true) et run non local_only
+     * (vérifié plus haut). La demande de la proposition
+     * n'élargit rien et ne bloque plus : elle est seulement
+     * tracée. L'intersection plafond ∩ contrat ∩ état vivant
+     * est revérifiée au dispatch.
      */
     if (
-      capabilities
+      contract.capabilityCeilings
         ?.network !==
         true
     ) {
       fail(
-        "GOAL_MODE_DEV_REMOTE_REASONING_REQUIRED",
-        "La proposition DEV doit demander la capacité réseau pour le reasoner distant."
+        "GOAL_MODE_DEV_REMOTE_REASONING_BLOCKED",
+        "Le plafond du Goal Run n'autorise pas le réseau requis par Native DEV."
       );
     }
+
+    const proposalRequestedNetwork =
+      capabilities
+        ?.network ===
+        true;
 
     const workspace =
       workspaceEngine
@@ -1010,6 +1019,24 @@ function createGoalModeDevProjectionService({
       );
     }
 
+    // B4a : le contrat doit refléter le réseau requis (jamais d'exécution
+    // Native DEV préparée sans réseau, ni réseau en local_only).
+    if (
+      devContract
+        ?.capabilities
+        ?.networkAllowed !==
+        true ||
+      devContract
+        ?.devInput
+        ?.localOnly !==
+        false
+    ) {
+      fail(
+        "GOAL_MODE_DEV_REMOTE_REASONING_BLOCKED",
+        "Le contrat Goal→DEV n'autorise pas le réseau requis par Native DEV."
+      );
+    }
+
     if (
       devContract
         .devInput
@@ -1112,6 +1139,9 @@ function createGoalModeDevProjectionService({
       authorization: {
         networkRequested:
           true,
+        networkSource:
+          "NATIVE_DEV_RUNTIME",
+        proposalRequestedNetwork,
         externalAuthorizationRequired:
           admission
             .capabilityAdmission
