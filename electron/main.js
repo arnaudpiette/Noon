@@ -654,7 +654,7 @@ function registerIpc() {
     const mime = { ".webm": "audio/webm", ".m4a": "audio/mp4", ".mp4": "audio/mp4",
       ".ogg": "audio/ogg", ".mp3": "audio/mpeg", ".wav": "audio/wav" }[path.extname(source).toLowerCase()];
     if (!mime) throw new Error("Format audio refusé.");
-    return { canceled: false, record: recorderStore.importAudio(source, mime, path.basename(source)) };
+    return { canceled: false, record: await recorderStore.importAudio(source, mime, path.basename(source)) };
   });
   registerTrustedHandler("noon:recorder-rename", (_event, id, title) => recorderStore.rename(id, title));
   registerTrustedHandler("noon:recorder-delete", (_event, id) => recorderStore.remove(id));
@@ -662,7 +662,7 @@ function registerIpc() {
   registerTrustedHandler("noon:recorder-append", (_event, id, chunk) => recorderStore.append(id, chunk));
   registerTrustedHandler("noon:recorder-state", (_event, id, state) => recorderStore.setState(id, state));
   registerTrustedHandler("noon:recorder-chunk", (_event, id, index) => recorderStore.chunk(id, index));
-  registerTrustedHandler("noon:recorder-transcript", (_event, id, text, source) => recorderStore.saveTranscript(id, text, source));
+  registerTrustedHandler("noon:recorder-transcript", (_event, id, text, source, segments) => recorderStore.saveTranscript(id, text, source, segments ?? null));
   registerTrustedHandler("noon:recorder-analysis", (_event, id, analysis, revision) => recorderStore.saveAnalysis(id, analysis, revision));
   registerTrustedHandler("noon:recorder-report", async (_event, id, format) => {
     if (!["docx", "xlsx", "pptx", "pdf"].includes(format)) throw new Error("Format refusé.");

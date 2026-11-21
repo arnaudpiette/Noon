@@ -37,6 +37,9 @@
   let savedDuration = 0;
   let nextIndex = 0;
   let playbackUrl = null;
+  let playbackItemId = null;
+  const audioTools = window.NoonRecorderAudio;
+  const SINGLE_TRANSCRIPTION_LIMIT = Math.floor(9.5 * 1024 * 1024);
   const message = (text) => { status.textContent = text; };
   function controls(active, paused = false) {
     startButton.disabled = active;
@@ -96,6 +99,7 @@
           const blob = await loadAudio(item, 150 * 1024 * 1024);
           if (playbackUrl) URL.revokeObjectURL(playbackUrl);
           playbackUrl = URL.createObjectURL(blob);
+          playbackItemId = item.id;
           player.src = playbackUrl;
           await player.play();
         } catch (error) { message(`Lecture impossible : ${error.message}`); }
@@ -146,22 +150,20 @@
       transcribe.textContent = "Transcrire";
       transcribe.disabled = item.chunks.length === 0 || Boolean(item.missingSegments);
       transcribe.addEventListener("click", async () => {
-        if (!window.confirm("Envoyer cet enregistrement audio à OpenAI pour transcription ? Le contenu sortira de ton Mac. Les frais et la conservation dépendent du service. Annuler conserve l'audio local.")) return;
+        const totalBytes = item.chunks.reduce((sum, chunk) => sum + chunk.bytes, 0);
+        const split = totalBytes > SINGLE_TRANSCRIPTION_LIMIT;
+        if (!window.confirm(split
+          ? "Envoyer cet enregistrement à OpenAI pour transcription ? Il sera découpé en parties d'environ 4 minutes, toutes envoyées. Le contenu sortira de ton Mac ; les frais et la conservation dépendent du service. Annuler conserve l'audio local."
+          : "Envoyer cet enregistrement audio à OpenAI pour transcription ? Le contenu sortira de ton Mac. Les frais et la conservation dépendent du service. Annuler conserve l'audio local.")) return;
         transcribe.disabled = true;
         try {
-          const blob = await loadAudio(item, 10 * 1024 * 1024);
-          message("Transcription en cours…");
-          const response = await fetch("/transcribe", {
-            method: "POST", headers: { "Content-Type": item.mimeType, "X-Audio-Duration-Ms": String(item.durationMs) }, body: blob,
-          });
-          const result = await response.json();
-          if (!response.ok) throw new Error(result.message || "Service de transcription indisponible.");
-          const text = String(result.text || "").trim();
-          await bridge.saveTranscript(item.id, text, "openai");
+          const result = split ? await transcribeInParts(item) : await transcribeWhole(item);
+          await bridge.saveTranscript(item.id, result.text, "openai", result.segments);
           selectedRecordingId = item.id;
           transcriptSection.hidden = false;
-          transcriptEditor.value = text;
-          message("Transcription disponible. Corrige le texte avant de l'utiliser.");
+          transcriptEditor.value = result.text;
+          message(split ? `Transcription disponible (${result.segments.length} parties, repères [mm:ss]). Corrige le texte avant de l'utiliser.` : "Transcription disponible. Corrige le texte avant de l'utiliser.");
+          await renderLibrary();
         } catch (error) { message(`Transcription impossible : ${error.message}`); }
         finally { transcribe.disabled = false; }
       });
@@ -183,14 +185,65 @@
         view.textContent = item.analysis.stale ? "Analyse périmée" : "Voir l'analyse";
         view.addEventListener("click", () => {
           selectedRecordingId = item.id;
-          showAnalysis(item.analysis);
+          showAnalysis(item.analysis, item);
         });
         row.append(view);
       }
       library.append(row);
     }
   }
-  function showAnalysis(analysis) {
+  async function postTranscription(body, mimeType, durationMs) {
+    const response = await fetch("/transcribe", { method: "POST", headers: { "Content-Type": mimeType, "X-Audio-Duration-Ms": String(Math.max(0, Math.round(durationMs || 0))) }, body });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.message || "Service de transcription indisponible.");
+    return String(result.text || "").trim();
+  }
+
+  async function transcribeWhole(item) {
+    const blob = await loadAudio(item, SINGLE_TRANSCRIPTION_LIMIT);
+    message("Transcription en cours…");
+    return { text: await postTranscription(blob, item.mimeType, item.durationMs), segments: null };
+  }
+
+  // Au-delà de la limite d'un appel : décodage local en 16 kHz mono, parties coupées au
+  // silence, chaque partie envoyée en WAV ; échec d'une partie → rien n'est enregistré.
+  async function transcribeInParts(item) {
+    if (!audioTools || !window.AudioContext) throw new Error("Découpage audio indisponible dans cet environnement.");
+    message("Préparation de l'audio (décodage local)…");
+    const blob = await loadAudio(item, 150 * 1024 * 1024);
+    const context = new AudioContext({ sampleRate: audioTools.SAMPLE_RATE });
+    let decoded;
+    try { decoded = await context.decodeAudioData(await blob.arrayBuffer()); }
+    catch { throw new Error("Format audio non décodable pour le découpage."); }
+    finally { await context.close().catch(() => {}); }
+    if (decoded.duration > audioTools.MAX_DURATION_SECONDS) throw new Error("Enregistrement de plus de 2 heures : découpe-le avant de le transcrire.");
+    const channels = Array.from({ length: decoded.numberOfChannels }, (_, index) => decoded.getChannelData(index));
+    const samples = audioTools.mixToMono(channels);
+    const plan = audioTools.planSegments(samples, decoded.sampleRate);
+    const parts = [];
+    for (const [index, segment] of plan.entries()) {
+      message(`Transcription de la partie ${index + 1} sur ${plan.length} (à partir de ${audioTools.formatTimestamp(segment.startMs)})…`);
+      const wav = new Blob([audioTools.encodeWav(samples.subarray(segment.start, segment.end), decoded.sampleRate)], { type: "audio/wav" });
+      parts.push({ ...segment, text: await postTranscription(wav, "audio/wav", segment.endMs - segment.startMs) });
+    }
+    return { text: audioTools.assembleTranscript(parts), segments: plan.map(({ startMs, endMs }) => ({ startMs, endMs })) };
+  }
+
+  async function playAt(item, seconds) {
+    try {
+      if (playbackItemId !== item.id || !player.src) {
+        const blob = await loadAudio(item, 150 * 1024 * 1024);
+        if (playbackUrl) URL.revokeObjectURL(playbackUrl);
+        playbackUrl = URL.createObjectURL(blob);
+        playbackItemId = item.id;
+        player.src = playbackUrl;
+      }
+      player.currentTime = Math.max(0, Number(seconds) || 0);
+      await player.play();
+    } catch (error) { message(`Lecture impossible : ${error.message}`); }
+  }
+
+  function showAnalysis(analysis, item = null) {
     analysisSection.hidden = false;
     analysisContent.replaceChildren();
     const summary = document.createElement("p");
@@ -201,6 +254,16 @@
     for (const claim of analysis.claims) {
       const paragraph = document.createElement("p");
       paragraph.textContent = `${claim.type} · ${claim.text} · Source : « ${claim.quote} » · À vérifier`;
+      // Citation horodatée : repère [mm:ss] de la partie qui contient la citation exacte.
+      const seconds = item?.transcript?.text && audioTools ? audioTools.timestampForQuote(item.transcript.text, claim.quote) : null;
+      if (seconds !== null && item?.chunks?.length) {
+        const listen = document.createElement("button");
+        listen.type = "button";
+        listen.textContent = `▶ ${audioTools.formatTimestamp(seconds * 1000)}`;
+        listen.title = "Réécouter l'audio à partir du début de la partie qui contient cette citation";
+        listen.addEventListener("click", () => { void playAt(item, seconds); });
+        paragraph.append(" ", listen);
+      }
       analysisContent.append(paragraph);
     }
   }
@@ -421,7 +484,7 @@
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || "Analyse indisponible.");
       const analysis = await bridge.saveAnalysis(item.id, result.analysis, item.transcript.revision);
-      showAnalysis(analysis);
+      showAnalysis(analysis, item);
       message("Brouillon d'analyse disponible. Vérifie les citations avant de l'utiliser.");
       await renderLibrary();
     } catch (error) { message(`Analyse impossible : ${error.message}`); }

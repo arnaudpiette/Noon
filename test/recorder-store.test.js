@@ -56,7 +56,7 @@ test("la transcription corrigée reste disponible après redémarrage sans effac
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test("importe une piste locale en segments puis restitue les octets d'origine", () => {
+test("importe une piste locale en segments puis restitue les octets d'origine", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "noon-recorder-"));
   try {
     const source = path.join(root, "sample.webm");
@@ -64,12 +64,12 @@ test("importe une piste locale en segments puis restitue les octets d'origine", 
     Buffer.from([0x1a, 0x45, 0xdf, 0xa3]).copy(original);
     fs.writeFileSync(source, original);
     const store = createRecorderStore(root);
-    const record = store.importAudio(source, "audio/webm", "sample.webm");
+    const record = await store.importAudio(source, "audio/webm", "sample.webm");
     assert.equal(record.state, "available");
-    assert.equal(record.chunks.length, 4);
+    assert.equal(record.chunks.length, 2, "segments de 256 Ko");
     assert.deepEqual(Buffer.concat(record.chunks.map(({ index }) => Buffer.from(store.chunk(record.id, index).data, "base64"))), original);
     fs.writeFileSync(source, "texte qui n'est pas un audio");
-    assert.throws(() => store.importAudio(source, "audio/webm", "invalid"), /audio valide/);
+    await assert.rejects(store.importAudio(source, "audio/webm", "invalid"), /audio valide/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -106,5 +106,22 @@ test("une capture orpheline (renderer rechargé) est close comme interrompue et 
     const next = store.create({ mimeType: "audio/webm" });
     assert.notEqual(next.id, orphan.id);
     assert.throws(() => store.append(orphan.id, { index: 1, durationMs: 1, data: Buffer.from("x").toString("base64") }), /inactive/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("repères de transcription : validés, conservés lors d'une correction manuelle, refusés s'ils sont incohérents", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "noon-recorder-"));
+  try {
+    const store = createRecorderStore(root);
+    const record = store.create({ mimeType: "audio/webm" });
+    store.append(record.id, { index: 0, durationMs: 1000, data: Buffer.from("a").toString("base64") });
+    store.setState(record.id, "available");
+    const segments = [{ startMs: 0, endMs: 230_000 }, { startMs: 230_000, endMs: 470_000 }];
+    assert.deepEqual(store.saveTranscript(record.id, "[00:00] a\n\n[03:50] b", "openai", segments).segments, segments);
+    assert.deepEqual(store.saveTranscript(record.id, "[00:00] a corrigé\n\n[03:50] b", "manual").segments, segments, "correction manuelle : repères conservés");
+    assert.equal(store.saveTranscript(record.id, "texte", "openai").segments, undefined, "nouvelle transcription sans découpe : pas de repères hérités");
+    for (const bad of [[], [{ startMs: 10, endMs: 5 }], [{ startMs: 0, endMs: 10 }, { startMs: 5, endMs: 20 }], [{ startMs: 0.5, endMs: 10 }], "x"]) {
+      assert.throws(() => store.saveTranscript(record.id, "t", "openai", bad), /Repères/);
+    }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
