@@ -3724,7 +3724,10 @@ async function transcribeAudioBuffer(
 
   const extension = mediaType.includes("mp4")
     ? "m4a"
-    : "webm";
+    : mediaType.includes("mpeg") ? "mp3"
+      : mediaType.includes("wav") ? "wav"
+        : mediaType.includes("ogg") ? "ogg"
+          : "webm";
 
   const audioFile = await toFile(
     audioBuffer,
