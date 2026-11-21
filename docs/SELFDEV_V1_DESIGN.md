@@ -169,7 +169,9 @@ commit, de fusion ou d'application au working tree en V1 : l'utilisateur intègr
 
 ## 6. Tranches
 
-1. **SD-1 — Cible et worktree, sans modèle.** Enregistrement de la cible, service de worktree
+1. **SD-1 — Cible et worktree, sans modèle.** *Livré le 21/11/2026* : `services/selfdev/`
+   (`selfdev-path-policy.js`, `selfdev-worktree-service.js`, `selfdev-target-store.js`),
+   tests `test/selfdev-sd1.test.js`, non branché au serveur. Enregistrement de la cible, service de worktree
    (création, inventaire, suppression explicite), politique de chemins SelfDev et contrôle du
    diff. Tests : working tree utilisateur intact (empreinte avant/après), base explicite,
    refus des chemins protégés, ajout de test autorisé, modification de test refusée.
