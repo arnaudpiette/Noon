@@ -2577,3 +2577,24 @@ body.dev-preview-resizing *{
 .goal-mode-dev__instruction { white-space: pre-wrap; overflow-wrap: anywhere; }
 .goal-mode-dev__basis { font-weight: 600; }
 .goal-mode-dev__rules { margin: 0; padding-left: 18px; }
+
+/* Dictaphone : une vue dédiée qui garde la navigation Noon intacte. */
+.recorder-entry{margin-top:12px;text-align:left}
+.recorder-view{padding:100px 38px 35px;overflow:auto}
+.recorder-layout{display:grid;grid-template-columns:minmax(250px,1fr) minmax(250px,1fr);gap:18px;max-width:1050px;margin-top:24px}
+.recorder-card{min-width:0;padding:22px;border:1px solid var(--border);border-radius:16px;background:#fff;box-shadow:0 7px 20px rgba(0,0,0,.03)}
+.recorder-card h2{margin:0 0 15px;font-size:20px}.recorder-card p{line-height:1.5;color:#56595d}
+.recorder-card label{display:block;margin:15px 0;font-size:13px;line-height:1.5}
+.recorder-card button{padding:10px 14px;border:1px solid var(--border);border-radius:9px;background:#f7f8f5}
+.recorder-card button:disabled{opacity:.45;cursor:not-allowed}
+.recorder-card button:focus-visible,.recorder-card input:focus-visible,.recorder-card textarea:focus-visible{outline:2px solid var(--orange);outline-offset:2px}
+#recorderStart{background:var(--green)}.recorder-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:15px}
+#recorderStatus{min-height:24px}#recorderList{display:grid;gap:8px;max-height:300px;overflow:auto}
+#recorderList button{text-align:left}#recorderList button[aria-current="true"]{border-color:var(--green);background:#f5fce2}
+.recorder-detail{grid-column:1/-1}.recorder-detail audio{width:100%;margin:10px 0}
+.recorder-detail textarea{display:block;width:100%;max-width:100%;padding:12px;border:1px solid var(--border);border-radius:9px;font:inherit;line-height:1.5}
+@media(max-width:850px){.recorder-layout{grid-template-columns:1fr}.recorder-view{padding:85px 18px 30px}}
+
+.recorder-point{margin:12px 0;padding:12px;border-left:3px solid var(--green);background:#f8faf5}.recorder-point p{margin:5px 0}.recorder-card select{margin-left:8px;padding:7px;border:1px solid var(--border);border-radius:7px}
+
+#recorderSegments{display:grid;gap:7px;margin:15px 0;max-height:320px;overflow:auto}#recorderSegments button{text-align:left}#recorderSegments label input{margin:0 8px;padding:7px;border:1px solid var(--border);border-radius:7px}

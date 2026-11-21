@@ -44,6 +44,7 @@
           <span class="conversation-history__empty">Aucun projet.</span>
         </div>
       </details>
+      <button id="openRecorderButton" class="new-conversation-button recorder-entry" type="button">● Dictaphone</button>
       <section class="live-voice-panel" aria-labelledby="liveVoiceTitle">
         <div class="live-voice-heading">
           <div>
@@ -897,6 +898,49 @@
         </section>
       </section>
 
+      <section id="recorderView" class="view recorder-view" aria-label="Dictaphone Noon">
+        <header class="chat-header"><div><span class="label">CAPTURE LOCALE</span><h1>Dictaphone</h1></div></header>
+        <div class="recorder-layout">
+          <section class="recorder-card" aria-label="Nouvel enregistrement">
+            <h2>Enregistrer</h2>
+            <p>Informe les participants et recueille leur accord lorsque nécessaire. Le microphone ne démarre qu'après ton action.</p>
+            <label><input id="recorderConsent" type="checkbox"> J'ai informé les participants et obtenu les accords nécessaires.</label>
+            <div class="recorder-actions">
+              <button id="recorderStart" type="button">● Enregistrer</button>
+              <button id="recorderPause" type="button" disabled>Pause</button>
+              <button id="recorderStop" type="button" disabled>Terminer</button>
+            </div>
+            <p id="recorderStatus" role="status" aria-live="polite">Prêt · microphone inactif</p>
+            <label class="recorder-import">Importer un audio (WebM, MP4 ou Ogg) <input id="recorderImport" type="file" accept="audio/webm,audio/mp4,audio/ogg,.webm,.m4a,.mp4,.ogg"></label>
+          </section>
+          <section class="recorder-card" aria-label="Bibliothèque d'enregistrements">
+            <h2>Bibliothèque</h2><div id="recorderList"></div>
+          </section>
+          <section id="recorderDetail" class="recorder-card recorder-detail" hidden>
+            <h2 id="recorderTitle"></h2>
+            <audio id="recorderAudio" controls preload="none"></audio>
+            <p id="recorderDetailStatus"></p>
+            <label><input id="recorderCloudConsent" type="checkbox"> Autoriser l'envoi de cet audio à OpenAI pour transcription.</label>
+            <label><input id="recorderSpeakerMode" type="checkbox"> Identifier les intervenants et horodater les segments (moteur temporaire, à remplacer avant le 26 février 2027).</label>
+            <button id="recorderTranscribe" type="button">Transcrire</button>
+            <div id="recorderSegments" aria-label="Passages horodatés"></div>
+            <label for="recorderTranscript">Transcription modifiable (sans horodatage garanti)</label>
+            <textarea id="recorderTranscript" rows="10" placeholder="La transcription apparaîtra ici."></textarea>
+            <div class="recorder-actions">
+              <label for="recorderAnalysisType">Type <select id="recorderAnalysisType"><option>réunion</option><option>cours</option><option>entretien</option><option>brainstorming</option><option>appel</option><option>journal</option></select></label>
+              <button id="recorderAnalyze" type="button">Analyser le texte (cloud)</button>
+            </div>
+            <section id="recorderAnalysis" aria-label="Analyse à vérifier"></section>
+            <div class="recorder-actions">
+              <button id="recorderSaveTranscript" type="button">Enregistrer la correction</button>
+              <label for="recorderExportFormat">Export <select id="recorderExportFormat"><option value="docx">Word DOCX</option><option value="xlsx">Excel XLSX</option><option value="pptx">PowerPoint PPTX</option><option value="pdf">PDF</option><option value="md">Markdown</option><option value="txt">Texte TXT</option><option value="srt">Sous-titres SRT</option><option value="vtt">Sous-titres VTT</option></select></label>
+              <button id="recorderExportText" type="button">Télécharger</button>
+              <button id="recorderDelete" type="button">Supprimer</button>
+            </div>
+          </section>
+        </div>
+      </section>
+
       <section id="briefView" class="view brief-view">
         <header class="chat-header"><div><span class="label">Chaque matin à 7 h · Europe/Paris</span><h1>Brief matinal Noon</h1></div><time id="briefGeneratedAt"></time></header>
         <section class="daily-brief-section personal-brief-section">
@@ -1164,6 +1208,7 @@
   <script src="dev-terminal-profile-ui.js"></script>
   <script src="goal-mode-dev-ui.js"></script>
   <script src="app.js"></script>
+  <script src="recorder.js"></script>
   <script src="live-voice-core.js"></script>
   <script src="live-voice.js"></script>
 </body>

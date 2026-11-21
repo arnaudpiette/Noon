@@ -9595,7 +9595,7 @@ function switchView(viewName) {
   if (currentView === "personal" && viewName !== "personal") {
     resetPrivateMemoryVisibility();
   }
-  currentView = ["chat", "brief", "personal"].includes(viewName) ? viewName : "core";
+  currentView = ["chat", "brief", "personal", "recorder"].includes(viewName) ? viewName : "core";
 
   viewButtons.forEach((button) => {
     const isActive = button.dataset.view === currentView;
@@ -9609,7 +9609,12 @@ function switchView(viewName) {
 
   document.body.dataset.interactionMode = currentView;
 
-  if (currentView === "brief") {
+  if (currentView === "recorder") {
+    interruptNoonSpeech(false);
+    window.noonLiveVoice?.disconnect({ announce: false });
+    window.dispatchEvent(new Event("noon:recorder-open"));
+    updateActivity("Dictaphone ouvert.");
+  } else if (currentView === "brief") {
     interruptNoonSpeech(false);
     window.noonLiveVoice?.disconnect({ announce: false });
     void loadCreativeBrief();
@@ -11559,3 +11564,6 @@ window.NoonAppBridge = {
 };
 
 void refreshAudioDevices();
+
+// Entrée dédiée au Dictaphone, sans modifier les vues historiques.
+document.getElementById("openRecorderButton").addEventListener("click", () => switchView("recorder"));
