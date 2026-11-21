@@ -35,6 +35,10 @@ const LOCK_FILE = "noon-data.lock";
 const TAKEOVER_FILE = `${LOCK_FILE}.takeover`;
 const BOOT_TIME_TOLERANCE_MS = 60_000;
 
+function ioErrorCode(error) {
+  return typeof error?.code === "string" && /^[A-Z0-9_]{1,40}$/.test(error.code) ? error.code : "READ_FAILED";
+}
+
 // ALIVE | DEAD (ESRCH exactement) | UNKNOWN (toute autre erreur).
 function probeProcessDefault(candidate, kill = (target, signal) => process.kill(target, signal)) {
   try {
@@ -74,7 +78,11 @@ function createDataDirectoryLock({
     try {
       raw = fs.readFileSync(target, "utf8");
     } catch (error) {
-      return error?.code === "ENOENT" ? { status: "ABSENT", raw: null, record: null } : { status: "UNREADABLE", raw: null, record: null };
+      // B4c : erreur d'E/S (EMFILE, EACCES…) distinguée d'un contenu illisible
+      // (raw === null) ; son code est gardé pour le diagnostic.
+      return error?.code === "ENOENT"
+        ? { status: "ABSENT", raw: null, record: null }
+        : { status: "UNREADABLE", raw: null, record: null, errorCode: ioErrorCode(error) };
     }
     try {
       const parsed = JSON.parse(raw);
@@ -251,7 +259,9 @@ function createDataDirectoryLock({
       }
       const existing = readState();
       if (existing.status === "ABSENT") continue; // libéré entre-temps : nouvel essai
-      if (existing.status === "UNREADABLE") return refused("UNREADABLE");
+      if (existing.status === "UNREADABLE") {
+        return refused("UNREADABLE", existing.errorCode ? { readError: existing.errorCode } : {});
+      }
       const liveness = holderLiveness(existing.record);
       if (liveness !== "DEAD") return refused("HELD", { holderPid: existing.record.pid });
       if (!autoTakeover) return refused("STALE", { holderPid: existing.record.pid });
@@ -268,6 +278,8 @@ function createDataDirectoryLock({
     const observed = readState();
     if (observed.status === "ABSENT") return acquire();
     const eligible = (state) => {
+      // B4c : fichier non lu (erreur d'E/S) → détenteur indéterminé, jamais repris.
+      if (state.status === "UNREADABLE" && state.raw === null) return "HOLDER_UNVERIFIED";
       if (state.status === "UNREADABLE") return expected === null ? true : "EXPECTED_HOLDER_MISMATCH";
       if (state.record.pid !== expected) return "EXPECTED_HOLDER_MISMATCH";
       const liveness = holderLiveness(state.record);
@@ -283,24 +295,49 @@ function createDataDirectoryLock({
   // État pour la maintenance (affichage) : aucune écriture, aucune reprise.
   function inspect() {
     const takeoverPending = readState(takeoverFile).status !== "ABSENT";
-    if (isHeld()) return Object.freeze({ state: "HELD_BY_THIS", takeoverPending, canTakeOver: false });
+    // B4c : une seule lecture du verrou. Avant, isHeld() puis readState()
+    // lisaient deux fois : une erreur passagère sur la première faisait
+    // afficher « autre instance » pour le propre verrou de ce processus.
     const observed = readState();
-    if (observed.status === "ABSENT") return Object.freeze({ state: "ABSENT", takeoverPending, canTakeOver: true });
+    const record = observed.status === "PRESENT" ? observed.record : null;
+    // Diagnostic (jamais le jeton, le chemin ni le hostname).
+    const diagnostic = Object.freeze({
+      read: observed.status,
+      readError: observed.errorCode || null,
+      tokenPresent: token !== null,
+      tokenMatch: token !== null && record?.token === token,
+      pidMatch: record ? record.pid === pid : null,
+      sameHost: record ? record.hostname === hostname : null,
+    });
+    const view = (fields) => Object.freeze({ ...fields, diagnostic });
+    if (diagnostic.tokenMatch && diagnostic.pidMatch) {
+      return view({ state: "HELD_BY_THIS", takeoverPending, canTakeOver: false });
+    }
+    if (observed.status === "ABSENT") return view({ state: "ABSENT", takeoverPending, canTakeOver: true });
     if (observed.status === "UNREADABLE") {
-      return Object.freeze({ state: "UNREADABLE", holderPid: null, takeoverPending, canTakeOver: true });
+      // Fichier non lu (erreur d'E/S) : indéterminé, aucune reprise proposée.
+      if (observed.raw === null) return view({ state: "UNVERIFIED", holderPid: null, takeoverPending, canTakeOver: false });
+      return view({ state: "UNREADABLE", holderPid: null, takeoverPending, canTakeOver: true });
     }
     const previous = previousOf(observed);
+    const holder = {
+      holderPid: previous.pid,
+      holderHostname: previous.hostname,
+      holderCreatedAt: previous.createdAt,
+    };
+    // Même PID sur la même machine sans notre jeton : jamais « autre instance ».
+    if (diagnostic.pidMatch && diagnostic.sameHost) {
+      return view({ state: "UNVERIFIED", ...holder, sameHost: true, machineRestarted: null, takeoverPending, canTakeOver: false });
+    }
     const liveness = holderLiveness(observed.record);
     const state = { ALIVE: "HELD", DEAD: "STALE", FOREIGN_HOST: "FOREIGN_HOST", UNKNOWN: "UNVERIFIED" }[liveness];
     const currentBoot = safeBootTime();
     // Indication seulement (PID probablement réutilisé) : n'autorise aucune reprise.
     const machineRestarted = liveness === "FOREIGN_HOST" || previous.bootTime === null || currentBoot === null
       ? null : currentBoot - previous.bootTime > BOOT_TIME_TOLERANCE_MS;
-    return Object.freeze({
+    return view({
       state,
-      holderPid: previous.pid,
-      holderHostname: previous.hostname,
-      holderCreatedAt: previous.createdAt,
+      ...holder,
       sameHost: liveness !== "FOREIGN_HOST",
       machineRestarted,
       takeoverPending,

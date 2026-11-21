@@ -994,14 +994,16 @@ test("B3b transport : détenteur vivant sur la même machine → reprise refusé
   try {
     const lockFile = path.join(h.directory, "data", LOCK_FILE);
     fs.mkdirSync(path.dirname(lockFile), { recursive: true });
-    // Le processus de test lui-même est vivant : détenteur vivant sur ce Mac.
-    const live = JSON.stringify({ pid: process.pid, hostname: os.hostname(), token: "live-token", createdAt: "2026-10-13T12:00:00.000Z", bootTime: 0 });
+    // Autre processus vivant sur ce Mac : PID 1 (launchd, toujours vivant ; EPERM → ALIVE).
+    // B4c : le PID du processus de test lui-même donnerait UNVERIFIED (testé à part).
+    const live = JSON.stringify({ pid: 1, hostname: os.hostname(), token: "live-token", createdAt: "2026-10-13T12:00:00.000Z", bootTime: 0 });
     fs.writeFileSync(lockFile, live);
     const state = await h.call("GET", "maintenance/lock");
     assert.equal(state.body.state, "HELD");
+    assert.equal(state.body.holderPid, 1);
     assert.equal(state.body.canTakeOver, false);
     assert.equal(state.body.machineRestarted, true); // indication seulement
-    const refused = await h.call("POST", "maintenance/lock-takeover", { confirm: true, expectedHolderPid: process.pid });
+    const refused = await h.call("POST", "maintenance/lock-takeover", { confirm: true, expectedHolderPid: 1 });
     assert.equal(refused.status, 409);
     assert.equal(refused.body.code, "GOAL_MODE_DEV_LOCK_HOLDER_ALIVE");
     assert.equal(fs.readFileSync(lockFile, "utf8"), live);
@@ -1011,6 +1013,28 @@ test("B3b transport : détenteur vivant sur la même machine → reprise refusé
     const scan = await h.call("POST", "maintenance/reconcile-scan", { confirm: true });
     assert.equal(scan.status, 409);
     assert.equal(scan.body.code, "GOAL_MODE_DEV_RECONCILE_LOCK_REQUIRED");
+  } finally { await h.close(); }
+});
+
+test("B4c transport : verrou au PID de ce processus sans son jeton → UNVERIFIED, jamais « autre instance », aucune reprise", async () => {
+  const h = await harness({ realLock: true });
+  try {
+    const lockFile = path.join(h.directory, "data", LOCK_FILE);
+    fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+    const foreignToken = JSON.stringify({ pid: process.pid, hostname: os.hostname(), token: "not-ours", createdAt: "2026-10-13T12:00:00.000Z", bootTime: 0 });
+    fs.writeFileSync(lockFile, foreignToken);
+    const state = await h.call("GET", "maintenance/lock");
+    assert.equal(state.status, 200);
+    assert.equal(state.body.state, "UNVERIFIED");
+    assert.equal(state.body.holderPid, process.pid);
+    assert.equal(state.body.canTakeOver, false);
+    // Projection à clés fixes : ni diagnostic, ni jeton, ni chemin.
+    assert.equal(Object.hasOwn(state.body, "diagnostic"), false);
+    assert.equal(JSON.stringify(state.body).includes("not-ours"), false);
+    const refused = await h.call("POST", "maintenance/lock-takeover", { confirm: true, expectedHolderPid: process.pid });
+    assert.equal(refused.status, 409);
+    assert.equal(refused.body.code, "GOAL_MODE_DEV_LOCK_HOLDER_ALIVE");
+    assert.equal(fs.readFileSync(lockFile, "utf8"), foreignToken);
   } finally { await h.close(); }
 });
 

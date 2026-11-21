@@ -1705,10 +1705,14 @@ try {
 let goalModeDevLockMaintenance = null;
 try {
   if (goalModeDevRuntime) {
+    // B4c : journal dédié au diagnostic du verrou (rétention propre, 200 entrées),
+    // créé seulement quand Goal Mode DEV est composé (flag actif).
+    const goalModeDevLockDiagnosticsLog = createAuditLog(path.join(DATA_DIRECTORY, "goal-mode-dev-lock-diagnostics.json"), 200);
     goalModeDevLockMaintenance = createGoalModeDevLockMaintenance({
       lock: dataDirectoryLock,
       runtime: goalModeDevRuntime,
       audit: (event, metadata) => toolAuditLog.append(event, metadata),
+      diagnostics: (event, metadata) => goalModeDevLockDiagnosticsLog.append(event, metadata),
     });
   }
 } catch (error) {

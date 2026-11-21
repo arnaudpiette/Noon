@@ -330,3 +330,98 @@ test("reprise automatique concurrente : plusieurs processus sur le même verrou 
     assert.equal(fs.existsSync(lockPath(directory)), false); // libéré par le gagnant
   }
 }));
+
+// ---- B4c : inspect() en une seule lecture, jamais « autre instance » pour soi ----
+
+// fs mandataire : les lectures du verrou peuvent échouer (EMFILE, EACCES…).
+function flakyFs({ failLockReads = 0, persistentCode = null } = {}) {
+  const state = { lockReads: 0, failures: failLockReads };
+  const proxy = Object.create(fs);
+  proxy.readFileSync = (file, ...rest) => {
+    if (path.basename(String(file)) === LOCK_FILE) {
+      state.lockReads += 1;
+      if (persistentCode) throw Object.assign(new Error(persistentCode), { code: persistentCode });
+      if (state.failures > 0) {
+        state.failures -= 1;
+        throw Object.assign(new Error("EMFILE"), { code: "EMFILE" });
+      }
+    }
+    return fs.readFileSync(file, ...rest);
+  };
+  return { proxy, state, failNext(count = 1) { state.failures = count; } };
+}
+
+test("B4c inspect : une seule lecture ; erreur passagère sur son propre verrou → UNVERIFIED, jamais HELD", () => withDir((directory) => {
+  const flaky = flakyFs();
+  const lock = createDataDirectoryLock({ directory, fs: flaky.proxy });
+  assert.equal(lock.acquire().reason, "ACQUIRED");
+  flaky.state.lockReads = 0;
+  assert.equal(lock.inspect().state, "HELD_BY_THIS");
+  assert.equal(flaky.state.lockReads, 1, "une seule lecture du verrou par inspect()");
+  // Mécanisme du premier essai : la lecture échoue une fois (EMFILE).
+  // Avant B4c : isHeld() échouait puis la seconde lecture voyait un détenteur
+  // vivant (ce processus) → HELD « autre instance ».
+  flaky.failNext(1);
+  const transient = lock.inspect();
+  assert.equal(transient.state, "UNVERIFIED");
+  assert.equal(transient.canTakeOver, false);
+  assert.equal(transient.holderPid, null);
+  assert.deepEqual({ ...transient.diagnostic }, {
+    read: "UNREADABLE", readError: "EMFILE", tokenPresent: true, tokenMatch: false, pidMatch: null, sameHost: null,
+  });
+  assert.equal(lock.inspect().state, "HELD_BY_THIS"); // lecture suivante : de nouveau détenu
+  assert.equal(lock.isHeld(), true);
+  assert.equal(lock.release(), true);
+}));
+
+test("B4c inspect : verrou au PID de ce processus sans notre jeton → UNVERIFIED ; autre machine inchangé", () => withDir((directory) => {
+  write(lockPath(directory), { pid: process.pid, hostname: HOST, token: "other-instance-in-process", createdAt: "2026-10-13T12:00:00.000Z" });
+  const sonde = probe({});
+  const lock = createDataDirectoryLock({ directory, probeProcess: sonde });
+  const view = lock.inspect();
+  assert.equal(view.state, "UNVERIFIED");
+  assert.equal(view.holderPid, process.pid);
+  assert.equal(view.sameHost, true);
+  assert.equal(view.canTakeOver, false);
+  assert.deepEqual({ ...view.diagnostic }, {
+    read: "PRESENT", readError: null, tokenPresent: false, tokenMatch: false, pidMatch: true, sameHost: true,
+  });
+  assert.deepEqual(sonde.calls, []); // jamais sondé : c'est nous
+  // Le diagnostic ne contient ni jeton, ni chemin, ni hostname.
+  const serialized = JSON.stringify(view.diagnostic);
+  for (const secret of ["other-instance-in-process", directory, HOST]) assert.equal(serialized.includes(secret), false, secret);
+  // Même PID mais autre machine : FOREIGN_HOST, comme avant.
+  write(lockPath(directory), { pid: process.pid, hostname: "other-host", token: "remote" });
+  assert.equal(lock.inspect().state, "FOREIGN_HOST");
+  // Autre PID vivant sur ce Mac : HELD, comme avant.
+  write(lockPath(directory), { pid: 9191, hostname: HOST, token: "live" });
+  const live = createDataDirectoryLock({ directory, probeProcess: probe({ 9191: "ALIVE" }) }).inspect();
+  assert.equal(live.state, "HELD");
+  assert.equal(live.diagnostic.pidMatch, false);
+}));
+
+test("B4c lecture impossible (E/S) : ni reprise explicite ni automatique, contenu illisible inchangé", () => withDir((directory) => {
+  write(lockPath(directory), { pid: 4343, hostname: HOST, token: "stale" });
+  const before = fs.readFileSync(lockPath(directory), "utf8");
+  const denied = flakyFs({ persistentCode: "EACCES" });
+  const lock = createDataDirectoryLock({ directory, fs: denied.proxy, probeProcess: probe({ 4343: "DEAD" }) });
+  const view = lock.inspect();
+  assert.equal(view.state, "UNVERIFIED");
+  assert.equal(view.canTakeOver, false);
+  assert.equal(view.diagnostic.readError, "EACCES");
+  assert.deepEqual({ ...lock.acquire({ autoTakeover: true }) }, { acquired: false, reason: "UNREADABLE", readError: "EACCES" });
+  assert.equal(lock.takeover({ expectedHolderPid: null }).reason, "HOLDER_UNVERIFIED");
+  assert.equal(fs.readFileSync(lockPath(directory), "utf8"), before);
+  assert.deepEqual(staleFiles(directory, LOCK_FILE), []);
+  assert.equal(fs.existsSync(mutexPath(directory)), false);
+  // Code d'erreur inattendu : normalisé, jamais recopié tel quel.
+  const odd = flakyFs({ persistentCode: "weird code with /path" });
+  assert.equal(createDataDirectoryLock({ directory, fs: odd.proxy }).inspect().diagnostic.readError, "READ_FAILED");
+  // Contenu illisible (lu mais invalide) : comportement B3b inchangé.
+  write(lockPath(directory), "{garbage");
+  const garbage = createDataDirectoryLock({ directory }).inspect();
+  assert.equal(garbage.state, "UNREADABLE");
+  assert.equal(garbage.canTakeOver, true);
+  assert.equal(garbage.diagnostic.readError, null);
+  assert.deepEqual({ ...createDataDirectoryLock({ directory }).acquire() }, { acquired: false, reason: "UNREADABLE" });
+}));

@@ -167,3 +167,93 @@ test("contrat B3b : corps exacts de reprise et de scan, projections à clés fix
   assert.deepEqual({ ...contract.projectLockTakeover({ acquired: true, reason: "TAKEN_OVER", previousPid: 3, reconcileRecommended: true, staleFile: "x" }) },
     { acquired: true, reason: "TAKEN_OVER", previousPid: 3, reconcileRecommended: true });
 });
+
+// ---- B4c : journal de diagnostic du verrou (dédié, métadonnées seulement) ----
+
+function diagRecorder() {
+  const events = [];
+  return { events, diagnostics: (event, metadata) => events.push([event, metadata]) };
+}
+
+test("B4c diagnostic : lock_acquire à chaque démarrage (acquis, repris, refusé), sans jeton ni hostname", () => {
+  for (const [acquire, expected] of [
+    [{ acquired: true, reason: "ACQUIRED" }, { reason: "ACQUIRED", acquired: true, selfPid: 4100, holderPid: null, readError: null }],
+    [{ acquired: true, reason: "TAKEN_OVER", previous: { pid: 4242, hostname: "secret-host" } },
+      { reason: "TAKEN_OVER", acquired: true, selfPid: 4100, holderPid: 4242, readError: null }],
+    [{ acquired: false, reason: "HELD", holderPid: 77 }, { reason: "HELD", acquired: false, selfPid: 4100, holderPid: 77, readError: null }],
+    [{ acquired: false, reason: "UNREADABLE", readError: "EMFILE" },
+      { reason: "UNREADABLE", acquired: false, selfPid: 4100, holderPid: null, readError: "EMFILE" }],
+  ]) {
+    const { events, diagnostics } = diagRecorder();
+    createGoalModeDevLockMaintenance({ lock: fakeLock({ acquire }), runtime: fakeRuntime(), diagnostics, pid: 4100 }).startup();
+    assert.deepEqual(events[0], ["goals.mode-dev.lock_acquire", expected]);
+    if (acquire.reason === "TAKEN_OVER") {
+      assert.deepEqual(events[1], ["goals.mode-dev.lock_takeover", { mode: "AUTOMATIC", previousPid: 4242, reason: "SAME_HOST_ESRCH" }]);
+    }
+    assert.equal(JSON.stringify(events).includes("secret-host"), false);
+  }
+});
+
+test("B4c diagnostic : lock_inspect seulement hors HELD_BY_THIS, champs bornés, délai depuis le démarrage", () => {
+  let clock = 1_000;
+  const lock = fakeLock();
+  let view = { state: "HELD_BY_THIS", takeoverPending: false, canTakeOver: false, diagnostic: { read: "PRESENT" } };
+  lock.inspect = () => view;
+  const { events, diagnostics } = diagRecorder();
+  const maintenance = createGoalModeDevLockMaintenance({ lock, runtime: fakeRuntime(), diagnostics, now: () => clock, pid: 4100 });
+  // Avant le démarrage : délai inconnu.
+  view = { state: "UNVERIFIED", holderPid: null, diagnostic: { read: "UNREADABLE", readError: "EMFILE", tokenPresent: true, tokenMatch: false, pidMatch: null, sameHost: null } };
+  maintenance.inspect();
+  assert.equal(events.at(-1)[1].sinceStartupMs, null);
+  maintenance.startup();
+  events.length = 0;
+  view = { state: "HELD_BY_THIS", takeoverPending: false, canTakeOver: false, diagnostic: { read: "PRESENT" } };
+  assert.equal(maintenance.inspect(), view); // vue renvoyée telle quelle
+  assert.deepEqual(events, []); // état normal : rien n'est journalisé
+  clock = 3_500;
+  view = {
+    state: "UNVERIFIED", holderPid: 4100, holderHostname: "secret-host",
+    diagnostic: { read: "PRESENT", readError: null, tokenPresent: true, tokenMatch: false, pidMatch: true, sameHost: true, token: "secret-token" },
+  };
+  maintenance.inspect();
+  assert.deepEqual(events, [["goals.mode-dev.lock_inspect", {
+    state: "UNVERIFIED", read: "PRESENT", readError: null, tokenPresent: true, tokenMatch: false, pidMatch: true,
+    sameHost: true, holderIsSelf: true, selfPid: 4100, holderPid: 4100, sinceStartupMs: 2_500,
+  }]]);
+  assert.equal(JSON.stringify(events).includes("secret"), false);
+  // Valeurs inattendues : normalisées (jamais recopiées).
+  events.length = 0;
+  view = { state: "weird state", holderPid: "12", diagnostic: { read: "<x>", readError: "with space", tokenPresent: "yes", pidMatch: 1 } };
+  maintenance.inspect();
+  assert.deepEqual(events[0][1], {
+    state: null, read: null, readError: null, tokenPresent: null, tokenMatch: null, pidMatch: null,
+    sameHost: null, holderIsSelf: false, selfPid: 4100, holderPid: null, sinceStartupMs: 2_500,
+  });
+  // Même PID mais autre machine : jamais « soi-même ».
+  view = { state: "FOREIGN_HOST", holderPid: 4100, diagnostic: { read: "PRESENT", pidMatch: true, sameHost: false } };
+  maintenance.inspect();
+  assert.equal(events.at(-1)[1].holderIsSelf, false);
+  // Vue sans diagnostic : champs nuls, aucune exception.
+  view = { state: "HELD", holderPid: 9 };
+  maintenance.inspect();
+  assert.equal(events.at(-1)[1].holderPid, 9);
+});
+
+test("B4c diagnostic : reprises copiées dans le journal dédié ; un journal défaillant ne casse rien", () => {
+  const { events, diagnostics } = diagRecorder();
+  const lock = fakeLock({ takeover: { acquired: true, reason: "TAKEN_OVER", previous: { pid: 77 } } });
+  createGoalModeDevLockMaintenance({ lock, runtime: fakeRuntime(), diagnostics }).takeover({ expectedHolderPid: 77 });
+  assert.deepEqual(events, [["goals.mode-dev.lock_takeover", { mode: "EXPLICIT", previousPid: 77, reason: "USER_CONFIRMED" }]]);
+  const refused = diagRecorder();
+  const maintenance = createGoalModeDevLockMaintenance({
+    lock: fakeLock({ takeover: { acquired: false, reason: "HOLDER_UNVERIFIED" } }), runtime: fakeRuntime(), diagnostics: refused.diagnostics,
+  });
+  assert.throws(() => maintenance.takeover({ expectedHolderPid: null }), { code: "GOAL_MODE_DEV_LOCK_HOLDER_UNVERIFIED" });
+  assert.deepEqual(refused.events, [["goals.mode-dev.lock_takeover_refused", { reason: "HOLDER_UNVERIFIED" }]]);
+  // Sink qui lève : démarrage, état et reprise continuent.
+  const broken = createGoalModeDevLockMaintenance({
+    lock: fakeLock(), runtime: fakeRuntime(), diagnostics: () => { throw new Error("disk full"); },
+  });
+  assert.equal(broken.startup().lock, "ACQUIRED");
+  assert.equal(broken.inspect().state, "HELD_BY_THIS");
+});

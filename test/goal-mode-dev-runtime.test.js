@@ -290,7 +290,8 @@ test("B1 câblage serveur : flag OFF par défaut, composition protégée, signal
   assert.match(source, /process\.once\("exit", \(\) => \{ try \{ dataDirectoryLock\.release\(\); \} catch \{\} \}\);/);
   assert.match(block, /dataDirectoryLock,/);
   // B3b : maintenance composée avec le verrou partagé, le runtime et l'audit ; passée au handler.
-  assert.match(source, /goalModeDevLockMaintenance = createGoalModeDevLockMaintenance\(\{\s*lock: dataDirectoryLock,\s*runtime: goalModeDevRuntime,\s*audit: \(event, metadata\) => toolAuditLog\.append\(event, metadata\),\s*\}\);/);
+  // B4c : journal de diagnostic du verrou dédié (200 entrées), créé seulement runtime composé.
+  assert.match(source, /if \(goalModeDevRuntime\) \{\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*const goalModeDevLockDiagnosticsLog = createAuditLog\(path\.join\(DATA_DIRECTORY, "goal-mode-dev-lock-diagnostics\.json"\), 200\);\s*goalModeDevLockMaintenance = createGoalModeDevLockMaintenance\(\{\s*lock: dataDirectoryLock,\s*runtime: goalModeDevRuntime,\s*audit: \(event, metadata\) => toolAuditLog\.append\(event, metadata\),\s*diagnostics: \(event, metadata\) => goalModeDevLockDiagnosticsLog\.append\(event, metadata\),\s*\}\);/);
   assert.match(httpBlock, /lockMaintenance: goalModeDevLockMaintenance,/);
   // Démarrage : une seule fois, hors safe mode, par la maintenance (reprise stricte + scan).
   const scan = startup.slice(startup.indexOf("if (goalModeDevLockMaintenance && !goalModeDevReconcileScanDone"));

@@ -131,6 +131,8 @@ test("B2 serveur réel : flag OFF par défaut → toutes les routes Goal Mode DE
       const untrusted = await server.call(method, route, body, { trusted: false });
       assert.equal(untrusted.status, 404, route);
     }
+    // B4c : flag OFF → aucun journal de diagnostic du verrou créé.
+    assert.equal(fs.existsSync(path.join(server.dataDirectory, "goal-mode-dev-lock-diagnostics.json")), false);
   } finally { await server.stop(); }
 });
 
@@ -204,6 +206,27 @@ test("4C-2 serveur réel : deux processus sur le même DATA_DIRECTORY, un seul s
     });
     assert.equal(refused.status, 409);
     assert.equal(refused.body.code, "GOAL_MODE_DEV_LOCK_HOLDER_ALIVE");
+    // B4c : journal de diagnostic dédié (rétention propre), métadonnées seulement.
+    const diagnosticsFile = path.join(first.dataDirectory, "goal-mode-dev-lock-diagnostics.json");
+    const diagnostics = JSON.parse(fs.readFileSync(diagnosticsFile, "utf8"));
+    const acquires = diagnostics.filter((item) => item.event === "goals.mode-dev.lock_acquire").map((item) => item.details);
+    assert.deepEqual(acquires.map((item) => [item.reason, item.acquired]), [["ACQUIRED", true], ["HELD", false]]);
+    const holderPid = lockView.body.result.holderPid;
+    assert.equal(acquires[0].selfPid, holderPid);
+    assert.equal(acquires[1].holderPid, holderPid);
+    assert.notEqual(acquires[1].selfPid, holderPid);
+    const inspected = diagnostics.filter((item) => item.event === "goals.mode-dev.lock_inspect").map((item) => item.details);
+    assert.equal(inspected.length, 1); // le premier processus (HELD_BY_THIS) n'a rien journalisé
+    assert.equal(inspected[0].state, "HELD");
+    assert.equal(inspected[0].holderIsSelf, false);
+    assert.equal(inspected[0].tokenPresent, false);
+    assert.equal(inspected[0].holderPid, holderPid);
+    assert.equal(typeof inspected[0].sinceStartupMs, "number");
+    assert.deepEqual(diagnostics.filter((item) => item.event === "goals.mode-dev.lock_takeover_refused").map((item) => item.details),
+      [{ reason: "HOLDER_ALIVE" }]);
+    const raw = fs.readFileSync(diagnosticsFile, "utf8");
+    const lockToken = JSON.parse(fs.readFileSync(path.join(first.dataDirectory, "noon-data.lock"), "utf8")).token;
+    for (const secret of [lockToken, os.hostname(), first.dataDirectory]) assert.equal(raw.includes(secret), false);
     await second.stop({ keep: true });
     second = null;
     assert.ok(fs.existsSync(path.join(first.dataDirectory, "noon-data.lock"))); // toujours détenu par le premier
