@@ -5835,7 +5835,7 @@ const server = http.createServer(async (req, res) => {
       }
       const parts = requestPath.split("/").filter(Boolean);
       let result;
-      if (parts.length === 1 && req.method === "GET") result = { recordings: recordingStore.list() };
+      if (parts.length === 1 && req.method === "GET") result = { recordings: recordingStore.list(new URL(req.url, "http://127.0.0.1").searchParams.get("q") || "") };
       else if (parts.length === 1 && req.method === "POST") result = { recording: recordingStore.create(await readJsonBody(req, 8192)) };
       else if (parts.length === 2 && req.method === "GET") result = { recording: recordingStore.load(parts[1]) };
       else if (parts.length === 3 && parts[2] === "chunk" && req.method === "POST") {
@@ -5861,7 +5861,7 @@ const server = http.createServer(async (req, res) => {
       else if (parts.length === 3 && parts[2] === "audio" && req.method === "GET") {
         const { recording, buffer } = recordingStore.chunks(parts[1]);
         res.writeHead(200, { "Content-Type": recording.mimeType, "Content-Length": buffer.length,
-          "Content-Disposition": `attachment; filename="noon-${recording.id}.${recording.mimeType === "audio/mp4" ? "m4a" : recording.mimeType === "audio/ogg" ? "ogg" : "webm"}` });
+          "Content-Disposition": `attachment; filename="noon-${recording.id}.${recording.mimeType === "video/mp4" ? "mp4" : recording.mimeType === "audio/mp4" ? "m4a" : recording.mimeType === "audio/ogg" ? "ogg" : "webm"}` });
         return res.end(buffer);
       }
       else if (parts.length === 3 && parts[2] === "transcript" && req.method === "POST") {
@@ -5877,7 +5877,7 @@ const server = http.createServer(async (req, res) => {
         if (recording.state !== "ready") throw Object.assign(new Error("Terminez d'abord l'enregistrement."), { statusCode: 409 });
         if (buffer.length > MAX_AUDIO_BYTES) throw Object.assign(new Error("Audio supérieur à 10 Mo : découpez-le avant transcription."), { statusCode: 413 });
         const type = recording.mimeType;
-        const extension = type === "audio/mp4" ? "m4a" : type === "audio/ogg" ? "ogg" : "webm";
+        const extension = type === "video/mp4" ? "mp4" : type === "audio/mp4" ? "m4a" : type === "audio/ogg" ? "ogg" : "webm";
         const audioFile = await toFile(buffer, `noon-recorder.${extension}`, { type });
         const speakerMode = body.speakerMode === true;
         const output = await getOpenAIClient().audio.transcriptions.create(speakerMode
@@ -5886,6 +5886,9 @@ const server = http.createServer(async (req, res) => {
         trackTranscriptionUsage(recording.durationMs);
         result = { recording: recordingStore.transcript(parts[1], output.text || "", body.expectedRevision,
           speakerMode ? output.segments || [] : []) };
+      }
+      else if (parts.length === 3 && parts[2] === "metadata" && req.method === "POST") {
+        result = { recording: recordingStore.updateMetadata(parts[1], await readJsonBody(req, 8192)) };
       }
       else if (parts.length === 3 && parts[2] === "speaker" && req.method === "POST") {
         const body = await readJsonBody(req, 8192);
@@ -5909,6 +5912,10 @@ const server = http.createServer(async (req, res) => {
         const analysis = JSON.parse(response.output_text || "{}");
         result = { recording: recordingStore.analyze(parts[1], { ...analysis, type }, body.expectedRevision) };
       }
+      else if (parts.length === 3 && parts[2] === "review" && req.method === "POST") {
+        const body = await readJsonBody(req, 8192);
+        result = { recording: recordingStore.reviewPoint(parts[1], body.pointIndex, body.status, body.expectedRevision, body.expectedReviewRevision) };
+      }
       else if (parts.length === 3 && parts[2] === "export" && req.method === "GET") {
         const recording = recordingStore.load(parts[1]);
         const format = new URL(req.url, "http://127.0.0.1").searchParams.get("format");
@@ -5918,7 +5925,7 @@ const server = http.createServer(async (req, res) => {
         const points = analysis?.points || [];
         const rows = points.filter(point => point.kind === "action");
         const content = format === "xlsx"
-          ? ["Action\tResponsable\tÉchéance\tStatut\tCitation", ...rows.map(point => [point.text, point.owner, point.due, "À valider", point.quote].map(value => String(value).replace(/[\t\r\n]/g, " ")).join("\t"))].join("\n")
+          ? ["Action\tResponsable\tÉchéance\tStatut\tCitation", ...rows.map(point => [point.text, point.owner, point.due, point.status || "proposé", point.quote].map(value => String(value).replace(/[\t\r\n]/g, " ")).join("\t"))].join("\n")
           : [`Session : ${recording.title}`, `Date : ${recording.createdAt}`, `Version de transcription : ${recording.transcriptRevision}`,
             "Analyse automatique à vérifier dans l'audio original.", "", analysis?.summary || "Aucune analyse disponible.", "",
             ...points.map(point => `${point.kind.toUpperCase()} — ${point.text}\nCitation : « ${point.quote} »\nResponsable : ${point.owner} ; échéance : ${point.due}`),

@@ -2598,3 +2598,7 @@ body.dev-preview-resizing *{
 .recorder-point{margin:12px 0;padding:12px;border-left:3px solid var(--green);background:#f8faf5}.recorder-point p{margin:5px 0}.recorder-card select{margin-left:8px;padding:7px;border:1px solid var(--border);border-radius:7px}
 
 #recorderSegments{display:grid;gap:7px;margin:15px 0;max-height:320px;overflow:auto}#recorderSegments button{text-align:left}#recorderSegments label input{margin:0 8px;padding:7px;border:1px solid var(--border);border-radius:7px}
+
+.recorder-fields{display:flex;gap:10px;flex-wrap:wrap;align-items:end}.recorder-fields label{flex:1 1 180px}.recorder-fields input,#recorderSearch{width:100%;padding:9px;border:1px solid var(--border);border-radius:8px}
+
+.recorder-list-row{display:flex;align-items:center;gap:8px}.recorder-list-row button{flex:1}.recorder-comparison-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.recorder-comparison-grid article{padding:12px;border:1px solid var(--border);border-radius:9px}@media(max-width:700px){.recorder-comparison-grid{grid-template-columns:1fr}}

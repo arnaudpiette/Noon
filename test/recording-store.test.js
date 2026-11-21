@@ -45,6 +45,8 @@ test("analysis keeps only quotations present in the current transcript and expir
     { kind: "action", text: "Inventé", quote: "vendredi prochain" },
   ] }, 1);
   assert.equal(record.analysis.points.length, 1);
+  assert.equal(store.reviewPoint(id, 0, "validé", 1, 0).analysis.points[0].status, "validé");
+  assert.throws(() => store.reviewPoint(id, 0, "rejeté", 1, 0), { code: "REVISION_CONFLICT" });
   assert.throws(() => store.analyze(id, {}, 0), { code: "REVISION_CONFLICT" });
   assert.equal(store.transcript(id, "Luc : envoyer le rapport jeudi.", 1).analysis, null);
 });
@@ -62,4 +64,21 @@ test("speaker labels need manual confirmation and timed segments disappear after
   assert.throws(() => store.nameSpeaker(id, "B", "Inconnu", 1), { code: "SPEAKER_UNKNOWN" });
   assert.equal(store.transcript(id, "Salut", 1).segments.length, 0);
   assert.deepEqual(store.load(id).speakers, {});
+});
+
+test("metadata uses optimistic revisions and library search includes transcript without exposing it in list", t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "noon-recording-search-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const store = createRecordingStore(root);
+  const { id } = store.create({ mimeType: "audio/webm", consent: true });
+  store.append(id, { index: 0, mimeType: "audio/webm", buffer: Buffer.from("audio") });
+  store.finish(id, 1000);
+  store.transcript(id, "Le secret du cours", 0);
+  const updated = store.updateMetadata(id, { title: "Cours", project: "Noon", tags: ["formation"], expectedRevision: 0 });
+  assert.equal(updated.metadataRevision, 1);
+  assert.throws(() => store.updateMetadata(id, { title: "Erreur", project: "", tags: [], expectedRevision: 0 }), { code: "REVISION_CONFLICT" });
+  assert.equal(store.list("secret")[0].id, id);
+  assert.equal(Object.hasOwn(store.list("secret")[0], "transcript"), false);
+  assert.equal(store.list("formation").length, 1);
+  assert.equal(store.list("autre").length, 0);
 });

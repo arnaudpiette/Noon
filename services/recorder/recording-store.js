@@ -7,7 +7,7 @@ const crypto = require("node:crypto");
 const ID_PATTERN = /^[a-f0-9-]{36}$/;
 const MAX_CHUNK_BYTES = 4 * 1024 * 1024;
 const MAX_RECORDING_BYTES = 512 * 1024 * 1024;
-const ALLOWED_TYPES = new Set(["audio/webm", "audio/mp4", "audio/ogg"]);
+const ALLOWED_TYPES = new Set(["audio/webm", "audio/mp4", "audio/ogg", "video/mp4"]);
 
 class RecordingError extends Error {
   constructor(code, message, statusCode = 400) {
@@ -39,8 +39,8 @@ function createRecordingStore(root) {
     } finally { try { fs.unlinkSync(temp); } catch {} }
   }
   function publicRecord(recording) {
-    const { id, title, createdAt, updatedAt, state, mimeType, bytes, chunks, transcript, transcriptRevision, durationMs, consent, project, analysis, segments, speakers } = recording;
-    return { id, title, createdAt, updatedAt, state, mimeType, bytes, chunkCount: chunks.length, transcript, transcriptRevision, durationMs, consent, project, analysis: analysis || null, segments: segments || [], speakers: speakers || {} };
+    const { id, title, createdAt, updatedAt, state, mimeType, bytes, chunks, transcript, transcriptRevision, durationMs, consent, project, analysis, segments, speakers, tags, metadataRevision } = recording;
+    return { id, title, createdAt, updatedAt, state, mimeType, bytes, chunkCount: chunks.length, transcript, transcriptRevision, durationMs, consent, project, analysis: analysis || null, segments: segments || [], speakers: speakers || {}, tags: tags || [], metadataRevision: metadataRevision || 0 };
   }
   function create({ title, mimeType, consent, project } = {}) {
     if (!ALLOWED_TYPES.has(mimeType)) throw new RecordingError("INVALID_MEDIA_TYPE", "Format audio non pris en charge.");
@@ -48,7 +48,7 @@ function createRecordingStore(root) {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     const recording = { id, title: String(title || "Nouvel enregistrement").trim().slice(0, 160), mimeType, consent: true,
-      project: String(project || "").slice(0, 160), createdAt: now, updatedAt: now, state: "recording", bytes: 0,
+      project: String(project || "").slice(0, 160), tags: [], metadataRevision: 0, createdAt: now, updatedAt: now, state: "recording", bytes: 0,
       chunks: [], durationMs: 0, transcript: "", transcriptRevision: 0, segments: [], speakers: {} };
     fs.mkdirSync(directory(id), { mode: 0o700 });
     save(recording);
@@ -122,6 +122,21 @@ function createRecordingStore(root) {
     save(recording);
     return publicRecord(recording);
   }
+  function updateMetadata(id, { title, project, tags, expectedRevision }) {
+    const recording = load(id);
+    if (recording.metadataRevision !== expectedRevision) throw new RecordingError("REVISION_CONFLICT", "Les détails ont été modifiés ailleurs.", 409);
+    if (typeof title !== "string" || !title.trim() || title.length > 160 || typeof project !== "string" || project.length > 160 ||
+      !Array.isArray(tags) || tags.length > 12 || tags.some(tag => typeof tag !== "string" || tag.length > 40)) {
+      throw new RecordingError("INVALID_METADATA", "Titre, projet ou tags invalides.");
+    }
+    recording.title = title.trim();
+    recording.project = project.trim();
+    recording.tags = [...new Set(tags.map(tag => tag.trim()).filter(Boolean))];
+    recording.metadataRevision += 1;
+    recording.updatedAt = new Date().toISOString();
+    save(recording);
+    return publicRecord(recording);
+  }
   function nameSpeaker(id, speaker, name, expectedRevision) {
     const recording = load(id);
     if (recording.transcriptRevision !== expectedRevision) throw new RecordingError("REVISION_CONFLICT", "La transcription a changé.", 409);
@@ -144,25 +159,41 @@ function createRecordingStore(root) {
         text: String(point.text || "").slice(0, 500),
         quote: String(point.quote || "").slice(0, 500),
         owner: String(point.owner || "À confirmer").slice(0, 100),
-        due: String(point.due || "À confirmer").slice(0, 100),
+        due: String(point.due || "À confirmer").slice(0, 100), status: "proposé",
       })).filter(point => point.text && point.quote && recording.transcript.includes(point.quote)) : [],
-      transcriptRevision: expectedRevision, createdAt: new Date().toISOString(),
+      transcriptRevision: expectedRevision, reviewRevision: 0, createdAt: new Date().toISOString(),
     };
     recording.analysis = normalized;
     recording.updatedAt = new Date().toISOString();
     save(recording);
     return publicRecord(recording);
   }
-  function list() {
+  function reviewPoint(id, pointIndex, status, expectedRevision, expectedReviewRevision) {
+    const recording = load(id);
+    if (!recording.analysis || recording.analysis.transcriptRevision !== expectedRevision) throw new RecordingError("REVISION_CONFLICT", "L'analyse est périmée.", 409);
+    if (recording.analysis.reviewRevision !== expectedReviewRevision) throw new RecordingError("REVISION_CONFLICT", "Un point a été revu ailleurs.", 409);
+    if (!Number.isSafeInteger(pointIndex) || pointIndex < 0 || !recording.analysis.points[pointIndex] || !["validé", "rejeté", "proposé"].includes(status)) {
+      throw new RecordingError("INVALID_REVIEW", "Décision invalide.");
+    }
+    recording.analysis.points[pointIndex].status = status;
+    recording.analysis.reviewRevision += 1;
+    recording.updatedAt = new Date().toISOString();
+    save(recording);
+    return publicRecord(recording);
+  }
+  function list(query = "") {
+    const normalized = String(query).trim().toLocaleLowerCase("fr-FR").slice(0, 160);
     return fs.readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory() && ID_PATTERN.test(entry.name))
-      .map(entry => { try { const { transcript, segments, analysis, ...summary } = publicRecord(load(entry.name)); return summary; } catch { return null; } }).filter(Boolean)
+      .map(entry => { try { return publicRecord(load(entry.name)); } catch { return null; } }).filter(Boolean)
+      .filter(entry => !normalized || [entry.title, entry.project, ...(entry.tags || []), entry.transcript].join(" ").toLocaleLowerCase("fr-FR").includes(normalized))
+      .map(({ transcript, segments, analysis, ...summary }) => summary)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
   function remove(id) {
     load(id);
     fs.rmSync(directory(id), { recursive: true, force: false });
   }
-  return { create, append, finish, chunks, transcript, analyze, nameSpeaker, list, load: id => publicRecord(load(id)), remove };
+  return { create, append, finish, chunks, transcript, analyze, nameSpeaker, updateMetadata, reviewPoint, list, load: id => publicRecord(load(id)), remove };
 }
 
 module.exports = { createRecordingStore, RecordingError, MAX_CHUNK_BYTES };

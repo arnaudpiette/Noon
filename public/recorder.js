@@ -11,7 +11,8 @@
     transcribe: $("recorderTranscribe"), save: $("recorderSaveTranscript"), export: $("recorderExportText"),
     remove: $("recorderDelete"), import: $("recorderImport"), analyze: $("recorderAnalyze"),
     analysis: $("recorderAnalysis"), analysisType: $("recorderAnalysisType"), exportFormat: $("recorderExportFormat"),
-    speakerMode: $("recorderSpeakerMode"), segments: $("recorderSegments"),
+    speakerMode: $("recorderSpeakerMode"), segments: $("recorderSegments"), search: $("recorderSearch"),
+    editTitle: $("recorderEditTitle"), editProject: $("recorderEditProject"), editTags: $("recorderEditTags"), saveMetadata: $("recorderSaveMetadata"), compare: $("recorderCompare"), comparison: $("recorderComparison"),
   };
   let recorder = null;
   let stream = null;
@@ -24,6 +25,7 @@
   let pauseStartedAt = 0;
   let totalPauseMs = 0;
   let audioUrl = null;
+  const comparisonIds = new Set();
   const MIME_TYPES = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"];
 
   function setStatus(message) { els.status.textContent = message; }
@@ -45,7 +47,7 @@
   }
   function fail(error) { setStatus(error.message || String(error)); }
   async function refresh() {
-    const { recordings } = await api("");
+    const { recordings } = await api(`?q=${encodeURIComponent(els.search.value.trim())}`);
     els.list.replaceChildren();
     if (!recordings.length) els.list.textContent = "Aucun enregistrement.";
     for (const item of recordings) {
@@ -54,14 +56,42 @@
       button.textContent = `${item.state === "recording" ? "◉ À récupérer · " : "▶ "}${item.title} · ${new Date(item.createdAt).toLocaleString("fr-FR")}`;
       button.setAttribute("aria-current", String(selected?.id === item.id));
       button.addEventListener("click", () => void select(item).catch(fail));
-      els.list.append(button);
+      const row = document.createElement("div"); row.className = "recorder-list-row";
+      const check = document.createElement("input"); check.type = "checkbox"; check.checked = comparisonIds.has(item.id);
+      check.setAttribute("aria-label", `Comparer ${item.title}`);
+      check.addEventListener("change", () => { if (check.checked) comparisonIds.add(item.id); else comparisonIds.delete(item.id); });
+      row.append(check, button); els.list.append(row);
     }
+  }
+  async function compare() {
+    if (comparisonIds.size !== 2) return detailStatus("Sélectionne exactement deux sessions à comparer.");
+    try {
+      const recordings = await Promise.all([...comparisonIds].map(async id => (await api(`/${id}`)).recording));
+      els.comparison.replaceChildren();
+      const heading = document.createElement("h3"); heading.textContent = "Deux sessions · sources séparées"; els.comparison.append(heading);
+      const grid = document.createElement("div"); grid.className = "recorder-comparison-grid";
+      recordings.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      for (const recording of recordings) {
+        const panel = document.createElement("article");
+        const title = document.createElement("h4"); title.textContent = `${recording.title} · ${new Date(recording.createdAt).toLocaleString("fr-FR")}`;
+        const summary = document.createElement("p"); summary.textContent = recording.analysis?.summary || "Aucune analyse validée.";
+        panel.append(title, summary);
+        for (const point of recording.analysis?.points || []) {
+          const line = document.createElement("p"); line.textContent = `${point.kind} : ${point.text} · « ${point.quote} »`; panel.append(line);
+        }
+        grid.append(panel);
+      }
+      els.comparison.append(grid);
+      const note = document.createElement("p"); note.textContent = "Comparaison côte à côte : confirme manuellement les changements de décisions et d'actions avant de les fusionner.";
+      els.comparison.append(note);
+    } catch (error) { detailStatus(error.message); }
   }
   async function select(item) {
     item = (await api(`/${item.id}`)).recording;
     selected = item;
     els.detail.hidden = false;
     els.title.textContent = item.title;
+    els.editTitle.value = item.title; els.editProject.value = item.project || ""; els.editTags.value = (item.tags || []).join(", ");
     els.transcript.value = item.transcript || "";
     renderAnalysis(item.analysis);
     renderSegments(item);
@@ -157,8 +187,8 @@
   async function importAudio(file) {
     if (!file) return;
     if (recorder) throw new Error("Termine d'abord la capture en cours.");
-    const mimeType = file.type === "audio/x-m4a" ? "audio/mp4" : file.type.split(";")[0];
-    if (!["audio/webm", "audio/mp4", "audio/ogg"].includes(mimeType)) throw new Error("Format audio non pris en charge.");
+    const mimeType = file.type === "audio/x-m4a" || (!file.type && /\.m4a$/i.test(file.name)) ? "audio/mp4" : file.type.split(";")[0];
+    if (!["audio/webm", "audio/mp4", "audio/ogg", "video/mp4"].includes(mimeType)) throw new Error("Format audio non pris en charge.");
     if (file.size > 512 * 1024 * 1024) throw new Error("Fichier supérieur à 512 Mo.");
     if (!els.consent.checked) throw new Error("Confirme les accords nécessaires avant l'import.");
     const { recording } = await api("", { method: "POST", body: JSON.stringify({ title: file.name, mimeType, consent: true }) });
@@ -203,14 +233,23 @@
     if (!analysis) return;
     const heading = document.createElement("h3"); heading.textContent = "Analyse à vérifier"; els.analysis.append(heading);
     const summary = document.createElement("p"); summary.textContent = analysis.summary; els.analysis.append(summary);
-    for (const point of analysis.points) {
+    analysis.points.forEach((point, index) => {
       const card = document.createElement("div"); card.className = "recorder-point";
       const label = document.createElement("strong"); label.textContent = `${point.kind} · ${point.text}`;
       const quote = document.createElement("p"); quote.textContent = `Citation vérifiée dans le texte : « ${point.quote} »`;
       card.append(label, quote);
+      const state = document.createElement("small"); state.textContent = `État : ${point.status || "proposé"}`; card.append(state);
+      for (const status of ["validé", "rejeté"]) {
+        const button = document.createElement("button"); button.type = "button"; button.textContent = status === "validé" ? "Valider" : "Rejeter";
+        button.addEventListener("click", async () => {
+          try { const { recording } = await api(`/${selected.id}/review`, { method: "POST", body: JSON.stringify({ pointIndex: index, status, expectedRevision: selected.transcriptRevision, expectedReviewRevision: selected.analysis.reviewRevision }) }); await select(recording); }
+          catch (error) { detailStatus(error.message); }
+        });
+        card.append(button);
+      }
       if (point.kind === "action") { const owner = document.createElement("small"); owner.textContent = `Responsable : ${point.owner} · Échéance : ${point.due} · à valider avant toute création de tâche`; card.append(owner); }
       els.analysis.append(card);
-    }
+    });
     const warning = document.createElement("p"); warning.textContent = "Vérifie chaque citation en écoutant l’audio. Les passages horodatés, s’ils existent, proviennent du moteur de transcription et peuvent contenir des erreurs."; els.analysis.append(warning);
   }
   async function analyze() {
@@ -235,6 +274,16 @@
       detailStatus("Transcription enregistrée. Vérifie et corrige le texte avant de l'utiliser.");
     } catch (error) { detailStatus(error.message); }
     finally { els.transcribe.disabled = false; els.cloudConsent.checked = false; }
+  }
+  async function saveMetadata() {
+    if (!selected) return;
+    try {
+      const { recording } = await api(`/${selected.id}/metadata`, { method: "POST", body: JSON.stringify({
+        title: els.editTitle.value, project: els.editProject.value,
+        tags: els.editTags.value.split(",").map(value => value.trim()).filter(Boolean), expectedRevision: selected.metadataRevision,
+      }) });
+      await select(recording); detailStatus("Détails enregistrés.");
+    } catch (error) { detailStatus(error.message); }
   }
   async function saveTranscript() {
     if (!selected) return;
@@ -275,6 +324,9 @@
   els.transcribe.addEventListener("click", () => void transcribe());
   els.analyze.addEventListener("click", () => void analyze());
   els.save.addEventListener("click", () => void saveTranscript());
+  els.saveMetadata.addEventListener("click", () => void saveMetadata());
+  els.search.addEventListener("input", () => void refresh().catch(fail));
+  els.compare.addEventListener("click", () => void compare());
   els.export.addEventListener("click", () => void exportText());
   els.remove.addEventListener("click", () => void remove());
   window.addEventListener("noon:recorder-open", () => void refresh().catch(fail));

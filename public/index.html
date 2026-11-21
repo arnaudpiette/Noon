@@ -911,13 +911,24 @@
               <button id="recorderStop" type="button" disabled>Terminer</button>
             </div>
             <p id="recorderStatus" role="status" aria-live="polite">Prêt · microphone inactif</p>
-            <label class="recorder-import">Importer un audio (WebM, MP4 ou Ogg) <input id="recorderImport" type="file" accept="audio/webm,audio/mp4,audio/ogg,.webm,.m4a,.mp4,.ogg"></label>
+            <label class="recorder-import">Importer un audio ou une vidéo MP4 (piste sonore seulement) <input id="recorderImport" type="file" accept="audio/webm,audio/mp4,audio/ogg,video/mp4,.webm,.m4a,.mp4,.ogg"></label>
           </section>
           <section class="recorder-card" aria-label="Bibliothèque d'enregistrements">
-            <h2>Bibliothèque</h2><div id="recorderList"></div>
+            <h2>Bibliothèque</h2>
+            <label for="recorderSearch">Rechercher titre, projet, tag ou transcription</label>
+            <input id="recorderSearch" type="search" placeholder="Rechercher…">
+            <div id="recorderList"></div>
+            <button id="recorderCompare" type="button">Comparer deux sessions</button>
+            <div id="recorderComparison" aria-label="Comparaison de sessions"></div>
           </section>
           <section id="recorderDetail" class="recorder-card recorder-detail" hidden>
             <h2 id="recorderTitle"></h2>
+            <div class="recorder-fields">
+              <label>Titre <input id="recorderEditTitle" type="text" maxlength="160"></label>
+              <label>Projet <input id="recorderEditProject" type="text" maxlength="160"></label>
+              <label>Tags (séparés par des virgules) <input id="recorderEditTags" type="text"></label>
+              <button id="recorderSaveMetadata" type="button">Enregistrer les détails</button>
+            </div>
             <audio id="recorderAudio" controls preload="none"></audio>
             <p id="recorderDetailStatus"></p>
             <label><input id="recorderCloudConsent" type="checkbox"> Autoriser l'envoi de cet audio à OpenAI pour transcription.</label>
