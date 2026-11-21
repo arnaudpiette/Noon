@@ -213,7 +213,48 @@ function createSelfDevWorktreeService({
     return Object.freeze({ removed: id, branchKept });
   }
 
-  return Object.freeze({ create, list, diffEntries, check, remove, userTreeFingerprint });
+  // Lecture interne (SD-2) : copie figée du manifeste, sans écriture possible.
+  function describe(id) {
+    const manifest = readManifest(id);
+    return Object.freeze({ ...manifest, baseTestFiles: Object.freeze([...(manifest.baseTestFiles || [])]) });
+  }
+
+  // Sonde jetable : worktree détaché au commit de base (aucune branche), node_modules cloné,
+  // dans laquelle SD-2 copie uniquement les nouveaux tests pour prouver qu'ils échouent sur la base.
+  function createProbe(id) {
+    const manifest = readManifest(id);
+    const root = resolveRepository(manifest.repositoryRoot);
+    const probePath = path.join(containerRoot, `${id}-probe-${randomId()}`);
+    if (fs.existsSync(probePath)) throw serviceError("SELFDEV_WORKTREE_EXISTS", "Sonde déjà présente.");
+    const before = userTreeFingerprint(root);
+    git(root, ["worktree", "add", "--quiet", "--detach", probePath, manifest.baseCommit]);
+    try {
+      const sourceModules = path.join(root, "node_modules");
+      if (fs.existsSync(sourceModules)) {
+        if (fs.lstatSync(sourceModules).isSymbolicLink()) throw serviceError("SELFDEV_NODE_MODULES_UNSUPPORTED", "node_modules du dépôt est un lien : clone refusé.");
+        try { cloneNodeModules(sourceModules, path.join(probePath, "node_modules")); }
+        catch { throw serviceError("SELFDEV_NODE_MODULES_CLONE_FAILED", "Clone de node_modules impossible : SelfDev s'arrête."); }
+      }
+    } catch (error) {
+      git(root, ["worktree", "remove", "--force", probePath], { allowFailure: true });
+      throw error;
+    }
+    if (userTreeFingerprint(root) !== before) throw serviceError("SELFDEV_USER_TREE_CHANGED", "Le working tree de l'utilisateur a changé pendant la création de la sonde.");
+    return Object.freeze({ probePath, baseCommit: manifest.baseCommit });
+  }
+
+  function removeProbe(id, probePath) {
+    const manifest = readManifest(id);
+    const root = resolveRepository(manifest.repositoryRoot);
+    const resolved = path.resolve(String(probePath || ""));
+    if (path.dirname(resolved) !== containerRoot || !path.basename(resolved).startsWith(`${id}-probe-`)) throw serviceError("SELFDEV_PROBE_INVALID", "Sonde invalide.");
+    git(root, ["worktree", "remove", "--force", resolved], { allowFailure: true });
+    if (fs.existsSync(resolved)) fs.rmSync(resolved, { recursive: true, force: true });
+    git(root, ["worktree", "prune"], { allowFailure: true });
+    return true;
+  }
+
+  return Object.freeze({ create, list, diffEntries, check, remove, userTreeFingerprint, describe, createProbe, removeProbe });
 }
 
 module.exports = { createSelfDevWorktreeService, cloneNodeModulesApfs, RETENTION_DAYS, BRANCH_PREFIX };

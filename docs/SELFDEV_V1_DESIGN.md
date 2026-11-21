@@ -175,7 +175,10 @@ commit, de fusion ou d'application au working tree en V1 : l'utilisateur intègr
    (création, inventaire, suppression explicite), politique de chemins SelfDev et contrôle du
    diff. Tests : working tree utilisateur intact (empreinte avant/après), base explicite,
    refus des chemins protégés, ajout de test autorisé, modification de test refusée.
-2. **SD-2 — Preuves base/patch.** Exécution des mêmes validations sur la base et après patch
+2. **SD-2 — Preuves base/patch.** *Livré le 21/11/2026* : `selfdev-evidence-service.js`
+   (exécuteur sandboxé injecté, relance unique des échecs, sonde jetable au commit de base
+   pour la reproduction, verdict `DEMONSTRATED` / `UNPROVEN` / `BLOCKED`), tests
+   `test/selfdev-sd2.test.js`. Exécution des mêmes validations sur la base et après patch
    via la Sandbox V1, comparaison, détection d'instabilité, vérification que les tests
    n'écrivent pas dans les données utilisateur.
 3. **SD-3 — Branchement Goal Mode DEV.** Run Goal Mode DEV dont le dépôt cible est le
