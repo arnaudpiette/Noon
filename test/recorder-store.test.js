@@ -39,3 +39,19 @@ test("un segment endommagé est refusé à la lecture et exclu de la récupérat
     assert.throws(() => store.chunk("../x", 0), /invalide/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test("la transcription corrigée reste disponible après redémarrage sans effacer l'original", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "noon-recorder-"));
+  try {
+    const store = createRecorderStore(root);
+    const recording = store.create({ mimeType: "audio/webm" });
+    store.append(recording.id, { index: 0, durationMs: 2500, data: Buffer.from("original").toString("base64") });
+    store.setState(recording.id, "available");
+    store.saveTranscript(recording.id, "Texte reconnu", "openai");
+    store.saveTranscript(recording.id, "Texte corrigé", "manual");
+    const restarted = createRecorderStore(root);
+    assert.equal(restarted.list()[0].transcript.text, "Texte corrigé");
+    assert.equal(restarted.list()[0].transcript.revision, 2);
+    assert.equal(Buffer.from(restarted.chunk(recording.id, 0).data, "base64").toString(), "original");
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
