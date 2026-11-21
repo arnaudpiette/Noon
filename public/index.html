@@ -54,6 +54,7 @@
         <input id="liveVoiceAccent" type="hidden" value="none">
         <audio id="liveVoiceAudio" autoplay hidden></audio>
       </section>
+      <button id="openRecorder" class="new-conversation-button recorder-entry" type="button">◉ Dictaphone</button>
 
       <section class="side-section operations-panel">
         <button class="operations-toggle" type="button" data-panel="integrationsPanel" aria-expanded="false">Intégrations</button>
@@ -596,10 +597,28 @@
     </div>
   </dialog>
 
+  <dialog id="recorderDialog" class="recorder-dialog" aria-labelledby="recorderTitle">
+    <header><h2 id="recorderTitle">Dictaphone</h2><button id="closeRecorder" type="button" aria-label="Fermer le Dictaphone">×</button></header>
+    <p id="recorderStatus" role="status" aria-live="polite">Prêt à enregistrer.</p>
+    <label>Titre <input id="recorderName" maxlength="120" value="Nouvel enregistrement"></label>
+    <label>Microphone <select id="recorderInput"><option value="">Microphone système</option></select></label>
+    <p id="recorderDeviceHelp">Informe les participants avant de commencer l'enregistrement.</p>
+    <div class="recorder-controls">
+      <button id="recorderStart" type="button">Enregistrer</button>
+      <button id="recorderPause" type="button" disabled>Pause</button>
+      <button id="recorderStop" type="button" disabled>Terminer</button>
+      <span id="recorderElapsed">00:00</span>
+    </div>
+    <h3>Enregistrements</h3>
+    <div id="recorderLibrary"></div>
+    <audio id="recorderPlayback" controls></audio>
+  </dialog>
+
   <script src="noon-particles.js"></script>
   <script src="ui-utils.js"></script>
   <script src="control-center.js"></script>
   <script src="app.js"></script>
+  <script src="recorder.js"></script>
   <script src="live-voice-core.js"></script>
   <script src="live-voice.js"></script>
 </body>
