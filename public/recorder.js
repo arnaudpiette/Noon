@@ -113,6 +113,34 @@
         } catch (error) { message(`Export impossible : ${error.message}`); }
       });
       row.append(exportButton);
+      const rename = document.createElement("button");
+      rename.type = "button";
+      rename.textContent = "Renommer";
+      rename.addEventListener("click", async () => {
+        const title = window.prompt("Nouveau titre de l'enregistrement", item.title);
+        if (title === null) return;
+        try { await bridge.rename(item.id, title); await renderLibrary(); }
+        catch (error) { message(`Renommage impossible : ${error.message}`); }
+      });
+      row.append(rename);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "Supprimer";
+      remove.addEventListener("click", async () => {
+        if (!window.confirm(`Supprimer définitivement « ${item.title} » et ses segments locaux ? Les copies déjà exportées resteront sur le disque.`)) return;
+        try {
+          await bridge.delete(item.id);
+          if (selectedRecordingId === item.id) {
+            selectedRecordingId = null;
+            transcriptSection.hidden = true;
+            analysisSection.hidden = true;
+            player.removeAttribute("src");
+          }
+          message("Enregistrement local supprimé.");
+          await renderLibrary();
+        } catch (error) { message(`Suppression impossible : ${error.message}`); }
+      });
+      row.append(remove);
       const transcribe = document.createElement("button");
       transcribe.type = "button";
       transcribe.textContent = "Transcrire";
