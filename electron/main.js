@@ -21,6 +21,7 @@ const { FOCUS_CATALOG } = require("../lib/focus-catalog");
 const { WakeWordService } = require("../services/wake-word-service");
 const { isDueToday, nextRunAt } = require("../lib/creative-brief");
 const { createLocalPermissionStore } = require("../lib/local-permissions");
+const { createRecorderStore } = require("../lib/recorder-store");
 
 const smokeArgument = (name) => process.argv.find((value) => value.startsWith(`--${name}=`))?.split("=").slice(1).join("=");
 const smokeModeFromArguments = process.argv.includes("--noon-smoke-test");
@@ -59,6 +60,7 @@ if (!hasSingleInstanceLock) app.quit();
 
 const dataPath = (name) => path.join(app.getPath("userData"), name);
 const localPermissionStore = createLocalPermissionStore(dataPath("local-permissions.json"));
+let recorderStore = null;
 function readJson(name, fallback) {
   try { return JSON.parse(fs.readFileSync(dataPath(name), "utf8")); }
   catch { return fallback; }
@@ -445,6 +447,39 @@ function registerIpc() {
     ipcMain,
     trustedOrigin: NOON_ORIGIN,
   });
+  registerTrustedHandler("noon:recorder-list", () => recorderStore.list());
+  registerTrustedHandler("noon:recorder-create", (_event, options) => recorderStore.create(options));
+  registerTrustedHandler("noon:recorder-append", (_event, id, chunk) => recorderStore.append(id, chunk));
+  registerTrustedHandler("noon:recorder-state", (_event, id, state) => recorderStore.setState(id, state));
+  registerTrustedHandler("noon:recorder-chunk", (_event, id, index) => recorderStore.chunk(id, index));
+  registerTrustedHandler("noon:recorder-export", async (_event, id) => {
+    const record = recorderStore.list().find((item) => item.id === id);
+    if (!record || !record.chunks.length) throw new Error("Aucun audio à exporter.");
+    const extension = record.mimeType.includes("mp4") ? "m4a" : record.mimeType.includes("ogg") ? "ogg" : "webm";
+    const selection = await dialog.showSaveDialog(mainWindow, {
+      title: "Exporter l'enregistrement",
+      defaultPath: path.join(app.getPath("downloads"), `noon-${id}.${extension}`),
+      filters: [{ name: "Enregistrement audio", extensions: [extension] }],
+      properties: ["showOverwriteConfirmation", "createDirectory"],
+    });
+    if (selection.canceled || !selection.filePath) return { canceled: true };
+    const target = selection.filePath.endsWith(`.${extension}`) ? selection.filePath : `${selection.filePath}.${extension}`;
+    const temporary = `${target}.${crypto.randomUUID()}.tmp`;
+    const handle = fs.openSync(temporary, "wx", 0o600);
+    try {
+      for (const entry of record.chunks) {
+        fs.writeSync(handle, Buffer.from(recorderStore.chunk(id, entry.index).data, "base64"));
+      }
+      fs.fsyncSync(handle);
+    } catch (error) {
+      fs.closeSync(handle);
+      fs.rmSync(temporary, { force: true });
+      throw error;
+    }
+    fs.closeSync(handle);
+    fs.renameSync(temporary, target);
+    return { canceled: false, name: path.basename(target) };
+  });
   registerTrustedHandler("noon:get-status", () => ({
     platform: process.platform, arch: process.arch, packaged: app.isPackaged,
     buildProfile, safeMode: safeModeRequested,
@@ -602,6 +637,7 @@ function registerIpc() {
 }
 async function startNoon() {
   const userDataDirectory = app.getPath("userData");
+  recorderStore = createRecorderStore(userDataDirectory);
   process.env.NOON_DATA_DIR = userDataDirectory;
   process.env.NOON_BUILD_PROFILE = buildProfile;
   if (safeModeRequested) process.env.NOON_SAFE_MODE = "1";
