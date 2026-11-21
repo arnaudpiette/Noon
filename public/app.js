@@ -7043,9 +7043,16 @@ function replaceAudioDeviceOptions(select, devices, defaultLabel, selectedId) {
     option.textContent = device.label || `${defaultLabel} ${index + 1}`;
     select.append(option);
   });
+  if (selectedId && !devices.some(({ deviceId }) => deviceId === selectedId)) {
+    const unavailable = document.createElement("option");
+    unavailable.value = selectedId;
+    unavailable.textContent = `${defaultLabel.includes("Microphone") ? "Microphone" : "Sortie audio"} sélectionné indisponible`;
+    unavailable.disabled = true;
+    select.append(unavailable);
+  }
   select.value = devices.some(({ deviceId }) => deviceId === selectedId)
     ? selectedId
-    : "";
+    : selectedId || "";
 }
 
 async function refreshAudioDevices() {
@@ -7066,9 +7073,8 @@ async function refreshAudioDevices() {
       "Sortie système par défaut",
       preferredAudioOutputId
     );
-    if (audioInputDeviceSelect.value !== preferredAudioInputId) {
-      preferredAudioInputId = "";
-      localStorage.removeItem(AUDIO_INPUT_STORAGE_KEY);
+    if (preferredAudioInputId && !inputs.some(({ deviceId }) => deviceId === preferredAudioInputId)) {
+      updateActivity("Le microphone sélectionné est introuvable. Choisis une autre entrée audio.");
     }
     if (audioOutputDeviceSelect.value !== preferredAudioOutputId) {
       preferredAudioOutputId = "";
@@ -10999,6 +11005,18 @@ async function startRecording() {
         video: false,
       });
 
+    const recordingTrack = mediaStream.getAudioTracks()[0];
+    if (!recordingTrack || recordingTrack.readyState !== "live") {
+      throw new DOMException("Aucune entrée micro active.", "NotFoundError");
+    }
+    recordingTrack.addEventListener("ended", () => {
+      if (mediaRecorder?.state === "recording") {
+        discardRecording = true;
+        finishVoiceRecording();
+        updateActivity("Microphone déconnecté pendant l’enregistrement. L’audio incomplet n’a pas été envoyé.");
+      }
+    }, { once: true });
+
     await refreshAudioDevices();
 
     const audioType = getSupportedAudioType();
@@ -11101,9 +11119,9 @@ async function startRecording() {
     const microphoneMessage = error.name === "NotAllowedError"
       ? "Accès au microphone refusé. Ouvre Réglages > Microphone dans les paramètres Noon."
       : error.name === "NotFoundError"
-        ? "Aucun microphone détecté. Vérifie la connexion du casque puis réessaie."
+        ? "Aucun microphone détecté : le micro interne du Mac est peut-être introuvable. Vérifie Réglages > Son > Entrée ou choisis un autre micro."
         : error.name === "OverconstrainedError"
-          ? "Le microphone sélectionné n’est plus disponible. Repasse sur le microphone système."
+          ? "Le microphone sélectionné est introuvable. Choisis explicitement une autre entrée audio."
           : `Microphone indisponible : ${error.message}`;
     updateActivity(microphoneMessage);
   }

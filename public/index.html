@@ -66,6 +66,7 @@
         <input id="liveVoiceAccent" type="hidden" value="none">
         <audio id="liveVoiceAudio" autoplay hidden></audio>
       </section>
+      <button id="openRecorder" class="new-conversation-button recorder-entry" type="button">◉ Dictaphone</button>
 
       <section class="side-section operations-panel">
         <button class="operations-toggle" type="button" data-panel="integrationsPanel" aria-expanded="false">Intégrations</button>
@@ -1157,6 +1158,42 @@
     </div>
   </dialog>
 
+  <dialog id="recorderDialog" class="recorder-dialog" aria-labelledby="recorderTitle">
+    <header><h2 id="recorderTitle">Dictaphone</h2><button id="closeRecorder" type="button" aria-label="Fermer le Dictaphone">×</button></header>
+    <p id="recorderStatus" role="status" aria-live="polite">Prêt à enregistrer.</p>
+    <label>Titre <input id="recorderName" maxlength="120" value="Nouvel enregistrement"></label>
+    <label>Microphone <select id="recorderInput"><option value="">Microphone système</option></select></label>
+    <button id="recorderTestInput" type="button">Tester le micro (parle pendant 4 secondes)</button>
+    <p id="recorderDeviceHelp">Informe les participants avant de commencer l'enregistrement.</p>
+    <div class="recorder-controls">
+      <button id="recorderStart" type="button">Enregistrer</button>
+      <button id="recorderImport" type="button">Importer un audio</button>
+      <button id="recorderPause" type="button" disabled>Pause</button>
+      <button id="recorderStop" type="button" disabled>Terminer</button>
+      <span id="recorderElapsed">00:00</span>
+    </div>
+    <h3>Enregistrements</h3>
+    <div id="recorderLibrary"></div>
+    <audio id="recorderPlayback" controls></audio>
+    <section id="recorderTranscriptSection" hidden>
+      <h3>Transcription</h3>
+      <p>Corrige le texte avant de l'utiliser pour une synthèse ou un export.</p>
+      <textarea id="recorderTranscript" rows="8" aria-label="Transcription modifiable"></textarea>
+      <button id="recorderSaveTranscript" type="button">Enregistrer la correction</button>
+      <button id="recorderExportText" type="button">Exporter TXT</button>
+      <button id="recorderExportMarkdown" type="button">Exporter MD</button>
+      <button id="recorderAnalyze" type="button">Analyser le texte</button>
+    </section>
+    <section id="recorderAnalysisSection" hidden>
+      <h3>Synthèse à vérifier</h3>
+      <div id="recorderAnalysis"></div>
+      <label>Exporter l'analyse
+        <select id="recorderReportFormat"><option value="docx">Document DOCX</option><option value="xlsx">Tableau XLSX</option><option value="pptx">Présentation PPTX</option><option value="pdf">Rapport PDF</option></select>
+      </label>
+      <button id="recorderExportReport" type="button">Exporter le brouillon</button>
+    </section>
+  </dialog>
+
   <script src="noon-particles.js"></script>
   <script src="ui-utils.js"></script>
   <script src="control-center.js"></script>
@@ -1164,6 +1201,7 @@
   <script src="dev-terminal-profile-ui.js"></script>
   <script src="goal-mode-dev-ui.js"></script>
   <script src="app.js"></script>
+  <script src="recorder.js"></script>
   <script src="live-voice-core.js"></script>
   <script src="live-voice.js"></script>
 </body>

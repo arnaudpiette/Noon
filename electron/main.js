@@ -36,6 +36,9 @@ const {
   normalizeDevPreviewUrl,
 } = require("./dev-preview-controller");
 const { createDeferredOptionalLoader, createStartupDiagnostics, startOptionalStartupPhase } = require("./startup-diagnostics");
+const { createRecorderStore } = require("../lib/recorder-store");
+const { reportContent } = require("../lib/recorder-report");
+const { buildBuffer, verifyArtifact } = require("../services/production/artifact-generator");
 
 const smokeArgument = (name) => process.argv.find((value) => value.startsWith(`--${name}=`))?.split("=").slice(1).join("=");
 const smokeModeFromArguments = process.argv.includes("--noon-smoke-test");
@@ -126,6 +129,7 @@ deferredOpenAISecret = createDeferredOptionalLoader({ operation: () => loadEncry
 deferredGeminiSecret = createDeferredOptionalLoader({ operation: () => loadEncryptedGeminiKey() });
 startupDiagnostics.record("main-module", "ready", { elapsedMs: Date.now() - PROCESS_STARTED_AT });
 const localPermissionStore = createLocalPermissionStore(dataPath("local-permissions.json"));
+let recorderStore = null;
 function readJson(name, fallback) {
   try { return JSON.parse(fs.readFileSync(dataPath(name), "utf8")); }
   catch { return fallback; }
@@ -463,7 +467,14 @@ function createWindow() {
     if (url === `${NOON_ORIGIN}/app`) return;
     event.preventDefault(); void openExternalUrl(url);
   });
-  mainWindow.webContents.on("render-process-gone", () => { liveVoiceActive = false; });
+  // Une capture du Dictaphone ne survit pas au renderer : on la clôt comme interrompue
+  // pour ne pas bloquer les prises suivantes jusqu'au redémarrage de Noon.
+  const releaseOrphanRecording = () => {
+    try { recorderStore?.interruptActive(); }
+    catch (error) { console.warn("[recorder] libération de la capture impossible :", error.code || error.message); }
+  };
+  mainWindow.webContents.on("did-navigate", releaseOrphanRecording);
+  mainWindow.webContents.on("render-process-gone", () => { liveVoiceActive = false; releaseOrphanRecording(); });
   mainWindow.on("close", (event) => {
     if (isQuitting) return;
     event.preventDefault();
@@ -630,6 +641,106 @@ function registerIpc() {
   const registerTrustedHandler = createTrustedIpcRegistrar({
     ipcMain,
     trustedOrigin: NOON_ORIGIN,
+  });
+  registerTrustedHandler("noon:recorder-list", () => recorderStore.list());
+  registerTrustedHandler("noon:recorder-import", async () => {
+    const selection = await dialog.showOpenDialog(mainWindow, {
+      title: "Importer un fichier audio",
+      properties: ["openFile"],
+      filters: [{ name: "Fichiers audio", extensions: ["webm", "m4a", "mp4", "ogg", "mp3", "wav"] }],
+    });
+    if (selection.canceled || !selection.filePaths[0]) return { canceled: true };
+    const source = selection.filePaths[0];
+    const mime = { ".webm": "audio/webm", ".m4a": "audio/mp4", ".mp4": "audio/mp4",
+      ".ogg": "audio/ogg", ".mp3": "audio/mpeg", ".wav": "audio/wav" }[path.extname(source).toLowerCase()];
+    if (!mime) throw new Error("Format audio refusé.");
+    return { canceled: false, record: recorderStore.importAudio(source, mime, path.basename(source)) };
+  });
+  registerTrustedHandler("noon:recorder-rename", (_event, id, title) => recorderStore.rename(id, title));
+  registerTrustedHandler("noon:recorder-delete", (_event, id) => recorderStore.remove(id));
+  registerTrustedHandler("noon:recorder-create", (_event, options) => recorderStore.create(options));
+  registerTrustedHandler("noon:recorder-append", (_event, id, chunk) => recorderStore.append(id, chunk));
+  registerTrustedHandler("noon:recorder-state", (_event, id, state) => recorderStore.setState(id, state));
+  registerTrustedHandler("noon:recorder-chunk", (_event, id, index) => recorderStore.chunk(id, index));
+  registerTrustedHandler("noon:recorder-transcript", (_event, id, text, source) => recorderStore.saveTranscript(id, text, source));
+  registerTrustedHandler("noon:recorder-analysis", (_event, id, analysis, revision) => recorderStore.saveAnalysis(id, analysis, revision));
+  registerTrustedHandler("noon:recorder-report", async (_event, id, format) => {
+    if (!["docx", "xlsx", "pptx", "pdf"].includes(format)) throw new Error("Format refusé.");
+    const record = recorderStore.list().find((item) => item.id === id);
+    if (!record) throw new Error("Enregistrement introuvable.");
+    const content = reportContent(record, format);
+    const selection = await dialog.showSaveDialog(mainWindow, {
+      title: "Exporter l'analyse du Dictaphone",
+      defaultPath: path.join(app.getPath("documents"), `noon-analyse-${id}.${format}`),
+      filters: [{ name: format.toUpperCase(), extensions: [format] }],
+      properties: ["showOverwriteConfirmation", "createDirectory"],
+    });
+    if (selection.canceled || !selection.filePath) return { canceled: true };
+    const target = selection.filePath.endsWith(`.${format}`) ? selection.filePath : `${selection.filePath}.${format}`;
+    const temporary = `${target}.${crypto.randomUUID()}.tmp`;
+    try {
+      fs.writeFileSync(temporary, await buildBuffer(format, record.title, content), { mode: 0o600 });
+      await verifyArtifact(temporary, format);
+      fs.renameSync(temporary, target);
+      return { canceled: false, name: path.basename(target) };
+    } catch (error) {
+      fs.rmSync(temporary, { force: true });
+      throw error;
+    }
+  });
+  registerTrustedHandler("noon:recorder-export-transcript", async (_event, id, format) => {
+    if (!["txt", "md"].includes(format)) throw new Error("Format refusé.");
+    const record = recorderStore.list().find((item) => item.id === id);
+    if (!record?.transcript?.text) throw new Error("Transcription introuvable.");
+    const selection = await dialog.showSaveDialog(mainWindow, {
+      title: "Exporter la transcription",
+      defaultPath: path.join(app.getPath("documents"), `noon-${id}.${format}`),
+      filters: [{ name: format === "md" ? "Markdown" : "Texte", extensions: [format] }],
+      properties: ["showOverwriteConfirmation", "createDirectory"],
+    });
+    if (selection.canceled || !selection.filePath) return { canceled: true };
+    const target = selection.filePath.endsWith(`.${format}`) ? selection.filePath : `${selection.filePath}.${format}`;
+    const text = format === "md"
+      ? `# ${record.title.replace(/[\r\n#]/g, " ")}\n\nSource : ${record.transcript.source} · Révision ${record.transcript.revision}\n\n${record.transcript.text}\n`
+      : `${record.transcript.text}\n`;
+    const temporary = `${target}.${crypto.randomUUID()}.tmp`;
+    try {
+      fs.writeFileSync(temporary, text, { encoding: "utf8", mode: 0o600, flag: "wx" });
+      fs.renameSync(temporary, target);
+    } catch (error) {
+      fs.rmSync(temporary, { force: true });
+      throw error;
+    }
+    return { canceled: false, name: path.basename(target) };
+  });
+  registerTrustedHandler("noon:recorder-export", async (_event, id) => {
+    const record = recorderStore.list().find((item) => item.id === id);
+    if (!record || !record.chunks.length) throw new Error("Aucun audio à exporter.");
+    const extension = record.mimeType.includes("mp4") ? "m4a" : record.mimeType.includes("ogg") ? "ogg"
+      : record.mimeType.includes("mpeg") ? "mp3" : record.mimeType.includes("wav") ? "wav" : "webm";
+    const selection = await dialog.showSaveDialog(mainWindow, {
+      title: "Exporter l'enregistrement",
+      defaultPath: path.join(app.getPath("downloads"), `noon-${id}.${extension}`),
+      filters: [{ name: "Enregistrement audio", extensions: [extension] }],
+      properties: ["showOverwriteConfirmation", "createDirectory"],
+    });
+    if (selection.canceled || !selection.filePath) return { canceled: true };
+    const target = selection.filePath.endsWith(`.${extension}`) ? selection.filePath : `${selection.filePath}.${extension}`;
+    const temporary = `${target}.${crypto.randomUUID()}.tmp`;
+    const handle = fs.openSync(temporary, "wx", 0o600);
+    try {
+      for (const entry of record.chunks) {
+        fs.writeSync(handle, Buffer.from(recorderStore.chunk(id, entry.index).data, "base64"));
+      }
+      fs.fsyncSync(handle);
+    } catch (error) {
+      fs.closeSync(handle);
+      fs.rmSync(temporary, { force: true });
+      throw error;
+    }
+    fs.closeSync(handle);
+    fs.renameSync(temporary, target);
+    return { canceled: false, name: path.basename(target) };
   });
   registerTrustedHandler("noon:get-status", () => ({
     platform: process.platform, arch: process.arch, packaged: app.isPackaged,
@@ -941,6 +1052,7 @@ function registerIpc() {
 }
 async function startNoon() {
   const userDataDirectory = app.getPath("userData");
+  recorderStore = createRecorderStore(userDataDirectory);
   process.env.NOON_DATA_DIR = userDataDirectory;
   process.env.NOON_BUILD_PROFILE = buildProfile;
   if (safeModeRequested) process.env.NOON_SAFE_MODE = "1";
