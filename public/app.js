@@ -11404,6 +11404,27 @@ if (goalModeDevPanel && window.NoonGoalModeDevUi) {
   // B4b : l'entrée « Goal Mode DEV » du Control Center n'apparaît que flag actif.
   void goalModeDevUi.init().then((available) => window.NoonControlCenter?.setGoalModeDevAvailable?.(available === true));
 }
+// Connecteurs MCP : entrée du Control Center visible seulement si connectors.mcp est actif (sinon 404).
+const mcpConnectorsPanel = document.getElementById("mcpConnectorsPanel");
+if (mcpConnectorsPanel && window.NoonMcpConnectorsUi) {
+  const mcpConnectorsUi = window.NoonMcpConnectorsUi.createMcpConnectorsController({
+    elements: { root: mcpConnectorsPanel },
+    api: window.NoonMcpConnectorsUi.createMcpConnectorsApi({ fetchImpl: window.fetch.bind(window) }),
+    openExternal: window.noon?.openExternal ? (url) => window.noon.openExternal(url) : null,
+  });
+  window.NoonMcpConnectors = Object.freeze({ refresh: () => mcpConnectorsUi.refresh() });
+  void mcpConnectorsUi.init().then((available) => window.NoonControlCenter?.setMcpAvailable?.(available === true));
+}
+// SelfDev : entrée du Control Center visible seulement si selfdev.v1 est actif (sinon 404).
+const selfDevPanel = document.getElementById("selfDevPanel");
+if (selfDevPanel && window.NoonSelfDevUi) {
+  const selfDevUi = window.NoonSelfDevUi.createSelfDevController({
+    elements: { root: selfDevPanel },
+    api: window.NoonSelfDevUi.createSelfDevApi({ fetchImpl: window.fetch.bind(window) }),
+  });
+  window.NoonSelfDev = Object.freeze({ refresh: () => selfDevUi.refresh() });
+  void selfDevUi.init().then((available) => window.NoonControlCenter?.setSelfDevAvailable?.(available === true));
+}
 loadAutomations();
 refreshWakeWordSettings();
 refreshOpenAIKeyStatus();

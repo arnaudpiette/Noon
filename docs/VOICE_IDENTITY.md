@@ -1,12 +1,14 @@
 # VoiceIdentity de Noon
 
-`services/voice/voice-identity.js` est la source unique de l’identité vocale. La voix principale est `marin` pour le TTS classique, le Live Mini et le Live Max. Luna, Terra et Sol produisent du texte ; ils ne sélectionnent jamais la voix.
+`services/voice/voice-identity.js` est la source unique de l’identité vocale. La seule voix autorisée est `cedar`, pour le TTS classique, le Live Mini et le Live Max. `arbor` reste la voix future préférée, à activer seulement quand elle sera disponible dans l’API et vérifiée. Luna, Terra et Sol produisent du texte ; ils ne sélectionnent jamais la voix.
 
 La langue, l’accent, la qualité Mini/Max et les périphériques restent des réglages de session. Ils peuvent modifier la prononciation, le modèle Realtime ou le transport audio, mais pas l’identité `noon-default`.
 
 ## Fallback
 
-Le TTS essaie `marin` deux fois. `cedar` n’est utilisé qu’après ces deux échecs et génère une trace `voice-identity.fallback` sans contenu parlé. Ce secours n’est jamais écrit dans `localStorage` et la requête suivante retente `marin`. Si le service OpenAI entier échoue, le renderer peut employer la voix système macOS, avec un message visible indiquant ce mode de secours.
+Aucun repli vocal : `fallbackPolicy: "none"` et `exactMatchRequired: true`. Le TTS fait une seule tentative en `cedar` ; si Cedar n’est pas disponible, la résolution échoue (`VOICE_UNAVAILABLE`) au lieu de changer de voix. En Live, si la voix confirmée par OpenAI diffère de Cedar, le renderer coupe la session et le signale. Les anciennes sélections de voix enregistrées sont ignorées et réécrites avec la politique canonique.
+
+Pour GPT-Live, voir `docs/VOICE_P0A_AUDIT.md` : la disponibilité de Cedar n’y est pas confirmée.
 
 ## Transports conservés
 

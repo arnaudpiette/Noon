@@ -233,6 +233,12 @@ const { createBackgroundJobEngine } = require("./services/jobs/background-job-en
 const { createNotificationAttentionEngine, createNotificationStore } = require("./services/notifications");
 const { createCapabilityRegistry, createLocalIntelligenceRuntime, createLocalModelAdapter } = require("./services/runtime");
 const { createExtensionRegistry, createExtensionRuntime } = require("./services/extensions");
+const { createMcpService } = require("./services/mcp");
+const {
+  createSelfDevEvidenceService, createSelfDevPathPolicyProvider, createSelfDevTargetStore, createSelfDevWorktreeService,
+} = require("./services/selfdev");
+const { createSelfDevReviewService } = require("./services/selfdev/selfdev-review-service");
+const { createSelfDevHttpRoutes } = require("./services/selfdev/selfdev-http-routes");
 const { createControlCenterService } = require("./services/control-center");
 const noonExampleSearchExtension = require("./services/extensions/sample/noon-example-search");
 const { createArtifactEngine } = require("./services/artifacts/artifact-engine");
@@ -1670,6 +1676,55 @@ const goalDevRetryRuntime =
 const dataDirectoryLock = createDataDirectoryLock({ directory: DATA_DIRECTORY });
 process.once("exit", () => { try { dataDirectoryLock.release(); } catch {} });
 
+/*
+ * SelfDev V1 (SD-3) — copies isolées du dépôt Noon. La politique de chemins est
+ * toujours fournie à Goal Mode DEV (elle ne fait que restreindre, et échoue fermée
+ * pour un dossier inconnu du conteneur SelfDev) ; les routes exigent selfdev.v1.
+ */
+const selfDevStateDirectory = path.join(DATA_DIRECTORY, "selfdev");
+const selfDevTargetStore = createSelfDevTargetStore({
+  filePath: path.join(selfDevStateDirectory, "selfdev-target.json"),
+  writableRootsProvider: () => localPermissionStore.roots("read-write"),
+});
+let selfDevServiceCache = { key: null, value: null };
+function selfDevServices() {
+  const target = selfDevTargetStore.get();
+  const container = target?.worktreeContainer;
+  if (!container || !fs.existsSync(container)) return { targetStore: selfDevTargetStore, worktreeService: null, evidenceService: null };
+  if (selfDevServiceCache.key !== container) {
+    const stateDirectory = path.join(selfDevStateDirectory, "worktrees");
+    const worktreeService = createSelfDevWorktreeService({ container, stateDirectory });
+    const evidenceService = createSelfDevEvidenceService({ worktreeService, executeValidation: sandboxDevValidationExecutor, stateDirectory });
+    // Relecteur : Codex Bridge en lecture seule s'il est installé ; appel distant soumis
+    // à la politique locale (REMOTE_REASONING).
+    const reviewService = findCodexExecutable() ? createSelfDevReviewService({
+      worktreeService, evidenceService, stateDirectory,
+      runReview: ({ worktreePath, question, signal }) => runCodexAnalysis({ question, projectPath: worktreePath, signal }),
+      isRemoteAllowed: () => localIntelligenceRuntime.preflight({ requiredCapabilities: ["REMOTE_REASONING"] }).status === "AVAILABLE",
+    }) : null;
+    selfDevServiceCache = { key: container, value: { worktreeService, evidenceService, reviewService } };
+  }
+  return { targetStore: selfDevTargetStore, resolveWorkspaceIds: selfDevWorkspaceIds, ...selfDevServiceCache.value };
+}
+// Workspaces dont une racine read-write contient le worktree (indice ; l'exécuteur revérifie).
+function selfDevWorkspaceIds(worktreePath) {
+  const ids = [];
+  for (const workspace of workspaceEngine.list() || []) {
+    try {
+      const roots = (workspaceEngine.context(workspace.id).roots || []).filter((root) => root.mode === "read-write");
+      if (roots.some((root) => worktreePath === root.path || worktreePath.startsWith(`${root.path}${path.sep}`))) ids.push(workspace.id);
+    } catch { /* workspace illisible ignoré */ }
+  }
+  return ids;
+}
+const selfDevPathPolicyProvider = createSelfDevPathPolicyProvider({ getContext: selfDevServices });
+const selfDevHttpRoutes = createSelfDevHttpRoutes({
+  isEnabled: () => featureFlags.evaluate("selfdev.v1", {}).mode !== "OFF" &&
+    !UI_VALIDATION_MODE && process.env.NOON_SMOKE_TEST !== "1" && process.env.NOON_SAFE_MODE !== "1",
+  services: selfDevServices,
+  observability: (event, metadata) => toolAuditLog.append(event, metadata),
+});
+
 let goalModeDevRuntime = null;
 try {
   if (featureFlags.evaluate("goals.mode-dev", {}).mode !== "OFF") {
@@ -1690,6 +1745,7 @@ try {
       providerAdapter: openAIProviderAdapter,
       trackUsage,
       dataDirectoryLock,
+      pathPolicyProvider: selfDevPathPolicyProvider,
       observability: (event, metadata) => toolAuditLog.append(`goals.mode-dev.${event}`, metadata),
     });
   }
@@ -1823,6 +1879,18 @@ const extensionRegistry = createExtensionRegistry({
   observability: (event, metadata) => toolAuditLog.append(`extensions.${event}`, metadata),
 });
 extensionRuntime.bindRegistry(extensionRegistry);
+// Client MCP (flag connectors.mcp, OFF par défaut) : outils en lecture seule
+// validés par l'utilisateur, jetons dans le coffre safeStorage existant.
+const mcpService = createMcpService({
+  enabled: featureFlags.evaluate("connectors.mcp").enabled && !UI_VALIDATION_MODE && process.env.NOON_SMOKE_TEST !== "1",
+  dataDirectory: DATA_DIRECTORY,
+  tokenStore: integrationTokenStore,
+  skillRegistry,
+  clientVersion: require("./package.json").version,
+  // Mode local uniquement / hors ligne : aucun serveur MCP distant (Figma = REMOTE_FIGMA).
+  isRemoteAllowed: (capabilityId) => localIntelligenceRuntime.preflight({ requiredCapabilities: [capabilityId] }).status === "AVAILABLE",
+  observability: (event, metadata) => toolAuditLog.append(event, metadata),
+});
 // L'extension de démonstration reste disponible pour les tests de développement,
 // mais ne doit jamais concurrencer la vraie recherche publique en production.
 if (process.env.NOON_ENABLE_EXAMPLE_SEARCH_EXTENSION === "true") {
@@ -6721,6 +6789,16 @@ if (req.method === "GET" && req.url === "/dev-project-rules-ui.js") {
 }
 
 // B3a : sert le contrôleur de l'UI d'approbation Goal Mode DEV (masqué si flag OFF).
+if (req.method === "GET" && req.url === "/selfdev-ui.js") {
+  res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", "X-Content-Type-Options": "nosniff" });
+  return res.end(fs.readFileSync(path.join(__dirname, "public", "selfdev-ui.js")));
+}
+
+if (req.method === "GET" && req.url === "/mcp-connectors-ui.js") {
+  res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", "X-Content-Type-Options": "nosniff" });
+  return res.end(fs.readFileSync(path.join(__dirname, "public", "mcp-connectors-ui.js")));
+}
+
 if (req.method === "GET" && req.url === "/goal-mode-dev-ui.js") {
   const filePath = path.join(__dirname, "public", "goal-mode-dev-ui.js");
   res.writeHead(200, {
@@ -8058,6 +8136,14 @@ if (req.method === "POST" && req.url === "/api/runtime/mode") {
     res.writeHead(error.statusCode || 400, { "Content-Type": "application/json" });
     return res.end(JSON.stringify({ status: "error", message: error.message }));
   }
+}
+
+if (selfDevHttpRoutes.matches(requestPath)) {
+  return selfDevHttpRoutes.handle(req, res, { requestPath, readJsonBody });
+}
+
+if (mcpService.matches(requestPath)) {
+  return mcpService.handle(req, res, { requestPath, readJsonBody });
 }
 
 if (req.method === "GET" && req.url === "/api/extensions") {
@@ -10507,6 +10593,9 @@ async function startNoonServer({
   // Le safe mode conserve le serveur local mais suspend les travaux autonomes.
   if (process.env.NOON_SAFE_MODE !== "1") backgroundJobEngine?.start();
 
+  // Reconnexion silencieuse des serveurs MCP déjà autorisés (flag connectors.mcp).
+  if (process.env.NOON_SAFE_MODE !== "1") void mcpService.startup().catch(() => {});
+
   if (server.listening) return Promise.resolve(server);
 
   return new Promise((resolve, reject) => {
@@ -10529,6 +10618,7 @@ async function startNoonServer({
 function stopNoonServer() {
   backgroundJobEngine?.stop();
   try { dataDirectoryLock.release(); } catch {}
+  void mcpService.closeAll().catch(() => {});
   if (!server.listening) return Promise.resolve();
 
   return new Promise((resolve, reject) => {

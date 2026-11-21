@@ -114,6 +114,8 @@ test("les données serveur restent dans le profil isolé et HTTP local reste aut
   assert.throws(() => assertUiValidationDataDirectory({ env: { NOON_UI_VALIDATION: "1", NOON_UI_VALIDATION_PROFILE: profile }, dataDirectory: "/normal" }), { code: "UI_VALIDATION_DATA_DIRECTORY_INVALID" });
   assert.equal(isUiValidationExternalRequest("/health"), false);
   assert.equal(isUiValidationExternalRequest("/integrations/gmail/connect"), true);
+  assert.equal(isUiValidationExternalRequest("/api/mcp/servers/figma/connect"), true);
+  assert.equal(isUiValidationExternalRequest("/api/selfdev/worktrees"), true);
   assert.equal(isUiValidationExternalRequest("/realtime/session"), true);
   assert.equal(isUiValidationExternalRequest("/api/dev/workspace-terminal/sessions"), true);
 });
