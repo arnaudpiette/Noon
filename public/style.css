@@ -33,6 +33,19 @@ body.sidebar-collapsed .sidebar-backdrop{opacity:0;pointer-events:none}
 }
 
 /* Navigation 2026 : hiérarchie Projets / Chats et rail compact persistant. */
+.recorder-entry{order:5;margin:8px 4px 12px;border:1px solid #e4e4e1;border-radius:9px;background:#fff}
+.recorder-dialog{width:min(720px,94vw);max-height:88vh;padding:24px;border:1px solid #dededb;border-radius:18px;background:#fdfdfc;box-shadow:0 24px 100px #0003;color:var(--ink)}
+.recorder-dialog::backdrop{background:#1118}
+.recorder-dialog header,.recorder-controls,.recorder-item{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.recorder-dialog h2{margin:0 0 15px}.recorder-dialog h3{margin:22px 0 12px}
+.recorder-dialog label{display:grid;gap:6px;margin:12px 0;font-size:14px}
+.recorder-dialog input,.recorder-dialog select{min-height:40px;padding:7px 10px;border:1px solid #ddd;border-radius:8px;background:white}
+.recorder-dialog button{padding:9px 14px;border:1px solid #ddd;border-radius:8px;background:white}
+.recorder-dialog button:disabled{opacity:.45;cursor:default}
+.recorder-dialog #recorderStart{background:var(--green)}
+.recorder-dialog #recorderStatus{min-height:1.4em;color:#555}
+.recorder-item{padding:10px 0;border-top:1px solid #eee;font-size:13px}
+.recorder-dialog audio{width:100%;margin-top:16px}
 :root{--sidebar-width:300px;--sidebar-rail-width:70px}
 .sidebar{padding:22px 16px 26px;background:#fbfbfa}
 .sidebar-brand-row{order:1;display:flex;align-items:flex-end;justify-content:space-between;padding:0 4px 28px}
