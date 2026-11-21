@@ -54,6 +54,10 @@
 
 *Livrés avant le branchement : le contrôle des routes d'annulation, de statut, de budget et de preuves (4C-1D), et le journal Native DEV fiable (voir plus bas).*
 
+## Prérequis
+
+- **Profil de données séparé pour le développement : tranche à faire avant un usage régulier de Goal Mode DEV.** Aujourd'hui, `npm start` et `Noon.app` partagent le même dossier de données (`~/Library/Application Support/noon` et `.../Noon` sont le même dossier sur un disque insensible à la casse). Les flags de `runtime-config.json` valent donc pour les deux. En attendant, un essai se fait sur une journée : ne pas ouvrir `Noon.app` entre l'activation et la marche arrière, faite le jour même.
+
 ## Cycle de vie d'une réservation DEV
 
 Une réservation est stockée dans l'état du Goal Run (`executionReservations`). Elle est persistée en ajout seul dans `goal_strategy_records`, et chaque écriture passe par un CAS sur la révision.
