@@ -86,6 +86,7 @@ test("les fonctions sensibles futures conservent des valeurs par défaut sûres"
     "extensions.external",
     "goals.mode-dev",
     "selfdev.v1",
+    "remote.lan",
   ]) {
     assert.equal(defaults.get(flagId), "OFF", `${flagId} doit rester OFF par défaut en V1`);
   }

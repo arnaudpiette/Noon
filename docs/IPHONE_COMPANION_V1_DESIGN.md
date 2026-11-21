@@ -118,7 +118,10 @@ réseau ; l'iPhone affiche explicitement « hors ligne » et l'âge des données
 
 ## 9. Tranches
 
-1. **IP-1 — Passerelle et invitation, côté Mac (sans iOS).** `remote-lan-gateway.js` derrière
+1. **IP-1 — Passerelle et invitation, côté Mac (sans iOS).** *Livré le 21/11/2026* :
+   `services/remote/remote-lan-gateway.js` et `test/remote-lan-gateway.test.js`, flag
+   `remote.lan` (OFF) ; non encore démarré par Noon : l'écoute réelle et les commandes
+   d'administration arrivent avec la section « Appareils » (IP-3). `remote-lan-gateway.js` derrière
    `remote.lan` (OFF), invitation QR et code de vérification, routes bornées, réseau local
    uniquement. Tests avec un client Node qui imite l'iPhone : clés brutes enveloppées en SPKI,
    JSON canonique, appairage, rejeu, révocation, origine non privée refusée.
