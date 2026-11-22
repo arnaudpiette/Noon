@@ -163,6 +163,20 @@ structurante, est notée ici avec sa date et sa raison.
 - Prochaine étape, après quelques semaines de mesure : décider d'un mode actif, avec ses propres
   évaluations de qualité.
 
+## 22/11/2026 — eval:life (V3-L6, G.5) et exclusion de `.noon-evals/` du packaging
+
+- `npm run eval:life` : état et coût estimé sans appel ; `-- --add` ajoute un cas (demande réelle,
+  bonne réponse, signaux d'échec, catégorie) ; `-- --run` rejoue (payant, `store: false`) ;
+  `-- --grade` fait noter par Arnaud puis compare au passage précédent (régressions,
+  améliorations) ; une note est reprise si la réponse est identique au caractère près.
+- Seule la demande est envoyée, avec la personnalité et la charte (réglages d'Arnaud s'ils
+  existent) : ni mémoire, ni historique, ni outils. Le test porte sur la réponse de base.
+- Cas dans `.noon-evals/life/cases.json` (mode 0600), hors dépôt (`.gitignore`) et désormais hors
+  de l'app packagée : `.noon-evals/` n'était pas exclu par `forge.config.js` (trou corrigé, il
+  concernait aussi les passages d'eval:character).
+- 30 à 50 cas, fournis par Arnaud ; pas de seuil de réussite fixé : l'indicateur est l'absence de
+  régression d'un commit important à l'autre.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

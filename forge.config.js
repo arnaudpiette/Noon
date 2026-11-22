@@ -55,6 +55,8 @@ module.exports = {
       /^\/\.env(?:\.|$)/,
       /^\/\.git(?:\/|$)/,
       /^\/\.github(?:\/|$)/,
+      // Résultats et cas d'évaluation locaux (eval:character, eval:life : demandes réelles d'Arnaud).
+      /^\/\.noon-evals(?:\/|$)/,
       /^\/out(?:\/|$)/,
       /^\/docs(?:\/|$)/,
       /^\/scripts(?:\/|$)/,
