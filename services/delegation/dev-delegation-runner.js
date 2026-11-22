@@ -142,7 +142,7 @@ function createDevDelegationRunner({ specialistAgent, workspaceEngine = null, pr
     const agentStarted = now();
     const rawAgentResult = controller.signal.aborted
       ? { taskId: contract.taskId, agent: specialistAgent.id, status: "CANCELLED", summary: "Mission annulée.", failureCategory: "CANCELLED" }
-      : await specialistAgent.executeTask(contract, { preflight, signal: controller.signal, benchmarkExecution: input.benchmarkExecution || null });
+      : await specialistAgent.executeTask(contract, { preflight, signal: controller.signal, benchmarkExecution: input.benchmarkExecution || null, executorId: typeof input.executor === "string" ? input.executor.slice(0, 40) : null });
     let agentResult = normalizeSpecialistAgentResult(rawAgentResult, { taskId: contract.taskId, agent: specialistAgent.id });
     const agentDuration = now() - agentStarted;
     const postSnapshot = snapshotRepository(contract.repositoryRoot);
@@ -180,12 +180,12 @@ function createDevDelegationRunner({ specialistAgent, workspaceEngine = null, pr
       ? (!failureCategory && review.valid && preserved && validations.every((item) => item.status === "PASS") ? "PASS" : "FAIL")
       : changedFiles.length || agentResult.status === "CANCELLED" || agentResult.status === "TIMEOUT" ? "PARTIAL" : "FAIL";
     const result = {
-      taskId: contract.taskId, agent: specialistAgent.id, status: agentResult.status, finalVerdict, failureCategory,
+      taskId: contract.taskId, agent: agentResult.agent || specialistAgent.id, status: agentResult.status, finalVerdict, failureCategory,
       summary: agentResult.summary, preflight, baseline, preExistingFailure: baseline.some((item) => item.status !== "PASS"), preExistingChanges: preflight.snapshot.files, preExistingChangesPreserved: preserved,
       changedFiles, validations, diffReview: review, permissions: contract.permissions,
       metrics: { taskDomain: "DEV", requiredQuality: contract.requiredQuality, duration: now() - started, agentDuration, orchestrationOverhead: Math.max(0, now() - started - agentDuration), preflightDuration, postValidationDuration, iterations: agentResult.iterations, commandCount: baseline.length + validations.length, estimatedCost: agentResult.estimatedCost, actualCost: agentResult.actualCost, backend: agentResult.backend, changedFilesCount: changedFiles.length, success: finalVerdict === "PASS", failureCategory },
     };
-    emit("specialist_agent.completed", { taskId: contract.taskId, agent: specialistAgent.id, taskDomain: "DEV", requiredQuality: contract.requiredQuality, duration: result.metrics.duration, iterations: result.metrics.iterations, commandCount: result.metrics.commandCount, changedFilesCount: changedFiles.length, validationStatus: validations.every((item) => item.status === "PASS") ? "PASS" : "FAIL", estimatedCost: result.metrics.estimatedCost, actualCost: result.metrics.actualCost, success: result.metrics.success, failureCategory });
+    emit("specialist_agent.completed", { taskId: contract.taskId, agent: result.agent, taskDomain: "DEV", requiredQuality: contract.requiredQuality, duration: result.metrics.duration, iterations: result.metrics.iterations, commandCount: result.metrics.commandCount, changedFilesCount: changedFiles.length, validationStatus: validations.every((item) => item.status === "PASS") ? "PASS" : "FAIL", estimatedCost: result.metrics.estimatedCost, actualCost: result.metrics.actualCost, success: result.metrics.success, failureCategory });
     controllers.delete(contract.taskId); return result;
   }
   async function cancelTask(taskId) { controllers.get(String(taskId))?.abort(); return specialistAgent.cancelTask(taskId); }

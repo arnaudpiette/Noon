@@ -181,6 +181,7 @@ const { createDelegationEngine } = require("./services/delegation/delegation-eng
 const { createCodexSpecialistAgent } = require("./services/delegation/codex-specialist-agent");
 const { createDevDelegationRunner } = require("./services/delegation/dev-delegation-runner");
 const { createExecutorWorktreeManager } = require("./services/delegation/executor-worktree");
+const { createClaudeCodeSpecialistAgent, createExecutorSelector } = require("./services/delegation/claude-code-specialist-agent");
 const { createNativeDevCoordinator } = require("./services/dev/native-dev-coordinator");
 const { createNativeDevOrchestrator } = require("./services/dev/native-dev-orchestrator");
 const { createNativeDevOrchestratorFacade } = require("./services/dev/native-dev-orchestrator-facade");
@@ -1947,8 +1948,11 @@ if (process.env.NOON_ENABLE_EXAMPLE_SEARCH_EXTENSION === "true") {
 const specialistRegistry = createSpecialistRegistry();
 const contextCapsuleBuilder = createContextCapsuleBuilder();
 const codexSpecialistAgent = createCodexSpecialistAgent({ observability: (event, metadata) => toolAuditLog.append(`dev.${event}`, metadata) });
+// V3-L5b : exécutant au choix par mission (Codex par défaut, Claude Code si installé).
+const claudeCodeSpecialistAgent = createClaudeCodeSpecialistAgent({ observability: (event, metadata) => toolAuditLog.append(`dev.${event}`, metadata) });
+const devExecutorSelector = createExecutorSelector({ agents: { "codex-cli": codexSpecialistAgent, "claude-code": claudeCodeSpecialistAgent }, defaultId: "codex-cli" });
 const devDelegationRunner = createDevDelegationRunner({
-  specialistAgent: codexSpecialistAgent,
+  specialistAgent: devExecutorSelector,
   worktreeManager: executorWorktreeManager,
   workspaceEngine,
   operationalSecurityPolicy,

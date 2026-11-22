@@ -117,6 +117,7 @@ test("4C-1D inventaire : tout appel cancelTask / getTaskStatus / projectDecision
     ["services/goals/goal-mode-dev-dispatch-service.js", "Goal Mode : cancelExecution / executionStatus"],
     ["services/goals/goal-mode-dev-runtime.js", "Goal Mode B1 : adaptateur du dispatch (taskId issus de la réservation)"],
     ["services/delegation/dev-delegation-runner.js", "hors Native DEV : délégation Codex"],
+    ["services/delegation/claude-code-specialist-agent.js", "hors Native DEV : sélecteur d'exécutant (V3-L5b), relaie l'annulation à l'exécutant de la mission"],
     ["services/dev/benchmark/codex-benchmark-participant.js", "hors Native DEV : benchmark Codex"],
   ]);
   const found = new Set();

@@ -86,6 +86,15 @@ structurante, est notée ici avec sa date et sa raison.
   dossiers autorisés d'Arnaud ne sont pas élargis.
 - Module générique distinct du worktree SelfDev (lié au dépôt Noon) ; convergence prévue en D.5.
 
+## 22/11/2026 — Claude Code comme second exécutant (V3-L5b)
+
+- `services/delegation/claude-code-specialist-agent.js` : `claude -p`, sortie stream-json,
+  `--permission-mode acceptEdits`, outils limités (lecture, édition, quelques commandes de
+  validation) ; commit, push, réseau, installation et `rm` refusés ; environnement sans clés (seule
+  la session Claude Code déjà ouverte sur le Mac sert). Absent du Mac au 22/11 : marqué indisponible.
+- Choix de l'exécutant par mission (`executor`: `codex-cli` par défaut, ou `claude-code`). Un
+  exécutant demandé mais absent fait échouer la mission : aucune bascule silencieuse vers l'autre.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
