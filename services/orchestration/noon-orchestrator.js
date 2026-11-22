@@ -46,6 +46,12 @@ function classifyError(error) {
   return "model_error";
 }
 
+// V3-L6 (G.3) : clé de cache de prompt par canal (préfixe stable : personnalité + charte).
+function promptCacheKeyFor(channel) {
+  const value = String(channel || "chat").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 40) || "chat";
+  return `noon:${value}`;
+}
+
 function createNoonOrchestrator({
     interventionPermissionEngine = null,
   contextBuilder,
@@ -311,7 +317,7 @@ function createNoonOrchestrator({
       if (previousProvider && providerId !== previousProvider && !["PROVIDER_FAILURE", "NETWORK_FAILURE", "RATE_LIMIT", "TIMEOUT", "AUTH_ERROR", "MODEL_UNAVAILABLE"].includes(classifyFailureCategory(lastError))) break;
       const activeAdapter = adapters[providerId];
       if (!activeAdapter || state.privacyDecisions?.[providerId]?.decision !== "ALLOW") continue;
-      let attemptRequest = { ...request, model };
+      let attemptRequest = { ...request, model, promptCacheKey: providerId === "openai" ? promptCacheKeyFor(state.request.channel) : undefined };
       try {
         for (let compatibilityAttempt = 0; compatibilityAttempt < 3; compatibilityAttempt += 1) {
           const attemptStarted = now();
@@ -508,6 +514,13 @@ function createNoonOrchestrator({
                 state.route.reasonCodes?.includes("QUALITY_ESCALATION") === true ||
                 state.route.routingReasonCodes?.includes("QUALITY_ESCALATION") === true,
             });
+            if (attemptRequest.promptCacheKey && /prompt_cache_key/i.test(String((error.cause || error)?.message || ""))) {
+              attemptRequest = { ...attemptRequest, promptCacheKey: undefined };
+              observability?.recordFallback(state.executionId, {
+                component: "prompt_cache_key", from: "enabled", to: "disabled", reason: "compatibility_error",
+              });
+              continue;
+            }
             if (attemptRequest.contextManagement && isCompactionCompatibilityError(error.cause || error)) {
               attemptRequest = { ...attemptRequest, contextManagement: undefined };
               trace("compaction.fallback", state, { feature: "compaction", model });
@@ -1625,4 +1638,5 @@ module.exports = {
   classifyError,
   createNoonOrchestrator,
   executionId,
+  promptCacheKeyFor,
 };

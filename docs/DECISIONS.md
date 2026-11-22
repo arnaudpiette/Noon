@@ -137,6 +137,18 @@ structurante, est notée ici avec sa date et sa raison.
 - Constat : le profil réel n'a que 3 traces depuis le 20/11 (4 requêtes en novembre) ; les chiffres
   se rempliront à l'usage.
 
+## 22/11/2026 — Cache de prompt (V3-L6, G.3)
+
+- Le préfixe des messages du chat est déjà stable : personnalité puis charte (~1 300 tokens avec la
+  charte, au-dessus du seuil de 1 024 du cache automatique d'OpenAI), puis règles permanentes ; le
+  contexte variable vient après. Aucun réordonnancement nécessaire.
+- Ajout de `prompt_cache_key` (`noon:<canal>`, aucune donnée privée) sur les appels OpenAI de
+  l'orchestrateur ; si un modèle refuse le paramètre, l'appel repart sans lui (repli tracé, comme
+  pour la compaction). Pas de `prompt_cache_retention` étendue : elle changerait le comportement de
+  coût, à décider à part.
+- « Santé de Noon » affiche la part des tokens d'entrée servis depuis le cache (période et mois).
+- Hors orchestrateur (Brief, première action, voix Live) : inchangé.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

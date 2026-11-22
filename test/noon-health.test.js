@@ -30,7 +30,7 @@ test("withDailyCost : la hausse du coût va au jour courant ; nouveau mois → v
 
 test("bilan : latences, réussite, coût du jour, budgets ; jours non mesurés à null", () => {
   const traces = [
-    trace("2026-11-22T08:00:00Z", { technicalExecutionMs: 1200 }),
+    trace("2026-11-22T08:00:00Z", { technicalExecutionMs: 1200, modelCalls: [{ inputTokens: 2000, cachedTokens: 1500 }] }),
     trace("2026-11-22T09:00:00Z", { technicalExecutionMs: 3000 }),
     trace("2026-11-22T10:00:00Z", { status: "failed", errors: [{ code: "X" }], technicalExecutionMs: 9000 }),
     trace("2026-11-21T09:00:00Z", { channel: "live_voice", voice: { firstAudioMs: 800 }, technicalExecutionMs: 60000 }),
@@ -39,7 +39,7 @@ test("bilan : latences, réussite, coût du jour, budgets ; jours non mesurés �
   ];
   const health = createNoonHealthReport({
     listTraces: () => traces,
-    usageStatus: () => ({ month: "2026-11", costUSD: 4.2, monthlyBudgetUSD: 30, remainingUSD: 25.8, mode: "NORMAL", requests: 12, dailyCostUSD: { "2026-11-22": 1.4 }, dailyCostSince: "2026-11-21" }),
+    usageStatus: () => ({ month: "2026-11", inputTokens: 10000, cachedInputTokens: 4000, costUSD: 4.2, monthlyBudgetUSD: 30, remainingUSD: 25.8, mode: "NORMAL", requests: 12, dailyCostUSD: { "2026-11-22": 1.4 }, dailyCostSince: "2026-11-21" }),
     briefUsage: () => ({ days: 14, generated: 5, onTime: 4, opened: 3, openedStreak: 2 }),
     now: () => NOW,
   }).report({ days: 7 });
@@ -59,6 +59,7 @@ test("bilan : latences, réussite, coût du jour, budgets ; jours non mesurés �
   assert.equal(health.month.costUSD, 4.2);
   assert.equal(health.brief.onTime, 4);
   assert.deepEqual(health.notMeasured, ["correctionRate"]);
+  assert.deepEqual(health.cache, { monthRatio: 0.4, periodRatio: 0.75, periodInputTokens: 2000 });
 });
 
 test("bilan sans données : aucune valeur inventée", () => {
@@ -69,6 +70,8 @@ test("bilan sans données : aucune valeur inventée", () => {
   assert.equal(health.budgets.dailyCost.status, "NO_DATA");
   assert.ok(health.byDay.every((day) => day.costUSD === null && day.successRate === null));
   assert.equal(health.brief, null);
+  assert.equal(health.cache.monthRatio, null);
+  assert.equal(health.cache.periodRatio, null);
 });
 
 test("observabilité : listTraces ne rend que les traces terminées, sans champs internes", () => {
@@ -127,6 +130,7 @@ test("panneau : résumé, budgets, jours ; période modifiable ; erreur → masq
   assert.match(text, /Hors budget/, "2,5 s > 2 s");
   assert.match(text, /Pas de données/, "aucune session Live");
   assert.match(text, /Taux de correction par toi : pas encore mesuré/);
+  assert.match(text, /Cache de prompt : — des tokens d'entrée sur la période/);
   assert.match(text, /dont 4 à l'heure/);
   assert.equal(all(root).filter((node) => node.tagName === "TR").length, 8, "en-tête + 7 jours");
   const select = all(root).find((node) => node.tagName === "SELECT");

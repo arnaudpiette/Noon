@@ -114,6 +114,8 @@
       const totals = el("section", "control-card");
       totals.append(el("h3", "", "Résumé"));
       totals.append(el("p", "", `${data.totals.exchanges} échange(s) tracé(s), réussite ${percent(data.totals.successRate)}. Texte : médiane ${seconds(data.totals.textP50Ms)}, 95 % sous ${seconds(data.totals.textP95Ms)}.`));
+      const cache = data.cache || {};
+      totals.append(el("p", "", `Cache de prompt : ${percent(cache.periodRatio)} des tokens d'entrée sur la période, ${percent(cache.monthRatio)} sur le mois.`));
       totals.append(el("p", "noon-health__hint", "Taux de correction par toi : pas encore mesuré."));
       nodes.push(totals, renderBudgets(), renderDays(), renderBrief());
       root.replaceChildren(...nodes);

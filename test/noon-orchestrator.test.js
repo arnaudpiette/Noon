@@ -920,3 +920,17 @@ test("une seconde opinion Gemini 503 ne dépasse pas deux tentatives et conserve
   assert.equal(result.metadata.secondOpinion.reasonCode, "SECOND_OPINION_SKIPPED_PROVIDER_UNAVAILABLE");
   assert.equal(result.metadata.secondOpinion.failureCategory, "PROVIDER_FAILURE");
 });
+
+// V3-L6 (G.3) — clé de cache de prompt : stable par canal, retirée si le modèle la refuse.
+test("cache de prompt : prompt_cache_key « noon:chat » envoyée, retirée si le modèle la refuse", async () => {
+  const fixture = createFixture({ responses: [response("Réponse")] });
+  await fixture.orchestrator.run(fixture.request);
+  assert.equal(fixture.modelCalls[0].prompt_cache_key, "noon:chat");
+
+  const refused = Object.assign(new Error("Unsupported parameter: 'prompt_cache_key'."), { status: 400 });
+  const compat = createFixture({ responses: [refused, response("Réponse sans clé")] });
+  const result = await compat.orchestrator.run(compat.request);
+  assert.equal(result.text, "Réponse sans clé");
+  assert.equal(compat.modelCalls.length, 2);
+  assert.equal(Object.hasOwn(compat.modelCalls[1], "prompt_cache_key"), false);
+});

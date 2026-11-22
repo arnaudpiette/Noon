@@ -161,3 +161,9 @@ test("les fixtures historiques conservent exactement le routage Luna Terra Sol e
   assert.equal(shadow.astra.wouldSelectAstra, true);
   assert.equal(shadow.astra.selected, false);
 });
+
+test("G.3 : prompt_cache_key transmise seulement si elle est bornée", () => {
+  assert.equal(toOpenAIRequest({ model: "gpt-5.6-sol", input: [], promptCacheKey: "noon:chat" }).prompt_cache_key, "noon:chat");
+  assert.equal(Object.hasOwn(toOpenAIRequest({ model: "gpt-5.6-sol", input: [], promptCacheKey: "Jean Dupont <secret>" }), "prompt_cache_key"), false);
+  assert.equal(Object.hasOwn(toOpenAIRequest({ model: "gpt-5.6-sol", input: [] }), "prompt_cache_key"), false);
+});

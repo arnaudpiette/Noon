@@ -40,6 +40,9 @@ function toOpenAIRequest(request = {}) {
   if (request.toolChoice) options.tool_choice = request.toolChoice;
   if (request.maxToolCalls) options.max_tool_calls = request.maxToolCalls;
   if (request.contextManagement) options.context_management = request.contextManagement;
+  // V3-L6 (G.3) : clé de cache stable (canal uniquement, aucune donnée privée) pour regrouper les
+  // requêtes qui partagent le préfixe personnalité + charte.
+  if (typeof request.promptCacheKey === "string" && /^[a-z0-9:._-]{1,64}$/.test(request.promptCacheKey)) options.prompt_cache_key = request.promptCacheKey;
   return options;
 }
 

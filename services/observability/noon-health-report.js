@@ -59,7 +59,9 @@ function createNoonHealthReport({ listTraces, usageStatus, briefUsage = null, bu
     const textLatency = []; const firstAudio = []; let failures = 0;
     const byDay = new Map(dates.map((date) => [date, { date, exchanges: 0, text: 0, voice: 0, background: 0, failures: 0, textLatency: [], tracedCostUSD: 0 }]));
     const byFunction = {};
+    let tracedInput = 0; let tracedCached = 0;
     for (const trace of traces) {
+      for (const call of trace.modelCalls || []) { tracedInput += finite(call.inputTokens) || 0; tracedCached += finite(call.cachedTokens) || 0; }
       const day = byDay.get(parisDate(new Date(trace.startedAt)));
       if (!day) continue;
       const failed = trace.status === "failed" || (Array.isArray(trace.errors) && trace.errors.length > 0);
@@ -102,6 +104,12 @@ function createNoonHealthReport({ listTraces, usageStatus, briefUsage = null, bu
         dailyCost: budgetCheck(todayCost, limits.dailyCostUSD),
       },
       month: { month: usage.month || null, costUSD: round(finite(usage.costUSD), 2), budgetUSD: finite(usage.monthlyBudgetUSD), remainingUSD: round(finite(usage.remainingUSD), 2), mode: usage.mode || null, requests: finite(usage.requests) },
+      // G.3 : part des tokens d'entrée servis depuis le cache de prompt.
+      cache: {
+        monthRatio: finite(usage.inputTokens) > 0 ? round(Math.min(1, (finite(usage.cachedInputTokens) || 0) / usage.inputTokens), 3) : null,
+        periodRatio: tracedInput > 0 ? round(Math.min(1, tracedCached / tracedInput), 3) : null,
+        periodInputTokens: tracedInput,
+      },
       byDay: days_,
       byFunction: Object.fromEntries(Object.entries(byFunction).map(([key, value]) => [key, { executions: value.executions, costUSD: round(value.costUSD, 4) }])),
       brief: brief ? { days: brief.days ?? null, generated: brief.generated ?? null, onTime: brief.onTime ?? null, opened: brief.opened ?? null, openedStreak: brief.openedStreak ?? null } : null,
