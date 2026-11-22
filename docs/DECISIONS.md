@@ -68,6 +68,24 @@ structurante, est notée ici avec sa date et sa raison.
 - Bilan : `GET /daily-brief/usage?days=14`. Il sert au critère de sortie de L2 (utilisé chaque jour
   pendant deux semaines). `opens` compte les chargements de la vue, pas des lectures distinctes.
 
+## 22/11/2026 — Exécutant externe dans un worktree isolé (V3-L5a)
+
+- Lot suivant choisi par Arnaud : L5 (DEV par délégation), L3 restant bloqué par les critères de L1
+  et de L2.
+- `services/delegation/executor-worktree.js` : l'exécutant (Codex CLI) travaille dans un worktree
+  Git détaché créé depuis HEAD, hors de tout dépôt (`~/.noon-dev/executor-worktrees` en
+  développement, dossier de données sinon). Aucune branche, aucun checkout dans le dossier de
+  travail d'Arnaud ; `node_modules` cloné en APFS ; hooks Git désactivés. Le diff est conservé en
+  patch, le worktree est supprimé (sauf `keepWorktree`).
+- Le dossier d'origine est comparé avant et après (statut, HEAD, contenu des fichiers modifiés) :
+  toute modification fait échouer la mission. Un commit de l'exécutant aussi.
+- Les changements non commités d'Arnaud ne sont pas visibles de l'exécutant ; le résultat
+  l'indique (`sourceUncommittedChanges`).
+- Bac à sable des validations : un worktree n'est accepté que s'il appartient à une mission
+  active ; l'autorisation est vérifiée sur le dépôt d'origine (`isolatedWorkspaceResolver`). Les
+  dossiers autorisés d'Arnaud ne sont pas élargis.
+- Module générique distinct du worktree SelfDev (lié au dépôt Noon) ; convergence prévue en D.5.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

@@ -180,6 +180,7 @@ const { createContextCapsuleBuilder } = require("./services/delegation/context-c
 const { createDelegationEngine } = require("./services/delegation/delegation-engine");
 const { createCodexSpecialistAgent } = require("./services/delegation/codex-specialist-agent");
 const { createDevDelegationRunner } = require("./services/delegation/dev-delegation-runner");
+const { createExecutorWorktreeManager } = require("./services/delegation/executor-worktree");
 const { createNativeDevCoordinator } = require("./services/dev/native-dev-coordinator");
 const { createNativeDevOrchestrator } = require("./services/dev/native-dev-orchestrator");
 const { createNativeDevOrchestratorFacade } = require("./services/dev/native-dev-orchestrator-facade");
@@ -1446,10 +1447,20 @@ const operationalSecurityPolicy = createOperationalSecurityPolicy({
   observability: (event, metadata) => toolAuditLog.append(event, metadata),
 });
 
+// V3-L5a : l'exécutant externe travaille dans un worktree détaché, hors de tout dépôt.
+// En développement, DATA_DIRECTORY est le dépôt Noon lui-même : les worktrees vont alors dans
+// ~/.noon-dev pour ne jamais être imbriqués dans le dépôt cible.
+const EXECUTOR_WORKTREE_ROOT = path.join(
+  path.resolve(DATA_DIRECTORY) === path.resolve(__dirname) ? path.join(require("node:os").homedir(), ".noon-dev") : DATA_DIRECTORY,
+  "executor-worktrees",
+);
+const executorWorktreeManager = createExecutorWorktreeManager({ rootDir: EXECUTOR_WORKTREE_ROOT });
+
 const sandboxDevValidationExecutor =
   createSandboxDevValidationExecutor({
     workspaceEngine,
     operationalSecurityPolicy,
+    isolatedWorkspaceResolver: (root) => executorWorktreeManager.resolveSource(root),
     observability:
       (event, metadata) =>
         toolAuditLog.append(
@@ -1938,6 +1949,7 @@ const contextCapsuleBuilder = createContextCapsuleBuilder();
 const codexSpecialistAgent = createCodexSpecialistAgent({ observability: (event, metadata) => toolAuditLog.append(`dev.${event}`, metadata) });
 const devDelegationRunner = createDevDelegationRunner({
   specialistAgent: codexSpecialistAgent,
+  worktreeManager: executorWorktreeManager,
   workspaceEngine,
   operationalSecurityPolicy,
   validationExecutor:

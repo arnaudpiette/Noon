@@ -304,7 +304,20 @@ function createSandboxDevValidationExecutor({
   createExecutionId =
     () =>
       `dev-validation-${crypto.randomUUID()}`,
+  // V3-L5a : worktree d'une mission active → dépôt d'origine. L'autorisation (politique et
+  // racines en écriture du workspace) est vérifiée sur ce dépôt d'origine ; la commande tourne
+  // dans le worktree. Un chemin inconnu du résolveur n'obtient rien de plus.
+  isolatedWorkspaceResolver = null,
 } = {}) {
+  const authorityRootFor = (candidate) => {
+    try {
+      const source = isolatedWorkspaceResolver?.(candidate);
+      return source ? canonicalDirectory(source) : candidate;
+    } catch {
+      return candidate;
+    }
+  };
+
   if (
     !workspaceEngine?.context
   ) {
@@ -394,7 +407,7 @@ function createSandboxDevValidationExecutor({
           policyRequest({
             command,
             workspaceId,
-            root,
+            root: authorityRootFor(root),
             permissions,
           })
         );
@@ -585,7 +598,9 @@ function createSandboxDevValidationExecutor({
 
           if (
             !roots.includes(
-              currentRoot
+              authorityRootFor(
+                currentRoot
+              )
             )
           ) {
             throw Object.assign(

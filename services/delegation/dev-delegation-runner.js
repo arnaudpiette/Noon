@@ -10,6 +10,7 @@ const { assertSpecialistAgentAdapter, normalizeSpecialistAgentResult } = require
 const { createDevTaskContract, PRIVATE_NAMES } = require("./dev-task-contract");
 const { classifyDevCommand } = require("./dev-command-policy");
 const { repositoryPreflight, snapshotRepository } = require("./repository-preflight");
+const { remapContractToWorktree } = require("./executor-worktree");
 
 const execFileAsync = promisify(execFile);
 const TEST_WEAKENING = /\b(?:test|describe|it)\.(?:skip|only)\b|eslint-disable|@ts-ignore|--no-verify/i;
@@ -65,19 +66,50 @@ function reviewDiff(contract, changedFiles) {
   return { valid: issues.length === 0, issues };
 }
 
-function createDevDelegationRunner({ specialistAgent, workspaceEngine = null, privacyPolicy = null, operationalSecurityPolicy = null, observability = null, now = () => Date.now(), validationExecutor = executeValidation } = {}) {
+function createDevDelegationRunner({ specialistAgent, workspaceEngine = null, privacyPolicy = null, operationalSecurityPolicy = null, observability = null, now = () => Date.now(), validationExecutor = executeValidation, worktreeManager = null } = {}) {
   assertSpecialistAgentAdapter(specialistAgent);
   const controllers = new Map();
   const emit = (event, metadata) => { try { observability?.(event, sanitizeAuditDetails(metadata)); } catch {} };
+  // V3-L5a : avec un gestionnaire de worktree, la mission s'exécute dans un worktree détaché
+  // créé depuis HEAD (le dossier de travail d'Arnaud n'est jamais touché) ; le diff est
+  // récupéré en patch, puis le worktree est supprimé sauf si keepWorktree est demandé.
   async function runDevTask(input = {}) {
-    const started = now();
-    let authorizedInput = input;
-    if (workspaceEngine) {
-      const workspace = workspaceEngine.context(input.workspaceId);
-      const roots = (workspace.relevantRoots || workspace.roots || []).filter((item) => item.mode === "read-write").map((item) => item.path);
-      authorizedInput = { ...input, workspaceAuthorized: roots.length > 0, workspaceRoots: roots };
+    if (!worktreeManager || input.isolation === "in-place") return runInPlace(input, null);
+    const authorizedInput = workspaceEngine ? authorize(input) : input;
+    const contract = createDevTaskContract(authorizedInput);
+    const handle = worktreeManager.prepare({ repositoryRoot: contract.repositoryRoot, taskId: contract.taskId });
+    emit("executor_worktree.created", { taskId: contract.taskId, baseCommit: handle.baseCommit, sourceUncommitted: handle.sourceUncommitted });
+    let result; let collected = null; let collectError = null; let disposed = false;
+    try {
+      result = await runInPlace(input, { contract: remapContractToWorktree(contract, handle.path), sourceContract: contract });
+      try { collected = worktreeManager.collect(handle); } catch (error) { collectError = error.code || "EXECUTOR_COLLECT_FAILED"; }
+    } finally {
+      if (input.keepWorktree !== true) { try { disposed = worktreeManager.dispose(handle); } catch { disposed = false; } }
+      worktreeManager.release?.(handle);
+      emit("executor_worktree.closed", { taskId: contract.taskId, kept: input.keepWorktree === true, disposed });
     }
-    const contract = createDevTaskContract(authorizedInput); const controller = new AbortController(); controllers.set(contract.taskId, controller);
+    const isolation = {
+      mode: "worktree", baseCommit: handle.baseCommit, sourceRepositoryUntouched: worktreeManager.sourceUntouched(handle), dependencies: handle.dependencies,
+      sourceUncommittedChanges: handle.sourceUncommitted,
+      files: collected?.files || [], patchPath: collected?.patchPath || null, patchBytes: collected?.patchBytes || 0,
+      committedByExecutor: collected?.committedByExecutor === true, collectError,
+      kept: input.keepWorktree === true, worktreePath: input.keepWorktree === true ? handle.path : null, disposed,
+    };
+    let { finalVerdict, failureCategory } = result;
+    if (!isolation.sourceRepositoryUntouched) { finalVerdict = "FAIL"; failureCategory = "OUT_OF_SCOPE_CHANGE"; }
+    else if (collectError || isolation.committedByExecutor) { finalVerdict = finalVerdict === "PASS" ? "FAIL" : finalVerdict; failureCategory = isolation.committedByExecutor ? "GIT_LOCAL_MUTATION" : "VALIDATION_FAILURE"; }
+    return { ...result, finalVerdict, failureCategory, isolation };
+  }
+
+  function authorize(input) {
+    const workspace = workspaceEngine.context(input.workspaceId);
+    const roots = (workspace.relevantRoots || workspace.roots || []).filter((item) => item.mode === "read-write").map((item) => item.path);
+    return { ...input, workspaceAuthorized: roots.length > 0, workspaceRoots: roots };
+  }
+
+  async function runInPlace(input = {}, isolated = null) {
+    const started = now();
+    const contract = isolated ? isolated.contract : createDevTaskContract(workspaceEngine ? authorize(input) : input); const controller = new AbortController(); controllers.set(contract.taskId, controller);
     if (input.signal) input.signal.addEventListener("abort", () => controller.abort(), { once: true });
     const preflightStarted = now(); const preflight = repositoryPreflight(contract, { now }); const preflightDuration = now() - preflightStarted;
     if (privacyPolicy && input.privacyDecision?.decision !== "ALLOW") { controllers.delete(contract.taskId); return { taskId: contract.taskId, status: "FAILED", finalVerdict: "FAIL", failureCategory: "PERMISSION_DENIED" }; }
@@ -85,7 +117,7 @@ function createDevDelegationRunner({ specialistAgent, workspaceEngine = null, pr
     const benchmarkScope = input.benchmarkExecution ? { authorizedRoots: [contract.repositoryRoot], authorizedWriteRoots: [contract.repositoryRoot] } : {};
     const scopeTelemetry = input.benchmarkExecution ? { benchmark: true, sessionId: input.benchmarkExecution.sessionId, runId: input.benchmarkExecution.runId, workspaceRoot: contract.repositoryRoot } : null;
     if (operationalSecurityPolicy) for (const command of commands) {
-      const decision = operationalSecurityPolicy.evaluate({ actionRequest: { origin: "explicit_user_chat", skillId: "terminal", operation: `read validate ${command}`, args: { path: contract.repositoryRoot }, workspaceId: contract.workspaceId, explicitOrder: true }, currentPermissions: { allowed: contract.permissions.includes("TERMINAL_SAFE"), code: "TERMINAL_SAFE" }, ...benchmarkScope, ...(scopeTelemetry ? { scopeTelemetry } : {}) });
+      const decision = operationalSecurityPolicy.evaluate({ actionRequest: { origin: "explicit_user_chat", skillId: "terminal", operation: `read validate ${command}`, args: { path: isolated?.sourceContract.repositoryRoot || contract.repositoryRoot }, workspaceId: contract.workspaceId, explicitOrder: true }, currentPermissions: { allowed: contract.permissions.includes("TERMINAL_SAFE"), code: "TERMINAL_SAFE" }, ...benchmarkScope, ...(scopeTelemetry ? { scopeTelemetry } : {}) });
       if (!["ALLOW", "ALLOW_WITH_CONSTRAINTS"].includes(decision.outcome)) { controllers.delete(contract.taskId); return { taskId: contract.taskId, status: "FAILED", finalVerdict: "FAIL", failureCategory: "PERMISSION_DENIED" }; }
     }
     const baseline = [];
