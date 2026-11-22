@@ -125,7 +125,7 @@ const { createInboxService } = require("./services/personal-intelligence/inbox-s
 const { createQuickCaptureService } = require("./services/capture/quick-capture-service");
 const { createResumeBriefingService, renderResumeBriefing } = require("./services/resume/resume-briefing-service");
 const { createFirstStepService, renderFirstStep } = require("./services/first-step/first-step-service");
-const { createBriefUsageLog } = require("./services/daily-brief/brief-usage-log");
+const { createBriefUsageLog, parisDate } = require("./services/daily-brief/brief-usage-log");
 const { DEFAULT_WEIGHTS, createPriorityEngine } = require("./services/personal-intelligence/priority-engine");
 const { createDeduplicationService } = require("./services/personal-intelligence/deduplication-service");
 const { createFollowUpService } = require("./services/personal-intelligence/follow-up-service");
@@ -200,6 +200,7 @@ const { createBenchmarkControlPlane } = require("./services/dev/benchmark/benchm
 const { createTransactionalExecutionEngine } = require("./services/execution/transactional-execution-engine");
 const { AsyncLocalStorage } = require("node:async_hooks");
 const { createNoonObservability } = require("./services/observability/noon-observability");
+const { createNoonHealthReport, withDailyCost } = require("./services/observability/noon-health-report");
 const { toChatProgressEvent } = require("./services/observability/chat-progress-event");
 const { createUserProgressEngine } = require("./services/observability/user-progress-engine");
 const { createUserProgressAdapter } = require("./services/observability/user-progress-adapter");
@@ -2493,6 +2494,14 @@ const dailyBriefEngine = createDailyBriefEngine({
 
 // V3-L2d : journal local d'usage du Brief (horodatages seulement, aucun contenu).
 const briefUsageLog = createBriefUsageLog({ filePath: path.join(DATA_DIRECTORY, "brief-usage-log.json") });
+// V3-L6 (G.1, G.2, G.6) : bilan local « Santé de Noon » (traces, coût par jour, usage du Brief).
+const NOON_DAILY_COST_CAP_USD = Number(process.env.NOON_DAILY_COST_CAP_USD) > 0 ? Number(process.env.NOON_DAILY_COST_CAP_USD) : MONTHLY_BUDGET_USD / 30;
+const noonHealthReport = createNoonHealthReport({
+  listTraces: (options) => noonObservability.listTraces(options),
+  usageStatus: () => getBudgetStatus(),
+  briefUsage: () => briefUsageLog.summary({ days: 14 }),
+  budgets: { dailyCostUSD: NOON_DAILY_COST_CAP_USD },
+});
 function briefScheduledTime() {
   try { return JSON.parse(fs.readFileSync(path.join(DATA_DIRECTORY, "preferences.json"), "utf8")).creativeBriefTime || "07:00"; } catch { return "07:00"; }
 }
@@ -2800,7 +2809,11 @@ function loadUsage() {
 
 // Enregistre les compteurs de consommation dans un fichier local.
 function saveUsage(usage) {
-  fs.writeFileSync(USAGE_FILE, JSON.stringify(usage, null, 2));
+  // V3-L6 (G.1) : la hausse du coût estimé est ventilée par jour (Europe/Paris), toutes catégories.
+  let previous;
+  try { previous = fs.existsSync(USAGE_FILE) ? JSON.parse(fs.readFileSync(USAGE_FILE, "utf8")) : null; } catch { previous = null; }
+  const next = withDailyCost(previous, usage, { costOf: calculateCostUSD, today: parisDate(new Date()) });
+  fs.writeFileSync(USAGE_FILE, JSON.stringify(next, null, 2));
 }
 
 function calculateTranscriptionCostUSD(usage) {
@@ -6984,6 +6997,11 @@ if (req.method === "GET" && req.url === "/dev-missions-ui.js") {
   return res.end(fs.readFileSync(path.join(__dirname, "public", "dev-missions-ui.js")));
 }
 
+if (req.method === "GET" && req.url === "/noon-health-ui.js") {
+  res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", "X-Content-Type-Options": "nosniff" });
+  return res.end(fs.readFileSync(path.join(__dirname, "public", "noon-health-ui.js")));
+}
+
 if (req.method === "GET" && req.url === "/mcp-connectors-ui.js") {
   res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", "X-Content-Type-Options": "nosniff" });
   return res.end(fs.readFileSync(path.join(__dirname, "public", "mcp-connectors-ui.js")));
@@ -8104,6 +8122,12 @@ if (req.method === "POST" && req.url === "/tts") {
     res.writeHead(error.statusCode || 500, { "Content-Type": "application/json" });
     return res.end(JSON.stringify({ status: "error", code: error.code || null, message: error.message }));
   }
+}
+
+if (requestPath === "/api/noon-health" && req.method === "GET") {
+  const healthUrl = new URL(req.url, `http://${req.headers.host || DEFAULT_HOST}`);
+  res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+  return res.end(JSON.stringify({ status: "ok", health: noonHealthReport.report({ days: Number(healthUrl.searchParams.get("days")) || 7 }) }));
 }
 
 if (requestPath === "/api/diagnostics/metrics" && req.method === "GET") {

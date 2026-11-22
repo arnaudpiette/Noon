@@ -121,6 +121,22 @@ structurante, est notée ici avec sa date et sa raison.
 - Un exécutant absent n'est pas sélectionnable. Critère de sortie de L5 : 10 missions réelles
   réussies, lancées par Arnaud.
 
+## 22/11/2026 — « Santé de Noon » (V3-L6, G.1 + G.2 + G.6, première tranche)
+
+- Lot suivant choisi par Arnaud : L6. Pas de nouveau système de mesure : le bilan agrège les traces
+  existantes (`noon-observability.jsonl`, 30 jours), le coût mensuel de `usage.json` et le journal
+  du Brief. Route `GET /api/noon-health?days=7|14|30`, section du Control Center sans flag
+  (lecture seule, locale).
+- Coût par jour : à chaque enregistrement de `usage.json`, la hausse du coût estimé est ajoutée au
+  jour (Europe/Paris), toutes catégories ; `dailyCostSince` marque le début de la mesure (les jours
+  d'avant sont « non mesurés », pas 0 $). Remise à zéro mensuelle comme les compteurs.
+- Budgets G.2 affichés : réponse texte < 2 s (médiane), premier son Live < 1 s, coût du jour
+  ≤ budget mensuel / 30 (`NOON_DAILY_COST_CAP_USD` pour changer). Plafond affiché, non bloquant :
+  le rendre bloquant toucherait au routage et au budget, à décider à part.
+- Non mesuré, et affiché comme tel : taux de correction par Arnaud ; justesse et calibration (B3).
+- Constat : le profil réel n'a que 3 traces depuis le 20/11 (4 requêtes en novembre) ; les chiffres
+  se rempliront à l'usage.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

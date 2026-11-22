@@ -265,6 +265,13 @@ function createNoonObservability({
     return trace ? sanitizeMetrics(Object.fromEntries(Object.entries(trace).filter(([key]) => !key.startsWith("_")))) : null;
   }
 
+  // V3-L6 : traces terminées récentes, nettoyées (aucun champ interne), pour le bilan de santé.
+  function listTraces({ sinceMs = 24 * 60 * 60 * 1000 } = {}) {
+    const cutoff = now() - finite(sinceMs);
+    return [...traces.values()].filter((trace) => trace.completedAt && Date.parse(trace.startedAt) >= cutoff)
+      .map((trace) => sanitizeMetrics(Object.fromEntries(Object.entries(trace).filter(([key]) => !key.startsWith("_")))));
+  }
+
   function summary({ sinceMs = 24 * 60 * 60 * 1000 } = {}) {
     const cutoff = now() - finite(sinceMs);
     const recent = [...traces.values()].filter((trace) => Date.parse(trace.startedAt) >= cutoff && trace.completedAt);
@@ -318,7 +325,7 @@ function createNoonObservability({
 
   return {
     attachModelPerformanceEngine,
-    completeExecution, failExecution, flush: () => writeQueue, getTrace,
+    completeExecution, failExecution, flush: () => writeQueue, getTrace, listTraces,
     healthSummary: () => summary(), recordApproval, recordContext, recordCost, recordError,
     recordFallback, recordModelCall, recordRouting, recordTool, recordVoice,
     recordPriority, sanitize: sanitizeMetrics, startExecution, summary,

@@ -2600,6 +2600,13 @@ body.dev-preview-resizing *{
 .dev-missions__summary { margin: 8px 0; white-space: pre-wrap; }
 .dev-missions__files { margin: 0; padding-left: 18px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .dev-missions__patch { max-height: 420px; overflow: auto; margin: 8px 0; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
+.noon-health { display: grid; gap: 12px; }
+.noon-health .control-section__header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.noon-health__hint { margin: 6px 0; color: var(--muted); font-size: 12px; }
+.noon-health__list { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.noon-health__table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.noon-health__table th, .noon-health__table td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; font-variant-numeric: tabular-nums; }
+.noon-health__table th { color: var(--muted); font-weight: 600; font-size: 12px; }
 .selfdev__review-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
 .mcp-connectors__subtitle { margin: 8px 0 0; font-size: 15px; }
 .mcp-connectors__tools { margin: 12px 0 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }

@@ -11530,6 +11530,16 @@ if (devMissionsPanel && window.NoonDevMissionsUi) {
   window.NoonDevMissions = Object.freeze({ refresh: () => devMissionsUi.refresh() });
   void devMissionsUi.init().then((available) => window.NoonControlCenter?.setDevMissionsAvailable?.(available === true));
 }
+// Santé de Noon (V3-L6) : bilan local en lecture seule, sans flag.
+const noonHealthPanel = document.getElementById("noonHealthPanel");
+if (noonHealthPanel && window.NoonHealthUi) {
+  const noonHealthUi = window.NoonHealthUi.createNoonHealthController({
+    elements: { root: noonHealthPanel },
+    api: window.NoonHealthUi.createNoonHealthApi({ fetchImpl: window.fetch.bind(window) }),
+  });
+  window.NoonHealth = Object.freeze({ refresh: () => noonHealthUi.refresh() });
+  void noonHealthUi.init().then((available) => window.NoonControlCenter?.setHealthAvailable?.(available === true));
+}
 loadAutomations();
 refreshWakeWordSettings();
 refreshOpenAIKeyStatus();
