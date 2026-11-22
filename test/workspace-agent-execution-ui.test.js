@@ -1,4 +1,5 @@
 "use strict";
+const { readServerSource } = require("./helpers/server-source");
 const { readAppSource } = require("./helpers/app-source");
 
 const assert = require("node:assert/strict");
@@ -10,7 +11,7 @@ const root = path.join(__dirname, "..");
 const app = readAppSource();
 const html = fs.readFileSync(path.join(root, "public/index.html"), "utf8");
 const css = fs.readFileSync(path.join(root, "public/style.css"), "utf8");
-const server = fs.readFileSync(path.join(root, "server.js"), "utf8");
+const server = readServerSource();
 const source = app.slice(app.indexOf("// DEV_WORKSPACE_AGENT_UI_START"), app.indexOf("// DEV_WORKSPACE_AGENT_UI_END"));
 
 test("l’Agent Loop ajoute uniquement des contrôles compacts au header Terminal", () => {

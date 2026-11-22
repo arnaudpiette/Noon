@@ -296,7 +296,7 @@ test("câblage : Control Center, index, app et serveur", () => {
   assert.match(readAppSource(), /window\.NoonControlCenter\?\.setIphoneCompanionAvailable\?\.\(available === true\)/);
   assert.match(fs.readFileSync(path.join(PUBLIC, "control-center.js"), "utf8"), /\[IPHONE_SECTION\]: "Compagnon iPhone"/);
   const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
-  assert.match(server, /req\.url === "\/iphone-companion-ui\.js"/);
+  assert.ok(require("../services/http/static-assets").STATIC_ASSETS["/iphone-companion-ui.js"], "servi par le serveur");
   assert.match(server, /featureFlags\.evaluate\("remote\.lan", \{\}\)\.mode !== "OFF"/);
   assert.match(server, /secureStore: integrationTokenStore/);
   assert.equal(/listen\(\{[^}]*0\.0\.0\.0/.test(fs.readFileSync(path.join(__dirname, "..", "services", "remote", "remote-lan-service.js"), "utf8")), false);

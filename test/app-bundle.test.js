@@ -27,7 +27,7 @@ test("recollage : un seul script, ordre préservé, servi en /app.js", () => {
   assert.doesNotThrow(() => new vm.Script(bundle, { filename: "app.js" }));
   assert.ok(bundle.startsWith(fs.readFileSync(path.join(appPartsDirectory(PUBLIC), APP_PARTS[0]), "utf8")));
   assert.ok(bundle.indexOf("// DEV_PREVIEW_UI_START") < bundle.indexOf("// DEV_WORKSPACE_AGENT_UI_START"));
-  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
-  assert.match(server, /req\.url === "\/app\.js"\) \{\s*res\.writeHead[\s\S]{0,120}readAppBundle\(path\.join\(__dirname, "public"\)\)/);
+  assert.equal(require("../services/http/static-assets").STATIC_ASSETS["/app.js"].bundle, true);
+  assert.match(fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8"), /staticAssets\.matches\(req\)/);
   assert.ok(fs.readFileSync(path.join(PUBLIC, "index.html"), "utf8").includes('<script src="app.js"></script>'));
 });

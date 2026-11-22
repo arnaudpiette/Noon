@@ -1,4 +1,5 @@
 "use strict";
+const { readServerSource } = require("./helpers/server-source");
 
 const assert =
   require("node:assert/strict");
@@ -562,14 +563,7 @@ test(
       );
 
     const server =
-      fs.readFileSync(
-        path.join(
-          __dirname,
-          "..",
-          "server.js"
-        ),
-        "utf8"
-      );
+      readServerSource();
 
     assert.match(
       index,
@@ -578,7 +572,7 @@ test(
 
     assert.match(
       server,
-      /req\.url === "\/dev-terminal-profile-ui\.js"/
+      /"\/dev-terminal-profile-ui\.js": \{ file: \["dev-terminal-profile-ui\.js"\]/
     );
 
     assert.match(

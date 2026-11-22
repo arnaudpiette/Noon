@@ -151,5 +151,5 @@ test("câblage : Control Center, index, app et serveur", () => {
   assert.ok(index.indexOf('<script src="dev-missions-ui.js"></script>') < index.indexOf('<script src="app.js"></script>'));
   assert.match(readAppSource(), /window\.NoonControlCenter\?\.setDevMissionsAvailable\?\.\(available === true\)/);
   assert.match(fs.readFileSync(path.join(PUBLIC, "control-center.js"), "utf8"), /\[DEV_MISSIONS_SECTION\]: "Missions DEV"/);
-  assert.match(fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8"), /req\.url === "\/dev-missions-ui\.js"/);
+  assert.ok(require("../services/http/static-assets").STATIC_ASSETS["/dev-missions-ui.js"], "servi par le serveur");
 });

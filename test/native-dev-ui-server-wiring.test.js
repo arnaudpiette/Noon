@@ -1,26 +1,13 @@
 "use strict";
+const { readServerSource } = require("./helpers/server-source");
 
 const assert =
   require("node:assert/strict");
-const fs =
-  require("node:fs");
-const path =
-  require("node:path");
 const test =
   require("node:test");
 
-const serverPath =
-  path.join(
-    __dirname,
-    "..",
-    "server.js"
-  );
-
 function source() {
-  return fs.readFileSync(
-    serverPath,
-    "utf8"
-  );
+  return readServerSource();
 }
 
 function section(

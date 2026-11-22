@@ -1,4 +1,5 @@
 "use strict";
+const { readServerSource } = require("./helpers/server-source");
 const { readAppSource } = require("./helpers/app-source");
 
 const assert = require("node:assert/strict");
@@ -207,7 +208,7 @@ test("le bouton Règles ouvre et referme réellement le panneau", async () => {
 test("le câblage monté depuis la page ouvre les règles du projet synthétique sélectionné", async () => {
   const html = fs.readFileSync(path.join(__dirname, "..", "public", "index.html"), "utf8");
   const app = readAppSource();
-  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
+  const server = readServerSource();
   const reads = [];
   const f = setupMountedUi({
     bridge: {
@@ -220,7 +221,7 @@ test("le câblage monté depuis la page ouvre les règles du projet synthétique
   });
 
   assert.ok(html.indexOf('src="dev-project-rules-ui.js"') < html.indexOf('src="app.js"'));
-  assert.match(server, /req\.method === "GET" && req\.url === "\/dev-project-rules-ui\.js"/);
+  assert.match(server, /"\/dev-project-rules-ui\.js": \{ file: \["dev-project-rules-ui\.js"\]/);
   assert.match(app, /NoonDevProjectRulesUi\?\.mountDevProjectRulesUi\(/);
   assert.match(app, /Le module des règles DEV n’a pas pu être chargé/);
   f.elements.toggle.emit("click");

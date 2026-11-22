@@ -1,4 +1,5 @@
 "use strict";
+const { readServerSource } = require("./helpers/server-source");
 const { readAppSource } = require("./helpers/app-source");
 
 // UI des connecteurs MCP sans navigateur : vm + faux DOM (innerHTML interdit).
@@ -295,6 +296,6 @@ test("câblage : script chargé avant app.js, conteneur dans le Control Center, 
   assert.match(index, /<div id="controlCenterMcp" class="control-center__mcp" hidden><section id="mcpConnectorsPanel"/);
   const app = readAppSource();
   assert.match(app, /window\.NoonControlCenter\?\.setMcpAvailable\?\.\(available === true\)/);
-  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
-  assert.match(server, /req\.url === "\/mcp-connectors-ui\.js"/);
+  const server = readServerSource();
+  assert.match(server, /"\/mcp-connectors-ui\.js": \{ file: \["mcp-connectors-ui\.js"\]/);
 });

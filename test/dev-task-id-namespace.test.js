@@ -1,4 +1,5 @@
 "use strict";
+const { readServerSource } = require("./helpers/server-source");
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -74,7 +75,7 @@ test("inventaire : tout appel runTask de production est audité", () => {
   // Tout nouvel appelant doit être ajouté ici après vérification qu'il
   // applique la règle d'espace réservé (ou qu'il n'est pas une entrée).
   const audited = new Map([
-    ["server.js", "POST /api/dev/native/tasks : assertDevTaskIdNotReserved(body.taskId)"],
+    ["services/dev/dev-http-routes.js", "POST /api/dev/native/tasks : assertDevTaskIdNotReserved(body.taskId)"],
     ["services/goals/goal-dev-execution-service.js", "dev-run + Retry approuvé : assertDevTaskIdNotReserved"],
     ["services/dev/native-dev-ui-execution-service.js", "UI : taskId serveur + refus réservé"],
     ["services/dev/benchmark/native-noon-benchmark-participant.js", "benchmark : refus réservé"],
@@ -99,7 +100,7 @@ test("inventaire : tout appel runTask de production est audité", () => {
 });
 
 test("câblage : la route Native DEV refuse l'espace réservé avant runTask", () => {
-  const source = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+  const source = readServerSource();
   const start = source.indexOf('requestPath === "/api/dev/native/tasks" && req.method === "POST"');
   assert.notEqual(start, -1);
   const block = source.slice(start, source.indexOf("nativeDevB3Facade.runTask(", start));
@@ -109,7 +110,7 @@ test("câblage : la route Native DEV refuse l'espace réservé avant runTask", (
 
 test("4C-1D inventaire : tout appel cancelTask / getTaskStatus / projectDecisionEvidence est audité", () => {
   const audited = new Map([
-    ["server.js", "GET /api/dev/native/tasks/:id et /cancel : refus de l'espace réservé"],
+    ["services/dev/dev-http-routes.js", "GET /api/dev/native/tasks/:id et /cancel : refus de l'espace réservé"],
     ["services/dev/native-dev-ui-execution-service.js", "UI get/cancel : refus de l'espace réservé"],
     ["services/decision/dev-decision-consumer.js", "preuves de décision : refus de l'espace réservé"],
     ["services/dev/benchmark/native-noon-benchmark-participant.js", "benchmark Native : refus de l'espace réservé"],
@@ -137,7 +138,7 @@ test("4C-1D inventaire : tout appel cancelTask / getTaskStatus / projectDecision
 });
 
 test("4C-1D câblage : statut, arrêt et budget refusent l'espace réservé avant tout accès", () => {
-  const source = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+  const source = readServerSource();
   const block = (marker, until) => {
     const start = source.indexOf(marker);
     assert.notEqual(start, -1, marker);

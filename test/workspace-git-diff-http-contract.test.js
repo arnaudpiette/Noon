@@ -1,23 +1,13 @@
 "use strict";
+const { readServerSource } = require("./helpers/server-source");
 
 const assert =
   require("node:assert/strict");
 const test =
   require("node:test");
-const fs =
-  require("node:fs");
-const path =
-  require("node:path");
 
 function serverSource() {
-  return fs.readFileSync(
-    path.join(
-      __dirname,
-      "..",
-      "server.js"
-    ),
-    "utf8"
-  );
+  return readServerSource();
 }
 
 function gitDiffRoutes() {

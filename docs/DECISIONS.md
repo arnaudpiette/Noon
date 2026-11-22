@@ -211,6 +211,30 @@ structurante, est notée ici avec sa date et sa raison.
 - Constat, non modifié : les POST mémoire n'exigent pas l'en-tête `x-noon-request` (l'interface
   ne l'envoie pas). À durcir dans une tranche dédiée, interface comprise.
 
+## 22/11/2026 — Découpe de `server.js`, première tranche (V3-L7)
+
+- `server.js` passe de 10 831 à 9 423 lignes. Sortis : les fichiers de l'interface (table exacte
+  `services/http/static-assets.js`), les routes de l'intelligence personnelle
+  (`services/personal-intelligence/personal-intelligence-http-routes.js`) et les routes DEV
+  (`services/dev/dev-http-routes.js`, 1 166 lignes).
+- Méthode : bloc de routes déplacé **tel quel**, pas réécrit. `scripts/extract-server-routes.js`
+  analyse les portées (eslint-scope), liste les dépendances du bloc et refuse le déplacement si le
+  bloc réassigne une variable du serveur, dépend d'une variable locale du gestionnaire autre que
+  `req`/`res`/`requestPath`, ou déclare quelque chose utilisé après lui. Les dépendances sont passées
+  par accesseurs, lus à chaque requête : l'ordre d'initialisation du démarrage ne change pas.
+  Un module rend `NOT_HANDLED` si la requête ne le concerne pas ; l'ordre des routes est conservé.
+- Seul changement de code hors déplacement : `requireTrustedDevUi` (pure) remonte du gestionnaire
+  au niveau du module, car elle sert aussi avant le bloc DEV.
+- Vérification avant/après sur serveur isolé (copie `git worktree` de HEAD contre le dossier de
+  travail) : 20 fichiers statiques octet pour octet, 18 requêtes intelligence personnelle et 50
+  requêtes DEV (avec et sans en-tête de confiance) — mêmes codes, en-têtes et corps, aux
+  horodatages, identifiants aléatoires et durées près.
+- Tests de câblage : `test/helpers/server-source.js` lit `server.js` puis les modules de routes
+  (liste `ROUTE_MODULES` à compléter à chaque nouvelle tranche).
+- Limite assumée : un module déplacé tel quel garde la forme d'origine (chaîne de `if`). Le
+  regroupement par domaine et les dépendances explicites sont le gain ; la réécriture interne
+  viendra, si besoin, route par route avec ses tests.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

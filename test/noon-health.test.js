@@ -152,7 +152,7 @@ test("câblage : Control Center, index, app et serveur", () => {
   assert.match(readAppSource(), /window\.NoonControlCenter\?\.setHealthAvailable\?\.\(available === true\)/);
   assert.match(read("public/control-center.js"), /\[HEALTH_SECTION\]: "Santé de Noon"/);
   const server = read("server.js");
-  assert.match(server, /req\.url === "\/noon-health-ui\.js"/);
+  assert.ok(require("../services/http/static-assets").STATIC_ASSETS["/noon-health-ui.js"], "servi par le serveur");
   assert.match(server, /requestPath === "\/api\/noon-health"/);
   assert.match(server, /withDailyCost\(previous, usage/);
 });

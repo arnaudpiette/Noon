@@ -1,9 +1,8 @@
 "use strict";
+const { readServerSource } = require("./helpers/server-source");
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const fs = require("node:fs");
-const path = require("node:path");
 
 process.env.NOON_SAFE_MODE = "1";
 
@@ -271,10 +270,7 @@ test(
 test(
   "les routes HTTP ne peuvent jamais créer un terminal NOON",
   () => {
-    const source = fs.readFileSync(
-      path.join(__dirname, "..", "server.js"),
-      "utf8"
-    );
+    const source = readServerSource();
 
     const start = source.indexOf(
       "function requireTrustedDevUi"
@@ -326,10 +322,7 @@ test(
 test(
   "les six opérations HTTP terminal sont présentes",
   () => {
-    const source = fs.readFileSync(
-      path.join(__dirname, "..", "server.js"),
-      "utf8"
-    );
+    const source = readServerSource();
 
     for (const expected of [
       "/api/dev/workspace-terminal/sessions",
@@ -379,13 +372,10 @@ test(
 test(
   "la création de session traduit le Focus UI en workspace legacy read-write",
   () => {
-    const source = fs.readFileSync(
-      path.join(__dirname, "..", "server.js"),
-      "utf8"
-    );
+    const source = readServerSource();
 
-    const start = source.indexOf(
-      'requestPath ===\n    "/api/dev/workspace-terminal/sessions"'
+    const start = source.search(
+      /requestPath ===\n\s*"\/api\/dev\/workspace-terminal\/sessions"/
     );
 
     const end = source.indexOf(
