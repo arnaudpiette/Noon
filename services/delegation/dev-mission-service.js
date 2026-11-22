@@ -18,6 +18,8 @@ const MAX_OBJECTIVE = 4000;
 const MAX_PATHS = 20;
 const ID = /^mission-[0-9a-f]{12}$/;
 const MAX_PATCH_VIEW = 256 * 1024;
+// D.2 — fichiers de travail privés d'Arnaud (non versionnés) : jamais créés ni modifiés par une mission.
+const MISSION_FORBIDDEN_PATHS = Object.freeze(["benchmark-workspaces", "dev-cost-ledger.json", "dev-task-journal"]);
 
 const fail = (code, message, statusCode = 400) => Object.assign(new Error(message), { code, statusCode });
 
@@ -103,6 +105,7 @@ function createDevMissionService({ runner, approvals, isEnabled = () => false, a
     mission.running = Promise.resolve().then(() => runner.runDevTask({
       taskId: id, workspaceId: mission.args.workspaceId, repositoryRoot, objective: mission.args.objective,
       allowedPaths: mission.args.allowedPaths.map((item) => path.join(repositoryRoot, item)), executor: mission.args.executor,
+      forbiddenPaths: MISSION_FORBIDDEN_PATHS.map((item) => path.join(repositoryRoot, item)),
     })).then((result) => finish(mission, result), (error) => { mission.error = { code: String(error?.code || "MISSION_RUN_FAILED").slice(0, 80) }; touch(mission, "failed"); emit("mission.failed", { missionId: id, code: mission.error.code }); });
     return view(mission);
   }
@@ -195,4 +198,4 @@ function createDevMissionService({ runner, approvals, isEnabled = () => false, a
   });
 }
 
-module.exports = { SKILL, createDevMissionService, cleanRelativePaths };
+module.exports = { SKILL, MISSION_FORBIDDEN_PATHS, createDevMissionService, cleanRelativePaths };

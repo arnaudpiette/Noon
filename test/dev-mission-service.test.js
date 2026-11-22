@@ -160,6 +160,17 @@ test("routes HTTP : 404 flag OFF, en-tête exigé, clés exactes, erreurs connue
   assert.equal((await call(routes, "POST", `/api/dev-missions/${created.payload.mission.id}/start`, { approvalId: "approval_00000000-0000-0000-0000-000000000000" }, { "x-noon-request": "1" })).payload.code, "MISSION_APPROVAL_MISMATCH");
 });
 
+test("D.2 : une mission qui écrit dans les fichiers de travail privés échoue, sans approbation d'application", async () => {
+  const h = setup({ specialist: agent(async (contract) => { fs.writeFileSync(path.join(contract.repositoryRoot, "dev-cost-ledger.json"), "{}\n"); return { taskId: contract.taskId, agent: "codex-cli", status: "SUCCESS", summary: "x" }; }) });
+  const mission = propose(h, { allowedPaths: ["."] });
+  h.service.start(mission.id, { approvalId: mission.approval.id });
+  await h.service.settled(mission.id);
+  const done = h.service.get(mission.id);
+  assert.equal(done.status, "failed");
+  assert.equal(done.approval, null);
+  assert.equal(fs.existsSync(path.join(h.root, "dev-cost-ledger.json")), false);
+});
+
 test("cleanRelativePaths normalise et refuse les chemins absolus ou remontants", () => {
   assert.deepEqual(cleanRelativePaths(["src/", "src", "test"]), ["src", "test"]);
   assert.deepEqual(cleanRelativePaths([]), ["."]);

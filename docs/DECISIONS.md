@@ -115,6 +115,9 @@ structurante, est notée ici avec sa date et sa raison.
   Git en écriture des espaces de travail (la proposition revérifie l'autorisation).
 - Le diff se relit dans le panneau avant l'approbation d'application (`GET …/patch`, texte brut,
   256 Ko affichés au plus). Appliquer demande une confirmation explicite.
+- D.2 : chaque mission interdit `benchmark-workspaces/`, `dev-cost-ledger.json` et
+  `dev-task-journal/` (fichiers de travail privés) ; y écrire fait échouer la mission.
+- D.1 à D.4 cochés dans la roadmap ; D.4 est une règle (le moteur DEV natif n'est plus étendu).
 - Un exécutant absent n'est pas sélectionnable. Critère de sortie de L5 : 10 missions réelles
   réussies, lancées par Arnaud.
 

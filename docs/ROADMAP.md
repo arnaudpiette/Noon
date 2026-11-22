@@ -186,10 +186,10 @@ Sortie : d'une idée floue à une action faisable en moins d'une minute ; repris
 
 ### Pilier D — DEV par délégation [REMPLACE P4 + P13]
 
-- ☐ D.1 Adaptateur **Executor** : Claude Code CLI et Codex CLI comme exécutants dans un worktree isolé.
-- ☐ D.2 Noon fournit le contexte (mémoire projet, règles, fichiers interdits : `benchmark-workspaces/`, `dev-cost-ledger.json`, `dev-task-journal/`), reçoit le diff, les logs et les tests.
-- ☐ D.3 Les approbations V2 (réservation, usage unique, CAS) s'appliquent à l'exécutant externe comme au moteur natif.
-- ☐ D.4 Le moteur DEV natif reste pour les petites tâches ; il n'est plus étendu.
+- ☑ D.1 Adaptateur **Executor** : Claude Code CLI et Codex CLI comme exécutants dans un worktree isolé.
+- ☑ D.2 Noon fournit le contexte (mémoire projet, règles, fichiers interdits : `benchmark-workspaces/`, `dev-cost-ledger.json`, `dev-task-journal/`), reçoit le diff, les logs et les tests.
+- ☑ D.3 Les approbations V2 (réservation, usage unique, CAS) s'appliquent à l'exécutant externe comme au moteur natif.
+- ☑ D.4 Le moteur DEV natif reste pour les petites tâches ; il n'est plus étendu.
 - ☐ D.5 SelfDev = cette même boucle pointée sur le dépôt Noon, dans un clone isolé, avec approbation humaine avant tout commit. Plus de moteur séparé.
 
 Sortie : dix missions DEV réelles (Kasa, portfolio, Noon) menées de bout en bout, avec diff, tests et validation.
