@@ -136,6 +136,7 @@ const { createPrivateMemoryService } = require("./services/personal-memory/priva
 const { createPrivateContextBuilder } = require("./services/personal-memory/context-builder");
 const { createMemoryEngine } = require("./services/memory/memory-engine");
 const { createLegacyMemoryMigration } = require("./services/memory/legacy-memory-migration");
+const { createMemoryHttpRoutes } = require("./services/memory/memory-http-routes");
 const { createHardRulesRegistry } = require("./services/rules/hard-rules-registry");
 const { createContextBuilder } = require("./services/context/context-builder");
 const { createAuthoritativeContextScopeProvider } = require("./services/context/authoritative-context-scope");
@@ -917,6 +918,16 @@ const memoryEngine = createMemoryEngine({
   hardRulesRegistry,
   conversationProvider: ({ conversationId }) =>
     getConversationHistory(createConversationKey({ sessionId: conversationId })),
+  // Déclaré plus bas ; résolu seulement au moment d'une correction.
+  operationalProfile: { respondToInference: (...args) => operationalProfileService.respondToInference(...args) },
+  // V3-L7 (A.6) : invalidation unique après toute écriture mémoire, pour qu'un souvenir
+  // corrigé ou oublié ne ressorte pas d'un cache de contexte ou de recherche.
+  onChange: ({ subjectId }) => {
+    contextBuilder.invalidateMemory();
+    personalSearchEngine?.invalidate();
+    multiSourceSynthesisEngine?.invalidate();
+    if (subjectId) contextBuilder.invalidateProfile(subjectId);
+  },
   debug: (event, counts) => toolAuditLog.append(event, counts),
 });
 const attachmentResolver = createAttachmentResolver();
@@ -932,9 +943,7 @@ function executeExplicitConversationMemoryCommand(question, options = {}) {
   if (!command) return null;
   const result = executeConversationMemoryCommand({ privateMemoryService, personalRepository, attachmentResolver }, command, options);
   if (result && !["not_found", "needs_clarification", "unavailable"].includes(result.status)) {
-    contextBuilder.invalidateMemory();
-    personalSearchEngine?.invalidate();
-    multiSourceSynthesisEngine?.invalidate();
+    memoryEngine.notifyChanged({ store: "private_memory", action: `conversation-${command.action}` });
   }
   toolAuditLog.append("private-memory.conversation-command", { action: command.action, subjectId: command.subjectId, status: result?.status || "unavailable", memoryCount: result?.memoryIds?.length || 0 });
   return { command, ...result };
@@ -2222,6 +2231,7 @@ const noonOrchestrator =
 const privateSeedImporter = privateMemoryService.available
   ? createPrivateSeedImporter(privateMemoryService)
   : null;
+const memoryHttpRoutes = createMemoryHttpRoutes({ memoryEngine, seedImporter: privateSeedImporter, validateSeed });
 const operationalProfileService = createOperationalProfileService(personalRepository);
 const projectIntelligenceService = createProjectIntelligenceService(personalRepository);
 const personalInboxService = createInboxService(personalRepository);
@@ -5488,8 +5498,8 @@ const controlCenterService = createControlCenterService({
       return { status: "HEALTHY", summary: pending.length ? `${pending.length} validation(s) attendent votre décision.` : "Aucune validation en attente.", items: pending.map((approval) => ({ id: approval.approvalId, label: approval.title, state: "DEGRADED", summary: approval.summary, meta: { effect: approval.consequences, expiresAt: approval.expiresAt, riskLevel: approval.riskLevel, actionFingerprint: approval.payloadHash }, actions: ["APPROVE_ACTION", "REJECT_ACTION"] })), counts: { pending: pending.length } };
     },
     memory() {
-      const structured = personalRepository.listMemories?.({ limit: 1000 }) || [];
-      const privateItems = privateMemoryService.available ? privateMemoryService.listMemories({ includeDeleted: false }) : [];
+      const structured = memoryEngine.listStructured({ limit: 1000 }) || [];
+      const privateItems = memoryEngine.privateStatus().available ? memoryEngine.listPrivate({ includeDeleted: false }) : [];
       const all = [...structured.map((entry) => ({ status: entry.status, sensitivity: entry.sensitivity, category: entry.type, localOnly: entry.metadata?.apiPolicy === "local_only" })), ...privateItems.map((entry) => ({ status: entry.status, sensitivity: entry.sensitivity, category: entry.category, localOnly: entry.apiPolicy === "local_only" }))];
       const byStatus = Object.fromEntries([...new Set(all.map((entry) => entry.status))].map((status) => [status, all.filter((entry) => entry.status === status).length]));
       const byCategory = Object.fromEntries([...new Set(all.map((entry) => entry.category).filter(Boolean))].slice(0, 30).map((category) => [category, all.filter((entry) => entry.category === category).length]));
@@ -5526,7 +5536,7 @@ const controlCenterService = createControlCenterService({
       return { status: "HEALTHY", summary: "Éléments nécessitant une attention et livraisons récentes.", items: requests.slice(0, 50).map((entry) => ({ id: entry.attentionId, label: entry.title || entry.type, state: entry.userActionRequired ? "DEGRADED" : "HEALTHY", summary: entry.genericSummary || entry.state, meta: { state: entry.state, importance: entry.importance, createdAt: entry.createdAt } })), counts: { total: requests.length, needsAttention: requests.filter((entry) => entry.userActionRequired).length } };
     },
     privacy() {
-      const memories = privateMemoryService.available ? privateMemoryService.listMemories({ includeDeleted: false }) : [];
+      const memories = memoryEngine.privateStatus().available ? memoryEngine.listPrivate({ includeDeleted: false }) : [];
       const runtime = localIntelligenceRuntime.snapshot();
       const ambient = ambientContextEngine.currentView();
       return { status: "HEALTHY", summary: "Ce qui reste local et ce qui peut quitter le Mac.", items: [
@@ -6635,7 +6645,7 @@ if (req.method === "POST" && req.url.startsWith("/ai")) {
           )
         : await executeAskAI();
 
-    if (result.status !== "approval_required" && privateMemoryService.available && privateMemoryService.settings().enabled) {
+    if (result.status !== "approval_required" && memoryEngine.privateStatus().available && memoryEngine.privateSettings().enabled) {
       const automaticMemory = autonomousMemoryPipeline.process({
         text: question,
         attachments: registeredAttachments,
@@ -6646,9 +6656,7 @@ if (req.method === "POST" && req.url.startsWith("/ai")) {
       if (automaticMemory.notification) result.answer = `${result.answer}\n\n${automaticMemory.notification}`;
       if (automaticMemory.receipt.memoryIds.length) {
         recentAutomaticMemoryIds.set(sessionId, automaticMemory.receipt.memoryIds);
-        contextBuilder.invalidateMemory();
-        personalSearchEngine?.invalidate();
-        multiSourceSynthesisEngine?.invalidate();
+        memoryEngine.notifyChanged({ store: "private_memory", action: "automatic" });
       }
     }
 
@@ -7975,15 +7983,13 @@ if (req.method === "POST" && req.url === "/realtime/tool") {
         normalizedIntent,
         continuityContext
       );
-      if (result.status !== "approval_required" && privateMemoryService.available && privateMemoryService.settings().enabled) {
+      if (result.status !== "approval_required" && memoryEngine.privateStatus().available && memoryEngine.privateSettings().enabled) {
         const automaticMemory = autonomousMemoryPipeline.process({ text: question, projectId: focus || workspaceId || null, projectName: focus || null });
         result.memoryReceipt = automaticMemory.receipt;
         if (automaticMemory.notification) result.answer = `${result.answer}\n\n${automaticMemory.notification}`;
         if (automaticMemory.receipt.memoryIds.length) {
           recentAutomaticMemoryIds.set(sessionId, automaticMemory.receipt.memoryIds);
-          contextBuilder.invalidateMemory();
-          personalSearchEngine?.invalidate();
-          multiSourceSynthesisEngine?.invalidate();
+          memoryEngine.notifyChanged({ store: "private_memory", action: "automatic" });
         }
       }
       sessionContinuityEngine.recordCompletedTurn(continuitySession.id, {
@@ -9136,52 +9142,8 @@ if (req.method === "GET" && req.url === "/integrations/gmail/health") {
 
 // Intelligence personnelle : les routes HTTP ne contiennent que la validation
 // et délèguent toute logique aux services dédiés.
-if (req.method === "GET" && req.url.startsWith("/private-memory")) {
-  const url = new URL(req.url, `http://${req.headers.host || DEFAULT_HOST}`);
-  res.writeHead(privateMemoryService.available ? 200 : 503, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-  if (!privateMemoryService.available) return res.end(JSON.stringify({ status: "error", message: privateMemoryService.reason }));
-  if (url.pathname === "/private-memory/profiles") return res.end(JSON.stringify({ status: "ok", profiles: privateMemoryService.listProfiles(), settings: privateMemoryService.settings() }));
-  if (url.pathname === "/private-memory/why") return res.end(JSON.stringify({ status: "ok", ...memoryEngine.lastUsage() }));
-  if (url.pathname === "/private-memory/export") return res.end(JSON.stringify({ status: "ok", export: privateMemoryService.exportSubject(String(url.searchParams.get("subjectId") || "arnaud")) }));
-  const memories = privateMemoryService.listMemories({
-    subjectId: String(url.searchParams.get("subjectId") || "arnaud"),
-    status: url.searchParams.get("status") || null,
-    sensitivity: url.searchParams.get("sensitivity") || null,
-    query: url.searchParams.get("q") || "",
-  });
-  return res.end(JSON.stringify({ status: "ok", memories, settings: privateMemoryService.settings() }));
-}
-
-if (req.method === "POST" && req.url.startsWith("/private-memory")) {
-  try {
-    if (!privateMemoryService.available) throw Object.assign(new Error(privateMemoryService.reason), { statusCode: 503 });
-    const url = new URL(req.url, `http://${req.headers.host || DEFAULT_HOST}`);
-    const body = await readJsonBody(req, 2 * 1024 * 1024);
-    let result;
-    if (url.pathname === "/private-memory/import/preview") {
-      const validation = validateSeed(body.seed); result = validation.valid ? privateSeedImporter.preview(body.seed) : validation;
-    } else if (url.pathname === "/private-memory/import") {
-      result = privateSeedImporter.importSelected(body.seed, Array.isArray(body.selectedIndexes) ? body.selectedIndexes : []);
-    } else if (body.action === "create") result = privateMemoryService.createMemory(body.memory || {});
-    else if (body.action === "update") result = privateMemoryService.updateMemory(String(body.id || ""), body.changes || {}, body.reason || "correction utilisateur");
-    else if (body.action === "confirm") result = privateMemoryService.updateMemory(String(body.id || ""), { status: "confirmed", consentStatus: "granted", confidence: 1 }, "validation explicite");
-    else if (body.action === "forget") result = privateMemoryService.forgetMemory(String(body.id || ""));
-    else if (body.action === "purge") result = { purged: privateMemoryService.purgeSubject(String(body.subjectId || "")) };
-    else if (body.action === "profile-settings") result = privateMemoryService.setProfileEnabled(String(body.subjectId || ""), body.enabled === true);
-    else if (body.action === "settings") result = privateMemoryService.setSettings(body.settings || {});
-    else throw Object.assign(new Error("Action de mémoire privée inconnue."), { statusCode: 400 });
-    if (url.pathname !== "/private-memory/import/preview") {
-      contextBuilder.invalidateMemory();
-      personalSearchEngine?.invalidate();
-      multiSourceSynthesisEngine?.invalidate();
-      if (body.subjectId) contextBuilder.invalidateProfile(String(body.subjectId));
-    }
-    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "ok", result }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "error", message: error.message }));
-  }
+if (memoryHttpRoutes.matches(req)) {
+  return memoryHttpRoutes.handle(req, res, { readJsonBody });
 }
 
 if (req.method === "GET" && req.url.startsWith("/personal-intelligence/profile")) {
@@ -9273,33 +9235,6 @@ if (req.method === "POST" && req.url === "/personal-synthesis/drill-down") {
     res.writeHead(error.statusCode || 400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     return res.end(JSON.stringify({ status: "error", message: error.message }));
   }
-}
-
-if (req.method === "GET" && req.url.startsWith("/personal-intelligence/memories")) {
-  const url = new URL(req.url, `http://${req.headers.host || DEFAULT_HOST}`);
-  const filters = { status: url.searchParams.get("status") || null, type: url.searchParams.get("type") || null, limit: 300 };
-  const query = String(url.searchParams.get("q") || "").slice(0, 200);
-  const memories = query ? personalRepository.searchMemories(query, filters) : personalRepository.listMemories(filters);
-  res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-  return res.end(JSON.stringify({ status: "ok", count: memories.length, memories }));
-}
-
-if (req.method === "POST" && req.url === "/personal-intelligence/memories") {
-  try {
-    const body = await readJsonBody(req, 40 * 1024); let result;
-    if (body.action === "create") result = personalRepository.upsertMemory({ ...body.memory, sourceType: body.memory?.sourceType || "explicit-user-instruction", status: body.memory?.status === "inferred" ? "inferred" : "confirmed", confidence: body.memory?.status === "inferred" ? body.memory?.confidence : 1, explicitConfirmation: body.memory?.status !== "inferred" });
-    else if (body.action === "confirm") result = personalRepository.confirmMemory(String(body.id || ""));
-    else if (body.action === "correct") result = operationalProfileService.respondToInference(String(body.id || ""), "correct", body.value);
-    else if (body.action === "temporary") result = operationalProfileService.respondToInference(String(body.id || ""), "temporary", body.value, body.expiresAt);
-    else if (body.action === "forget") result = personalRepository.forgetMemory(String(body.id || ""));
-    else if (body.action === "block") result = personalRepository.blockMemory(String(body.id || ""));
-    else if (body.action === "extend") result = personalRepository.updateMemory(String(body.id || ""), { status: "temporary", expiresAt: body.expiresAt });
-    else throw Object.assign(new Error("Action mémoire inconnue."), { statusCode: 400 });
-    contextBuilder.invalidateMemory();
-    personalSearchEngine?.invalidate();
-    multiSourceSynthesisEngine?.invalidate();
-    res.writeHead(200, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ status: "ok", result }));
-  } catch (error) { res.writeHead(error.statusCode || 400, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ status: "error", code: error.code || null, message: error.message })); }
 }
 
 if (req.method === "GET" && req.url === "/personal-intelligence/projects") {

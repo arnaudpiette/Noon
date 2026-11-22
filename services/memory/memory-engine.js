@@ -1,7 +1,10 @@
 "use strict";
 
-// Façade de lecture commune aux mémoires existantes. Elle ne possède aucun
-// stockage et ne migre aucune donnée : chaque source conserve son cycle de vie.
+// Façade commune aux mémoires existantes. Elle ne possède aucun stockage et ne
+// migre aucune donnée : chaque source conserve son cycle de vie. Les écritures
+// (créer, corriger, confirmer, oublier, purger) passent par memory-writes.js.
+
+const { createMemoryWrites } = require("./memory-writes");
 
 const SOURCE_PRIORITY = Object.freeze({
   private_memory: 400,
@@ -81,9 +84,12 @@ function createMemoryEngine({
   conversationProvider = null,
   projectProvider = null,
   hardRulesRegistry = null,
+  operationalProfile = null,
+  onChange = null,
   debug = null,
   now = () => new Date(),
 } = {}) {
+  const writes = createMemoryWrites({ privateMemoryService, structuredRepository, operationalProfile, onChange });
   let lastUsage = {
     sourcesUsed: [], memoryIds: [], truncated: false, durationMs: 0,
     counts: {},
@@ -622,6 +628,7 @@ function createMemoryEngine({
     proposeCandidate,
     resolveContextSource,
     search,
+    ...writes,
   };
 }
 

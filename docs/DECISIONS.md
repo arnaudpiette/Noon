@@ -193,6 +193,24 @@ structurante, est notée ici avec sa date et sa raison.
 - Tests : `test/helpers/app-source.js` reconstitue le texte complet ; 26 tests y lisent l'interface.
 - Reste pour le critère de sortie de L7 : `server.js` (≈ 10 900 lignes) et la fusion mémoire (A.6).
 
+## 22/11/2026 — Écritures mémoire derrière MemoryEngine (V3-L7, A.6)
+
+- La lecture était déjà unifiée. `MemoryEngine` porte maintenant aussi les écritures
+  (`services/memory/memory-writes.js`) : créer, corriger, confirmer, oublier, bloquer, purger,
+  pour la mémoire privée chiffrée comme pour la mémoire structurée.
+- Choix : une interface unique, pas de fusion des stockages. Chaque action délègue au service
+  existant avec exactement le même comportement ; aucune donnée n'est déplacée ni migrée. La
+  migration vers la mémoire privée canonique reste celle de `MEMORY_MIGRATION.md`.
+- Une seule invalidation des caches (contexte, recherche, synthèse) : le `onChange` de
+  `MemoryEngine`. Les commandes conversationnelles, l'import et la mémoire automatique la
+  déclenchent via `notifyChanged`. Avant, elle était recopiée à cinq endroits de `server.js`.
+- Routes `/private-memory` et `/personal-intelligence/memories` sorties de `server.js`
+  (`services/memory/memory-http-routes.js`), contrats inchangés (codes, corps, limites de taille).
+- Reste hors de cette interface : les services de mémoire eux-mêmes (pipeline automatique,
+  commandes conversationnelles, import, migration) appellent toujours leurs stockages en interne.
+- Constat, non modifié : les POST mémoire n'exigent pas l'en-tête `x-noon-request` (l'interface
+  ne l'envoie pas). À durcir dans une tranche dédiée, interface comprise.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

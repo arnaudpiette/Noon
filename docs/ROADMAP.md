@@ -106,7 +106,7 @@ Fusionne P0 et P1 de la V2.1, avec une **limite de temps**.
 - ☐ A.3 Vrai lint : ESLint avec règles strictes (no-undef, no-unused-vars, eqeqeq, no-floating-promises via plugin).
 - ☐ A.4 `// @ts-check` + JSDoc sur les frontières : IPC, connecteurs, sécurité, mémoire.
 - ☑ A.5 Découper `public/app.js` par écran (chat, DEV, Goal Mode, réglages, brief…). Objectif : aucun fichier au-delà de 1 500 lignes.
-- ☐ A.6 Fusionner `memory`, `personal-memory` et `personal-intelligence` derrière une seule interface `MemoryEngine`.
+- ☑ A.6 Fusionner `memory`, `personal-memory` et `personal-intelligence` derrière une seule interface `MemoryEngine`.
 - ☐ A.7 Inventaire des services : pour chacun, *utilisé / branché / mort*. Les services morts sortent du build.
 
 Sortie : app packagée qui démarre et répond, lint réel au vert, baseline de tests, liste des services morts.
