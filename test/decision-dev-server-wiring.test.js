@@ -1,26 +1,14 @@
 "use strict";
+const { readServerSource } = require("./helpers/server-source");
 
 const assert =
   require("node:assert/strict");
-
-const fs =
-  require("node:fs");
-
-const path =
-  require("node:path");
 
 const test =
   require("node:test");
 
 const SERVER =
-  fs.readFileSync(
-    path.join(
-      __dirname,
-      "..",
-      "server.js"
-    ),
-    "utf8"
-  );
+  readServerSource();
 
 test(
   "4.4E server câble explicitement DEV Evidence sur la route Decision existante",

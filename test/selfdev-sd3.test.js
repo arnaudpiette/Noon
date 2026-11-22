@@ -1,4 +1,5 @@
 "use strict";
+const { readServerSource } = require("./helpers/server-source");
 
 // SelfDev V1 — SD-3 : politique de chemins pour Goal Mode DEV, routes HTTP, câblage serveur.
 
@@ -152,7 +153,7 @@ test("flag selfdev.v1 : OFF par défaut, exige goals.mode-dev", () => {
 });
 
 test("câblage serveur : politique de chemins transmise à Goal Mode DEV, routes gardées, exécuteur sandboxé", () => {
-  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
+  const server = readServerSource();
   assert.match(server, /pathPolicyProvider: selfDevPathPolicyProvider,/);
   assert.match(server, /executeValidation: sandboxDevValidationExecutor/);
   assert.match(server, /featureFlags\.evaluate\("selfdev\.v1", \{\}\)\.mode !== "OFF" &&\n\s+!UI_VALIDATION_MODE && process\.env\.NOON_SMOKE_TEST !== "1" && process\.env\.NOON_SAFE_MODE !== "1"/);

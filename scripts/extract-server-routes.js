@@ -34,7 +34,7 @@ const manager = eslintScope.analyze(ast, { ecmaVersion: 2022, nodejsScope: true,
 const moduleScope = manager.globalScope.childScopes[0];
 const inBlock = (range) => range[0] >= start && range[1] <= end;
 
-const deps = new Map(); const problems = []; const locals = new Set();
+const deps = new Map(); const liveRanges = []; const problems = []; const locals = new Set();
 for (const scope of manager.scopes) {
   for (const reference of scope.references) {
     if (!inBlock(reference.identifier.range)) continue;
@@ -47,6 +47,12 @@ for (const scope of manager.scopes) {
       if (reference.isWrite()) problems.push(`écriture de la variable serveur ${name}`);
       const kind = variable.defs[0]?.parent?.kind || variable.defs[0]?.type;
       deps.set(name, kind);
+      // Une variable `let` réaffectée après sa déclaration doit être déclarée : lue en direct
+      // (config.live → `deps.x` à chaque usage) ou affectée une seule fois au démarrage
+      // (config.startupOnly). Sinon une requête en attente pourrait garder une valeur périmée.
+      const writes = variable.references.filter((candidate) => candidate.isWrite()).length;
+      if (kind === "let" && writes > 1 && !(config.live || []).includes(name) && !(config.startupOnly || []).includes(name)) problems.push(`variable let réaffectée : ${name} (live ou startupOnly ?)`);
+      if ((config.live || []).includes(name)) liveRanges.push(reference.identifier.range);
     } else if ((config.allowedLocals || ["req", "res", "requestPath"]).includes(name)) {
       locals.add(name);
       if (reference.isWrite()) problems.push(`écriture de ${name}`);
@@ -60,10 +66,25 @@ for (const scope of manager.scopes) {
     for (const reference of variable.references) if (!inBlock(reference.identifier.range)) problems.push(`déclaration du bloc utilisée ailleurs : ${variable.name}`);
   }
 }
-if (/\barguments\b|\bthis\b/.test(block)) problems.push("arguments/this dans le bloc");
+// `this` / `arguments` changeraient de sens une fois déplacés (analyse de l'arbre, pas du texte :
+// `body.arguments` est une propriété, pas une référence).
+(function walk(node) {
+  if (!node || typeof node.type !== "string") return;
+  if (inBlock(node.range) && (node.type === "ThisExpression" || (node.type === "Identifier" && node.name === "arguments" && manager.scopes.some((scope) => scope.references.some((reference) => reference.identifier === node))))) problems.push("arguments/this dans le bloc");
+  for (const key of Object.keys(node)) {
+    if (key === "parent") continue;
+    const value = node[key];
+    if (Array.isArray(value)) value.forEach(walk); else if (value && typeof value.type === "string") walk(value);
+  }
+})(ast);
 if (problems.length) { console.error([...new Set(problems)].join("\n")); process.exit(2); }
 
-const names = [...deps.keys()].sort();
+const live = new Set(config.live || []);
+const names = [...deps.keys()].filter((name) => !live.has(name)).sort();
+const allNames = [...deps.keys()].sort();
+// Références « live » réécrites en `deps.x` (positions exactes de l'analyse, de la fin vers le début).
+let movedBlock = block;
+for (const [from, to] of [...liveRanges].sort((a, b) => b[0] - a[0])) movedBlock = movedBlock.slice(0, from - start) + `deps.${source.slice(from, to)}` + movedBlock.slice(to - start);
 let routeResultPath = path.relative(path.dirname(path.join(ROOT, config.module)), path.join(ROOT, "services/http/route-result")).split(path.sep).join("/");
 if (!routeResultPath.startsWith(".")) routeResultPath = `./${routeResultPath}`;
 // Indentation de 4 espaces, sauf les lignes qui commencent à l'intérieur d'un gabarit
@@ -78,13 +99,14 @@ const templates = [];
     if (Array.isArray(value)) value.forEach(walk); else if (value && typeof value.type === "string") walk(value);
   }
 })(ast);
+// Les positions viennent du bloc d'origine (la réécriture « live » n'ajoute aucune ligne).
 function indent(text) {
   let offset = start;
-  return text.split("\n").map((line) => {
+  const flags = block.split("\n").map((line) => {
     const lineStart = offset; offset += line.length + 1;
-    const insideTemplate = templates.some(([from, to]) => lineStart > from && lineStart < to);
-    return line && !insideTemplate ? `    ${line}` : line;
-  }).join("\n");
+    return templates.some(([from, to]) => lineStart > from && lineStart < to);
+  });
+  return text.split("\n").map((line, index) => (line && !flags[index] ? `    ${line}` : line)).join("\n");
 }
 const moduleText = `"use strict";
 
@@ -94,7 +116,7 @@ ${config.header.split("\n").map((line) => `// ${line}`.trimEnd()).join("\n")}
 
 const { NOT_HANDLED } = require("${routeResultPath}");
 
-const DEPENDENCIES = Object.freeze(${JSON.stringify(names)});
+const DEPENDENCIES = Object.freeze(${JSON.stringify(allNames)});
 
 function ${config.factory}(deps) {
   for (const name of DEPENDENCIES) if (!(name in deps)) throw new TypeError(\`Dépendance manquante : \${name}\`);
@@ -103,7 +125,7 @@ function ${config.factory}(deps) {
 ${names.map((name) => `      ${name},`).join("\n")}
     } = deps;
 
-${indent(block.replace(/\s+$/, ""))}
+${indent(movedBlock.replace(/\s+$/, ""))}
 
     return NOT_HANDLED;
   };
@@ -119,7 +141,7 @@ const dispatch = `{
 
 `;
 const construction = `const ${config.instance} = ${config.factory}({
-${names.map((name) => `  get ${name}() { return ${name}; },`).join("\n")}
+${allNames.map((name) => `  get ${name}() { return ${name}; },`).join("\n")}
 });
 `;
 let server = source.slice(0, start) + dispatch + source.slice(end);

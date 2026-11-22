@@ -12,6 +12,13 @@ const { NOT_HANDLED } = require("../services/http/route-result");
 const MODULES = [
   ["../services/personal-intelligence/personal-intelligence-http-routes", "createPersonalIntelligenceHttpRoutes", "personalIntelligenceHttpRoutes"],
   ["../services/dev/dev-http-routes", "createDevHttpRoutes", "devHttpRoutes"],
+  ["../services/workspaces/projects-http-routes", "createProjectsHttpRoutes", "projectsHttpRoutes"],
+  ["../services/sessions/conversation-http-routes", "createConversationHttpRoutes", "conversationHttpRoutes"],
+  ["../services/voice/voice-http-routes", "createVoiceHttpRoutes", "voiceHttpRoutes"],
+  ["../services/control-center/system-http-routes", "createSystemHttpRoutes", "systemHttpRoutes"],
+  ["../services/goals/goals-http-routes", "createGoalsHttpRoutes", "goalsHttpRoutes"],
+  ["../services/voice/transcription-http-routes", "createTranscriptionHttpRoutes", "transcriptionHttpRoutes"],
+  ["../services/planning/day-http-routes", "createDayHttpRoutes", "dayHttpRoutes"],
 ];
 const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
 
@@ -23,7 +30,10 @@ for (const [file, factory, instance] of MODULES) {
   });
 
   test(`${factory} : requête étrangère → NOT_HANDLED, rien n'est écrit`, async () => {
-    const deps = Object.fromEntries(loaded.DEPENDENCIES.map((name) => [name, undefined]));
+    // Dépendance neutre : toute propriété la renvoie, tout appel répond undefined (ex. un
+    // `autreModule.matches(requestPath)` en tête de bloc répond « non »).
+    const inert = new Proxy(function inert() {}, { get: (target, key) => (key === Symbol.toPrimitive ? () => "\u0000inert" : typeof key === "symbol" ? undefined : inert), apply: () => undefined });
+    const deps = Object.fromEntries(loaded.DEPENDENCIES.map((name) => [name, inert]));
     const handle = loaded[factory](deps);
     const res = { writeHead() { throw new Error("aucune réponse attendue"); }, end() { throw new Error("aucune réponse attendue"); } };
     for (const method of ["GET", "POST"]) {

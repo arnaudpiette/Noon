@@ -1,4 +1,5 @@
 "use strict";
+const { readServerSource } = require("./helpers/server-source");
 const { readAppSource } = require("./helpers/app-source");
 
 // V3-L2d — journal local d'usage du Brief : à l'heure, ouvert, série, rétention, câblage.
@@ -73,7 +74,7 @@ test("fichier abîmé lu comme vide ; jours de plus de 120 jours supprimés", ()
 });
 
 test("câblage : génération journalisée, ouverture protégée par l'en-tête, Electron marque le déclencheur planifié", () => {
-  const server = read("server.js");
+  const server = readServerSource();
   assert.match(server, /briefUsageLog\.recordGenerated\(\{ date: brief\.date/);
   assert.match(server, /briefUsageLog\.recordFailure\(/);
   assert.match(server, /requestPath === "\/daily-brief\/opened"[\s\S]{0,120}x-noon-request/);

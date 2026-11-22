@@ -1,4 +1,5 @@
 "use strict";
+const { readServerSource } = require("./helpers/server-source");
 const { readAppSource } = require("./helpers/app-source");
 
 const assert = require("node:assert/strict");
@@ -119,7 +120,7 @@ test("chosen voice survives a fresh process and ignores environment voice overri
 
 test("runtime voice payloads use canonical resolution without browser fallback", () => {
   const fs = require('node:fs');
-  const server = fs.readFileSync(require.resolve('../server'), 'utf8');
+  const server = readServerSource();
   assert.match(server, /output: \{ voice: resolvedVoice.voice \}/);
   assert.match(server, /voiceIdentity.attempts\(resolvedVoice\)/);
   assert.match(server, /voice: attempt.voice/);
@@ -132,7 +133,7 @@ test("runtime voice payloads use canonical resolution without browser fallback",
 
 test("audio guards precede remote requests et le micro Live reste distinct", () => {
   const fs = require("node:fs");
-  const server = fs.readFileSync(require.resolve("../server"), "utf8");
+  const server = readServerSource();
   for (const route of ['req.url.startsWith("/realtime/session")', 'req.url === "/tts"']) {
     const handler = server.slice(server.indexOf(route));
     assert.ok(handler.includes("assertRemoteVoiceAvailable("));

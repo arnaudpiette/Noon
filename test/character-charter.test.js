@@ -1,4 +1,5 @@
 "use strict";
+const { readServerSource } = require("./helpers/server-source");
 const { readAppSource } = require("./helpers/app-source");
 
 // V3-L1 — charte de caractère, cadrans, stockage, intégration au prompt, interface, eval:character.
@@ -77,7 +78,7 @@ test("serveur : flag character.charter (ON, réversible), routes bornées, conte
   const flag = FEATURE_FLAGS.find((item) => item.flagId === "character.charter");
   assert.equal(flag.defaultMode, "ON");
   assert.ok(flag.allowedModes.includes("OFF") && flag.killSwitchAllowed);
-  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
+  const server = readServerSource();
   assert.match(server, /setCharacterProvider\(\(\) => \(featureFlags\.evaluate\("character\.charter", \{\}\)\.enabled \? renderCharacterInstructions\(characterStore\.get\(\)\.dials\) : ""\)\)/);
   assert.match(server, /personalityProvider: \(\) => noonPersonality\(\)/);
   assert.match(server, /onChange: \(\) => contextBuilder\.invalidateStatic\(\)/);

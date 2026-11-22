@@ -235,6 +235,33 @@ structurante, est notée ici avec sa date et sa raison.
   regroupement par domaine et les dépendances explicites sont le gain ; la réécriture interne
   viendra, si besoin, route par route avec ses tests.
 
+## 22/11/2026 — Découpe de `server.js`, deuxième tranche (V3-L7)
+
+- `server.js` passe de 9 423 à 7 589 lignes. Sept modules de routes, même méthode :
+  `services/workspaces/projects-http-routes.js` (projets, catalogue Focus),
+  `services/sessions/conversation-http-routes.js` (conversations, dossiers, historique, activité,
+  réinitialisation), `services/voice/voice-http-routes.js` (Realtime, identité vocale, TTS),
+  `services/voice/transcription-http-routes.js`, `services/control-center/system-http-routes.js`
+  (santé, diagnostics, reprise de session, Control Center, runtime, extensions, contexte ambiant),
+  `services/goals/goals-http-routes.js` (objectifs, reprise Goal Mode DEV, décision) et
+  `services/planning/day-http-routes.js` (brief, caractère, planning, suivi, revues, intégrations
+  Google).
+- Valeur périmée : un accesseur lu au début de la requête garderait l'ancienne valeur d'une
+  variable `let` réaffectée pendant que la requête attend son corps. L'outil refuse désormais
+  toute variable `let` réaffectée tant qu'elle n'est pas déclarée : `live` (chaque usage devient
+  `deps.x`, lu au moment de l'usage, comme avant) ou `startupOnly` (affectée une seule fois au
+  démarrage). Vérifié pour la tranche 1 : ses quatre `let` sont toutes affectées une fois au
+  démarrage.
+- Seul changement de code hors déplacement : les quatre écritures de l'index des conversations
+  passent par `replaceConversationIndex(store)` (affectation puis sauvegarde, comme avant), et
+  `conversationIndex` est lu en direct dans le module.
+- Outil : contrôle `this`/`arguments` sur l'arbre syntaxique (le contrôle textuel bloquait sur
+  `body.arguments`).
+- Vérification avant/après : 74 requêtes couvrant les sept modules (dont refus sans en-tête de
+  confiance) — mêmes codes et en-têtes, mêmes corps aux horodatages, identifiants aléatoires et
+  durées près. Le seul autre écart (`/integrations/status`) venait du `.env` local absent de la
+  copie de référence ; disparu en rejouant la référence avec ce même `.env`.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

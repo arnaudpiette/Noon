@@ -127,6 +127,13 @@ const { createResumeBriefingService, renderResumeBriefing } = require("./service
 const { createFirstStepService, renderFirstStep } = require("./services/first-step/first-step-service");
 const { createBriefUsageLog, parisDate } = require("./services/daily-brief/brief-usage-log");
 const { createStaticAssets } = require("./services/http/static-assets");
+const { createDayHttpRoutes } = require("./services/planning/day-http-routes");
+const { createTranscriptionHttpRoutes } = require("./services/voice/transcription-http-routes");
+const { createGoalsHttpRoutes } = require("./services/goals/goals-http-routes");
+const { createSystemHttpRoutes } = require("./services/control-center/system-http-routes");
+const { createVoiceHttpRoutes } = require("./services/voice/voice-http-routes");
+const { createConversationHttpRoutes } = require("./services/sessions/conversation-http-routes");
+const { createProjectsHttpRoutes } = require("./services/workspaces/projects-http-routes");
 const { createDevHttpRoutes } = require("./services/dev/dev-http-routes");
 const { NOT_HANDLED } = require("./services/http/route-result");
 const { createPersonalIntelligenceHttpRoutes } = require("./services/personal-intelligence/personal-intelligence-http-routes");
@@ -5691,6 +5698,12 @@ function saveConversationIndex() {
   fs.renameSync(temporaryFile, CONVERSATION_INDEX_FILE);
 }
 
+// V3-L7 : les routes de conversations (sorties de server.js) remplacent l'index par ce point unique.
+function replaceConversationIndex(store) {
+  conversationIndex = store;
+  saveConversationIndex();
+}
+
 function touchConversation(sessionId, question = "", folderId = GENERAL_FOLDER_ID) {
   const id = normalizeSessionId(sessionId);
   const now = new Date().toISOString();
@@ -6048,6 +6061,163 @@ const devHttpRoutes = createDevHttpRoutes({
   get requireTrustedDevUi() { return requireTrustedDevUi; },
   get resolveFocusCatalogSelection() { return resolveFocusCatalogSelection; },
   get workspaceEngine() { return workspaceEngine; },
+});
+const projectsHttpRoutes = createProjectsHttpRoutes({
+  get buildFocusCatalog() { return buildFocusCatalog; },
+  get getAllowedDirectories() { return getAllowedDirectories; },
+  get getValidRegisteredProjects() { return getValidRegisteredProjects; },
+  get listLocalProjects() { return listLocalProjects; },
+  get readJsonBody() { return readJsonBody; },
+  get resolveProject() { return resolveProject; },
+  get scanRegisteredProjects() { return scanRegisteredProjects; },
+});
+const conversationHttpRoutes = createConversationHttpRoutes({
+  get GENERAL_FOLDER_ID() { return GENERAL_FOLDER_ID; },
+  get MAX_CONVERSATIONS_PER_FOLDER() { return MAX_CONVERSATIONS_PER_FOLDER; },
+  get MAX_FOLDERS() { return MAX_FOLDERS; },
+  get clearConversationSession() { return clearConversationSession; },
+  get conversationIndex() { return conversationIndex; },
+  get createConversationKey() { return createConversationKey; },
+  get createFolder() { return createFolder; },
+  get crypto() { return crypto; },
+  get deleteConversation() { return deleteConversation; },
+  get deleteFolder() { return deleteFolder; },
+  get getConversationTranscript() { return getConversationTranscript; },
+  get getSessionActivity() { return getSessionActivity; },
+  get normalizeFocusName() { return normalizeFocusName; },
+  get normalizeFocusPath() { return normalizeFocusPath; },
+  get normalizeNoonMode() { return normalizeNoonMode; },
+  get normalizeSessionId() { return normalizeSessionId; },
+  get readJsonBody() { return readJsonBody; },
+  get renameFolder() { return renameFolder; },
+  get replaceConversationIndex() { return replaceConversationIndex; },
+  get resolveFocusCatalogSelection() { return resolveFocusCatalogSelection; },
+  get sessionActivities() { return sessionActivities; },
+  get sessionContinuityEngine() { return sessionContinuityEngine; },
+  get touchConversation() { return touchConversation; },
+  get updateConversation() { return updateConversation; },
+});
+const voiceHttpRoutes = createVoiceHttpRoutes({
+  get REALTIME_IDLE_TIMEOUT_MS() { return REALTIME_IDLE_TIMEOUT_MS; },
+  get REALTIME_MAX_SESSION_MS() { return REALTIME_MAX_SESSION_MS; },
+  get REALTIME_MODELS() { return REALTIME_MODELS; },
+  get WEB_SEARCH_DAILY_LIMIT() { return WEB_SEARCH_DAILY_LIMIT; },
+  get WEB_SEARCH_MAX_PER_REQUEST() { return WEB_SEARCH_MAX_PER_REQUEST; },
+  get askAI() { return askAI; },
+  get assertRemoteVoiceAvailable() { return assertRemoteVoiceAvailable; },
+  get autonomousMemoryPipeline() { return autonomousMemoryPipeline; },
+  get buildIntentContext() { return buildIntentContext; },
+  get createConversationKey() { return createConversationKey; },
+  get crypto() { return crypto; },
+  get executeExplicitConversationMemoryCommand() { return executeExplicitConversationMemoryCommand; },
+  get getBudgetStatus() { return getBudgetStatus; },
+  get getConversationHistory() { return getConversationHistory; },
+  get getValidRegisteredProjects() { return getValidRegisteredProjects; },
+  get getVoiceBudgetStatus() { return getVoiceBudgetStatus; },
+  get intentCommandEngine() { return intentCommandEngine; },
+  get localIntelligenceRuntime() { return localIntelligenceRuntime; },
+  get memoryEngine() { return memoryEngine; },
+  get modelForQuality() { return modelForQuality; },
+  get normalizeAccent() { return normalizeAccent; },
+  get normalizeFocusName() { return normalizeFocusName; },
+  get normalizeFocusPath() { return normalizeFocusPath; },
+  get normalizeLanguage() { return normalizeLanguage; },
+  get normalizeNoonMode() { return normalizeNoonMode; },
+  get normalizeSessionId() { return normalizeSessionId; },
+  get normalizeVoiceQuality() { return normalizeVoiceQuality; },
+  get readJsonBody() { return readJsonBody; },
+  get readTextBody() { return readTextBody; },
+  get realtimeVoiceConfig() { return realtimeVoiceConfig; },
+  get recentAutomaticMemoryIds() { return recentAutomaticMemoryIds; },
+  get refreshDailyWebSearchUsage() { return refreshDailyWebSearchUsage; },
+  get registerRealtimeUsage() { return registerRealtimeUsage; },
+  get rememberConversation() { return rememberConversation; },
+  get rememberedRealtimeTurns() { return rememberedRealtimeTurns; },
+  get resolveFocusCatalogSelection() { return resolveFocusCatalogSelection; },
+  get resolveFocusProject() { return resolveFocusProject; },
+  get resolveProject() { return resolveProject; },
+  get scanRegisteredProjects() { return scanRegisteredProjects; },
+  get sessionContinuityEngine() { return sessionContinuityEngine; },
+  get touchConversation() { return touchConversation; },
+  get voiceIdentity() { return voiceIdentity; },
+  get workspaceEngine() { return workspaceEngine; },
+});
+const systemHttpRoutes = createSystemHttpRoutes({
+  get DEFAULT_HOST() { return DEFAULT_HOST; },
+  get WEB_SEARCH_DAILY_LIMIT() { return WEB_SEARCH_DAILY_LIMIT; },
+  get ambientContextEngine() { return ambientContextEngine; },
+  get contextBuilder() { return contextBuilder; },
+  get controlCenterService() { return controlCenterService; },
+  get devMissionHttpRoutes() { return devMissionHttpRoutes; },
+  get extensionRegistry() { return extensionRegistry; },
+  get findCodexExecutable() { return findCodexExecutable; },
+  get getBudgetStatus() { return getBudgetStatus; },
+  get getVoiceBudgetStatus() { return getVoiceBudgetStatus; },
+  get localIntelligenceRuntime() { return localIntelligenceRuntime; },
+  get mcpService() { return mcpService; },
+  get noonHealthReport() { return noonHealthReport; },
+  get noonObservability() { return noonObservability; },
+  get normalizeNoonMode() { return normalizeNoonMode; },
+  get normalizeSessionId() { return normalizeSessionId; },
+  get readJsonBody() { return readJsonBody; },
+  get refreshDailyWebSearchUsage() { return refreshDailyWebSearchUsage; },
+  get reliabilityEngine() { return reliabilityEngine; },
+  get remoteLanHttpRoutes() { return remoteLanHttpRoutes; },
+  get selfDevHttpRoutes() { return selfDevHttpRoutes; },
+  get sessionContinuityEngine() { return sessionContinuityEngine; },
+});
+const goalsHttpRoutes = createGoalsHttpRoutes({
+  get GOAL_MODE_DEV_HTTP_PREFIX() { return GOAL_MODE_DEV_HTTP_PREFIX; },
+  get decisionSupportEngine() { return decisionSupportEngine; },
+  get devDecisionConsumer() { return devDecisionConsumer; },
+  get goalDevExecutionService() { return goalDevExecutionService; },
+  get goalDevRetryHttpStatus() { return goalDevRetryHttpStatus; },
+  get goalDevRetryRuntime() { return goalDevRetryRuntime; },
+  get goalModeDevHttp() { return goalModeDevHttp; },
+  get goalStrategyEngine() { return goalStrategyEngine; },
+  get normalizeGoalDevRetryPrepareRequest() { return normalizeGoalDevRetryPrepareRequest; },
+  get normalizeGoalDevRetryResumeRequest() { return normalizeGoalDevRetryResumeRequest; },
+  get projectGoalDevRetryPermitResponse() { return projectGoalDevRetryPermitResponse; },
+  get projectGoalDevRetryResumeResponse() { return projectGoalDevRetryResumeResponse; },
+  get readJsonBody() { return readJsonBody; },
+  get requireTrustedDevUi() { return requireTrustedDevUi; },
+});
+const transcriptionHttpRoutes = createTranscriptionHttpRoutes({
+  get MAX_AUDIO_BYTES() { return MAX_AUDIO_BYTES; },
+  get assertRemoteVoiceAvailable() { return assertRemoteVoiceAvailable; },
+  get getBudgetStatus() { return getBudgetStatus; },
+  get localIntelligenceRuntime() { return localIntelligenceRuntime; },
+  get trackTranscriptionUsage() { return trackTranscriptionUsage; },
+  get transcribeAudioBuffer() { return transcribeAudioBuffer; },
+});
+const dayHttpRoutes = createDayHttpRoutes({
+  get CHARACTER_DIALS() { return CHARACTER_DIALS; },
+  get DATA_DIRECTORY() { return DATA_DIRECTORY; },
+  get DEFAULT_HOST() { return DEFAULT_HOST; },
+  get GOOGLE_ACCOUNT_EMAIL() { return GOOGLE_ACCOUNT_EMAIL; },
+  get briefUsageLog() { return briefUsageLog; },
+  get calendarConnector() { return calendarConnector; },
+  get characterStore() { return characterStore; },
+  get completeGoogleOAuthCallback() { return completeGoogleOAuthCallback; },
+  get createGoogleReadAuthorization() { return createGoogleReadAuthorization; },
+  get dailyBriefEngine() { return dailyBriefEngine; },
+  get dailyPlanStore() { return dailyPlanStore; },
+  get dailyPlanningEngine() { return dailyPlanningEngine; },
+  get executionTrackingEngine() { return executionTrackingEngine; },
+  get executionTrackingRepository() { return executionTrackingRepository; },
+  get featureFlags() { return featureFlags; },
+  get fs() { return fs; },
+  get getGoogleAccessToken() { return getGoogleAccessToken; },
+  get gmailConnector() { return gmailConnector; },
+  get notesConnector() { return notesConnector; },
+  get path() { return path; },
+  get planningPreferenceStore() { return planningPreferenceStore; },
+  get readJsonBody() { return readJsonBody; },
+  get reliabilityEngine() { return reliabilityEngine; },
+  get remindersConnector() { return remindersConnector; },
+  get reviewLearningEngine() { return reviewLearningEngine; },
+  get sendGoogleCallbackPage() { return sendGoogleCallbackPage; },
+  get toolAuditLog() { return toolAuditLog; },
 });
 const server = http.createServer(async (req, res) => {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -6992,2043 +7162,39 @@ if (staticAssets.matches(req)) {
   return staticAssets.handle(req, res);
 }
 
-if (req.method === "GET" && req.url === "/projects") {
-  try {
-    const projects = listLocalProjects();
-
-    res.writeHead(200);
-
-    return res.end(
-      JSON.stringify(
-        {
-          status: "ok",
-          mode: "read-only",
-          count: projects.length,
-          projects,
-        },
-        null,
-        2
-      )
-    );
-  } catch (error) {
-    res.writeHead(500);
-
-    return res.end(
-      JSON.stringify({
-        status: "error",
-        message: error.message,
-      })
-    );
-  }
-}
-
-if (req.method === "GET" && req.url === "/projects/catalog") {
-  const projects = getValidRegisteredProjects();
-  res.writeHead(200, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "no-store",
-  });
-  return res.end(JSON.stringify({
-    status: "ok",
-    mode: "read-only",
-    count: projects.length,
-    projects,
-  }));
-}
-
-if (req.method === "POST" && req.url === "/projects/scan") {
-  try {
-    if (req.headers["x-noon-request"] !== "1") {
-      const error = new Error("Requête Noon refusée.");
-      error.statusCode = 403;
-      throw error;
-    }
-    const body = await readJsonBody(req, 10 * 1024);
-    const focusId = typeof body.focusId === "string"
-      ? body.focusId.trim().slice(0, 100)
-      : null;
-    const projects = scanRegisteredProjects(focusId || null);
-    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-    return res.end(JSON.stringify({
-      status: "ok",
-      count: projects.length,
-      projects,
-      scannedFocusId: focusId || null,
-    }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 500, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", message: error.message }));
-  }
-}
-
-if (req.method === "POST" && req.url === "/projects/resolve") {
-  try {
-    if (req.headers["x-noon-request"] !== "1") {
-      const error = new Error("Requête Noon refusée.");
-      error.statusCode = 403;
-      throw error;
-    }
-    const body = await readJsonBody(req, 10 * 1024);
-    const query = String(body.query || "").trim().slice(0, 150);
-    if (!query) {
-      const error = new Error("Nom de projet obligatoire.");
-      error.statusCode = 400;
-      throw error;
-    }
-    const result = resolveProject(query, getValidRegisteredProjects());
-    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-    return res.end(JSON.stringify({ status: "ok", result }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 500, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", message: error.message }));
-  }
-}
-
-if (req.method === "GET" && req.url.startsWith("/projects/")) {
-  const id = decodeURIComponent(req.url.slice("/projects/".length)).slice(0, 100);
-  const project = getValidRegisteredProjects().find((candidate) => candidate.id === id);
-  if (!project) {
-    res.writeHead(404, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", message: "Projet non détecté dans les dossiers autorisés" }));
-  }
-  res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-  return res.end(JSON.stringify({ status: "ok", project }));
-}
-
-if (req.method === "GET" && req.url === "/focus/catalog") {
-  const catalog = buildFocusCatalog(getAllowedDirectories());
-  res.writeHead(200, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "no-store",
-  });
-  return res.end(JSON.stringify({
-    status: "ok",
-    mode: "read-only",
-    count: catalog.length,
-    availableCount: catalog.filter((entry) => entry.available).length,
-    catalog: catalog.map((entry) => ({
-      id: entry.id,
-      displayName: entry.displayName,
-      sortName: entry.sortName,
-      aliases: entry.aliases,
-      resolvedPath: entry.resolvedPath,
-      available: entry.available,
-      status: entry.status,
-      matches: entry.status === "ambiguous" ? entry.matches : [],
-    })),
-  }));
-}
-
-if (
-  req.method === "POST" &&
-  req.url.startsWith("/session/clear")
-) {
-  const url = new URL(
-    req.url,
-    `http://${req.headers.host}`
-  );
-
-  const sessionId = normalizeSessionId(
-    url.searchParams.get("sessionId")
-  );
-
-  clearConversationSession(sessionId);
-
-  res.writeHead(200);
-
-  return res.end(
-    JSON.stringify({
-      status: "ok",
-      message: "Mémoire de conversation supprimée.",
-    })
-  );
-}
-
-if (req.method === "GET" && req.url === "/conversations") {
-  res.writeHead(200, {
-    "Content-Type": "application/json",
-    "Cache-Control": "no-store",
-  });
-  return res.end(JSON.stringify({
-    status: "ok",
-    limits: { folders: MAX_FOLDERS, conversationsPerFolder: MAX_CONVERSATIONS_PER_FOLDER },
-    folders: conversationIndex.folders,
-    conversations: conversationIndex.conversations,
-  }));
-}
-
-if (req.method === "POST" && req.url === "/conversations") {
-  try {
-    if (req.headers["x-noon-request"] !== "1") {
-      const error = new Error("Requête Noon refusée.");
-      error.statusCode = 403;
-      throw error;
-    }
-    const body = await readJsonBody(req, 10 * 1024);
-    const conversation = touchConversation(body.sessionId, body.title || "", body.folderId || GENERAL_FOLDER_ID);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "ok", conversation }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 400, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", message: error.message }));
-  }
-}
-
-if (req.method === "DELETE" && requestPath.startsWith("/conversations/")) {
-  try {
-    if (req.headers["x-noon-request"] !== "1") {
-      const error = new Error("Requête Noon refusée.");
-      error.statusCode = 403;
-      throw error;
-    }
-    const sessionId = decodeURIComponent(requestPath.slice("/conversations/".length));
-    if (!conversationIndex.conversations.some((item) => item.id === sessionId)) {
-      const error = new Error("Conversation introuvable.");
-      error.statusCode = 404;
-      throw error;
-    }
-    deleteConversation(sessionId);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "ok" }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 400, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", message: error.message }));
-  }
-}
-
-if (req.method === "POST" && req.url === "/conversation-folders") {
-  try {
-    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403 });
-    const body = await readJsonBody(req, 10 * 1024);
-    const result = createFolder(conversationIndex, { id: crypto.randomUUID(), title: body.title });
-    conversationIndex = result.store; saveConversationIndex();
-    res.writeHead(201, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "ok", folder: result.folder }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 400, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", message: error.message }));
-  }
-}
-
-if (req.method === "PATCH" && requestPath.startsWith("/conversation-folders/")) {
-  try {
-    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403 });
-    const id = decodeURIComponent(requestPath.slice("/conversation-folders/".length));
-    const body = await readJsonBody(req, 10 * 1024);
-    conversationIndex = renameFolder(conversationIndex, id, body.title); saveConversationIndex();
-    res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "ok" }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 400, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", message: error.message }));
-  }
-}
-
-if (req.method === "DELETE" && requestPath.startsWith("/conversation-folders/")) {
-  try {
-    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403 });
-    const id = decodeURIComponent(requestPath.slice("/conversation-folders/".length));
-    const url = new URL(req.url, "http://127.0.0.1");
-    const result = deleteFolder(conversationIndex, id, { deleteConversations: url.searchParams.get("deleteConversations") === "true", destinationFolderId: url.searchParams.get("destinationFolderId") || null });
-    for (const conversationId of result.deletedConversationIds) clearConversationSession(conversationId);
-    conversationIndex = result.store; saveConversationIndex();
-    res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "ok" }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 400, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", message: error.message }));
-  }
-}
-
-if (req.method === "PATCH" && requestPath.startsWith("/conversations/")) {
-  try {
-    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403 });
-    const id = decodeURIComponent(requestPath.slice("/conversations/".length));
-    const body = await readJsonBody(req, 10 * 1024);
-    conversationIndex = updateConversation(conversationIndex, id, { title: body.title, folderId: body.folderId, pinned: body.pinned }); saveConversationIndex();
-    res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "ok" }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 400, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", message: error.message }));
-  }
-}
-
-if (
-  req.method === "GET" &&
-  req.url.startsWith("/session/history")
-) {
-  try {
-    const url = new URL(
-      req.url,
-      `http://${req.headers.host}`
-    );
-
-    const sessionId = normalizeSessionId(
-      url.searchParams.get("sessionId")
-    );
-
-    const mode = normalizeNoonMode(
-      url.searchParams.get("mode")
-    );
-
-    let focus = normalizeFocusName(
-      url.searchParams.get("focus")
-    );
-
-    let focusPath = normalizeFocusPath(
-      url.searchParams.get("focusPath")
-    );
-    const catalogSelection = resolveFocusCatalogSelection(
-      url.searchParams.get("focusId"),
-      url.searchParams.get("focusPath")
-    );
-    if (catalogSelection) {
-      focus = catalogSelection.name;
-      focusPath = catalogSelection.path;
-    }
-
-    const conversationKey = createConversationKey({
-      sessionId,
-      mode,
-      focus,
-      focusPath,
-    });
-
-    const history = getConversationTranscript(
-      conversationKey
-    );
-    const continuitySession = sessionContinuityEngine.resolveSession({
-      conversationId: sessionId,
-      projectId: focus || null,
-      mode,
-      channel: "chat",
-      profileScope: "arnaud",
-    });
-    const restoredSession = sessionContinuityEngine.restoreContext(
-      continuitySession.id
-    );
-
-    res.writeHead(200);
-
-    return res.end(
-      JSON.stringify({
-        status: "ok",
-        sessionId: continuitySession.id,
-        conversationId: sessionId,
-        continuity: {
-          state: sessionContinuityEngine.getSession(continuitySession.id).status,
-          summaryVersion: restoredSession.summary?.version || 0,
-          recentEntityCount: restoredSession.recentEntityRefs.length,
-          recoveredFromCrash: restoredSession.recoveredFromCrash,
-        },
-        count: history.length,
-        history,
-      })
-    );
-  } catch (error) {
-    res.writeHead(500);
-
-    return res.end(
-      JSON.stringify({
-        status: "error",
-        message: error.message,
-      })
-    );
-  }
-}
-
-if (
-  req.method === "GET" &&
-  req.url.startsWith("/session/activity")
-) {
-  const url = new URL(
-    req.url,
-    `http://${req.headers.host}`
-  );
-
-  const sessionId = normalizeSessionId(
-    url.searchParams.get("sessionId")
-  );
-
-  res.writeHead(200);
-
-  return res.end(
-    JSON.stringify({
-      status: "ok",
-      activity: getSessionActivity(sessionId),
-    })
-  );
-}
-
-// Supprime la mémoire de tous les modes et Focus pour la session courante.
-if (
-  req.url === "/conversation/reset" &&
-  req.method === "POST"
-) {
-  try {
-    if (req.headers["x-noon-request"] !== "1") {
-      res.writeHead(403, {
-        "Content-Type": "application/json",
-      });
-
-      return res.end(
-        JSON.stringify({
-          status: "error",
-          message: "Requête Noon refusée.",
-        })
-      );
-    }
-
-    const body = await readJsonBody(req, 10 * 1024);
-    const sessionId = normalizeSessionId(body.sessionId);
-
-    const continuitySession = sessionContinuityEngine.getActiveSession({
-      conversationId: sessionId,
-      profileScope: "arnaud",
-    });
-    if (continuitySession && continuitySession.status !== "closed") {
-      sessionContinuityEngine.closeSession(continuitySession.id);
-    }
-
-    clearConversationSession(sessionId);
-    sessionActivities.delete(sessionId);
-
-    res.writeHead(200, {
-      "Content-Type": "application/json",
-    });
-
-    return res.end(
-      JSON.stringify({
-        status: "ok",
-        message: "Conversation réinitialisée.",
-      })
-    );
-  } catch (error) {
-    res.writeHead(error.statusCode || 500, {
-      "Content-Type": "application/json",
-    });
-
-    return res.end(
-      JSON.stringify({
-        status: "error",
-        message: error.message,
-      })
-    );
-  }
-}
-
-// Indique l’état du serveur et du budget sans contacter OpenAI.
-if (
-  req.method === "POST" &&
-  req.url.startsWith("/realtime/session")
-) {
-  try {
-    if (req.headers["x-noon-request"] !== "1") {
-      const error = new Error("Requête Noon refusée.");
-      error.statusCode = 403;
-      throw error;
-    }
-    assertRemoteVoiceAvailable(localIntelligenceRuntime, "REMOTE_REALTIME");
-
-    const voiceBudget = getVoiceBudgetStatus();
-    if (voiceBudget.state === "BLOCKED") {
-      const error = new Error(
-        "Le budget vocal mensuel est atteint. Continue en mode texte."
-      );
-      error.statusCode = 429;
-      error.code = "VOICE_BUDGET_BLOCKED";
-      throw error;
-    }
-
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const quality = normalizeVoiceQuality(url.searchParams.get("quality"));
-    const model = modelForQuality(quality);
-    const voiceSessionId = voiceIdentity.createSessionId();
-    const generalBudget = getBudgetStatus();
-
-    if (
-      quality === "max" &&
-      (generalBudget.mode !== "NORMAL" ||
-        voiceBudget.state === "PROTECTION")
-    ) {
-      const error = new Error(
-        "La Qualité Max est désactivée par le mode de protection budgétaire."
-      );
-      error.statusCode = 409;
-      error.code = "VOICE_MAX_DISABLED";
-      throw error;
-    }
-
-    if (
-      quality === "max" &&
-      url.searchParams.get("confirmMax") !== "true"
-    ) {
-      const error = new Error(
-        "La Qualité Max doit être confirmée avant chaque session."
-      );
-      error.statusCode = 409;
-      error.code = "VOICE_MAX_CONFIRMATION_REQUIRED";
-      throw error;
-    }
-
-    const sessionId = normalizeSessionId(url.searchParams.get("sessionId"));
-    const mode = normalizeNoonMode(url.searchParams.get("mode"));
-    let focus = normalizeFocusName(url.searchParams.get("focus"));
-    let focusPath = normalizeFocusPath(url.searchParams.get("focusPath"));
-    const catalogSelection = resolveFocusCatalogSelection(
-      url.searchParams.get("focusId"),
-      url.searchParams.get("focusPath")
-    );
-    if (url.searchParams.get("focusId")) {
-      if (!catalogSelection) {
-        const error = new Error("Le Focus demandé est indisponible.");
-        error.statusCode = 400;
-        throw error;
-      }
-      focus = catalogSelection.name;
-      focusPath = catalogSelection.path;
-    }
-    let workspaceId = null;
-    if (url.searchParams.get("focusId") && focusPath) {
-      const focusId = String(url.searchParams.get("focusId"));
-      workspaceId = workspaceEngine.ensureLegacy({
-        legacyId: focusId,
-        name: focus || focusId,
-        rootPath: focusPath,
-        type: focusId.startsWith("projet-") ? "learning" : "project",
-      }).id;
-    }
-    const continuitySession = sessionContinuityEngine.resolveSession({
-      conversationId: sessionId,
-      workspaceId,
-      projectId: focus || null,
-      mode,
-      channel: "voice",
-      profileScope: "arnaud",
-    });
-    const language = normalizeLanguage(url.searchParams.get("language"));
-    const accent = normalizeAccent(url.searchParams.get("accent"));
-    const resolvedVoice = voiceIdentity.resolve({ pipeline: "realtime", language, accent, model });
-    voiceIdentity.assertAvailable(resolvedVoice);
-    const conversationKey = createConversationKey({
-      sessionId,
-      mode,
-      focus,
-      focusPath,
-    });
-    const history = getConversationHistory(conversationKey);
-    const sdp = await readTextBody(req);
-
-    if (!sdp.startsWith("v=0")) {
-      const error = new Error("L’offre WebRTC est invalide.");
-      error.statusCode = 400;
-      throw error;
-    }
-
-    const sessionConfig = {
-      type: "realtime",
-      model,
-      output_modalities: ["audio"],
-      reasoning: { effort: "low" },
-      audio: {
-        input: {
-          transcription: {
-            model: "gpt-4o-mini-transcribe",
-            ...(language === "auto" ? {} : { language }),
-          },
-          turn_detection: {
-            type: "semantic_vad",
-            eagerness: "auto",
-            create_response: true,
-            interrupt_response: true,
-          },
-        },
-        output: { voice: resolvedVoice.voice },
-      },
-      instructions: realtimeVoiceConfig.buildInstructions({
-        language,
-        accent,
-        mode,
-        focus,
-        focusPath,
-        history,
-      }),
-      tools: realtimeVoiceConfig.tools,
-      tool_choice: "auto",
-      truncation: {
-        type: "retention_ratio",
-        retention_ratio: 0.8,
-        token_limits: { post_instructions: 8000 },
-      },
-    };
-    const form = new FormData();
-    form.set("sdp", sdp);
-    form.set("session", JSON.stringify(sessionConfig));
-    const safetyIdentifier = crypto
-      .createHash("sha256")
-      .update(sessionId)
-      .digest("hex");
-    const upstream = await fetch(
-      "https://api.openai.com/v1/realtime/calls",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "OpenAI-Safety-Identifier": safetyIdentifier,
-        },
-        body: form,
-      }
-    );
-    const answerSdp = await upstream.text();
-
-    if (!upstream.ok) {
-      const error = new Error("Impossible d’ouvrir la conversation Live.");
-      error.statusCode = upstream.status;
-      error.code = "PROVIDER_UNAVAILABLE";
-      throw error;
-    }
-
-    res.writeHead(200, {
-      "Content-Type": "application/sdp",
-      "Cache-Control": "no-store",
-      "X-Noon-Voice-Model": model,
-      "X-Noon-Voice-Identity": resolvedVoice.identityId,
-      "X-Noon-Voice": resolvedVoice.voice,
-      "X-Noon-Voice-Status": resolvedVoice.status,
-      "X-Noon-Voice-Session": voiceSessionId,
-      "X-Noon-Session": continuitySession.id,
-      "X-Noon-Conversation": sessionId,
-      "X-Voice-Identity-Resolve-Ms": String(resolvedVoice.voiceIdentityResolveMs),
-      "X-Noon-Max-Session-Ms": String(REALTIME_MAX_SESSION_MS),
-      "X-Noon-Idle-Timeout-Ms": String(REALTIME_IDLE_TIMEOUT_MS),
-    });
-    return res.end(answerSdp);
-  } catch (error) {
-    res.writeHead(error.statusCode || 500, {
-      "Content-Type": "application/json",
-    });
-    return res.end(JSON.stringify({
-      status: "error",
-      code: error.code || null,
-      message: error.message,
-    }));
-  }
-}
-
-if (req.method === "POST" && req.url === "/realtime/usage") {
-  try {
-    if (req.headers["x-noon-request"] !== "1") {
-      const error = new Error("Requête Noon refusée.");
-      error.statusCode = 403;
-      throw error;
-    }
-    const body = await readJsonBody(req, 128 * 1024);
-    const sessionId = normalizeSessionId(body.sessionId);
-    const model = [REALTIME_MODELS.mini, REALTIME_MODELS.max]
-      .includes(body.model)
-      ? body.model
-      : REALTIME_MODELS.mini;
-    const result = registerRealtimeUsage({
-      sessionId,
-      responseId: body.responseId,
-      model,
-      usage: body.usage || {},
-    });
-    res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "ok", ...result }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 400);
-    return res.end(JSON.stringify({ status: "error", message: error.message }));
-  }
-}
-
-if (req.method === "POST" && req.url === "/realtime/turn") {
-  try {
-    if (req.headers["x-noon-request"] !== "1") {
-      const error = new Error("Requête Noon refusée.");
-      error.statusCode = 403;
-      throw error;
-    }
-    const body = await readJsonBody(req, 64 * 1024);
-    const turnId = String(body.turnId || "").slice(0, 120);
-    const question = String(body.question || "").trim().slice(0, 4000);
-    const answer = String(body.answer || "").trim().slice(0, 4000);
-
-    if (!turnId || !question || !answer) {
-      const error = new Error("Tour vocal incomplet.");
-      error.statusCode = 400;
-      throw error;
-    }
-
-    if (!rememberedRealtimeTurns.has(turnId)) {
-      const sessionId = normalizeSessionId(body.sessionId);
-      const mode = normalizeNoonMode(body.mode);
-      let focus = normalizeFocusName(body.focus);
-      let focusPath = normalizeFocusPath(body.focusPath);
-      const catalogSelection = resolveFocusCatalogSelection(
-        body.focusId,
-        body.focusPath
-      );
-      if (catalogSelection) {
-        focus = catalogSelection.name;
-        focusPath = catalogSelection.path;
-      }
-      const key = createConversationKey({ sessionId, mode, focus, focusPath });
-      rememberConversation(key, question, answer);
-      touchConversation(sessionId, question);
-      let workspaceId = null;
-      if (body.focusId && focusPath) {
-        const focusId = String(body.focusId);
-        workspaceId = workspaceEngine.ensureLegacy({
-          legacyId: focusId,
-          name: focus || focusId,
-          rootPath: focusPath,
-          type: focusId.startsWith("projet-") ? "learning" : "project",
-        }).id;
-      }
-      const continuitySession = sessionContinuityEngine.resolveSession({
-        conversationId: sessionId,
-        workspaceId,
-        projectId: focus || null,
-        mode,
-        channel: "voice",
-        profileScope: "arnaud",
-      });
-      sessionContinuityEngine.recordCompletedTurn(continuitySession.id, {
-        channel: "voice",
-        messages: [
-          { role: "user", content: question, state: "completed" },
-          { role: "assistant", content: answer, state: "completed" },
-        ],
-        lastMessageId: turnId,
-      });
-      rememberedRealtimeTurns.add(turnId);
-      if (rememberedRealtimeTurns.size > 1000) {
-        rememberedRealtimeTurns.delete(rememberedRealtimeTurns.values().next().value);
-      }
-    }
-
-    res.writeHead(200);
-    return res.end(JSON.stringify({ status: "ok" }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 400);
-    return res.end(JSON.stringify({ status: "error", message: error.message }));
-  }
-}
-
-if (req.method === "POST" && req.url === "/realtime/tool") {
-  try {
-    if (req.headers["x-noon-request"] !== "1") {
-      const error = new Error("Requête Noon refusée.");
-      error.statusCode = 403;
-      throw error;
-    }
-    const body = await readJsonBody(req, 128 * 1024);
-    const name = String(body.name || "");
-    const args = body.arguments && typeof body.arguments === "object"
-      ? body.arguments
-      : {};
-
-    if (name === "set_noon_mode") {
-      const mode = normalizeNoonMode(args.mode);
-      await intentCommandEngine.parse("voice", { transcript: `mode ${mode}`, sessionId: body.sessionId, structured: { action: "set_mode", mode } }, buildIntentContext({ sessionId: normalizeSessionId(body.sessionId) }));
-      res.writeHead(200);
-      return res.end(JSON.stringify({
-        status: "ok",
-        message: `Mode ${mode} activé.`,
-        clientAction: { type: "setMode", mode },
-      }));
-    }
-
-    if (name === "set_noon_focus") {
-      await intentCommandEngine.parse("voice", { transcript: args.clear ? "retire le focus" : `passe sur ${String(args.query || "")}`, sessionId: body.sessionId }, buildIntentContext({ sessionId: normalizeSessionId(body.sessionId) }));
-      const result = args.clear
-        ? { status: "cleared", project: null }
-        : resolveFocusProject(args.query);
-      res.writeHead(200);
-      return res.end(JSON.stringify({
-        status: "ok",
-        result,
-        clientAction:
-          result.status === "resolved" || result.status === "cleared"
-            ? { type: "setFocus", project: result.project }
-            : null,
-      }));
-    }
-
-    if (name === "set_noon_voice_style") {
-      const language = normalizeLanguage(args.language);
-      const accent = normalizeAccent(args.accent);
-      res.writeHead(200);
-      return res.end(JSON.stringify({
-        status: "ok",
-        message: "Style vocal mis à jour.",
-        clientAction: { type: "setVoiceStyle", language, accent },
-      }));
-    }
-
-    if (name === "manage_noon_projects") {
-      const action = String(args.action || "");
-      if (action === "scan") {
-        const projects = scanRegisteredProjects();
-        res.writeHead(200);
-        return res.end(JSON.stringify({
-          status: "ok",
-          message: `${projects.length} projet(s) détecté(s).`,
-          projects: projects.map(({ id, name, parentFocusName }) => ({ id, name, parentFocusName })),
-          clientAction: { type: "refreshProjects" },
-        }));
-      }
-      if (action === "list") {
-        const projects = getValidRegisteredProjects();
-        res.writeHead(200);
-        return res.end(JSON.stringify({
-          status: "ok",
-          count: projects.length,
-          projects: projects.map(({ id, name, parentFocusName }) => ({ id, name, parentFocusName })),
-        }));
-      }
-      if (action === "find") {
-        const result = resolveProject(args.query, getValidRegisteredProjects());
-        res.writeHead(200);
-        return res.end(JSON.stringify({ status: "ok", result }));
-      }
-      const error = new Error("Action projet non autorisée.");
-      error.statusCode = 400;
-      throw error;
-    }
-
-    if (name === "ask_noon_brain") {
-      const question = String(args.question || "").trim().slice(0, 4000);
-      if (!question) throw new Error("Question vocale vide.");
-      const sessionId = normalizeSessionId(body.sessionId);
-      const mode = normalizeNoonMode(body.mode);
-      let focus = normalizeFocusName(body.focus);
-      let focusPath = normalizeFocusPath(body.focusPath);
-      const catalogSelection = resolveFocusCatalogSelection(
-        body.focusId,
-        body.focusPath
-      );
-      if (catalogSelection) {
-        focus = catalogSelection.name;
-        focusPath = catalogSelection.path;
-      }
-      const key = createConversationKey({ sessionId, mode, focus, focusPath });
-      const history = getConversationHistory(key);
-      const webSearchEnabled = args.webSearch === true;
-      const currentWebUsage = refreshDailyWebSearchUsage();
-      if (
-        webSearchEnabled &&
-        currentWebUsage.calls >= WEB_SEARCH_DAILY_LIMIT
-      ) {
-        const error = new Error(
-          "La limite quotidienne de recherche Internet est atteinte."
-        );
-        error.statusCode = 429;
-        throw error;
-      }
-      const maxWebCalls = webSearchEnabled
-        ? Math.min(
-            WEB_SEARCH_MAX_PER_REQUEST,
-            WEB_SEARCH_DAILY_LIMIT - currentWebUsage.calls
-          )
-        : 0;
-      let workspaceId = null;
-      if (body.focusId && focusPath) {
-        workspaceId = workspaceEngine.ensureLegacy({ legacyId: String(body.focusId), name: focus || String(body.focusId), rootPath: focusPath, type: String(body.focusId).startsWith("projet-") ? "learning" : "project" }).id;
-      }
-      const continuitySession = sessionContinuityEngine.resolveSession({
-        conversationId: sessionId, workspaceId, projectId: focus || null,
-        mode, channel: "voice", profileScope: "arnaud",
-      });
-      const normalizedIntent = await intentCommandEngine.parse("voice", {
-        transcript: question, conversationId: sessionId,
-        sessionId: continuitySession.id, workspaceId,
-      }, buildIntentContext({ sessionId: continuitySession.id, conversationId: sessionId, workspaceId }));
-      sessionContinuityEngine.applyIntent(continuitySession.id, normalizedIntent);
-      const memoryCommand = executeExplicitConversationMemoryCommand(question, { projectId: focus || workspaceId || null, recentMemoryIds: recentAutomaticMemoryIds.get(sessionId) || [] });
-      if (memoryCommand) {
-        const memoryContext = { sourcesUsed: ["private_memory"], memoryIds: memoryCommand.memoryIds || [], truncated: false };
-        sessionContinuityEngine.recordCompletedTurn(continuitySession.id, { channel: "voice", normalizedIntent, executionId: null, approvalIds: [], artifacts: [], messages: [{ role: "user", content: question, state: "completed" }, { role: "assistant", content: memoryCommand.answer, state: "completed" }], lastMessageId: null });
-        res.writeHead(200);
-        return res.end(JSON.stringify({ status: "ok", answer: memoryCommand.answer, sessionId: continuitySession.id, conversationId: sessionId, sources: [], artifacts: [], memoryContext, memoryReceipt: memoryCommand.receipt || null, clientAction: { type: "brainAnswer", question, answer: memoryCommand.answer, sources: [], artifacts: [] } }));
-      }
-      const continuityContext = {
-        ...sessionContinuityEngine.contextForRequest(continuitySession.id),
-        version: sessionContinuityEngine.getSession(continuitySession.id).version,
-      };
-      const result = await askAI(
-        question,
-        focus,
-        focusPath,
-        mode,
-        history,
-        sessionId,
-        [],
-        "low",
-        webSearchEnabled,
-        maxWebCalls,
-        "balanced",
-        workspaceId,
-        normalizedIntent,
-        continuityContext
-      );
-      if (result.status !== "approval_required" && memoryEngine.privateStatus().available && memoryEngine.privateSettings().enabled) {
-        const automaticMemory = autonomousMemoryPipeline.process({ text: question, projectId: focus || workspaceId || null, projectName: focus || null });
-        result.memoryReceipt = automaticMemory.receipt;
-        if (automaticMemory.notification) result.answer = `${result.answer}\n\n${automaticMemory.notification}`;
-        if (automaticMemory.receipt.memoryIds.length) {
-          recentAutomaticMemoryIds.set(sessionId, automaticMemory.receipt.memoryIds);
-          memoryEngine.notifyChanged({ store: "private_memory", action: "automatic" });
-        }
-      }
-      sessionContinuityEngine.recordCompletedTurn(continuitySession.id, {
-        channel: "voice", normalizedIntent,
-        executionId: result.executionId || null,
-        approvalIds: result.approval?.id ? [result.approval.id] : [],
-        artifacts: result.artifacts || [],
-        messages: result.status === "approval_required" ? [] : [
-          { role: "user", content: question, state: "completed" },
-          { role: "assistant", content: result.answer, state: "completed" },
-        ],
-        lastMessageId: result.executionId || null,
-      });
-      res.writeHead(200);
-      return res.end(JSON.stringify({
-        status: result.status === "approval_required" ? "approval_required" : "ok",
-        answer: result.answer,
-        approval: result.approval || null,
-        executionId: result.executionId || null,
-        sessionId: continuitySession.id,
-        conversationId: sessionId,
-        sources: result.sources,
-        artifacts: result.artifacts || [],
-        memoryReceipt: result.memoryReceipt || null,
-        clientAction: {
-          type: "brainAnswer",
-          question,
-          answer: result.answer,
-          sources: result.sources,
-          artifacts: result.artifacts || [],
-          approval: result.approval || null,
-          executionId: result.executionId || null,
-        },
-      }));
-    }
-
-    const error = new Error("Outil vocal non autorisé.");
-    error.statusCode = 400;
-    throw error;
-  } catch (error) {
-    res.writeHead(error.statusCode || 500);
-    return res.end(JSON.stringify({ status: "error", message: error.message }));
-  }
-}
-
-if (req.method === "GET" && req.url === "/realtime/budget") {
-  res.writeHead(200, { "Cache-Control": "no-store" });
-  return res.end(JSON.stringify({
-    status: "ok",
-    budget: getVoiceBudgetStatus(),
-  }));
-}
-
-if (req.method === "GET" && req.url.startsWith("/voice/identity")) {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const pipeline = url.searchParams.get("pipeline") === "realtime" ? "realtime" : "tts";
-  const language = normalizeLanguage(url.searchParams.get("language"));
-  const accent = normalizeAccent(url.searchParams.get("accent"));
-  const resolved = voiceIdentity.resolve({ pipeline, language, accent, model: url.searchParams.get("model") || null });
-  res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-  return res.end(JSON.stringify({ status: "ok", identity: voiceIdentity.publicConfig(), resolved }));
-}
-
-if (req.method === "POST" && req.url === "/tts") {
-  try {
-    if (req.headers["x-noon-request"] !== "1") {
-      const error = new Error("Requête Noon refusée.");
-      error.statusCode = 403;
-      throw error;
-    }
-    assertRemoteVoiceAvailable(localIntelligenceRuntime, "REMOTE_REALTIME");
-    const body = await readJsonBody(req, 32 * 1024);
-    const input = String(body.text || "").trim().slice(0, 700);
-    if (!input) {
-      const error = new Error("Texte vocal vide.");
-      error.statusCode = 400;
-      throw error;
-    }
-    const language = normalizeLanguage(body.language, "fr-FR");
-    const accent = normalizeAccent(body.accent);
-    const mode = normalizeNoonMode(body.mode);
-    const identityStartedAt = Date.now();
-    const resolvedVoice = voiceIdentity.resolve({ pipeline: "tts", language, accent });
-    voiceIdentity.assertAvailable(resolvedVoice);
-    const instructions = [
-      resolvedVoice.styleInstructions,
-      mode === "DEV" ? "Ton technique mais chaleureux." : "Ton créatif, chaleureux et naturel.",
-    ].join(" ");
-    let upstream;
-    let selectedAttempt = null;
-    const ttsStartedAt = Date.now();
-
-    for (const attempt of voiceIdentity.attempts(resolvedVoice)) {
-      upstream = await fetch("https://api.openai.com/v1/audio/speech", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "gpt-4o-mini-tts",
-          voice: attempt.voice,
-          input,
-          instructions,
-          response_format: "pcm",
-        }),
-      });
-      if (upstream.ok) {
-        selectedAttempt = attempt;
-        if (attempt.fallback) voiceIdentity.traceFallback(resolvedVoice, "primary_provider_error");
-        break;
-      }
-    }
-
-    if (!upstream?.ok || !upstream.body) {
-      const error = new Error("La voix OpenAI est indisponible.");
-      error.statusCode = upstream?.status || 502;
-      throw error;
-    }
-
-    res.writeHead(200, {
-      "Content-Type": "audio/pcm",
-      "Cache-Control": "no-store",
-      "X-Audio-Sample-Rate": "24000",
-      "X-Noon-Voice-Identity": resolvedVoice.identityId,
-      "X-Noon-Voice": selectedAttempt.voice,
-      "X-Noon-Voice-Fallback": String(selectedAttempt.fallback),
-      "X-Voice-Identity-Resolve-Ms": String(Date.now() - identityStartedAt),
-      "X-TTS-Start-Ms": String(Date.now() - ttsStartedAt),
-    });
-    const reader = upstream.body.getReader();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!res.write(Buffer.from(value))) {
-        await new Promise((resolve) => res.once("drain", resolve));
-      }
-    }
-    return res.end();
-  } catch (error) {
-    if (res.headersSent) return res.destroy();
-    res.writeHead(error.statusCode || 500, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", code: error.code || null, message: error.message }));
-  }
-}
-
-if (requestPath === "/api/noon-health" && req.method === "GET") {
-  const healthUrl = new URL(req.url, `http://${req.headers.host || DEFAULT_HOST}`);
-  res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
-  return res.end(JSON.stringify({ status: "ok", health: noonHealthReport.report({ days: Number(healthUrl.searchParams.get("days")) || 7 }) }));
-}
-
-if (requestPath === "/api/diagnostics/metrics" && req.method === "GET") {
-  const diagnosticsUrl = new URL(req.url, `http://${req.headers.host || DEFAULT_HOST}`);
-  const requestedExecutionId = diagnosticsUrl.searchParams.get("executionId");
-  res.writeHead(200, {
-    "Content-Type": "application/json",
-    "Cache-Control": "no-store",
-  });
-  return res.end(JSON.stringify({
-    status: "ok",
-    diagnostics: noonObservability.summary({ sinceMs: 30 * 24 * 60 * 60 * 1000 }),
-    trace: requestedExecutionId ? noonObservability.getTrace(requestedExecutionId) : undefined,
-  }));
-}
-
-if (req.url === "/api/diagnostics/voice" && req.method === "POST") {
-  try {
-    const body = await readJsonBody(req, 16 * 1024);
-    const executionId = String(body.executionId || "");
-    if (!noonObservability.getTrace(executionId)) {
-      noonObservability.startExecution({
-        executionId,
-        channel: body.channel === "live_voice" ? "live_voice" : "voice",
-        intent: "voice",
-      });
-    }
-    noonObservability.recordVoice(executionId, body.metrics || {});
-    if (body.completed === true) {
-      const duration = Number(body.metrics?.sessionTotalMs) || 0;
-      noonObservability.completeExecution(executionId, {
-        status: "completed", wallClockTotalMs: duration, technicalExecutionMs: duration,
-      });
-    }
-    res.writeHead(204, { "Cache-Control": "no-store" });
-    return res.end();
-  } catch (error) {
-    res.writeHead(error.statusCode || 400, { "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "error", message: "Métriques audio invalides." }));
-  }
-}
-
-if (req.method === "GET" && req.url.startsWith("/sessions/diagnostics")) {
-  try {
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const requestedSessionId = String(url.searchParams.get("sessionId") || "").trim();
-    const diagnostics = sessionContinuityEngine.diagnostics(requestedSessionId || null);
-    res.writeHead(200, {
-      "Content-Type": "application/json",
-      "Cache-Control": "no-store",
-    });
-    return res.end(JSON.stringify({
-      status: "ok",
-      count: diagnostics.length,
-      sessions: diagnostics,
-    }));
-  } catch (error) {
-    res.writeHead(error.code === "SESSION_NOT_FOUND" ? 404 : 400, {
-      "Content-Type": "application/json",
-      "Cache-Control": "no-store",
-    });
-    return res.end(JSON.stringify({ status: "error", message: error.message }));
-  }
-}
-
-if (
-  req.method === "POST" &&
-  ["/sessions/resume", "/sessions/suspend"].includes(req.url)
-) {
-  try {
-    if (req.headers["x-noon-request"] !== "1") {
-      const error = new Error("Requête Noon refusée.");
-      error.statusCode = 403;
-      throw error;
-    }
-    const body = await readJsonBody(req, 16 * 1024);
-    const explicitSessionId = String(body.sessionId || "").trim();
-    let session = explicitSessionId
-      ? sessionContinuityEngine.getSession(explicitSessionId)
-      : sessionContinuityEngine.getActiveSession({
-          conversationId: normalizeSessionId(body.conversationId),
-          profileScope: "arnaud",
-        });
-    if (!session && body.conversationId) {
-      session = sessionContinuityEngine.resolveSession({
-        conversationId: normalizeSessionId(body.conversationId),
-        workspaceId: body.workspaceId || null,
-        projectId: body.projectId || null,
-        mode: normalizeNoonMode(body.mode),
-        channel: body.channel === "voice" ? "voice" : "chat",
-        profileScope: "arnaud",
-      });
-    }
-    if (!session) {
-      const error = new Error("Session introuvable.");
-      error.statusCode = 404;
-      throw error;
-    }
-    const result = req.url === "/sessions/resume"
-      ? sessionContinuityEngine.restoreContext(session.id, {
-          query: String(body.query || "").slice(0, 1000),
-          includeOldHistory: body.includeOldHistory === true,
-        })
-      : sessionContinuityEngine.suspendSession(session.id, String(body.reason || "conversation_left").slice(0, 80));
-    res.writeHead(200, {
-      "Content-Type": "application/json",
-      "Cache-Control": "no-store",
-    });
-    return res.end(JSON.stringify({ status: "ok", session: result }));
-  } catch (error) {
-    res.writeHead(error.statusCode || (error.code === "SESSION_NOT_FOUND" ? 404 : 400), {
-      "Content-Type": "application/json",
-      "Cache-Control": "no-store",
-    });
-    return res.end(JSON.stringify({ status: "error", message: error.message }));
-  }
-}
-
-if (req.method === "GET" && req.url.startsWith("/api/control-center/overview")) {
-  try {
-    const url = new URL(req.url, `http://${req.headers.host || DEFAULT_HOST}`);
-    const snapshot = await controlCenterService.getOverview({ view: url.searchParams.get("view") || "USER", force: url.searchParams.get("refresh") === "1" });
-    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "ok", snapshot }));
-  } catch (error) {
-    res.writeHead(error.code === "CONTROL_CENTER_DISABLED" ? 404 : 400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "error", code: error.code || "CONTROL_OVERVIEW_FAILED", message: "Le Control Center est temporairement indisponible." }));
-  }
-}
-
-if (req.method === "GET" && req.url.startsWith("/api/control-center/sections/")) {
-  try {
-    const url = new URL(req.url, `http://${req.headers.host || DEFAULT_HOST}`);
-    const sectionId = decodeURIComponent(url.pathname.slice("/api/control-center/sections/".length));
-    const sectionModel = await controlCenterService.getSection(sectionId, { view: url.searchParams.get("view") || "USER", force: url.searchParams.get("refresh") === "1" });
-    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "ok", section: sectionModel }));
-  } catch (error) {
-    res.writeHead(error.code === "CONTROL_SECTION_UNKNOWN" ? 404 : 400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "error", code: error.code || "CONTROL_SECTION_FAILED", message: "Cette section est temporairement indisponible." }));
-  }
-}
-
-if (req.method === "POST" && req.url === "/api/control-center/actions") {
-  try {
-    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403, code: "CONTROL_TRUSTED_UI_REQUIRED" });
-    const body = await readJsonBody(req, 16 * 1024);
-    const result = await controlCenterService.requestAction(body, { actor: "owner", origin: "trusted_ui" });
-    res.writeHead(result.status === "PENDING_APPROVAL" ? 202 : 200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "ok", action: result }));
-  } catch (error) {
-    res.writeHead(error.statusCode || (error.code === "CONTROL_ACTION_UNKNOWN" ? 404 : 400), { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "error", code: error.code || "CONTROL_ACTION_FAILED", message: "L’action n’a pas été exécutée." }));
-  }
-}
-
-if (req.method === "GET" && req.url === "/api/health") {
-  res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-  return res.end(JSON.stringify({ status: "ok", diagnostic: reliabilityEngine.report() }));
-}
-
-if (req.method === "GET" && req.url.startsWith("/api/health/")) {
-  try {
-    const componentId = decodeURIComponent(new URL(req.url, `http://${req.headers.host}`).pathname.slice("/api/health/".length));
-    const snapshot = await reliabilityEngine.check(componentId);
-    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "ok", component: snapshot, explanation: reliabilityEngine.explain([componentId]) }));
-  } catch (error) {
-    res.writeHead(error.code === "COMPONENT_UNKNOWN" ? 404 : 400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "error", message: "Diagnostic indisponible pour ce composant." }));
-  }
-}
-
-if (req.method === "POST" && req.url === "/api/health/diagnose") {
-  try {
-    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403 });
-    const body = await readJsonBody(req, 4 * 1024);
-    const diagnostic = await reliabilityEngine.diagnose({ deep: body.deep === true });
-    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "ok", diagnostic, explanation: reliabilityEngine.explain() }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "error", message: error.message }));
-  }
-}
-
-if (req.method === "POST" && req.url.startsWith("/api/health/") && req.url.endsWith("/repair")) {
-  try {
-    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403 });
-    const pathname = new URL(req.url, `http://${req.headers.host}`).pathname;
-    const componentId = decodeURIComponent(pathname.slice("/api/health/".length, -"/repair".length));
-    const result = await reliabilityEngine.selfHeal(componentId);
-    res.writeHead(result.repaired ? 200 : 409, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: result.repaired ? "ok" : "refused", componentId, ...result }));
-  } catch (error) {
-    res.writeHead(error.statusCode || (error.code === "COMPONENT_UNKNOWN" ? 404 : 400), { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "error", message: "Réparation sûre indisponible pour ce composant." }));
-  }
-}
-
-if (req.method === "GET" && req.url.startsWith("/api/runtime/capabilities")) {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const snapshot = localIntelligenceRuntime.snapshot({
-    internetAvailable: url.searchParams.get("internet") !== "offline",
-    providerAvailable: url.searchParams.get("provider") !== "unavailable",
-    lanAvailable: url.searchParams.get("lan") === "available" ? true : undefined,
-  });
-  res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-  return res.end(JSON.stringify({ status: "ok", runtime: snapshot }));
-}
-
-if (req.method === "POST" && req.url === "/api/runtime/mode") {
-  try {
-    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403 });
-    const body = await readJsonBody(req, 10 * 1024);
-    const runtime = localIntelligenceRuntime.setPreference(body.preference, { origin: "user" });
-    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "ok", runtime }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 400, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", message: error.message }));
-  }
-}
-
-if (devMissionHttpRoutes.matches(requestPath)) {
-  return devMissionHttpRoutes.handle(req, res, { requestPath, readJsonBody });
-}
-if (remoteLanHttpRoutes.matches(requestPath)) {
-  return remoteLanHttpRoutes.handle(req, res, { requestPath, readJsonBody });
-}
-
-if (selfDevHttpRoutes.matches(requestPath)) {
-  return selfDevHttpRoutes.handle(req, res, { requestPath, readJsonBody });
-}
-
-if (mcpService.matches(requestPath)) {
-  return mcpService.handle(req, res, { requestPath, readJsonBody });
-}
-
-if (req.method === "GET" && req.url === "/api/extensions") {
-  res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-  return res.end(JSON.stringify({ status: "ok", isolation: "IN_PROCESS_TRUSTED", extensions: extensionRegistry.list() }));
-}
-
-if (req.method === "POST" && /^\/api\/extensions\/[^/]+\/(enable|disable|health)$/.test(req.url)) {
-  try {
-    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403 });
-    const [, , , encodedId, action] = new URL(req.url, `http://${req.headers.host}`).pathname.split("/");
-    const extensionId = decodeURIComponent(encodedId);
-    const extension = action === "enable" ? await extensionRegistry.enable(extensionId)
-      : action === "disable" ? await extensionRegistry.disable(extensionId)
-        : { ...extensionRegistry.get(extensionId), health: await extensionRegistry.checkHealth(extensionId) };
-    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "ok", extension }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "error", code: error.code || "EXTENSION_ACTION_FAILED", message: error.message }));
-  }
-}
-
-if (req.url === "/health" && req.method === "GET") {
-  const budget = getBudgetStatus();
-  const currentWebUsage = refreshDailyWebSearchUsage();
-
-  res.writeHead(200, {
-    "Content-Type": "application/json",
-    "Cache-Control": "no-store",
-  });
-
-  return res.end(
-    JSON.stringify({
-      status: "ok",
-      service: "Noon",
-      budgetMode: budget.mode,
-      codex: {
-        available: Boolean(findCodexExecutable()),
-        mode: "read-only",
-      },
-      webSearchUsage: {
-        used: currentWebUsage.calls,
-        limit: WEB_SEARCH_DAILY_LIMIT,
-        remaining:
-          WEB_SEARCH_DAILY_LIMIT - currentWebUsage.calls,
-      },
-      voiceBudget: getVoiceBudgetStatus(),
-      observability: noonObservability.healthSummary(),
-      contextCache: contextBuilder.cacheStats(),
-      reliability: reliabilityEngine.report(),
-      timestamp: new Date().toISOString(),
-    })
-  );
-}
-
-// Contrats locaux du contexte ambiant. Ils n'activent aucune collecte : seul
-// un POST explicite avec l'en-tête interne peut démarrer une session.
-if (req.method === "GET" && req.url === "/api/context/ambient") {
-  res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-  return res.end(JSON.stringify({ status: "ok", context: ambientContextEngine.currentView() }));
-}
-
-if (req.method === "POST" && req.url.startsWith("/api/context/ambient/")) {
-  try {
-    if (req.headers["x-noon-request"] !== "1") {
-      const error = new Error("Requête Noon refusée."); error.statusCode = 403; throw error;
-    }
-    const body = await readJsonBody(req, 64 * 1024);
-    const action = req.url.slice("/api/context/ambient/".length);
-    let result;
-    if (action === "start") result = ambientContextEngine.start({ requestedMode: body.mode || "EXPLICIT_SHARE", durationMs: body.durationMs, userExplicit: body.userExplicit === true });
-    else if (action === "stop") result = ambientContextEngine.stop("user_stop");
-    else if (action === "signal") result = ambientContextEngine.receive(body.signal || {});
-    else { const error = new Error("Action de contexte inconnue."); error.statusCode = 404; throw error; }
-    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "ok", result, context: ambientContextEngine.currentView() }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 400, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", code: error.code || null, message: error.message }));
-  }
-}
-
-// Une comparaison produit uniquement une recommandation structurée. Cette
-// route ne transmet jamais le résultat aux outils d'exécution.
-// Branchement B2 : avant toutes les routes /api/goals génériques (GET et POST).
-if (requestPath.startsWith(GOAL_MODE_DEV_HTTP_PREFIX)) {
-  return goalModeDevHttp.handle(req, res, requestPath);
-}
-
-if (req.method === "GET" && req.url.startsWith("/api/goals")) {
-  try {
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const profileScope = String(url.searchParams.get("profileScope") || "arnaud").slice(0, 80);
-    const goals = goalStrategyEngine.registry.list({
-      profileScope,
-      workspaceId: url.searchParams.get("workspaceId") || null,
-      projectId: url.searchParams.get("projectId") || null,
-    });
-    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "ok", goals, candidates: goalStrategyEngine.registry.listCandidates({ profileScope }) }));
-  } catch (error) {
-    res.writeHead(400, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", code: error.code || null, message: error.message }));
-  }
-}
-
-function sendGoalDevRetryError(
-  res,
-  error
-) {
-  res.writeHead(
-    goalDevRetryHttpStatus(
-      error
-    ),
-    {
-      "Content-Type":
-        "application/json",
-      "Cache-Control":
-        "no-store",
-    }
-  );
-
-  return res.end(
-    JSON.stringify({
-      status: "error",
-
-      code:
-        error?.code ||
-        "GOAL_DEV_RETRY_API_FAILURE",
-
-      message:
-        error?.message ||
-        "Erreur Retry DEV.",
-    })
-  );
-}
-
-/*
- * 4.6K — surface HTTP minimale du Retry Runtime.
- *
- * Le renderer ne peut fournir que :
- * - chainId à la préparation ;
- * - approvalId + resumeToken + décision explicite à la reprise.
- *
- * Aucun taskId, workspace, projet, chemin, permission ou template
- * provenant du client n'est accepté par ce contrat.
- */
-if (
-  requestPath ===
-    "/api/goals/dev-retry/prepare" &&
-  req.method === "POST"
-) {
-  try {
-    requireTrustedDevUi(req);
-
-    const body =
-      await readJsonBody(
-        req,
-        8 * 1024
-      );
-
-    const input =
-      normalizeGoalDevRetryPrepareRequest(
-        body
-      );
-
-    const permit =
-      await goalDevRetryRuntime
-        .permitService
-        .prepare(
-          input
-        );
-
-    const retry =
-      projectGoalDevRetryPermitResponse(
-        permit
-      );
-
-    res.writeHead(
-      202,
-      {
-        "Content-Type":
-          "application/json",
-        "Cache-Control":
-          "no-store",
-      }
-    );
-
-    return res.end(
-      JSON.stringify({
-        status: "ok",
-        retry,
-      })
-    );
-  } catch (error) {
-    return sendGoalDevRetryError(
-      res,
-      error
-    );
-  }
-}
-
-if (
-  requestPath ===
-    "/api/goals/dev-retry/resume" &&
-  req.method === "POST"
-) {
-  try {
-    requireTrustedDevUi(req);
-
-    const body =
-      await readJsonBody(
-        req,
-        8 * 1024
-      );
-
-    /*
-     * decision est obligatoire au niveau HTTP.
-     * L'API ne doit jamais hériter du défaut
-     * "approve" du service interne.
-     */
-    const input =
-      normalizeGoalDevRetryResumeRequest(
-        body
-      );
-
-    const resumed =
-      await goalDevRetryRuntime
-        .approvedRetryService
-        .resume(
-          input
-        );
-
-    const retry =
-      projectGoalDevRetryResumeResponse(
-        resumed
-      );
-
-    res.writeHead(
-      200,
-      {
-        "Content-Type":
-          "application/json",
-        "Cache-Control":
-          "no-store",
-      }
-    );
-
-    return res.end(
-      JSON.stringify({
-        status: "ok",
-        retry,
-      })
-    );
-  } catch (error) {
-    return sendGoalDevRetryError(
-      res,
-      error
-    );
-  }
-}
-
-if (req.method === "POST" && req.url.startsWith("/api/goals/")) {
-  try {
-    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403 });
-    const body = await readJsonBody(req, 256 * 1024);
-    const action = new URL(req.url, `http://${req.headers.host}`).pathname.slice("/api/goals/".length);
-    let result;
-    if (action === "create") result = goalStrategyEngine.createGoal(body.goal || body);
-    else if (action === "candidate") result = goalStrategyEngine.proposeGoal(body.goal || body);
-    else if (action === "confirm") result = goalStrategyEngine.confirmCandidate(body.candidateId, body.goal || {});
-    else if (action === "update") result = goalStrategyEngine.updateGoal(body.goalId, body.changes || {}, { userConfirmed: body.userConfirmed === true });
-    else if (action === "transition") result = goalStrategyEngine.transition(body.goalId, body.status, { userConfirmed: body.userConfirmed === true, evidence: body.evidence || {} });
-    else if (action === "milestone") result = goalStrategyEngine.addMilestone(body.goalId, body.milestone || {}, { userConfirmed: body.userConfirmed === true });
-    else if (action === "strategy") result = goalStrategyEngine.versionStrategy(body.goalId, body.strategy || {}, { userConfirmed: body.userConfirmed === true });
-    else if (action === "review") result = goalStrategyEngine.reviewGoal(body.goalId, body.review || {});
-    else if (action === "alignment") result = goalStrategyEngine.evaluateAlignment(body.subject || {}, body.scope || {}, body.evidence || []);
-    else if (action === "dev-run") {
-      if (body.userConfirmed !== true) {
-        throw Object.assign(
-          new Error("Le lancement DEV depuis Goal requiert une confirmation explicite."),
-          {
-            statusCode: 400,
-            code: "GOAL_DEV_EXECUTION_CONFIRMATION_REQUIRED",
-          }
-        );
-      }
-
-      result =
-        await goalDevExecutionService.run({
-          goalId:
-            body.goalId,
-          request:
-            body.devTask || {},
-        });
-    }
-    else throw Object.assign(new Error("Action Goal inconnue."), { statusCode: 404 });
-    res.writeHead(action === "create" ? 201 : 200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "ok", result }));
-  } catch (error) {
-    res.writeHead(error.statusCode || (error.code === "GOAL_NOT_FOUND" ? 404 : 400), { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", code: error.code || null, message: error.message }));
-  }
-}
-
-if (req.method === "POST" && req.url === "/api/decision/compare") {
-  try {
-    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403 });
-    const body = await readJsonBody(req, 256 * 1024);
-
-    let result;
-
-    if (body.devEvidence !== undefined) {
-      if (
-        !body.decision ||
-        typeof body.decision !== "object" ||
-        Array.isArray(body.decision)
-      ) {
-        throw new TypeError(
-          "decision explicite requise avec devEvidence."
-        );
-      }
-
-      result =
-        devDecisionConsumer.compare({
-          decisionRequest:
-            body.decision,
-
-          devEvidence:
-            body.devEvidence,
-
-          remote:
-            body.remote === true,
-        });
-    } else {
-      result =
-        decisionSupportEngine.compare(
-          body.decision || body,
-          {
-            remote:
-              body.remote === true,
-          }
-        );
-    }
-
-    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "ok", result }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 400, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", code: error.code || null, message: error.message }));
-  }
-}
-
-if (req.method === "POST" && req.url === "/api/decision/record") {
-  try {
-    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403 });
-    const body = await readJsonBody(req, 64 * 1024);
-    const record = decisionSupportEngine.recordChoice(body);
-    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "ok", record }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 400, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", code: error.code || null, message: error.message }));
-  }
-}
-
-if (
-  req.method === "POST" &&
-  req.url === "/transcribe"
-) {
-  const transcriptionStartedAt = Date.now();
-  const budget = getBudgetStatus();
-
-  try {
-    assertRemoteVoiceAvailable(localIntelligenceRuntime, "REMOTE_TRANSCRIPTION");
-  } catch (error) {
-    res.writeHead(error.statusCode || 409, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", code: error.code, message: error.message }));
-  }
-
-  if (budget.mode === "BLOCKED") {
-    res.writeHead(403);
-
-    return res.end(
-      JSON.stringify({
-        status: "error",
-        message:
-          "Budget mensuel Noon atteint.",
-      })
-    );
-  }
-
-  const chunks = [];
-  let totalBytes = 0;
-  let audioTooLarge = false;
-
-  req.on("data", (chunk) => {
-    if (audioTooLarge) return;
-
-    totalBytes += chunk.length;
-
-    if (totalBytes > MAX_AUDIO_BYTES) {
-      audioTooLarge = true;
-      chunks.length = 0;
-      return;
-    }
-
-    chunks.push(chunk);
-  });
-
-  req.on("end", async () => {
-    if (audioTooLarge) {
-      res.writeHead(413);
-
-      return res.end(
-        JSON.stringify({
-          status: "error",
-          message: "Enregistrement trop volumineux.",
-        })
-      );
-    }
-
-    if (chunks.length === 0) {
-      res.writeHead(400);
-
-      return res.end(
-        JSON.stringify({
-          status: "error",
-          message: "Aucun son reçu.",
-        })
-      );
-    }
-
-    try {
-      const audioBuffer = Buffer.concat(chunks);
-
-      const text = await transcribeAudioBuffer(
-        audioBuffer,
-        req.headers["content-type"]
-      );
-
-      if (!text) {
-        res.writeHead(422);
-
-        return res.end(
-          JSON.stringify({
-            status: "error",
-            message:
-              "Aucune parole n'a été reconnue.",
-          })
-        );
-      }
-
-      trackTranscriptionUsage(
-        req.headers["x-audio-duration-ms"]
-      );
-
-      res.writeHead(200, {
-        "Content-Type": "application/json",
-        "X-Transcription-Ms": String(Date.now() - transcriptionStartedAt),
-      });
-
-      return res.end(
-        JSON.stringify({
-          status: "ok",
-          text,
-        })
-      );
-    } catch (error) {
-      console.error(
-        "Erreur de transcription :",
-        error.message
-      );
-
-      res.writeHead(500);
-
-      return res.end(
-        JSON.stringify({
-          status: "error",
-          message:
-            "Impossible de transcrire la voix.",
-        })
-      );
-    }
-  });
-
-  return;
-}
-
-if (req.method === "GET" && ["/daily-brief/current", "/daily-brief", "/brief", "/personal-brief"].includes(requestPath)) {
-  let preferences = {};
-  try { preferences = JSON.parse(fs.readFileSync(path.join(DATA_DIRECTORY, "preferences.json"), "utf8")); } catch {}
-  const state = dailyBriefEngine.getCurrent({
-    catchUp: new URL(req.url, `http://${req.headers.host}`).searchParams.get("catchUp") !== "false",
-    enabled: preferences.creativeBriefEnabled !== false && process.env.NOON_SAFE_MODE !== "1",
-    time: preferences.creativeBriefTime || "07:00",
-  });
-  res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-  return res.end(JSON.stringify(state));
-}
-
-if (req.method === "GET" && requestPath === "/daily-brief/usage") {
-  const days = Number(new URL(req.url, `http://${req.headers.host}`).searchParams.get("days")) || 14;
-  res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
-  return res.end(JSON.stringify({ status: "ok", usage: briefUsageLog.summary({ days }) }));
-}
-
-if (req.method === "POST" && requestPath === "/daily-brief/opened") {
-  try {
-    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403 });
-    const body = await readJsonBody(req, 1024);
-    const day = briefUsageLog.recordOpened({ date: String(body?.date || "") });
-    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-    return res.end(JSON.stringify({ status: "ok", recorded: Boolean(day) }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 400, { "Content-Type": "application/json; charset=utf-8" });
-    return res.end(JSON.stringify({ status: "error", message: error.statusCode === 403 ? error.message : "Ouverture non enregistrée." }));
-  }
-}
-
-if (req.method === "GET" && requestPath === "/daily-brief/history") {
-  const date = new URL(req.url, `http://${req.headers.host}`).searchParams.get("date");
-  const brief = dailyBriefEngine.getHistorical(date);
-  res.writeHead(brief ? 200 : 404, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-  return res.end(JSON.stringify({ status: brief ? "historical" : "missing", brief }));
-}
-
-if (req.method === "GET" && req.url === "/character/dials") {
-  const state = characterStore.get();
-  res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
-  return res.end(JSON.stringify({ status: "ok", enabled: featureFlags.evaluate("character.charter", {}).enabled, dials: state.dials, updatedAt: state.updatedAt, charterVersion: state.charterVersion, definitions: CHARACTER_DIALS }));
-}
-
-if (req.method === "POST" && req.url === "/character/dials") {
-  try {
-    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403, code: "CHARACTER_REQUEST_REFUSED" });
-    const body = await readJsonBody(req, 4 * 1024);
-    const state = characterStore.update(body?.dials);
-    toolAuditLog.append("character.dials_updated", { keys: Object.keys(body?.dials || {}).slice(0, 5) });
-    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-    return res.end(JSON.stringify({ status: "ok", dials: state.dials, updatedAt: state.updatedAt }));
-  } catch (error) {
-    const known = /^CHARACTER_/.test(String(error?.code || ""));
-    res.writeHead(error.statusCode || (known ? 400 : 500), { "Content-Type": "application/json; charset=utf-8" });
-    return res.end(JSON.stringify({ status: "error", code: known ? error.code : "CHARACTER_ERROR", message: known ? error.message : "Réglage du caractère impossible." }));
-  }
-}
-
-if (req.method === "GET" && req.url === "/planning/preferences") {
-  const state = planningPreferenceStore.load();
-  res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-  return res.end(JSON.stringify({ status: "ok", ...state }));
-}
-
-if (req.method === "POST" && req.url === "/planning/preferences") {
-  try {
-    const body = await readJsonBody(req, 40 * 1024); let result;
-    if (body.action === "settings") result = planningPreferenceStore.updateSettings(body.settings || {});
-    else if (body.action === "add") result = planningPreferenceStore.addPreference(body.preference || {});
-    else if (body.action === "update") result = planningPreferenceStore.updatePreference(String(body.id || ""), body.changes || {});
-    else if (body.action === "delete") result = planningPreferenceStore.removePreference(String(body.id || ""));
-    else throw Object.assign(new Error("Action de préférence inconnue."), { statusCode: 400 });
-    res.writeHead(200, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ status: "ok", result }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 400, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ status: "error", message: error.message }));
-  }
-}
-
-if (req.method === "GET" && req.url.startsWith("/planning/day")) {
-  const url = new URL(req.url, `http://${req.headers.host || DEFAULT_HOST}`);
-  const requestedDate = url.searchParams.get("date") || new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit",
-  }).format(new Date());
-  const plan = dailyPlanStore.get(requestedDate);
-  res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-  return res.end(JSON.stringify({ status: "ok", plan }));
-}
-
-if (req.method === "POST" && ["/planning/day/build", "/planning/day/replan"].includes(req.url)) {
-  try {
-    const body = await readJsonBody(req, 2 * 1024 * 1024);
-    const input = {
-      actions: Array.isArray(body.actions) ? body.actions.slice(0, 200) : [],
-      events: Array.isArray(body.events) ? body.events.slice(0, 200) : [],
-      at: body.at ? new Date(body.at) : new Date(),
-      trigger: String(body.trigger || (req.url.endsWith("replan") ? "user_replan" : "user_build")).slice(0, 80),
-    };
-    if (!Number.isFinite(input.at.getTime())) throw Object.assign(new Error("Date de planification invalide."), { statusCode: 400 });
-    const plan = req.url.endsWith("replan")
-      ? await dailyPlanningEngine.replanDay(input)
-      : await dailyPlanningEngine.buildPlan(input);
-    executionTrackingEngine.ingestPlan(plan, { subjectScope: body.subjectScope || "arnaud" });
-    res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "ok", plan }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 400, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", message: error.message }));
-  }
-}
-
-if (req.method === "POST" && req.url === "/planning/day/approval") {
-  try {
-    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403 });
-    const body = await readJsonBody(req, 50 * 1024);
-    const plan = dailyPlanStore.get(String(body.date || ""));
-    if (!plan || plan.planId !== body.planId || plan.planVersion !== Number(body.planVersion)) {
-      throw Object.assign(new Error("Le planning a changé. Recalculez-le avant validation."), { statusCode: 409 });
-    }
-    const approval = await dailyPlanningEngine.previewApproval(plan, {
-      executionId: body.executionId,
-      calendarId: body.calendarId || "primary",
-    });
-    res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "approval_required", approval }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 400, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", message: error.message }));
-  }
-}
-
-if (req.method === "GET" && req.url.startsWith("/tracking/items")) {
-  const url = new URL(req.url, `http://${req.headers.host || DEFAULT_HOST}`);
-  const allowedScopes = new Set(["arnaud", "alexandra", "sinan", "kaan", "household", "projects"]);
-  const subjectScope = allowedScopes.has(url.searchParams.get("subjectScope")) ? url.searchParams.get("subjectScope") : "arnaud";
-  const items = executionTrackingEngine.list({ subjectScope, status: url.searchParams.get("status") || undefined });
-  res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-  return res.end(JSON.stringify({ status: "ok", count: items.length, items }));
-}
-
-if (req.method === "POST" && ["/tracking/evidence", "/tracking/command"].includes(req.url)) {
-  try {
-    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403 });
-    const body = await readJsonBody(req, 80 * 1024);
-    let result;
-    if (req.url === "/tracking/command") {
-      const candidates = (body.executionItemIds || []).slice(0, 10)
-        .map((id) => executionTrackingRepository.get(String(id))).filter(Boolean);
-      result = executionTrackingEngine.interpretUserCommand(body.text, candidates, {
-        at: body.at ? new Date(body.at) : new Date(),
-      });
-    } else {
-      result = executionTrackingEngine.synchronizeEvidence(body.evidence || {});
-    }
-    res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "ok", result }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 400, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", code: error.code || null, message: error.message }));
-  }
-}
-
-if (req.method === "POST" && req.url === "/tracking/drift") {
-  try {
-    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403 });
-    const body = await readJsonBody(req, 30 * 1024);
-    const at = body.at ? new Date(body.at) : new Date();
-    const drifts = executionTrackingEngine.detectDrift({ at, subjectScope: body.subjectScope || "arnaud" });
-    const proactive = body.proactive === false ? null : await executionTrackingEngine.sendDriftsToProactive(drifts, { at, subjectScope: body.subjectScope || "arnaud" });
-    res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "ok", drifts, proactive }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 400, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", message: error.message }));
-  }
-}
-
-if (req.method === "GET" && req.url.startsWith("/reviews")) {
-  const url = new URL(req.url, `http://${req.headers.host || DEFAULT_HOST}`);
-  const allowedScopes = new Set(["arnaud", "alexandra", "sinan", "kaan", "household", "projects"]);
-  const subjectScope = allowedScopes.has(url.searchParams.get("subjectScope"))
-    ? url.searchParams.get("subjectScope") : "arnaud";
-  const reviewType = ["daily", "weekly"].includes(url.searchParams.get("type"))
-    ? url.searchParams.get("type") : undefined;
-  const reviews = reviewLearningEngine.list({ subjectScope, reviewType, limit: 30 });
-  res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-  return res.end(JSON.stringify({ status: "ok", count: reviews.length, reviews }));
-}
-
-if (req.method === "POST" && ["/reviews/daily", "/reviews/weekly"].includes(req.url)) {
-  try {
-    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403 });
-    const body = await readJsonBody(req, 30 * 1024);
-    const allowedScopes = new Set(["arnaud", "alexandra", "sinan", "kaan", "household", "projects"]);
-    const subjectScope = allowedScopes.has(body.subjectScope) ? body.subjectScope : "arnaud";
-    const explicitPreferences = body.explicitPreferences && typeof body.explicitPreferences === "object"
-      ? body.explicitPreferences : {};
-    const review = req.url === "/reviews/daily"
-      ? reviewLearningEngine.generateDaily({ date: body.date, subjectScope, explicitPreferences })
-      : reviewLearningEngine.generateWeekly({
-        at: body.at ? new Date(body.at) : new Date(), subjectScope, explicitPreferences,
-      });
-    res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "ok", review }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 400, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", message: error.message }));
-  }
+{
+  const routed = await projectsHttpRoutes(req, res, requestPath);
+  if (routed !== NOT_HANDLED) return routed;
 }
 
-if (req.method === "GET" && req.url === "/integrations/status") {
-  res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-  return res.end(JSON.stringify({
-    status: "ok",
-    dryRunExternalWrites: true,
-    integrations: [gmailConnector.status, calendarConnector.status, remindersConnector.status, notesConnector.status],
-  }));
+{
+  const routed = await conversationHttpRoutes(req, res, requestPath);
+  if (routed !== NOT_HANDLED) return routed;
 }
 
-if (req.method === "POST" && ["/integrations/gmail/connect", "/integrations/google-calendar/connect"].includes(req.url)) {
-  try {
-    const { url } = await createGoogleReadAuthorization();
-    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "ok", authorizationUrl: url }));
-  } catch (error) {
-    res.writeHead(503, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", message: error.message }));
-  }
+{
+  const routed = await voiceHttpRoutes(req, res, requestPath);
+  if (routed !== NOT_HANDLED) return routed;
 }
 
-if (req.method === "GET" && requestPath === "/integrations/google/callback") {
-  const callbackUrl = new URL(req.url, "http://127.0.0.1:3000");
-  return sendGoogleCallbackPage(res, await completeGoogleOAuthCallback(callbackUrl));
+{
+  const routed = await systemHttpRoutes(req, res, requestPath);
+  if (routed !== NOT_HANDLED) return routed;
 }
 
-if (req.method === "POST" && ["/integrations/gmail/disconnect", "/integrations/google-calendar/disconnect"].includes(req.url)) {
-  const result = gmailConnector.disconnect();
-  res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-  return res.end(JSON.stringify({ status: "ok", ...result }));
+{
+  const routed = await goalsHttpRoutes(req, res, requestPath);
+  if (routed !== NOT_HANDLED) return routed;
 }
 
-if (req.method === "GET" && req.url === "/integrations/google-calendar/health") {
-  try {
-    const calendars = await calendarConnector.listCalendars(); calendarConnector.markSuccess();
-    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "ok", calendars: calendars.items?.length || 0 }));
-  } catch (error) {
-    calendarConnector.markError(error); const normalized = reliabilityEngine.recordFailure("google-calendar", error); res.writeHead(503, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "error", reasonCode: normalized.category, message: normalized.safeMessage, recoveryAction: normalized.recoveryAction }));
-  }
+{
+  const routed = await transcriptionHttpRoutes(req, res, requestPath);
+  if (routed !== NOT_HANDLED) return routed;
 }
 
-if (req.method === "GET" && req.url === "/integrations/gmail/health") {
-  try {
-    const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
-      headers: { Authorization: `Bearer ${await getGoogleAccessToken()}` },
-      signal: AbortSignal.timeout(10_000),
-    });
-    const profile = await response.json();
-    if (!response.ok || profile.emailAddress?.toLowerCase() !== GOOGLE_ACCOUNT_EMAIL) {
-      throw new Error("Le compte Gmail autorisé ne correspond pas.");
-    }
-    gmailConnector.markSuccess();
-    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "ok", account: GOOGLE_ACCOUNT_EMAIL }));
-  } catch (error) {
-    gmailConnector.markError(error);
-    const normalized = reliabilityEngine.recordFailure("gmail", error);
-    res.writeHead(503, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "error", reasonCode: normalized.category, message: normalized.safeMessage, recoveryAction: normalized.recoveryAction }));
-  }
+{
+  const routed = await dayHttpRoutes(req, res, requestPath);
+  if (routed !== NOT_HANDLED) return routed;
 }
 
 // Intelligence personnelle : les routes HTTP ne contiennent que la validation

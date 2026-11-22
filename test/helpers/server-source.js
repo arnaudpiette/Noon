@@ -11,6 +11,13 @@ const ROUTE_MODULES = Object.freeze([
   "services/memory/memory-http-routes.js",
   "services/personal-intelligence/personal-intelligence-http-routes.js",
   "services/dev/dev-http-routes.js",
+  "services/workspaces/projects-http-routes.js",
+  "services/sessions/conversation-http-routes.js",
+  "services/voice/voice-http-routes.js",
+  "services/control-center/system-http-routes.js",
+  "services/goals/goals-http-routes.js",
+  "services/voice/transcription-http-routes.js",
+  "services/planning/day-http-routes.js",
 ]);
 
 function readServerSource() {

@@ -1,13 +1,8 @@
 "use strict";
+const { readServerSource } = require("./helpers/server-source");
 
 const assert =
   require("node:assert/strict");
-
-const fs =
-  require("node:fs");
-
-const path =
-  require("node:path");
 
 const test =
   require("node:test");
@@ -389,14 +384,7 @@ test(
   "4.6K le wiring HTTP est placé avant le routeur Goal générique et reste Trusted UI",
   () => {
     const server =
-      fs.readFileSync(
-        path.join(
-          __dirname,
-          "..",
-          "server.js"
-        ),
-        "utf8"
-      );
+      readServerSource();
 
     const prepareRoute =
       server.search(

@@ -1,4 +1,5 @@
 "use strict";
+const { readServerSource } = require("./helpers/server-source");
 
 // Dossiers temporaires uniquement ; fournisseur factice, aucun appel payant.
 
@@ -255,7 +256,7 @@ test("B1 câblage serveur : flag OFF par défaut, composition protégée, signal
   assert.equal(flag.defaultMode, "OFF");
   assert.deepEqual(flag.allowedModes, ["OFF", "LIMITED"]);
   assert.deepEqual([...flag.requires].sort(), ["dev.native-core", "goals.engine"]);
-  const source = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
+  const source = readServerSource();
   const start = source.indexOf("let goalModeDevRuntime = null;");
   assert.notEqual(start, -1);
   const block = source.slice(start, source.indexOf('"goals.dev-retry.runtime_composed"', start));
