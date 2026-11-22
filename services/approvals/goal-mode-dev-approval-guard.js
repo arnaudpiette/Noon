@@ -7,8 +7,11 @@
 
 const { SKILL_NAME } = require("../goals/goal-mode-dev-approval-action");
 
+// V3-L5c : les missions DEV déléguées ont aussi leurs routes dédiées (/api/dev-missions).
+const DEDICATED_SKILLS = new Set([SKILL_NAME, "dev-mission"]);
+
 function isGoalModeDevApproval(approval) {
-  return approval?.skillName === SKILL_NAME || approval?.provider === SKILL_NAME;
+  return DEDICATED_SKILLS.has(approval?.skillName) || DEDICATED_SKILLS.has(approval?.provider);
 }
 
 function genericApprovals(list) {

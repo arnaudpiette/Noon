@@ -95,6 +95,20 @@ structurante, est notée ici avec sa date et sa raison.
 - Choix de l'exécutant par mission (`executor`: `codex-cli` par défaut, ou `claude-code`). Un
   exécutant demandé mais absent fait échouer la mission : aucune bascule silencieuse vers l'autre.
 
+## 22/11/2026 — Missions DEV encadrées par deux approbations (V3-L5c)
+
+- Flag `dev.missions` (OFF par défaut, OFF/LIMITED), distinct de `delegation.engine` qui gouverne la
+  délégation d'analyse du chat. Routes `/api/dev-missions` (en-tête `x-noon-request` obligatoire).
+- Proposer une mission exige que le dépôt soit une racine en écriture de l'espace de travail.
+- Approbation 1, lancement : liée à l'objectif, aux chemins, à l'exécutant et au commit de base ;
+  refusée si le dépôt a changé de commit entre-temps.
+- Approbation 2, application : liée au SHA-256 exact du patch ; seulement pour une mission PASS ;
+  refusée si un fichier du patch est modifié localement ou si le patch ne s'applique plus.
+  Application par `git apply` simple : ni index, ni commit, ni push.
+- Moteur d'approbation V2 réutilisé (usage unique, expiration 5 min, annulé au redémarrage).
+  Ces approbations sont exclues des routes génériques, comme celles du Goal Mode DEV.
+- Les missions sont gardées en mémoire : un redémarrage les perd (les approbations le sont déjà).
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

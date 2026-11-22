@@ -182,6 +182,8 @@ const { createCodexSpecialistAgent } = require("./services/delegation/codex-spec
 const { createDevDelegationRunner } = require("./services/delegation/dev-delegation-runner");
 const { createExecutorWorktreeManager } = require("./services/delegation/executor-worktree");
 const { createClaudeCodeSpecialistAgent, createExecutorSelector } = require("./services/delegation/claude-code-specialist-agent");
+const { createDevMissionService } = require("./services/delegation/dev-mission-service");
+const { createDevMissionHttpRoutes } = require("./services/delegation/dev-mission-http-routes");
 const { createNativeDevCoordinator } = require("./services/dev/native-dev-coordinator");
 const { createNativeDevOrchestrator } = require("./services/dev/native-dev-orchestrator");
 const { createNativeDevOrchestratorFacade } = require("./services/dev/native-dev-orchestrator-facade");
@@ -1960,6 +1962,24 @@ const devDelegationRunner = createDevDelegationRunner({
     sandboxDevValidationExecutor,
   observability: (event, metadata) => toolAuditLog.append(`delegation.${event}`, metadata),
 });
+// V3-L5c : missions DEV (flag dev.missions, OFF par défaut) ; approbations V2 au lancement et à
+// l'application du diff. Le dépôt doit être une racine en écriture de l'espace de travail.
+const devMissionsEnabled = () => featureFlags.evaluate("dev.missions", {}).enabled && process.env.NOON_SAFE_MODE !== "1" && !UI_VALIDATION_MODE;
+const devMissionService = createDevMissionService({
+  runner: devDelegationRunner,
+  approvals: approvalManager,
+  isEnabled: devMissionsEnabled,
+  listExecutors: () => devExecutorSelector.list(),
+  authorizeRepository: (workspaceId, repositoryRoot) => {
+    try {
+      const workspace = workspaceEngine.context(workspaceId);
+      const roots = (workspace.relevantRoots || workspace.roots || []).filter((item) => item.mode === "read-write").map((item) => { try { return fs.realpathSync(item.path); } catch { return null; } }).filter(Boolean);
+      return roots.length > 0 && isPathInsideRoots(repositoryRoot, roots);
+    } catch { return false; }
+  },
+  observability: (event, metadata) => toolAuditLog.append(`dev.${event}`, metadata),
+});
+const devMissionHttpRoutes = createDevMissionHttpRoutes({ isEnabled: devMissionsEnabled, service: devMissionService });
 // Le benchmark possède déjà son propre gate B2 et son snapshot canonique. Son
 // runner ne doit donc pas résoudre l'identifiant de session comme un workspace
 // utilisateur persistant dans WorkspaceEngine.
@@ -8288,6 +8308,9 @@ if (req.method === "POST" && req.url === "/api/runtime/mode") {
   }
 }
 
+if (devMissionHttpRoutes.matches(requestPath)) {
+  return devMissionHttpRoutes.handle(req, res, { requestPath, readJsonBody });
+}
 if (remoteLanHttpRoutes.matches(requestPath)) {
   return remoteLanHttpRoutes.handle(req, res, { requestPath, readJsonBody });
 }
