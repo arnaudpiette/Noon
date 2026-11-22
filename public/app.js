@@ -11386,6 +11386,15 @@ if (selfDevPanel && window.NoonSelfDevUi) {
   window.NoonSelfDev = Object.freeze({ refresh: () => selfDevUi.refresh() });
   void selfDevUi.init().then((available) => window.NoonControlCenter?.setSelfDevAvailable?.(available === true));
 }
+// Caractère (V3-L1) : cadrans de la charte dans les réglages rapides.
+const characterSettings = document.getElementById("characterSettings");
+if (characterSettings && window.NoonCharacterUi) {
+  const characterUi = window.NoonCharacterUi.createCharacterController({
+    elements: { root: characterSettings },
+    api: window.NoonCharacterUi.createCharacterApi({ fetchImpl: window.fetch.bind(window) }),
+  });
+  void characterUi.init();
+}
 // Compagnon iPhone : entrée visible seulement si remote.lan est actif (sinon 404).
 const iphoneCompanionPanel = document.getElementById("iphoneCompanionPanel");
 if (iphoneCompanionPanel && window.NoonIphoneCompanionUi) {

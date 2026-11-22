@@ -2579,6 +2579,11 @@ body.dev-preview-resizing *{
 .selfdev__steps { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
 .selfdev__review { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }
 .selfdev__review h4 { margin: 0 0 6px; font-size: 13px; }
+.character-settings { display: grid; gap: 6px; margin: 8px 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; }
+.character-dial input[type="range"] { width: 100%; }
+.character-dial__head, .character-dial__ends { display: flex; justify-content: space-between; gap: 8px; }
+.character-dial__value { font-weight: 600; }
+.character-dial__ends { color: var(--muted); font-size: 11px; }
 .iphone-companion { display: grid; gap: 12px; }
 .iphone-companion__qr { display: block; width: min(280px, 100%); height: auto; margin: 8px 0; border-radius: 8px; }
 .iphone-companion__code { margin: 8px 0; font: 600 28px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.12em; }

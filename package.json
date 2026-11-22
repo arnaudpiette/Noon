@@ -20,6 +20,7 @@
     "verify:mac": "node scripts/verify-macos-package.js",
     "eval:production-hardening": "node scripts/run-evaluations.js --category=production-hardening",
     "eval:smoke": "node scripts/run-evaluations.js --tag=smoke",
+    "eval:character": "node scripts/eval-character.js",
     "eval:critical": "node scripts/run-evaluations.js --tag=critical",
     "eval:config": "node scripts/run-evaluations.js --tag=config",
     "eval:features": "node scripts/run-evaluations.js --tag=feature-flags",

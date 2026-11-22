@@ -39,6 +39,8 @@ tool-audit.json
 tool-audit.json.tmp
 planning-preferences.json
 planning-preferences.json.tmp
+character-preferences.json
+character-preferences.json.tmp
 daily-plans.json
 daily-plans.json.tmp
 personal-intelligence.sqlite

@@ -74,7 +74,9 @@ const {
   runCodexAnalysis,
 } = require("./lib/codex-bridge");
 const { modelFallbacks, normalizeIntelligenceProfile, selectLegacyModelRoute, selectModelRoute, trimHistoryByCharacters, updateConversationSummary } = require("./lib/noon-intelligence");
-const { NOON_PERSONALITY, buildNoonSystemPrompt } = require("./lib/noon-system-prompt");
+const { buildNoonSystemPrompt, noonPersonality, setCharacterProvider } = require("./lib/noon-system-prompt");
+const { DIALS: CHARACTER_DIALS, renderCharacterInstructions } = require("./services/character/character-charter");
+const { createCharacterStore } = require("./services/character/character-store");
 const { createCreativeBriefStore } = require("./lib/creative-brief");
 const { redactSecrets } = require("./services/security/redaction");
 const { createOperationalSecurityPolicy } = require("./services/security/operational-security-policy");
@@ -1057,8 +1059,15 @@ const authorizedContextSources = createAuthorizedContextSources({
   },
   observability: (event, metadata) => toolAuditLog.append(event, metadata),
 });
+// V3-L1 : charte de caractère + cadrans réglés par Arnaud (flag character.charter, ON ;
+// OFF = personnalité de base seule). Un changement de cadran invalide le contexte statique.
+const characterStore = createCharacterStore({
+  filePath: path.join(DATA_DIRECTORY, "character-preferences.json"),
+  onChange: () => contextBuilder.invalidateStatic(),
+});
+setCharacterProvider(() => (featureFlags.evaluate("character.charter", {}).enabled ? renderCharacterInstructions(characterStore.get().dials) : ""));
 const contextBuilder = createContextBuilder({
-  personalityProvider: () => NOON_PERSONALITY,
+  personalityProvider: () => noonPersonality(),
   hardRulesRegistry,
   memoryEngine,
   conversationProvider: ({ conversationId }) =>
@@ -6802,6 +6811,11 @@ if (req.method === "GET" && req.url === "/selfdev-ui.js") {
   return res.end(fs.readFileSync(path.join(__dirname, "public", "selfdev-ui.js")));
 }
 
+if (req.method === "GET" && req.url === "/character-ui.js") {
+  res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", "X-Content-Type-Options": "nosniff" });
+  return res.end(fs.readFileSync(path.join(__dirname, "public", "character-ui.js")));
+}
+
 if (req.method === "GET" && req.url === "/iphone-companion-ui.js") {
   res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", "X-Content-Type-Options": "nosniff" });
   return res.end(fs.readFileSync(path.join(__dirname, "public", "iphone-companion-ui.js")));
@@ -8668,6 +8682,27 @@ if (req.method === "GET" && requestPath === "/daily-brief/history") {
   const brief = dailyBriefEngine.getHistorical(date);
   res.writeHead(brief ? 200 : 404, { "Content-Type": "application/json", "Cache-Control": "no-store" });
   return res.end(JSON.stringify({ status: brief ? "historical" : "missing", brief }));
+}
+
+if (req.method === "GET" && req.url === "/character/dials") {
+  const state = characterStore.get();
+  res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+  return res.end(JSON.stringify({ status: "ok", enabled: featureFlags.evaluate("character.charter", {}).enabled, dials: state.dials, updatedAt: state.updatedAt, charterVersion: state.charterVersion, definitions: CHARACTER_DIALS }));
+}
+
+if (req.method === "POST" && req.url === "/character/dials") {
+  try {
+    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403, code: "CHARACTER_REQUEST_REFUSED" });
+    const body = await readJsonBody(req, 4 * 1024);
+    const state = characterStore.update(body?.dials);
+    toolAuditLog.append("character.dials_updated", { keys: Object.keys(body?.dials || {}).slice(0, 5) });
+    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+    return res.end(JSON.stringify({ status: "ok", dials: state.dials, updatedAt: state.updatedAt }));
+  } catch (error) {
+    const known = /^CHARACTER_/.test(String(error?.code || ""));
+    res.writeHead(error.statusCode || (known ? 400 : 500), { "Content-Type": "application/json; charset=utf-8" });
+    return res.end(JSON.stringify({ status: "error", code: known ? error.code : "CHARACTER_ERROR", message: known ? error.message : "Réglage du caractère impossible." }));
+  }
 }
 
 if (req.method === "GET" && req.url === "/planning/preferences") {

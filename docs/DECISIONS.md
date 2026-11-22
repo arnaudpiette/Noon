@@ -40,6 +40,17 @@ structurante, est notée ici avec sa date et sa raison.
 - Suppression des dix fichiers morts listés dans `docs/CURRENT_STATE.md` §5.
 - Scénario d'évaluation `voice.identity` aligné sur Cedar, voix canonique.
 
+## 22/11/2026 — Charte de caractère activée par défaut (V3-L1)
+
+- Les dix articles, les garde-fous du §5 et les cinq cadrans (`services/character/`) s'ajoutent
+  à la personnalité de base pour le chat et la voix Live. Flag `character.charter` ON ; le
+  passer à OFF rétablit la personnalité de base seule.
+- Cadrans réglés dans les réglages rapides (section « Caractère »), stockés localement dans
+  `character-preferences.json` (aucun secret). Défauts de la roadmap : franchise 4,
+  challenge 3, initiative 3, proactivité 3, zone de confort 3.
+- Critère de sortie de L1 : `npm run eval:character -- --run` (payant, ~0,24 USD sur
+  gpt-5.6-terra), puis notation par Arnaud (`-- --grade`) ; il faut ≥ 90 % sur 30 cas.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
