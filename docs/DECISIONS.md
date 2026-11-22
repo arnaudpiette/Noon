@@ -262,6 +262,25 @@ structurante, est notée ici avec sa date et sa raison.
   durées près. Le seul autre écart (`/integrations/status`) venait du `.env` local absent de la
   copie de référence ; disparu en rejouant la référence avec ce même `.env`.
 
+## 22/11/2026 — Figma MCP et reconnexion Google depuis le Control Center
+
+- Figma en ligne (`mcp.figma.com`) : Figma n'y accepte que les clients de son catalogue MCP (VS
+  Code, Cursor, Claude Code, Codex…) ; Noon n'y figure pas. L'entrée du catalogue porte
+  `unavailable` (`MCP_CLIENT_NOT_ACCEPTED`) : refus immédiat, sans appel, raison affichée, ni
+  « Installer » ni « Connecter ». L'écriture dans Figma n'existe que sur ce serveur : Noon ne peut
+  donc que lire, via l'application de bureau. Pistes non engagées : liste d'attente du catalogue
+  Figma, ou écriture déléguée à un client du catalogue (Claude Code / Codex) sous approbation.
+- Figma bureau : port 3845 fermé → `MCP_LOCAL_SERVER_UNREACHABLE` avec la marche à suivre (Dev
+  Mode, « Enable desktop MCP server », siège Dev ou Full) au lieu de « TypeError ».
+- Google : « Tester » ne proposait l'autorisation que sans jeton ; un jeton refusé par Google
+  (expiré ou révoqué) laissait la carte en UNAUTHORIZED sans issue, la carte « Intégrations » qui
+  porte « Reconnecter » étant masquée par la CSS (`.operations-panel{display:none!important}`).
+  `services/control-center/connection-check-action.js` propose désormais la reconnexion dans ce
+  cas aussi ; le bouton s'appelle « Reconnecter » sur une connexion refusée. Le renouvellement
+  raté journalise le code OAuth de Google (`google-oauth.refresh-failed`, ex. `invalid_grant`),
+  jamais de jeton. Cause probable d'expiration répétée : application OAuth Google en mode
+  « Testing », dont les jetons de renouvellement expirent après 7 jours.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

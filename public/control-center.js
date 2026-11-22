@@ -114,7 +114,7 @@
     if (supported.length) {
       const actions = element("div", "control-card__actions");
       for (const action of supported) {
-        const button = element("button", "", actionLabels[action]);
+        const button = element("button", "", action === "CHECK_CONNECTION" && value.state === "UNAUTHORIZED" ? "Reconnecter" : actionLabels[action]);
         button.type = "button";
         button.addEventListener("click", () => requestAction(action, value.id, button));
         actions.append(button);

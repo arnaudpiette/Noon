@@ -163,8 +163,11 @@ test('Control Center reuses the canonical read-only Google OAuth flow when auth 
  const fs=require('node:fs');const server=fs.readFileSync(require.resolve('../server'),'utf8');
  const renderer=fs.readFileSync(require.resolve('../public/control-center'),'utf8');
  assert.match(server,/function createGoogleReadAuthorization\(\)/);
- assert.match(server,/googleConnector && !googleConnector\.connected/);
- assert.match(server,/status: "AUTH_REQUIRED", authorizationUrl: url/);
+ const action=fs.readFileSync(require.resolve('../services/control-center/connection-check-action'),'utf8');
+ assert.match(server,/CHECK_CONNECTION: createCheckConnectionAction\(\{ googleConnectors: \[gmailConnector, calendarConnector\], reliabilityEngine, createGoogleReadAuthorization \}\)/);
+ assert.match(action,/googleConnector && !googleConnector\.connected/);
+ assert.match(action,/googleConnector && component\?\.state === "UNAUTHORIZED"/);
+ assert.match(action,/status: "AUTH_REQUIRED", authorizationUrl: url/);
  assert.equal((server.match(/createGoogleAuthorization\(\{/g)||[]).length,1);
  assert.match(renderer,/data\.action\?\.result\?\.authorizationUrl/);
  assert.match(renderer,/window\.noon\.openGoogleAuthorization\(authorizationUrl\)/);

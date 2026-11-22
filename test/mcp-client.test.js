@@ -332,6 +332,30 @@ test("un serveur distant sans capacité déclarée est refusé ; un serveur loop
   assert.deepEqual(local.asked, [], "le loopback ne consulte pas la politique distante");
 });
 
+test("Figma en ligne est marqué indisponible : refus explicite, aucun transport ouvert", async () => {
+  const entry = catalogEntry("figma");
+  assert.equal(entry.unavailable.code, "MCP_CLIENT_NOT_ACCEPTED");
+  const { manager, opened } = blockedFixture({ allowed: true, entry });
+  await assert.rejects(manager.connect("figma"), (error) => error.code === "MCP_CLIENT_NOT_ACCEPTED" && /catalogue MCP/.test(error.message));
+  await assert.rejects(manager.connectSilently("figma"), { code: "MCP_CLIENT_NOT_ACCEPTED" });
+  assert.equal(manager.status("figma").state, "UNAVAILABLE");
+  assert.deepEqual(opened, []);
+});
+
+test("serveur Figma de bureau éteint : message d'activation au lieu d'une erreur technique", async () => {
+  const entry = catalogEntry("figma-desktop");
+  const registry = createMcpServerRegistry({ catalog: () => entry });
+  registry.install("figma-desktop");
+  const refused = Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+  const manager = createMcpClientManager({
+    registry, tokenStore: createTokenStore({ filePath: path.join(tmpDir(), "t.json") }),
+    transportFactory: () => ({}),
+    clientFactory: () => ({ async connect() { throw refused; }, close: async () => {} }),
+  });
+  await assert.rejects(manager.connect("figma-desktop"), (error) => error.code === "MCP_LOCAL_SERVER_UNREACHABLE" && /Enable desktop MCP server/.test(error.message));
+  assert.equal(manager.status("figma-desktop").lastError, "MCP_LOCAL_SERVER_UNREACHABLE");
+});
+
 test("le catalogue rattache Figma distant à REMOTE_FIGMA et le serveur de bureau au loopback", () => {
   assert.equal(catalogEntry("figma").remoteCapability, "REMOTE_FIGMA");
   assert.equal(new URL(catalogEntry("figma-desktop").url).hostname, "127.0.0.1");

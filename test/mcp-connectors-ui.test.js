@@ -134,6 +134,19 @@ test("catalogue : installation par POST avec X-Noon-Request ; valeurs serveur re
   assert.deepEqual(post.body, {});
 });
 
+test("Figma en ligne indisponible : raison affichée, ni Installer ni Connecter", async () => {
+  const unavailable = { code: "MCP_CLIENT_NOT_ACCEPTED", message: "Indisponible : Noon n'est pas dans le catalogue MCP de Figma." };
+  const catalogOnly = harness({ responses: { list: { status: "ok", catalog: [{ ...FIGMA, installed: false, unavailable }], servers: [] } } });
+  await catalogOnly.controller.init();
+  assert.ok(catalogOnly.root.textContent.includes(unavailable.message));
+  assert.ok(!buttonByText(catalogOnly.root, "Installer"));
+  const installed = harness({ responses: { list: { status: "ok", catalog: [], servers: [installedFigma({ unavailable })] } } });
+  await installed.controller.init();
+  assert.ok(installed.root.textContent.includes(unavailable.message));
+  assert.ok(!buttonByText(installed.root, "Connecter"));
+  assert.ok(buttonByText(installed.root, "Désinstaller"), "la désinstallation reste possible");
+});
+
 test("connexion OAuth : seule une URL https est ouverte, puis l'état est relu jusqu'à CONNECTED", async () => {
   const opened = [];
   let state = "NOT_CONNECTED";

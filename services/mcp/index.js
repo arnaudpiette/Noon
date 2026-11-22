@@ -22,7 +22,7 @@ function createMcpService({ enabled = false, dataDirectory = null, tokenStore, s
   manager = createMcpClientManager({ registry, tokenStore, clientVersion, observability, isRemoteAllowed, onToolsChanged: async (serverId, tools) => { bridge.sync(serverId, tools); }, ...managerOptions });
 
   function describe(server) {
-    return { id: server.id, displayName: server.displayName, url: server.url, auth: server.auth, dataClass: server.dataClass, note: server.note,
+    return { id: server.id, displayName: server.displayName, url: server.url, auth: server.auth, dataClass: server.dataClass, note: server.note, unavailable: server.unavailable || null,
       readOnlyTools: [...server.readOnlyTools], userApprovedReadOnly: [...server.userApprovedReadOnly], status: manager.status(server.id), tools: bridge.exposure(server.id) };
   }
 
@@ -41,7 +41,7 @@ function createMcpService({ enabled = false, dataDirectory = null, tokenStore, s
     const [, serverId, action] = match;
     try {
       if (req.method === "GET" && !serverId) {
-        return send(200, { status: "ok", catalog: MCP_CATALOG.map(({ id, displayName, url, auth, dataClass, note }) => ({ id, displayName, url, auth, dataClass, note, installed: Boolean(registry.get(id)) })), servers: registry.list().map(describe) });
+        return send(200, { status: "ok", catalog: MCP_CATALOG.map(({ id, displayName, url, auth, dataClass, note, unavailable }) => ({ id, displayName, url, auth, dataClass, note, unavailable: unavailable || null, installed: Boolean(registry.get(id)) })), servers: registry.list().map(describe) });
       }
       if (req.headers["x-noon-request"] !== "1") return send(403, { status: "error", code: "MCP_REQUEST_REFUSED", message: "Requête Noon refusée." });
       if (req.method === "POST" && action === "install") return send(200, { status: "ok", server: describe(registry.install(serverId)) });

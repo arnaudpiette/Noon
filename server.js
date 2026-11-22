@@ -127,6 +127,7 @@ const { createResumeBriefingService, renderResumeBriefing } = require("./service
 const { createFirstStepService, renderFirstStep } = require("./services/first-step/first-step-service");
 const { createBriefUsageLog, parisDate } = require("./services/daily-brief/brief-usage-log");
 const { createStaticAssets } = require("./services/http/static-assets");
+const { createCheckConnectionAction } = require("./services/control-center/connection-check-action");
 const { createDayHttpRoutes } = require("./services/planning/day-http-routes");
 const { createTranscriptionHttpRoutes } = require("./services/voice/transcription-http-routes");
 const { createGoalsHttpRoutes } = require("./services/goals/goals-http-routes");
@@ -608,7 +609,10 @@ async function refreshGoogleAccessToken(savedToken) {
   });
   const refreshed = await response.json();
   if (!response.ok || !refreshed.access_token) {
-    throw Object.assign(new Error("Reconnectez Google pour renouveler l’autorisation."), { status: response.status === 400 ? 401 : response.status });
+    // Code d'erreur OAuth de Google seulement (ex. invalid_grant), jamais de jeton ni de secret.
+    const providerError = typeof refreshed?.error === "string" ? refreshed.error.replace(/[^a-z_]/gi, "").slice(0, 40) : null;
+    toolAuditLog.append("google-oauth.refresh-failed", { status: response.status, providerError });
+    throw Object.assign(new Error("Reconnectez Google pour renouveler l’autorisation."), { status: response.status === 400 ? 401 : response.status, providerError });
   }
   const token = {
     ...savedToken,
@@ -5577,14 +5581,7 @@ const controlCenterService = createControlCenterService({
   },
   actions: {
     RUN_QUICK_DIAGNOSTIC: async () => ({ status: "SUCCEEDED", diagnostic: await reliabilityEngine.diagnose({ deep: false }) }),
-    CHECK_CONNECTION: async ({ targetId }) => {
-      const googleConnector = [gmailConnector, calendarConnector].find((connector) => connector.id === targetId);
-      if (googleConnector && !googleConnector.connected) {
-        const { url } = await createGoogleReadAuthorization();
-        return { status: "AUTH_REQUIRED", authorizationUrl: url };
-      }
-      return { status: "SUCCEEDED", component: await reliabilityEngine.check(targetId, { force: true }) };
-    },
+    CHECK_CONNECTION: createCheckConnectionAction({ googleConnectors: [gmailConnector, calendarConnector], reliabilityEngine, createGoogleReadAuthorization }),
     CHECK_EXTENSION: async ({ targetId }) => ({ status: "SUCCEEDED", health: await extensionRegistry.checkHealth(targetId) }),
   },
 });

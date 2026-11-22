@@ -18,6 +18,7 @@
     AUTH_REQUIRED: "Autorisation requise",
     BLOCKED: "Bloqué (local uniquement ou hors ligne)",
     ERROR: "Erreur",
+    UNAVAILABLE: "Indisponible",
   });
 
   const ERROR_MESSAGES = Object.freeze({
@@ -30,6 +31,8 @@
     MCP_TOOL_NOT_READ_ONLY: "Cet outil n'est pas reconnu comme lecture seule.",
     MCP_REQUEST_REFUSED: "Requête refusée par Noon.",
     MCP_AUTHORIZATION_URL_INVALID: "Adresse d'autorisation invalide : connexion annulée.",
+    MCP_LOCAL_SERVER_UNREACHABLE: "Serveur local introuvable sur ce Mac. Pour Figma : ouvre un fichier, passe en Dev Mode (Maj+D), puis « Enable desktop MCP server » (siège Dev ou Full requis).",
+    MCP_CLIENT_NOT_ACCEPTED: "Indisponible : ce fournisseur n'accepte pas Noon sur son serveur en ligne.",
   });
 
   const HIDDEN_REASONS = Object.freeze({
@@ -232,13 +235,14 @@
       head.append(el("h3", "", server.displayName || server.id), pill(state));
       card.append(head);
       if (server.note) card.append(el("p", "", server.note));
+      if (server.unavailable) card.append(el("p", "mcp-connectors__unavailable", server.unavailable.message));
       const meta = el("div", "control-card__meta");
       try { meta.append(el("span", "", `Adresse : ${new URL(server.url).host}`)); } catch { /* URL du catalogue relu */ }
       meta.append(el("span", "", server.auth === "oauth" ? "Connexion : OAuth" : "Connexion : locale, sans jeton"));
       if (state === "CONNECTED") meta.append(el("span", "", `Outils proposés par le serveur : ${Number(server.status?.toolCount) || 0}`));
       card.append(meta);
       const actions = el("div", "control-card__actions");
-      if (state !== "CONNECTED") actions.append(button(state === "AUTH_REQUIRED" ? "Relancer l'autorisation" : "Connecter", () => run(() => connect(server))));
+      if (state !== "CONNECTED" && !server.unavailable) actions.append(button(state === "AUTH_REQUIRED" ? "Relancer l'autorisation" : "Connecter", () => run(() => connect(server))));
       if (state === "CONNECTED" || server.status?.hasCredentials) {
         actions.append(button("Déconnecter", () => run(async () => { stopPolling(); await api.disconnect(server.id); }, { successNotice: "Déconnecté. Les jetons locaux sont supprimés ; l'accès n'est pas révoqué chez le fournisseur." })));
       }
@@ -256,6 +260,11 @@
       head.append(el("h3", "", entry.displayName || entry.id));
       card.append(head);
       if (entry.note) card.append(el("p", "", entry.note));
+      if (entry.unavailable) {
+        head.append(pill("UNAVAILABLE"));
+        card.append(el("p", "mcp-connectors__unavailable", entry.unavailable.message));
+        return card;
+      }
       const actions = el("div", "control-card__actions");
       actions.append(button("Installer", () => run(() => api.install(entry.id), { successNotice: `${entry.displayName} installé. Connecte-le puis valide ses outils.` })));
       card.append(actions);

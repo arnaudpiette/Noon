@@ -15,6 +15,13 @@ const DEFAULT_CALL_TIMEOUT_MS = 30_000;
 const MAX_TOOL_PAGES = 10;
 
 function managerError(code, message) { return Object.assign(new Error(message), { code }); }
+// Serveur local qui ne répond pas (port fermé) : l'échec vient de fetch, pas du protocole MCP.
+const UNREACHABLE_CODES = new Set(["ECONNREFUSED", "ECONNRESET", "EHOSTUNREACH", "ENOTFOUND", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"]);
+function isUnreachable(error) {
+  const cause = error?.cause;
+  return UNREACHABLE_CODES.has(String(error?.code || "")) || UNREACHABLE_CODES.has(String(cause?.code || "")) ||
+    (error?.name === "TypeError" && /fetch failed/i.test(String(error?.message || "")));
+}
 function safeErrorCode(error) { return String(error?.code || error?.name || "MCP_ERROR").replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 80); }
 
 function createMcpClientManager({
@@ -38,6 +45,13 @@ function createMcpClientManager({
     const server = registry.get(id);
     if (!server) throw managerError("MCP_SERVER_NOT_INSTALLED", "Serveur MCP non installé.");
     return server;
+  }
+
+  // Serveur du catalogue connu pour refuser Noon : aucun appel, raison affichée telle quelle.
+  function assertAvailable(server) {
+    if (!server.unavailable) return;
+    setStatus(server.id, { state: "UNAVAILABLE", lastError: server.unavailable.code });
+    throw managerError(server.unavailable.code, server.unavailable.message);
   }
 
   // Un serveur loopback reste sur le Mac ; tout autre serveur est un appel distant
@@ -87,6 +101,7 @@ function createMcpClientManager({
 
   // Reconnexion sans interaction : jetons du coffre (rafraîchis par le SDK) ou serveur sans auth.
   async function connectSilently(server) {
+    assertAvailable(server);
     assertRemoteAllowed(server);
     if (server.auth === "none") return activate(server, await openSession(server, null));
     const redirectUrl = savedRedirectUrl(server.id);
@@ -102,6 +117,7 @@ function createMcpClientManager({
 
   async function connect(id) {
     const server = requireServer(id);
+    assertAvailable(server);
     try { assertRemoteAllowed(server); }
     catch (error) { setStatus(id, { state: "BLOCKED", lastError: error.code }); throw error; }
     setStatus(id, { state: "CONNECTING", lastError: null });
@@ -142,8 +158,10 @@ function createMcpClientManager({
         return { status: "AUTH_REQUIRED", authorizationUrl };
       }
     } catch (error) {
-      setStatus(id, { state: "ERROR", lastError: safeErrorCode(error) });
-      emit("mcp.connect_failed", { serverId: id, errorCode: safeErrorCode(error) });
+      const unreachable = LOOPBACK_HOSTS.has(new URL(server.url).hostname) && isUnreachable(error);
+      setStatus(id, { state: "ERROR", lastError: unreachable ? "MCP_LOCAL_SERVER_UNREACHABLE" : safeErrorCode(error) });
+      emit("mcp.connect_failed", { serverId: id, errorCode: safeErrorCode(error), unreachable });
+      if (unreachable) throw managerError("MCP_LOCAL_SERVER_UNREACHABLE", server.unreachableMessage || "Serveur MCP local introuvable sur ce Mac : vérifie que l'application qui le fournit est ouverte et que son serveur est activé.");
       throw managerError(error.code === "MCP_AUTH_REQUIRED" ? "MCP_AUTH_REQUIRED" : "MCP_CONNECT_FAILED", "Connexion au serveur MCP impossible.");
     }
   }

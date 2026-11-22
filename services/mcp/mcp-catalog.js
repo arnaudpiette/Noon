@@ -15,12 +15,19 @@ const MCP_CATALOG = Object.freeze([
     // Capacité soumise à la politique locale (mode local uniquement / hors ligne).
     remoteCapability: "REMOTE_FIGMA",
     dataClass: "PRIVATE", readOnlyTools: FIGMA_READ_ONLY_TOOLS,
-    note: "Serveur distant officiel. L'enregistrement OAuth dynamique reste à vérifier sur le Mac.",
+    note: "Serveur distant officiel de Figma.",
+    // Vérifié le 22/11/2026 : Figma n'accepte sur ce serveur que les clients de son catalogue MCP
+    // (VS Code, Cursor, Claude Code…). Noon n'y figure pas : connexion refusée d'avance, sans appel.
+    unavailable: Object.freeze({
+      code: "MCP_CLIENT_NOT_ACCEPTED",
+      message: "Indisponible : Figma n'accepte sur son serveur en ligne que les applications de son catalogue MCP, et Noon n'y figure pas. Utilise « Figma (application de bureau) ».",
+    }),
   }),
   Object.freeze({
     id: "figma-desktop", displayName: "Figma (application de bureau)", url: "http://127.0.0.1:3845/mcp", auth: "none",
     dataClass: "PRIVATE", readOnlyTools: FIGMA_READ_ONLY_TOOLS,
     note: "Serveur local de l'application Figma (Dev Mode). Aucun jeton : à activer dans Figma.",
+    unreachableMessage: "Serveur Figma introuvable sur ce Mac. Dans Figma : ouvre un fichier, passe en Dev Mode (Maj+D), puis « Enable desktop MCP server » (siège Dev ou Full requis).",
   }),
 ]);
 
