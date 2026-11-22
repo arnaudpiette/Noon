@@ -4,6 +4,7 @@
 // Références DOM partagées par les différents modules de l’interface.
 const {
   escapeHtml,
+  isResumeCommand,
   parseCaptureCommand,
   parseFocusCommand,
   shouldConvertPastedText,
@@ -10420,6 +10421,26 @@ async function saveQuickCapture(question, text, displayUserMessage = true) {
   }
 }
 
+// V3-L2b : point de reprise local (aucun appel au modèle).
+async function showResumeBriefing(question, displayUserMessage = true) {
+  if (displayUserMessage) addMessage("Vous", question, "user", true);
+  promptInput.value = "";
+  resizePromptInput();
+  try {
+    const query = new URLSearchParams();
+    if (currentFocusId) query.set("focusId", currentFocusId);
+    if (currentFocusPath) query.set("focusPath", currentFocusPath);
+    const response = await fetch(`/resume?${query}`, { cache: "no-store" });
+    let data;
+    try { data = await response.json(); } catch { data = {}; }
+    if (!response.ok) throw new Error(data.message || "Point de reprise indisponible.");
+    addMessage("Noon", data.text, "noon", true);
+    updateActivity("Point de reprise prêt.");
+  } catch (error) {
+    addMessage("Noon", `Je n'ai pas pu retrouver où tu en étais : ${error.message}`, "noon", true);
+  }
+}
+
 async function sendQuestion(question, options = {}) {
   if (requestInProgress) {
     updateActivity("Noon traite déjà une demande.");
@@ -10446,6 +10467,10 @@ async function sendQuestion(question, options = {}) {
   const captureCommand = filesToSend.length === 0 ? parseCaptureCommand(question) : null;
   if (captureCommand) {
     await saveQuickCapture(question, captureCommand.text, displayUserMessage);
+    return;
+  }
+  if (filesToSend.length === 0 && isResumeCommand(question)) {
+    await showResumeBriefing(question, displayUserMessage);
     return;
   }
 
@@ -11484,6 +11509,11 @@ window.noon?.onDeepLink((link) => {
   }
   if (link.action === "brief") {
     switchView("brief");
+    return;
+  }
+  if (link.action === "resume") {
+    switchView("chat");
+    void showResumeBriefing("Où j'en étais ?");
     return;
   }
   if (link.action === "mode") {

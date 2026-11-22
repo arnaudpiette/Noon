@@ -512,6 +512,7 @@ function rebuildTrayMenu() {
     { label: "Nouvelle conversation", click: () => dispatchDeepLink("noon://new-conversation") },
     { label: "Brief Noon", click: () => dispatchDeepLink("noon://brief") },
     { label: "Noter…", click: showCaptureWindow },
+    { label: "Où j'en étais ?", click: () => dispatchDeepLink("noon://resume") },
     { type: "separator" },
     { label: "Salut Noon", type: "checkbox", checked: preferences.wakeWordEnabled,
       click: (item) => { void setPreference("wakeWordEnabled", item.checked).then(syncWakeWordState); } },

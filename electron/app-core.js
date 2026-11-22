@@ -2,7 +2,7 @@
 
 // Fonctions pures de sécurité Electron : validation des liens, raccourcis et navigations.
 
-const ALLOWED_DEEP_LINKS = new Set(["open", "live", "wake", "brief", "focus", "mode", "new-conversation", "settings", "diagnostic"]);
+const ALLOWED_DEEP_LINKS = new Set(["open", "live", "wake", "brief", "focus", "mode", "new-conversation", "settings", "diagnostic", "resume"]);
 
 function parseNoonDeepLink(rawUrl) {
   try {

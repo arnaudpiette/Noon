@@ -38,6 +38,12 @@
     return null;
   }
 
+  // V3-L2b : « Où j'en étais ? », « on en était où ? », « je reprends » → point de reprise local.
+  function isResumeCommand(value) {
+    const question = String(value || "").trim().replace(/[’]/g, "'");
+    return /^(?:(?:hey|salut|ok)\s+)?(?:noon\s*[,:]?\s+)?(?:(?:où|ou)\s+(?:j'en|on en)\s+(?:étais|etais|était|etait|suis|est)(?:-je)?|on en (?:était|etait|est) où|où en (?:suis-je|étais-je|j'en suis)|je reprends|on reprend)\s*[?.!]*$/i.test(question);
+  }
+
   function parseFocusCommand(value) {
     const question = String(value || "").trim();
     if (/^(?:retire|enlève|désactive|supprime)\s+(?:le\s+)?focus\b/i.test(question)) {
@@ -615,6 +621,7 @@
 
   return {
     escapeHtml,
+    isResumeCommand,
     parseCaptureCommand,
     parseFocusCommand,
     shouldConvertPastedText,
