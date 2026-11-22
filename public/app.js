@@ -6,6 +6,7 @@ const {
   escapeHtml,
   isResumeCommand,
   parseCaptureCommand,
+  parseFirstStepCommand,
   parseFocusCommand,
   shouldConvertPastedText,
   createPastedTextFileName,
@@ -10441,6 +10442,57 @@ async function showResumeBriefing(question, displayUserMessage = true) {
   }
 }
 
+// V3-L2c : « Je dois faire X » → une première action de 2 à 5 min, enregistrable en un clic.
+async function showFirstStep(question, task, displayUserMessage = true) {
+  if (displayUserMessage) addMessage("Vous", question, "user", true);
+  promptInput.value = "";
+  resizePromptInput();
+  requestInProgress = true;
+  updateActivity("Noon cherche un premier pas…");
+  try {
+    const response = await fetch("/first-step", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Noon-Request": "1" },
+      body: JSON.stringify({ task }),
+    });
+    let data;
+    try { data = await response.json(); } catch { data = {}; }
+    if (!response.ok) throw new Error(data.message || "Premier pas indisponible.");
+    const message = addMessage("Noon", data.text, "noon", true);
+    const actions = document.createElement("div");
+    actions.className = "message-actions first-step-actions";
+    const save = document.createElement("button");
+    save.type = "button";
+    save.textContent = "Enregistrer comme prochaine action";
+    save.addEventListener("click", async () => {
+      save.disabled = true;
+      try {
+        const saveResponse = await fetch("/first-step/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Noon-Request": "1" },
+          body: JSON.stringify({ task: data.result.task, step: data.result.step, focusId: currentFocusId || null, focusPath: currentFocusPath || null }),
+        });
+        let saved;
+        try { saved = await saveResponse.json(); } catch { saved = {}; }
+        if (!saveResponse.ok) throw new Error(saved.message || "Enregistrement impossible.");
+        save.textContent = saved.saved.savedTo === "project" ? `Enregistrée pour ${saved.saved.projectName}` : "Enregistrée dans ta boîte de réception";
+        updateActivity("Prochaine action enregistrée.");
+      } catch (error) {
+        save.disabled = false;
+        updateActivity(`Prochaine action non enregistrée : ${error.message}`);
+      }
+    });
+    actions.append(save);
+    message.append(actions);
+    updateActivity("Premier pas prêt.");
+  } catch (error) {
+    addMessage("Noon", `Je n'ai pas pu proposer de premier pas : ${error.message}`, "noon", true);
+    updateActivity("Premier pas indisponible.");
+  } finally {
+    requestInProgress = false;
+  }
+}
+
 async function sendQuestion(question, options = {}) {
   if (requestInProgress) {
     updateActivity("Noon traite déjà une demande.");
@@ -10471,6 +10523,11 @@ async function sendQuestion(question, options = {}) {
   }
   if (filesToSend.length === 0 && isResumeCommand(question)) {
     await showResumeBriefing(question, displayUserMessage);
+    return;
+  }
+  const firstStepCommand = filesToSend.length === 0 ? parseFirstStepCommand(question) : null;
+  if (firstStepCommand) {
+    await showFirstStep(question, firstStepCommand.task, displayUserMessage);
     return;
   }
 

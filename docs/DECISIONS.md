@@ -51,6 +51,14 @@ structurante, est notée ici avec sa date et sa raison.
 - Critère de sortie de L1 : `npm run eval:character -- --run` (payant, ~0,24 USD sur
   gpt-5.6-terra), puis notation par Arnaud (`-- --grade`) ; il faut ≥ 90 % sur 30 cas.
 
+## 22/11/2026 — « Je dois faire X » sur le petit modèle (V3-L2c)
+
+- Un seul appel à `gpt-5.6-luna` (`store: false`, 400 jetons de sortie au plus), avec la
+  personnalité et la charte ; seule la tâche est envoyée, ni mémoire ni historique. Refusé en
+  mode local uniquement. Réponse validée (une action, 2 à 5 minutes), sinon erreur affichée.
+- « Enregistrer comme prochaine action » : prochaine action du projet du Focus (nom exact),
+  sinon note dans la boîte de réception. Aucun projet deviné.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

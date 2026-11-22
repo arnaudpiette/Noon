@@ -44,6 +44,24 @@
     return /^(?:(?:hey|salut|ok)\s+)?(?:noon\s*[,:]?\s+)?(?:(?:où|ou)\s+(?:j'en|on en)\s+(?:étais|etais|était|etait|suis|est)(?:-je)?|on en (?:était|etait|est) où|où en (?:suis-je|étais-je|j'en suis)|je reprends|on reprend)\s*[?.!]*$/i.test(question);
   }
 
+  // V3-L2c : « Je dois faire X », « il faut que je finisse X » → une première action de 2 à 5 min.
+  // Strict : verbe d'action attendu ; une question (« je dois faire quoi ? ») reste une demande normale.
+  const FIRST_STEP_VERBS = Object.freeze({
+    faire: "faire", fasse: "faire", finir: "finir", finisse: "finir", terminer: "terminer", termine: "terminer",
+    commencer: "commencer", commence: "commencer", avancer: "avancer", avance: "avancer",
+    "m'occuper": "m'occuper", "m'occupe": "m'occuper",
+  });
+  function parseFirstStepCommand(value) {
+    const question = String(value || "").trim().replace(/[’]/g, "'");
+    if (!question || /\?\s*$/.test(question)) return null;
+    const match = question.match(/^(?:(?:hey|salut|ok)\s+)?(?:noon\s*[,:]?\s+)?(?:je\s+dois|il\s+faut\s+(?:absolument\s+)?que\s+je|faut\s+que\s+je)\s+(faire|fasse|finir|finisse|terminer|termine|commencer|commence|avancer|avance|m'occuper|m'occupe)\s+([\s\S]+)$/i);
+    if (!match) return null;
+    const object = match[2].trim().replace(/[.!]+$/, "").trim();
+    if (object.split(/\s+/).filter(Boolean).length < 1 || object.length < 3) return null;
+    if (/^(?:quoi|comment|ça|ca|ceci|cela)$/i.test(object)) return null;
+    return { task: `${FIRST_STEP_VERBS[match[1].toLowerCase()]} ${object}`.slice(0, 500) };
+  }
+
   function parseFocusCommand(value) {
     const question = String(value || "").trim();
     if (/^(?:retire|enlève|désactive|supprime)\s+(?:le\s+)?focus\b/i.test(question)) {
@@ -622,6 +640,7 @@
   return {
     escapeHtml,
     isResumeCommand,
+    parseFirstStepCommand,
     parseCaptureCommand,
     parseFocusCommand,
     shouldConvertPastedText,

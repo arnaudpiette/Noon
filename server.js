@@ -124,6 +124,7 @@ const { createProjectIntelligenceService } = require("./services/personal-intell
 const { createInboxService } = require("./services/personal-intelligence/inbox-service");
 const { createQuickCaptureService } = require("./services/capture/quick-capture-service");
 const { createResumeBriefingService, renderResumeBriefing } = require("./services/resume/resume-briefing-service");
+const { createFirstStepService, renderFirstStep } = require("./services/first-step/first-step-service");
 const { DEFAULT_WEIGHTS, createPriorityEngine } = require("./services/personal-intelligence/priority-engine");
 const { createDeduplicationService } = require("./services/personal-intelligence/deduplication-service");
 const { createFollowUpService } = require("./services/personal-intelligence/follow-up-service");
@@ -2172,6 +2173,23 @@ const resumeBriefingService = createResumeBriefingService({
   inspectGit: (projectPath) => inspectGitStatus(projectPath),
   listProjects: () => personalRepository.listProjects(),
   recentCaptures: (limit) => quickCaptureService.recent(limit),
+});
+// V3-L2c : « Je dois faire X » → une première action de 2 à 5 min (petit modèle + charte).
+const FIRST_STEP_MODEL = "gpt-5.6-luna";
+const firstStepService = createFirstStepService({
+  personality: () => noonPersonality(),
+  generate: async ({ instructions, input }) => {
+    if (localIntelligenceRuntime.snapshot({ internetAvailable: true }).state === "LOCAL_ONLY") {
+      throw Object.assign(new Error("Mode local uniquement : je ne contacte pas le modèle pour proposer un premier pas."), { code: "FIRST_STEP_REMOTE_FORBIDDEN", statusCode: 409 });
+    }
+    authorizeOpenAIPrivacy([{ source: "first_step", classification: "PERSONAL", content: input }]);
+    const response = await getOpenAIClient().responses.create({ model: FIRST_STEP_MODEL, instructions, input, store: false, max_output_tokens: 400 });
+    trackUsage(response);
+    return response.output_text || "";
+  },
+  listProjects: () => personalRepository.listProjects(),
+  saveProject: (project) => personalRepository.upsertProject(project),
+  capture: (item) => quickCaptureService.capture(item),
 });
 const deduplicationService = createDeduplicationService(personalRepository);
 const followUpService = createFollowUpService(personalRepository);
@@ -6775,6 +6793,31 @@ if (req.method === "GET" && (req.url === "/resume" || req.url.startsWith("/resum
   } catch {
     res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
     return res.end(JSON.stringify({ status: "error", code: "RESUME_ERROR", message: "Point de reprise indisponible." }));
+  }
+}
+
+if (req.method === "POST" && (req.url === "/first-step" || req.url === "/first-step/save")) {
+  try {
+    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403, code: "FIRST_STEP_REQUEST_REFUSED" });
+    const body = await readJsonBody(req, 8 * 1024);
+    if (req.url === "/first-step") {
+      const result = await firstStepService.suggest({ task: body?.task });
+      toolAuditLog.append("first_step.suggested", { model: FIRST_STEP_MODEL, minutes: result.minutes, taskLength: result.task.length });
+      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ status: "ok", result, text: renderFirstStep(result) }));
+    }
+    const focusId = String(body?.focusId || "").trim();
+    const focus = /^[a-zA-Z0-9_-]{1,80}$/.test(focusId) ? (() => { try { return resolveFocusCatalogSelection(focusId, body?.focusPath || null); } catch { return null; } })() : null;
+    const saved = await firstStepService.save({ task: body?.task, step: body?.step, focusName: focus?.name || null });
+    toolAuditLog.append("first_step.saved", { savedTo: saved.savedTo });
+    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+    return res.end(JSON.stringify({ status: "ok", saved }));
+  } catch (error) {
+    const code = String(error?.code || "");
+    const known = /^(FIRST_STEP_|CAPTURE_)/.test(code) || error?.statusCode === 503;
+    toolAuditLog.append("first_step.failed", { code: code || "FIRST_STEP_ERROR" });
+    res.writeHead(error.statusCode || (known ? 400 : 500), { "Content-Type": "application/json; charset=utf-8" });
+    return res.end(JSON.stringify({ status: "error", code: known ? (code || "FIRST_STEP_UNAVAILABLE") : "FIRST_STEP_ERROR", message: known ? error.message : "Premier pas indisponible." }));
   }
 }
 

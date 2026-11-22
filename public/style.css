@@ -2607,3 +2607,9 @@ body.dev-preview-resizing *{
 .goal-mode-dev__instruction { white-space: pre-wrap; overflow-wrap: anywhere; }
 .goal-mode-dev__basis { font-weight: 600; }
 .goal-mode-dev__rules { margin: 0; padding-left: 18px; }
+
+/* V3-L2c — bouton « Enregistrer comme prochaine action » sous le premier pas. */
+.first-step-actions { display: flex; gap: 8px; margin-top: 8px; }
+.first-step-actions button { border: 1px solid var(--border); background: #fff; color: var(--ink); border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 600; }
+.first-step-actions button:hover:not(:disabled) { border-color: var(--ink); }
+.first-step-actions button:disabled { color: var(--muted); cursor: default; }
