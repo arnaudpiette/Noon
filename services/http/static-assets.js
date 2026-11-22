@@ -26,6 +26,7 @@ const STATIC_ASSETS = Object.freeze({
   "/selfdev-ui.js": { file: ["selfdev-ui.js"], headers: nosniffJs },
   "/character-ui.js": { file: ["character-ui.js"], headers: nosniffJs },
   "/iphone-companion-ui.js": { file: ["iphone-companion-ui.js"], headers: nosniffJs },
+  "/figma-bridge-ui.js": { file: ["figma-bridge-ui.js"], headers: nosniffJs },
   "/dev-missions-ui.js": { file: ["dev-missions-ui.js"], headers: nosniffJs },
   "/noon-health-ui.js": { file: ["noon-health-ui.js"], headers: nosniffJs },
   "/mcp-connectors-ui.js": { file: ["mcp-connectors-ui.js"], headers: nosniffJs },

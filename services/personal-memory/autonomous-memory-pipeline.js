@@ -13,7 +13,20 @@ const GENERAL_MEMORY_TYPE_BY_CATEGORY = Object.freeze({
   decision: "decision",
   tooling: "tooling",
 });
-function createReceipt({ automatic = true } = {}) { return { success: true, operation: "none", automatic, persisted: true, general: emptyCounts(), private: emptyCounts(), project: emptyCounts(), memoryIds: [], errors: 0 }; }
+function createReceipt({ automatic = true } = {}) { return { success: true, operation: "none", automatic, persisted: true, general: emptyCounts(), private: emptyCounts(), project: emptyCounts(), categories: { general: {}, private: {}, project: {} }, memoryIds: [], errors: 0 }; }
+
+// Libellés des catégories dans le compte-rendu (jamais le contenu des souvenirs).
+const CATEGORY_LABELS = Object.freeze({
+  preference: "préférences", identity_role: "rôle professionnel", objective: "objectifs", habit: "habitudes",
+  decision: "décisions", tooling: "outils", identity: "identité", family_child: "enfants",
+  family_relationship: "relations familiales", address: "adresse", health: "santé", finance: "finances",
+  legal: "justice", contact: "coordonnées",
+});
+function countCategory(receipt, bucketName, category) {
+  const bucket = receipt.categories[bucketName];
+  const key = String(category || "autre");
+  bucket[key] = (bucket[key] || 0) + 1;
+}
 function candidateText(item) { return typeof item.value === "string" ? item.value : JSON.stringify(item.value || ""); }
 function sameText(left, right) { return normalizeForComparison(left) === normalizeForComparison(right); }
 
@@ -106,6 +119,7 @@ function persistGeneral(repository, candidate, receipt) {
   const verified = repository.getMemory(item.id);
   if (!verified || !sameText(candidateText(verified), candidate.statement)) throw new Error("MEMORY_READ_BACK_FAILED");
   receipt.general[existing ? "updated" : "created"] += 1; receipt.memoryIds.push(item.id);
+  countCategory(receipt, "general", candidate.category);
 }
 
 function persistPrivate(service, candidate, receipt) {
@@ -118,15 +132,40 @@ function persistPrivate(service, candidate, receipt) {
   const verified = item?.id ? service.getMemory(item.id) : null;
   if (!verified || !sameText(verified.statement, candidate.statement) || verified.apiPolicy !== candidate.apiPolicy) throw new Error("MEMORY_READ_BACK_FAILED");
   bucket[existing ? "updated" : "created"] += 1; receipt.memoryIds.push(item.id);
+  countCategory(receipt, candidate.scope === "project" ? "project" : "private", candidate.category);
+}
+
+// Compte-rendu factuel de ce qui a réellement été écrit, par destination et par catégorie.
+// Il est ajouté après la réponse du modèle, qui ne voit pas cette mémorisation : le libellé le
+// dit, pour ne pas contredire une réponse du type « je ne peux pas enregistrer ».
+function describeCategories(categories = {}) {
+  return Object.entries(categories).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([category, count]) => `${CATEGORY_LABELS[category] || category.replace(/_/g, " ")} ${count}`).join(", ");
 }
 
 function notificationFor(receipt, projectName = null) {
-  const general = receipt.general.created + receipt.general.updated, privateCount = receipt.private.created + receipt.private.updated, project = receipt.project.created + receipt.project.updated;
-  if (!general && !privateCount && !project) return "";
-  if (privateCount && (general || project)) return "J’ai aussi retenu quelques informations utiles ; les données sensibles ont été conservées uniquement dans ta mémoire privée locale.";
-  if (privateCount) return "J’ai conservé cette information dans ta mémoire privée locale.";
-  if (project) return `J’ai également retenu cette décision pour le projet ${projectName || "actif"}.`;
-  return "J’ai aussi retenu cette information pour la suite.";
+  const totals = {
+    general: receipt.general.created + receipt.general.updated,
+    private: receipt.private.created + receipt.private.updated,
+    project: receipt.project.created + receipt.project.updated,
+  };
+  const total = totals.general + totals.private + totals.project;
+  if (!total) return "";
+  const created = receipt.general.created + receipt.private.created + receipt.project.created;
+  const updated = receipt.general.updated + receipt.private.updated + receipt.project.updated;
+  const categories = receipt.categories || { general: {}, private: {}, project: {} };
+  const plural = (count, word) => `${count} ${word}${count > 1 ? "s" : ""}`;
+  const lines = [`Mémorisation automatique de Noon (faite après cette réponse) : ${plural(total, "élément")} enregistré${total > 1 ? "s" : ""} — ${created} nouveau${created > 1 ? "x" : ""}, ${updated} mis à jour.`];
+  const detail = (count, label, bucket) => {
+    if (!count) return;
+    const list = describeCategories(categories[bucket]);
+    lines.push(`• ${label} : ${count}${list ? ` (${list})` : ""}`);
+  };
+  detail(totals.general, "Mémoire générale", "general");
+  detail(totals.private, "Mémoire privée locale (chiffrée)", "private");
+  detail(totals.project, `Projet ${projectName || "actif"}`, "project");
+  lines.push("Tu peux les relire, corriger ou oublier dans Mémoire.");
+  return lines.join("\n");
 }
 
 function createAutonomousMemoryPipeline({ personalRepository, privateMemoryService, audit = () => {} } = {}) {
@@ -149,7 +188,7 @@ function createAutonomousMemoryPipeline({ personalRepository, privateMemoryServi
     receipt.success = receipt.errors === 0; receipt.persisted = receipt.errors === 0;
     const notification = receipt.success
       ? notificationFor(receipt, projectName)
-      : unique.length > 0 ? "La mise à jour de ma mémoire persistante a échoué." : "";
+      : unique.length > 0 ? "Mémorisation automatique de Noon : la mise à jour de ma mémoire persistante a échoué." : "";
     audit("memory.write", { success: receipt.success, automatic: true, created: receipt.general.created + receipt.private.created + receipt.project.created, updated: receipt.general.updated + receipt.private.updated + receipt.project.updated });
     return { candidates: unique, receipt, notification };
   }

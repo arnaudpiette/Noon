@@ -7,7 +7,7 @@
 
 const { NOT_HANDLED } = require("../http/route-result");
 
-const DEPENDENCIES = Object.freeze(["REALTIME_IDLE_TIMEOUT_MS","REALTIME_MAX_SESSION_MS","REALTIME_MODELS","WEB_SEARCH_DAILY_LIMIT","WEB_SEARCH_MAX_PER_REQUEST","askAI","assertRemoteVoiceAvailable","autonomousMemoryPipeline","buildIntentContext","createConversationKey","crypto","executeExplicitConversationMemoryCommand","getBudgetStatus","getConversationHistory","getValidRegisteredProjects","getVoiceBudgetStatus","intentCommandEngine","localIntelligenceRuntime","memoryEngine","modelForQuality","normalizeAccent","normalizeFocusName","normalizeFocusPath","normalizeLanguage","normalizeNoonMode","normalizeSessionId","normalizeVoiceQuality","readJsonBody","readTextBody","realtimeVoiceConfig","recentAutomaticMemoryIds","refreshDailyWebSearchUsage","registerRealtimeUsage","rememberConversation","rememberedRealtimeTurns","resolveFocusCatalogSelection","resolveFocusProject","resolveProject","scanRegisteredProjects","sessionContinuityEngine","touchConversation","voiceIdentity","workspaceEngine"]);
+const DEPENDENCIES = Object.freeze(["REALTIME_IDLE_TIMEOUT_MS","REALTIME_MAX_SESSION_MS","REALTIME_MODELS","WEB_SEARCH_DAILY_LIMIT","WEB_SEARCH_MAX_PER_REQUEST","askAI","assertRemoteVoiceAvailable","autonomousMemoryPipeline","buildIntentContext","createConversationKey","crypto","executeExplicitConversationMemoryCommand","getBudgetStatus","getConversationHistory","getValidRegisteredProjects","getVoiceBudgetStatus","intentCommandEngine","localIntelligenceRuntime","memoryEngine","modelForQuality","normalizeAccent","normalizeFocusName","normalizeFocusPath","normalizeLanguage","normalizeNoonMode","normalizeSessionId","normalizeVoiceQuality","readJsonBody","readTextBody","realtimeVoiceConfig","recentAutomaticMemoryIds","recentAutomaticMemoryReports","refreshDailyWebSearchUsage","registerRealtimeUsage","rememberConversation","rememberedRealtimeTurns","resolveFocusCatalogSelection","resolveFocusProject","resolveProject","scanRegisteredProjects","sessionContinuityEngine","touchConversation","voiceIdentity","workspaceEngine"]);
 
 function createVoiceHttpRoutes(deps) {
   for (const name of DEPENDENCIES) if (!(name in deps)) throw new TypeError(`Dépendance manquante : ${name}`);
@@ -44,6 +44,7 @@ function createVoiceHttpRoutes(deps) {
       readTextBody,
       realtimeVoiceConfig,
       recentAutomaticMemoryIds,
+      recentAutomaticMemoryReports,
       refreshDailyWebSearchUsage,
       registerRealtimeUsage,
       rememberConversation,
@@ -487,7 +488,7 @@ function createVoiceHttpRoutes(deps) {
             sessionId: continuitySession.id, workspaceId,
           }, buildIntentContext({ sessionId: continuitySession.id, conversationId: sessionId, workspaceId }));
           sessionContinuityEngine.applyIntent(continuitySession.id, normalizedIntent);
-          const memoryCommand = executeExplicitConversationMemoryCommand(question, { projectId: focus || workspaceId || null, recentMemoryIds: recentAutomaticMemoryIds.get(sessionId) || [] });
+          const memoryCommand = executeExplicitConversationMemoryCommand(question, { projectId: focus || workspaceId || null, recentMemoryIds: recentAutomaticMemoryIds.get(sessionId) || [], recentMemoryReport: recentAutomaticMemoryReports.get(sessionId) || "" });
           if (memoryCommand) {
             const memoryContext = { sourcesUsed: ["private_memory"], memoryIds: memoryCommand.memoryIds || [], truncated: false };
             sessionContinuityEngine.recordCompletedTurn(continuitySession.id, { channel: "voice", normalizedIntent, executionId: null, approvalIds: [], artifacts: [], messages: [{ role: "user", content: question, state: "completed" }, { role: "assistant", content: memoryCommand.answer, state: "completed" }], lastMessageId: null });
@@ -520,6 +521,7 @@ function createVoiceHttpRoutes(deps) {
             if (automaticMemory.notification) result.answer = `${result.answer}\n\n${automaticMemory.notification}`;
             if (automaticMemory.receipt.memoryIds.length) {
               recentAutomaticMemoryIds.set(sessionId, automaticMemory.receipt.memoryIds);
+              if (automaticMemory.receipt.success && automaticMemory.notification) recentAutomaticMemoryReports.set(sessionId, automaticMemory.notification);
               memoryEngine.notifyChanged({ store: "private_memory", action: "automatic" });
             }
           }

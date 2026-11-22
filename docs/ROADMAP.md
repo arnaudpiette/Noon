@@ -286,7 +286,7 @@ Horizon réaliste : un Noon « compagnon » utilisable au quotidien en **3 mois 
 
 | Idée V2.1 | Critère de dégel |
 |---|---|
-| P12 Creative Studio / Figma design-to-code | L5 terminé + besoin client réel |
+| P12 Creative Studio / Figma design-to-code | L5 terminé + besoin client réel — **exception du 23/11/2026** : plugin Figma « Noon Bridge » (lecture puis écriture sous validation) dégelé à la demande de l'utilisateur, voir `docs/DECISIONS.md` |
 | P14 App Control, navigateur, Mobilité V2/V3, Deezer | L10 terminé |
 | P15 App iPhone | L2 et L3 utilisés chaque jour ; commencer par un simple canal de capture vers le Mac |
 | P15 Apple Watch | App iPhone utilisée chaque jour |

@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<style>
+  body { font: 12px/1.45 Inter, system-ui, sans-serif; margin: 0; padding: 14px; color: var(--figma-color-text, #222); background: var(--figma-color-bg, #fff); }
+  h1 { font-size: 13px; margin: 0 0 6px; }
+  p { margin: 6px 0; }
+  .state { display: inline-block; padding: 2px 8px; border-radius: 10px; background: var(--figma-color-bg-secondary, #eee); font-weight: 600; }
+  .state[data-state="connected"] { background: #e3f6d8; color: #2c5d12; }
+  .state[data-state="error"] { background: #fde7e3; color: #8a2414; }
+  input { width: 110px; font: inherit; font-size: 16px; letter-spacing: 3px; padding: 4px 6px; }
+  button { font: inherit; padding: 5px 10px; margin-top: 6px; cursor: pointer; }
+  .muted { color: var(--figma-color-text-secondary, #777); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+  <h1>Noon Bridge</h1>
+  <p><span id="state" class="state">Démarrage…</span></p>
+  <p id="detail" class="muted"></p>
+  <form id="pairForm" hidden>
+    <p>Dans Noon : Control Center → Figma → « Générer un code ». Saisis-le ici :</p>
+    <input id="code" inputmode="numeric" autocomplete="off" maxlength="7" placeholder="000000" aria-label="Code de jumelage">
+    <button type="submit">Jumeler</button>
+  </form>
+  <button id="unpair" type="button" hidden>Dissocier ce Mac</button>
+  <p class="muted">Le plugin ne parle qu'à Noon sur ce Mac (127.0.0.1). Garde cette fenêtre ouverte pendant que Noon travaille.</p>
+<script>
+  "use strict";
+  var BASE = "http://127.0.0.1:3856/figma-bridge/v1/";
+  var token = null;
+  var context = {};
+  var running = false;
+  var waiting = {};
+  var stateNode = document.getElementById("state");
+  var detailNode = document.getElementById("detail");
+  var pairForm = document.getElementById("pairForm");
+  var unpairButton = document.getElementById("unpair");
+
+  function setState(kind, label, detail) {
+    stateNode.dataset.state = kind; stateNode.textContent = label; detailNode.textContent = detail || "";
+  }
+  function toMain(message) { parent.postMessage({ pluginMessage: message }, "*"); }
+  function sleep(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
+
+  function call(method, route, body) {
+    var headers = {};
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    if (token) headers["X-Noon-Figma-Token"] = token;
+    return fetch(BASE + route, { method: method, headers: headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  }
+
+  function forget(reason) {
+    token = null; running = false; toMain({ type: "token:clear" });
+    pairForm.hidden = false; unpairButton.hidden = true;
+    setState("idle", "Non jumelé", reason || "");
+  }
+
+  function runCommand(command) {
+    return new Promise(function (resolve) { waiting[command.id] = resolve; toMain({ type: "command", command: command }); });
+  }
+
+  async function loop() {
+    if (running) return; running = true;
+    var failures = 0;
+    pairForm.hidden = true; unpairButton.hidden = false;
+    while (running && token) {
+      try {
+        var hello = await call("POST", "hello", context);
+        if (hello.status === 401) { forget("Noon ne reconnaît plus ce plugin : jumelle-le de nouveau."); return; }
+        setState("connected", "Connecté à Noon", (context.fileName || "") + (context.pageName ? " · " + context.pageName : ""));
+        failures = 0;
+        while (running && token) {
+          var next = await call("GET", "next");
+          if (next.status === 401) { forget("Noon ne reconnaît plus ce plugin : jumelle-le de nouveau."); return; }
+          if (next.status === 204) continue;
+          if (!next.ok) throw new Error("HTTP " + next.status);
+          var payload = await next.json();
+          var outcome = await runCommand(payload.command);
+          await call("POST", "result", outcome);
+        }
+      } catch (error) {
+        failures += 1;
+        setState("error", "Noon injoignable", "Noon est-il ouvert, avec la passerelle Figma activée ? Nouvel essai…");
+        await sleep(Math.min(15000, 1000 * Math.pow(2, Math.min(failures, 4))));
+      }
+    }
+  }
+
+  window.onmessage = function (event) {
+    var message = event.data && event.data.pluginMessage;
+    if (!message) return;
+    if (message.type === "context") { context = message.context || {}; return; }
+    if (message.type === "token") {
+      token = message.token || null;
+      if (token) loop(); else forget("");
+      return;
+    }
+    if (message.type === "result" && waiting[message.id]) {
+      var resolve = waiting[message.id]; delete waiting[message.id];
+      resolve({ id: message.id, ok: message.ok, result: message.result, error: message.error });
+    }
+  };
+
+  pairForm.addEventListener("submit", async function (event) {
+    event.preventDefault();
+    var code = document.getElementById("code").value.replace(/\s+/g, "");
+    try {
+      var response = await call("POST", "pair", { code: code, pluginVersion: context.pluginVersion || null });
+      var payload = await response.json().catch(function () { return {}; });
+      if (!response.ok || !payload.token) { setState("error", "Jumelage refusé", payload.message || "Code incorrect ou expiré."); return; }
+      token = payload.token; toMain({ type: "token:set", token: token });
+      loop();
+    } catch (error) {
+      setState("error", "Noon injoignable", "Ouvre Noon et génère un code dans Control Center → Figma.");
+    }
+  });
+
+  unpairButton.addEventListener("click", function () { forget("Dissocié. Génère un nouveau code dans Noon pour reconnecter."); });
+
+  toMain({ type: "context" });
+  toMain({ type: "token:get" });
+</script>
+</body>
+</html>

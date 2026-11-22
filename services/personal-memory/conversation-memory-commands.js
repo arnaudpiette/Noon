@@ -183,6 +183,9 @@ function parseConversationMemoryCommand(text) {
     };
   }
 
+  // Compte-rendu de la dernière mémorisation automatique de la conversation (pas le contenu
+  // de toute la mémoire) : « qu'as-tu retenu de ce fichier ? », « qu'as-tu enregistré à l'instant ? ».
+  if (/^(?:noon,?\s*)?(?:qu['’]as-tu|qu['’]est-ce\s+que\s+tu\s+as)\s+(?:retenu|enregistr[eé]|m[eé]moris[eé]|rang[eé])\s+(?:de\s+ce\s+(?:fichier|document|message)|du\s+(?:fichier|document)|[aà]\s+l['’]instant|tout\s+[aà]\s+l['’]heure|dans\s+cette\s+conversation)\s*\??$/i.test(source)) return { action: "report_recent", subjectId: "arnaud" };
   const memoryRead = parseMemoryReadIntent(source);
   if (memoryRead) return memoryRead;
 
@@ -807,6 +810,12 @@ function executeConversationMemoryCommand(serviceOrContext, command, options = {
     const matches = privateService ? matchingMemories(privateService, searchSubject, command.query) : [];
     if (!matches.length) return { status: "not_found", answer: "Je n’ai trouvé aucune information correspondante dans votre mémoire privée." };
     return { status: "found", answer: matches.slice(0, 5).map((item) => item.statement).join(" "), memoryIds: matches.slice(0, 5).map((item) => item.id) };
+  }
+
+  if (command.action === "report_recent") {
+    const report = typeof options.recentMemoryReport === "string" ? options.recentMemoryReport.trim() : "";
+    if (!report) return { status: "not_found", answer: "Je n’ai rien mémorisé automatiquement dans cette conversation récemment." };
+    return { status: "found", answer: report, memoryIds: [] };
   }
 
   if (command.action === "delete_recent") {

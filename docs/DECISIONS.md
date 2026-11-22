@@ -281,6 +281,47 @@ structurante, est notée ici avec sa date et sa raison.
   jamais de jeton. Cause probable d'expiration répétée : application OAuth Google en mode
   « Testing », dont les jetons de renouvellement expirent après 7 jours.
 
+## 23/11/2026 — Compte-rendu vrai de la mémorisation automatique
+
+- La mémorisation automatique tourne après la réponse du modèle, qui ne la voit pas : Noon
+  pouvait répondre « je ne peux pas enregistrer » puis ajouter « J'ai conservé… ». La phrase
+  générique est remplacée par un compte-rendu factuel, explicitement attribué à la mémorisation
+  automatique : nombre d'éléments, nouveaux / mis à jour, destination (générale, privée locale,
+  projet) et catégories — jamais le contenu des souvenirs.
+- « Qu'as-tu retenu de ce fichier ? » (ou « à l'instant », « tout à l'heure », « dans cette
+  conversation ») relit ce dernier compte-rendu, sans rien écrire ; « qu'as-tu retenu » garde
+  l'inventaire complet.
+- Non traité (choix de l'utilisateur, point A écarté pour l'instant) : un document peut toujours
+  créer des souvenirs confirmés sans validation, catégories sensibles comprises.
+- Repéré, non corrigé : « oublie ça » supprime les identifiants de la dernière mémorisation,
+  qui incluent aussi des souvenirs existants mis à jour ou ignorés comme doublons.
+
+## 23/11/2026 — Plugin Figma « Noon Bridge », tranche 1 (dégel partiel de P12)
+
+- Dégel décidé par l'utilisateur (« lance le plugin Noon figma ») : il veut que Noon lise **et
+  écrive** dans Figma Desktop comme Claude ou ChatGPT. Siège Full, compte Pro. Le reste de P12
+  (Creative Studio) reste gelé. Interrompt L7 (découpe de `server.js`) le temps de ce chantier.
+- Pourquoi un plugin : Figma réserve son serveur MCP en ligne (seul à écrire) aux clients de son
+  catalogue, et le serveur de l'application de bureau est en lecture seule. Un plugin de
+  développement importé par l'utilisateur a, lui, accès au fichier ouvert (API Plugin Figma).
+- Architecture : `figma-plugin/noon-bridge/` (manifeste, `code.js` fil principal avec liste
+  blanche de commandes, `ui.html` qui parle à Noon) ⇄ `services/figma-bridge/figma-bridge.js`,
+  serveur HTTP sur 127.0.0.1:3856 (attente longue, sans dépendance nouvelle), flag
+  `figma.bridge` OFF. Démarré seulement à la génération d'un code, ou au démarrage si déjà jumelé.
+- Sécurité : code de jumelage à 6 chiffres affiché dans le Control Center, 5 minutes, usage
+  unique, verrouillé après 5 essais ; jeton de 32 octets, seule son empreinte SHA-256 est
+  stockée (`figma-bridge.json`) ; le plugin garde le jeton dans `figma.clientStorage` ; CORS `*`
+  imposé par l'origine nulle de l'iframe Figma, compensé par le jeton ; dissociation = jeton
+  révoqué. Plugin exclu de Noon.app (forge).
+- Tranche 1 = lecture seule : `ping`, `get_selection`, `get_page`. Panneau « Figma » du Control
+  Center : générer un code, état, test de lecture, dissocier.
+- Vérifié : tests unitaires et de contrat ; bout en bout sur serveur Noon isolé avec un faux
+  plugin (jumelage, pré-vol CORS, commande, résultat, refus sans jeton, jeton jamais en clair).
+  Non vérifié : le vrai plugin dans Figma Desktop (import du manifeste, réseau de l'iframe vers
+  127.0.0.1) — à faire par l'utilisateur.
+- Suite : tranche 2 = outils Figma pour le modèle de Noon (lecture) ; tranche 3 = écriture
+  (créer, modifier, styler) derrière une validation du plan de modifications.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

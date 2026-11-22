@@ -197,6 +197,8 @@ const { createExecutorWorktreeManager } = require("./services/delegation/executo
 const { createClaudeCodeSpecialistAgent, createExecutorSelector } = require("./services/delegation/claude-code-specialist-agent");
 const { createDevMissionService } = require("./services/delegation/dev-mission-service");
 const { createDevMissionHttpRoutes } = require("./services/delegation/dev-mission-http-routes");
+const { createFigmaBridge } = require("./services/figma-bridge/figma-bridge");
+const { createFigmaBridgeHttpRoutes } = require("./services/figma-bridge/figma-bridge-http-routes");
 const { createNativeDevCoordinator } = require("./services/dev/native-dev-coordinator");
 const { createNativeDevOrchestrator } = require("./services/dev/native-dev-orchestrator");
 const { createNativeDevOrchestratorFacade } = require("./services/dev/native-dev-orchestrator-facade");
@@ -946,6 +948,8 @@ const memoryEngine = createMemoryEngine({
 });
 const attachmentResolver = createAttachmentResolver();
 const recentAutomaticMemoryIds = new Map();
+// Dernier compte-rendu de mémorisation automatique par conversation (« qu'as-tu retenu de ce fichier ? »).
+const recentAutomaticMemoryReports = new Map();
 const autonomousMemoryPipeline = createAutonomousMemoryPipeline({
   personalRepository,
   privateMemoryService,
@@ -2026,6 +2030,17 @@ const devMissionService = createDevMissionService({
   observability: (event, metadata) => toolAuditLog.append(`dev.${event}`, metadata),
 });
 const devMissionHttpRoutes = createDevMissionHttpRoutes({ isEnabled: devMissionsEnabled, service: devMissionService });
+
+// Plugin Figma « Noon Bridge » (flag figma.bridge OFF par défaut) : serveur 127.0.0.1 démarré
+// seulement à la génération d'un code de jumelage, ou au démarrage si un jumelage existe.
+const figmaBridgeEnabled = () => featureFlags.evaluate("figma.bridge", {}).enabled &&
+  process.env.NOON_SAFE_MODE !== "1" && process.env.NOON_SMOKE_TEST !== "1" && !UI_VALIDATION_MODE;
+const figmaBridge = createFigmaBridge({
+  stateFile: path.join(DATA_DIRECTORY, "figma-bridge.json"),
+  port: Number(process.env.NOON_FIGMA_BRIDGE_PORT) || undefined,
+  observability: (event, metadata) => toolAuditLog.append(event, metadata),
+});
+const figmaBridgeHttpRoutes = createFigmaBridgeHttpRoutes({ isEnabled: figmaBridgeEnabled, bridge: figmaBridge });
 // Le benchmark possède déjà son propre gate B2 et son snapshot canonique. Son
 // runner ne doit donc pas résoudre l'identifiant de session comme un workspace
 // utilisateur persistant dans WorkspaceEngine.
@@ -6126,6 +6141,7 @@ const voiceHttpRoutes = createVoiceHttpRoutes({
   get readTextBody() { return readTextBody; },
   get realtimeVoiceConfig() { return realtimeVoiceConfig; },
   get recentAutomaticMemoryIds() { return recentAutomaticMemoryIds; },
+  get recentAutomaticMemoryReports() { return recentAutomaticMemoryReports; },
   get refreshDailyWebSearchUsage() { return refreshDailyWebSearchUsage; },
   get registerRealtimeUsage() { return registerRealtimeUsage; },
   get rememberConversation() { return rememberConversation; },
@@ -6762,6 +6778,7 @@ if (req.method === "POST" && req.url.startsWith("/ai")) {
       currentAttachments: registeredAttachments,
       projectId: focus || workspaceId || null,
       recentMemoryIds: recentAutomaticMemoryIds.get(sessionId) || [],
+      recentMemoryReport: recentAutomaticMemoryReports.get(sessionId) || "",
     });
     if (memoryCommand) {
       const memoryContext = { sourcesUsed: ["structured_memory", "private_memory"], memoryIds: memoryCommand.memoryIds || [], truncated: false };
@@ -6881,6 +6898,7 @@ if (req.method === "POST" && req.url.startsWith("/ai")) {
       if (automaticMemory.notification) result.answer = `${result.answer}\n\n${automaticMemory.notification}`;
       if (automaticMemory.receipt.memoryIds.length) {
         recentAutomaticMemoryIds.set(sessionId, automaticMemory.receipt.memoryIds);
+        if (automaticMemory.receipt.success && automaticMemory.notification) recentAutomaticMemoryReports.set(sessionId, automaticMemory.notification);
         memoryEngine.notifyChanged({ store: "private_memory", action: "automatic" });
       }
     }
@@ -7172,6 +7190,10 @@ if (staticAssets.matches(req)) {
 {
   const routed = await voiceHttpRoutes(req, res, requestPath);
   if (routed !== NOT_HANDLED) return routed;
+}
+
+if (figmaBridgeHttpRoutes.matches(requestPath)) {
+  return figmaBridgeHttpRoutes.handle(req, res, { requestPath });
 }
 
 {
@@ -7512,6 +7534,9 @@ async function startNoonServer({
   // Reconnexion silencieuse des serveurs MCP déjà autorisés (flag connectors.mcp).
   if (process.env.NOON_SAFE_MODE !== "1") void mcpService.startup().catch(() => {});
 
+  // Plugin Figma déjà jumelé : la passerelle locale écoute pour qu'il se reconnecte seul.
+  if (figmaBridgeEnabled() && figmaBridge.isPaired()) void figmaBridge.start().catch((error) => toolAuditLog.append("figma-bridge.start_failed", { code: error.code || "ERROR" }));
+
   if (server.listening) return Promise.resolve(server);
 
   return new Promise((resolve, reject) => {
@@ -7535,6 +7560,7 @@ function stopNoonServer() {
   backgroundJobEngine?.stop();
   try { dataDirectoryLock.release(); } catch {}
   void mcpService.closeAll().catch(() => {});
+  void figmaBridge.stop().catch(() => {});
   if (!server.listening) return Promise.resolve();
 
   return new Promise((resolve, reject) => {

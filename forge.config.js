@@ -57,6 +57,8 @@ module.exports = {
       /^\/\.github(?:\/|$)/,
       // Résultats et cas d'évaluation locaux (eval:character, eval:life : demandes réelles d'Arnaud).
       /^\/\.noon-evals(?:\/|$)/,
+      // Plugin Figma : importé par l'utilisateur dans Figma Desktop, pas embarqué dans Noon.app.
+      /^\/figma-plugin(?:\/|$)/,
       /^\/out(?:\/|$)/,
       /^\/docs(?:\/|$)/,
       /^\/scripts(?:\/|$)/,

@@ -619,6 +619,16 @@ if (iphoneCompanionPanel && window.NoonIphoneCompanionUi) {
   window.NoonIphoneCompanion = Object.freeze({ refresh: () => iphoneCompanionUi.refresh() });
   void iphoneCompanionUi.init().then((available) => window.NoonControlCenter?.setIphoneCompanionAvailable?.(available === true));
 }
+// Figma (plugin Noon Bridge) : entrée visible seulement si figma.bridge est actif (sinon 404).
+const figmaBridgePanel = document.getElementById("figmaBridgePanel");
+if (figmaBridgePanel && window.NoonFigmaBridgeUi) {
+  const figmaBridgeUi = window.NoonFigmaBridgeUi.createFigmaBridgeController({
+    elements: { root: figmaBridgePanel },
+    api: window.NoonFigmaBridgeUi.createFigmaBridgeApi({ fetchImpl: window.fetch.bind(window) }),
+  });
+  window.NoonFigmaBridge = Object.freeze({ refresh: () => figmaBridgeUi.refresh() });
+  void figmaBridgeUi.init().then((available) => window.NoonControlCenter?.setFigmaBridgeAvailable?.(available === true));
+}
 // Missions DEV (V3-L5d) : entrée visible seulement si dev.missions est actif (sinon 404).
 const devMissionsPanel = document.getElementById("devMissionsPanel");
 if (devMissionsPanel && window.NoonDevMissionsUi) {

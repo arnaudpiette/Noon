@@ -48,7 +48,8 @@ test("une préférence durable est persistée, notifiée, dédupliquée puis cor
   try {
     const first = fx.pipeline.process({ text: "À partir de maintenant je préfère JavaScript." });
     assert.equal(first.receipt.general.created, 1);
-    assert.match(first.notification, /retenu/i);
+    assert.match(first.notification, /^Mémorisation automatique de Noon \(faite après cette réponse\) : 1 élément enregistré — 1 nouveau, 0 mis à jour\./);
+    assert.match(first.notification, /• Mémoire générale : 1 \(préférences 1\)/);
     const duplicate = fx.pipeline.process({ text: "À partir de maintenant je préfère JavaScript." });
     assert.equal(duplicate.receipt.general.skipped, 1);
     assert.equal(duplicate.notification, "");
@@ -65,7 +66,7 @@ test("une décision nommant le Focus devient une mémoire de projet", () => {
   try {
     const result = fx.pipeline.process({ text: "Cedar devient la voix par défaut pour Noon.", projectId: "noon", projectName: "Noon" });
     assert.equal(result.receipt.project.created, 1);
-    assert.match(result.notification, /projet Noon/);
+    assert.match(result.notification, /• Projet Noon : 1 \(décisions 1\)/);
     const stored = fx.privateService.listMemories({ subjectId: "project:noon", includeDeleted: false });
     assert.equal(stored.length, 1);
     assert.equal(stored[0].apiPolicy, "contextual");
@@ -99,7 +100,10 @@ test("une pièce jointe ne conserve que les faits utiles et jamais l'anecdote ou
     assert.equal(result.receipt.general.created, 1);
     assert.equal(result.receipt.private.created, 1);
     assert.equal(result.candidates.length, 2);
-    assert.match(result.notification, /données sensibles/);
+    assert.match(result.notification, /2 éléments enregistrés — 2 nouveaux, 0 mis à jour/);
+    assert.match(result.notification, /• Mémoire générale : 1/);
+    assert.match(result.notification, /• Mémoire privée locale \(chiffrée\) : 1 \(adresse 1\)/);
+    assert.doesNotMatch(result.notification, /Testville|Astro/, "jamais le contenu des souvenirs");
   } finally { close(fx); }
 });
 
@@ -386,4 +390,21 @@ test("les mémoires générales de deux profils ne s'écrasent pas entre elles",
   } finally {
     close(fx);
   }
+});
+
+test("compte-rendu : « qu'as-tu retenu de ce fichier ? » relit la dernière mémorisation, sans rien écrire", () => {
+  const fx = fixture();
+  try {
+    const result = fx.pipeline.process({ attachments: [{ name: "fixture.txt", extractedText: "Je travaille désormais principalement avec Astro.\nMon adresse est 10 rue Exemple à Testville." }] });
+    const before = fx.repository.listMemories().length + fx.privateService.listMemories({ includeDeleted: false }).length;
+    const command = parseConversationMemoryCommand("Qu’as-tu retenu de ce fichier ?");
+    assert.equal(command.action, "report_recent");
+    const report = executeConversationMemoryCommand(context(fx), command, { recentMemoryReport: result.notification });
+    assert.equal(report.status, "found");
+    assert.equal(report.answer, result.notification);
+    const empty = executeConversationMemoryCommand(context(fx), command, {});
+    assert.equal(empty.status, "not_found");
+    assert.equal(fx.repository.listMemories().length + fx.privateService.listMemories({ includeDeleted: false }).length, before);
+    assert.equal(parseConversationMemoryCommand("qu'as-tu retenu").action, "memory_read", "l'inventaire complet reste inchangé");
+  } finally { close(fx); }
 });
