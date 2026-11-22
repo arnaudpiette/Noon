@@ -27,10 +27,12 @@
   const MCP_SECTION = "mcp-connectors";
   const SELFDEV_SECTION = "selfdev";
   const IPHONE_SECTION = "iphone-companion";
+  const DEV_MISSIONS_SECTION = "dev-missions";
   const clientPanels = {
     [MCP_SECTION]: { container: document.getElementById("controlCenterMcp"), available: false, refresh: () => window.NoonMcpConnectors?.refresh?.() },
     [SELFDEV_SECTION]: { container: document.getElementById("controlCenterSelfDev"), available: false, refresh: () => window.NoonSelfDev?.refresh?.() },
     [IPHONE_SECTION]: { container: document.getElementById("controlCenterIphone"), available: false, refresh: () => window.NoonIphoneCompanion?.refresh?.() },
+    [DEV_MISSIONS_SECTION]: { container: document.getElementById("controlCenterDevMissions"), available: false, refresh: () => window.NoonDevMissions?.refresh?.() },
   };
   const isClientPanel = (id) => Object.prototype.hasOwnProperty.call(clientPanels, id);
   const hideClientPanels = (except = null) => { for (const [id, panel] of Object.entries(clientPanels)) if (id !== except && panel.container) panel.container.hidden = true; };
@@ -46,6 +48,7 @@
     [MCP_SECTION]: "Connecteurs MCP",
     [SELFDEV_SECTION]: "SelfDev",
     [IPHONE_SECTION]: "Compagnon iPhone",
+    [DEV_MISSIONS_SECTION]: "Missions DEV",
   });
   const actionLabels = Object.freeze({
     RUN_QUICK_DIAGNOSTIC: "Vérifier", CHECK_CONNECTION: "Tester", CHECK_EXTENSION: "Tester",
@@ -226,6 +229,7 @@
   const showSelfDev = () => showClientPanel(SELFDEV_SECTION);
   const setSelfDevAvailable = (value) => setClientPanelAvailable(SELFDEV_SECTION, value);
   const setIphoneCompanionAvailable = (value) => setClientPanelAvailable(IPHONE_SECTION, value);
+  const setDevMissionsAvailable = (value) => setClientPanelAvailable(DEV_MISSIONS_SECTION, value);
 
   async function load(sectionId = "overview", force = false) {
     activeSection = sectionId;
@@ -268,5 +272,5 @@
   refreshButton.addEventListener("click", reload);
   viewSelect.addEventListener("change", reload);
   dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
-  window.NoonControlCenter = Object.freeze({ open, refresh: reload, setGoalModeDevAvailable, showGoalModeDev, setMcpAvailable, showMcp, setSelfDevAvailable, showSelfDev, setIphoneCompanionAvailable });
+  window.NoonControlCenter = Object.freeze({ open, refresh: reload, setGoalModeDevAvailable, showGoalModeDev, setMcpAvailable, showMcp, setSelfDevAvailable, showSelfDev, setIphoneCompanionAvailable, setDevMissionsAvailable });
 })();

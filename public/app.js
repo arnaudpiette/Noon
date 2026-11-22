@@ -11520,6 +11520,16 @@ if (iphoneCompanionPanel && window.NoonIphoneCompanionUi) {
   window.NoonIphoneCompanion = Object.freeze({ refresh: () => iphoneCompanionUi.refresh() });
   void iphoneCompanionUi.init().then((available) => window.NoonControlCenter?.setIphoneCompanionAvailable?.(available === true));
 }
+// Missions DEV (V3-L5d) : entrée visible seulement si dev.missions est actif (sinon 404).
+const devMissionsPanel = document.getElementById("devMissionsPanel");
+if (devMissionsPanel && window.NoonDevMissionsUi) {
+  const devMissionsUi = window.NoonDevMissionsUi.createDevMissionsController({
+    elements: { root: devMissionsPanel },
+    api: window.NoonDevMissionsUi.createDevMissionsApi({ fetchImpl: window.fetch.bind(window) }),
+  });
+  window.NoonDevMissions = Object.freeze({ refresh: () => devMissionsUi.refresh() });
+  void devMissionsUi.init().then((available) => window.NoonControlCenter?.setDevMissionsAvailable?.(available === true));
+}
 loadAutomations();
 refreshWakeWordSettings();
 refreshOpenAIKeyStatus();

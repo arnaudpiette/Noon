@@ -17,6 +17,7 @@ const EXECUTORS = new Set(["codex-cli", "claude-code"]);
 const MAX_OBJECTIVE = 4000;
 const MAX_PATHS = 20;
 const ID = /^mission-[0-9a-f]{12}$/;
+const MAX_PATCH_VIEW = 256 * 1024;
 
 const fail = (code, message, statusCode = 400) => Object.assign(new Error(message), { code, statusCode });
 
@@ -36,7 +37,7 @@ function cleanRelativePaths(paths) {
   }))].sort();
 }
 
-function createDevMissionService({ runner, approvals, isEnabled = () => false, authorizeRepository = null, listExecutors = async () => [], git = defaultGit, now = () => new Date(), idFactory = () => `mission-${crypto.randomBytes(6).toString("hex")}`, observability = null } = {}) {
+function createDevMissionService({ runner, approvals, isEnabled = () => false, authorizeRepository = null, listExecutors = async () => [], listRepositories = () => [], git = defaultGit, now = () => new Date(), idFactory = () => `mission-${crypto.randomBytes(6).toString("hex")}`, observability = null } = {}) {
   if (!runner?.runDevTask || !approvals?.prepareAction) throw new TypeError("runner et approvals requis.");
   const missions = new Map();
   const emit = (event, metadata) => { try { observability?.(event, metadata); } catch {} };
@@ -73,7 +74,7 @@ function createDevMissionService({ runner, approvals, isEnabled = () => false, a
     const approval = approvals.prepareAction({
       skillName: SKILL, operation: "run", target: repositoryRoot, normalizedArgs: args, permissionLevel: "local_write", riskLevel: "medium",
       title: "Lancer une mission DEV",
-      summary: `${executor === "claude-code" ? "Claude Code" : "Codex"} travaillera dans une copie isolée de ${path.basename(repositoryRoot)} (commit ${baseCommit.slice(0, 7)}), chemins : ${args.allowedPaths.join(", ")}. Objectif : ${objective.slice(0, 300)}`,
+      summary: `${executor === "claude-code" ? "Claude Code" : "Codex"} travaillera dans une copie isolée de ${path.basename(repositoryRoot)} (commit ${baseCommit.slice(0, 7)}), chemins : ${args.allowedPaths.join(", ") === "." ? "tout le dépôt" : args.allowedPaths.join(", ")}. Objectif : ${objective.slice(0, 300)}`,
     });
     const mission = { id, args, createdAt: now().toISOString(), updatedAt: now().toISOString(), status: "awaiting_start", pendingApproval: { id: approval.id, kind: "start", expiresAt: approval.expiresAt, summary: approval.summary } };
     missions.set(id, mission);
@@ -172,10 +173,22 @@ function createDevMissionService({ runner, approvals, isEnabled = () => false, a
     return view(mission);
   }
 
+  // V3-L5d — diff à relire avant l'approbation d'application (texte brut, borné).
+  function patch(id) {
+    ensureEnabled();
+    const mission = find(id);
+    if (!mission.patchPath) throw fail("MISSION_PATCH_UNAVAILABLE", "Aucun diff pour cette mission.", 404);
+    let buffer;
+    try { buffer = fs.readFileSync(mission.patchPath); } catch { throw fail("MISSION_PATCH_UNAVAILABLE", "Diff introuvable.", 404); }
+    return { missionId: id, bytes: buffer.length, truncated: buffer.length > MAX_PATCH_VIEW, text: buffer.subarray(0, MAX_PATCH_VIEW).toString("utf8") };
+  }
+
   return Object.freeze({
-    propose, start, apply, discard, renewApplyApproval,
+    propose, start, apply, discard, renewApplyApproval, patch,
     get: (id) => view(find(id)),
     executors: () => listExecutors(),
+    // Dépôts proposables : racines en écriture des espaces de travail (propose revérifie).
+    repositories: () => { try { return (listRepositories() || []).slice(0, 50); } catch { return []; } },
     list: () => [...missions.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(view),
     // Tests et arrêt propre : attendre la fin de la mission en cours.
     settled: (id) => find(id).running || Promise.resolve(),

@@ -2590,6 +2590,16 @@ body.dev-preview-resizing *{
 .iphone-companion__hint { margin: 6px 0; color: var(--muted); font-size: 12px; }
 .iphone-companion__scopes { display: grid; gap: 6px; margin: 8px 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
 .iphone-companion__devices { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.dev-missions { display: grid; gap: 12px; }
+.dev-missions__field { display: grid; gap: 4px; margin: 8px 0; font-size: 13px; }
+.dev-missions__field textarea, .dev-missions__field input, .dev-missions__field select { width: 100%; box-sizing: border-box; font: inherit; }
+.dev-missions__field textarea { padding: 8px; border: 1px solid var(--border); border-radius: 8px; resize: vertical; }
+.dev-missions__hint { margin: 6px 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.dev-missions__label { margin: 8px 0 4px; font-size: 12px; font-weight: 600; }
+.dev-missions__approval { margin: 8px 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
+.dev-missions__summary { margin: 8px 0; white-space: pre-wrap; }
+.dev-missions__files { margin: 0; padding-left: 18px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.dev-missions__patch { max-height: 420px; overflow: auto; margin: 8px 0; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
 .selfdev__review-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
 .mcp-connectors__subtitle { margin: 8px 0 0; font-size: 15px; }
 .mcp-connectors__tools { margin: 12px 0 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }

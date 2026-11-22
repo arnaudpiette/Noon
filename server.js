@@ -1970,6 +1970,21 @@ const devMissionService = createDevMissionService({
   approvals: approvalManager,
   isEnabled: devMissionsEnabled,
   listExecutors: () => devExecutorSelector.list(),
+  // V3-L5d : dépôts Git proposés dans le panneau = racines en écriture des espaces de travail.
+  listRepositories: () => {
+    const seen = new Set(); const repositories = [];
+    for (const workspace of workspaceEngine.list() || []) {
+      let roots;
+      try { roots = (workspaceEngine.context(workspace.id).roots || []).filter((item) => item.mode === "read-write"); } catch { continue; }
+      for (const root of roots) {
+        let repositoryRoot; try { repositoryRoot = fs.realpathSync(root.path); } catch { continue; }
+        if (!fs.existsSync(path.join(repositoryRoot, ".git")) || seen.has(`${workspace.id}\0${repositoryRoot}`)) continue;
+        seen.add(`${workspace.id}\0${repositoryRoot}`);
+        repositories.push({ workspaceId: workspace.id, workspaceName: String(workspace.name || workspace.id).slice(0, 120), repositoryRoot, name: path.basename(repositoryRoot) });
+      }
+    }
+    return repositories;
+  },
   authorizeRepository: (workspaceId, repositoryRoot) => {
     try {
       const workspace = workspaceEngine.context(workspaceId);
@@ -6962,6 +6977,11 @@ if (req.method === "GET" && req.url === "/character-ui.js") {
 if (req.method === "GET" && req.url === "/iphone-companion-ui.js") {
   res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", "X-Content-Type-Options": "nosniff" });
   return res.end(fs.readFileSync(path.join(__dirname, "public", "iphone-companion-ui.js")));
+}
+
+if (req.method === "GET" && req.url === "/dev-missions-ui.js") {
+  res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", "X-Content-Type-Options": "nosniff" });
+  return res.end(fs.readFileSync(path.join(__dirname, "public", "dev-missions-ui.js")));
 }
 
 if (req.method === "GET" && req.url === "/mcp-connectors-ui.js") {

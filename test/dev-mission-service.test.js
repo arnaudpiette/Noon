@@ -62,6 +62,11 @@ test("parcours complet : proposer → approuver le lancement → mission isolée
   assert.equal(done.approval.kind, "apply");
   assert.throws(() => h.service.start(proposed.id, { approvalId: proposed.approval.id }), (error) => error.code === "MISSION_STATE_INVALID");
 
+  const diff = h.service.patch(proposed.id);
+  assert.match(diff.text, /^-module\.exports = 1;$/m);
+  assert.match(diff.text, /^\+module\.exports = 2;$/m);
+  assert.equal(diff.truncated, false);
+
   const applied = h.service.apply(proposed.id, { approvalId: done.approval.id });
   assert.equal(applied.status, "applied");
   assert.equal(fs.readFileSync(path.join(h.root, "src", "value.js"), "utf8"), "module.exports = 2;\n");
@@ -149,6 +154,9 @@ test("routes HTTP : 404 flag OFF, en-tête exigé, clés exactes, erreurs connue
   assert.equal(created.status, 200);
   const listed = await call(routes, "GET", "/api/dev-missions");
   assert.equal(listed.payload.missions.length, 1);
+  assert.deepEqual(listed.payload.repositories, []);
+  assert.equal((await call(routes, "GET", `/api/dev-missions/${created.payload.mission.id}/patch`)).payload.code, "MISSION_PATCH_UNAVAILABLE", "aucun diff avant exécution");
+  assert.equal((await call(routes, "POST", `/api/dev-missions/${created.payload.mission.id}/patch`, {}, { "x-noon-request": "1" })).status, 405);
   assert.equal((await call(routes, "POST", `/api/dev-missions/${created.payload.mission.id}/start`, { approvalId: "approval_00000000-0000-0000-0000-000000000000" }, { "x-noon-request": "1" })).payload.code, "MISSION_APPROVAL_MISMATCH");
 });
 

@@ -109,6 +109,15 @@ structurante, est notée ici avec sa date et sa raison.
   Ces approbations sont exclues des routes génériques, comme celles du Goal Mode DEV.
 - Les missions sont gardées en mémoire : un redémarrage les perd (les approbations le sont déjà).
 
+## 22/11/2026 — Panneau « Missions DEV » (V3-L5d)
+
+- Section du Control Center visible seulement avec `dev.missions` actif. Dépôts proposés : racines
+  Git en écriture des espaces de travail (la proposition revérifie l'autorisation).
+- Le diff se relit dans le panneau avant l'approbation d'application (`GET …/patch`, texte brut,
+  256 Ko affichés au plus). Appliquer demande une confirmation explicite.
+- Un exécutant absent n'est pas sélectionnable. Critère de sortie de L5 : 10 missions réelles
+  réussies, lancées par Arnaud.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
