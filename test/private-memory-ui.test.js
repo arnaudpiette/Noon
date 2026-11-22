@@ -1,4 +1,5 @@
 "use strict";
+const { readAppSource } = require("./helpers/app-source");
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -7,7 +8,7 @@ const test = require("node:test");
 
 const publicDirectory = path.join(__dirname, "..", "public");
 const html = fs.readFileSync(path.join(publicDirectory, "index.html"), "utf8");
-const app = fs.readFileSync(path.join(publicDirectory, "app.js"), "utf8");
+const app = readAppSource();
 const css = fs.readFileSync(path.join(publicDirectory, "style.css"), "utf8");
 
 test("la mémoire privée est masquée par défaut sans état persistant", () => {

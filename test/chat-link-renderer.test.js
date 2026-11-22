@@ -1,4 +1,5 @@
 "use strict";
+const { readAppSource } = require("./helpers/app-source");
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -44,7 +45,7 @@ test("le HTML modèle reste un noeud texte et ne crée aucun script", () => {
 });
 
 test("le streaming reste textuel et le rendu final ne pose aucun handler par lien", () => {
-  const app = fs.readFileSync(path.join(__dirname, "..", "public", "app.js"), "utf8");
+  const app = readAppSource();
   assert.match(app, /streamedParagraph\.textContent = streamedText/);
   assert.match(app, /renderChatMarkdown\(paragraph, text\)/);
   assert.doesNotMatch(renderChatMarkdown.toString(), /addEventListener|onclick/);
@@ -64,7 +65,7 @@ test("les liens sont accessibles nativement au clavier", () => {
 });
 
 test("les cartes de sources conservent URL, source et résumé structurés", () => {
-  const app = fs.readFileSync(path.join(__dirname, "..", "public", "app.js"), "utf8");
+  const app = readAppSource();
   assert.match(app, /source\.url/);
   assert.match(app, /source\.source \|\| source\.domain/);
   assert.match(app, /source\.snippet/);

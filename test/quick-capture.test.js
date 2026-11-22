@@ -1,4 +1,5 @@
 "use strict";
+const { readAppSource } = require("./helpers/app-source");
 
 // V3-L2a — capture rapide : repérage de « note ça », enregistrement local dans la boîte de
 // réception, fenêtre de capture, câblage serveur / chat / Electron.
@@ -109,7 +110,7 @@ test("câblage : routes serveur bornées, chat sans appel au modèle, raccourci 
   assert.match(server, /req\.method === "POST" && req\.url === "\/capture"[\s\S]{0,200}x-noon-request/);
   assert.match(server, /\["\/capture", "\/capture\.js", "\/capture\.css"\]/);
   assert.match(server, /form-action 'none'/);
-  const app = read("public", "app.js");
+  const app = readAppSource();
   const captureIndex = app.indexOf("const captureCommand = filesToSend.length === 0 ? parseCaptureCommand(question) : null;");
   assert.ok(captureIndex > 0 && captureIndex < app.indexOf('const response = await fetch("/ai/stream"'), "la capture est traitée avant tout appel au modèle");
   assert.match(app, /body: JSON\.stringify\(\{ text, origin: "chat" \}\)/);

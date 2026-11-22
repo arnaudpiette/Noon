@@ -1,4 +1,5 @@
 "use strict";
+const { readAppSource } = require("./helpers/app-source");
 
 // V3-L2c — « Je dois faire X » → une première action de 2 à 5 minutes.
 const assert = require("node:assert/strict");
@@ -74,7 +75,7 @@ test("câblage : routes protégées par l'en-tête Noon, petit modèle, store:fa
   assert.match(server, /store: false, max_output_tokens: 400/);
   assert.match(server, /state === "LOCAL_ONLY"[\s\S]{0,200}FIRST_STEP_REMOTE_FORBIDDEN/);
   assert.match(server, /req\.url === "\/first-step" \|\| req\.url === "\/first-step\/save"[\s\S]{0,200}x-noon-request/);
-  const app = read("public", "app.js");
+  const app = readAppSource();
   const send = app.slice(app.indexOf("async function sendQuestion("));
   assert.ok(send.indexOf("parseFirstStepCommand(question)") > 0 && send.indexOf("parseFirstStepCommand(question)") < send.indexOf("shouldSuggestWebSearch(question)"));
 });

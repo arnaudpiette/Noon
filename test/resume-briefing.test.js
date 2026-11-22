@@ -1,4 +1,5 @@
 "use strict";
+const { readAppSource } = require("./helpers/app-source");
 
 // V3-L2b — « Où j'en étais ? » : assemblage local, prochain pas, rendu honnête, câblage.
 const assert = require("node:assert/strict");
@@ -74,7 +75,7 @@ test("commande et câblage : repérage strict, route locale, lien profond et bar
   const server = read("server.js");
   assert.match(server, /resolveFocus: \(focusId, focusPath\) => resolveFocusCatalogSelection\(focusId, focusPath\)/);
   assert.match(server, /req\.url === "\/resume" \|\| req\.url\.startsWith\("\/resume\?"\)/);
-  const app = read("public", "app.js");
+  const app = readAppSource();
   assert.ok(app.indexOf("isResumeCommand(question)") < app.indexOf('const response = await fetch("/ai/stream"'), "traité avant tout appel au modèle");
   assert.match(read("electron", "main.js"), /\{ label: "Où j'en étais \?", click: \(\) => dispatchDeepLink\("noon:\/\/resume"\) \}/);
 });

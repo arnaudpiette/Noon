@@ -15,7 +15,10 @@ module.exports = [
   {
     ignores: [
       "node_modules/**", "out/**", "benchmark-workspaces/**", "dev-task-journal/**", "resources/**",
-      "Workspace/**", ".noon-evals/**", "test/fixtures/**", "backups/**", "logs/**",
+      "Workspace/**", ".noon-evals/**",
+      // Morceaux de l'interface : lintés une fois recollés (scripts/lint-app-bundle.js), car ils
+      // partagent une seule portée.
+      "public/app/**", "test/fixtures/**", "backups/**", "logs/**",
     ],
   },
   js.configs.recommended,

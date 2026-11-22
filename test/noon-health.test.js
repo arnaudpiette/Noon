@@ -1,4 +1,5 @@
 "use strict";
+const { readAppSource } = require("./helpers/app-source");
 
 // V3-L6 — bilan « Santé de Noon » : agrégats des traces, coût par jour ventilé à l'écriture,
 // budgets G.2, absence de données dite telle quelle ; panneau en texte brut.
@@ -148,7 +149,7 @@ test("câblage : Control Center, index, app et serveur", () => {
   const index = read("public/index.html");
   assert.ok(index.includes('id="controlCenterHealth"'));
   assert.ok(index.indexOf('<script src="noon-health-ui.js"></script>') < index.indexOf('<script src="app.js"></script>'));
-  assert.match(read("public/app.js"), /window\.NoonControlCenter\?\.setHealthAvailable\?\.\(available === true\)/);
+  assert.match(readAppSource(), /window\.NoonControlCenter\?\.setHealthAvailable\?\.\(available === true\)/);
   assert.match(read("public/control-center.js"), /\[HEALTH_SECTION\]: "Santé de Noon"/);
   const server = read("server.js");
   assert.match(server, /req\.url === "\/noon-health-ui\.js"/);

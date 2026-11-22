@@ -1,4 +1,5 @@
 "use strict";
+const { readAppSource } = require("./helpers/app-source");
 
 // V3-L5d — panneau « Missions DEV » : préparer, lancer après validation, suivre, relire le diff,
 // appliquer après confirmation ; rendu en texte brut ; masqué si le flag est OFF.
@@ -148,7 +149,7 @@ test("câblage : Control Center, index, app et serveur", () => {
   const index = fs.readFileSync(path.join(PUBLIC, "index.html"), "utf8");
   assert.ok(index.includes('id="controlCenterDevMissions"'));
   assert.ok(index.indexOf('<script src="dev-missions-ui.js"></script>') < index.indexOf('<script src="app.js"></script>'));
-  assert.match(fs.readFileSync(path.join(PUBLIC, "app.js"), "utf8"), /window\.NoonControlCenter\?\.setDevMissionsAvailable\?\.\(available === true\)/);
+  assert.match(readAppSource(), /window\.NoonControlCenter\?\.setDevMissionsAvailable\?\.\(available === true\)/);
   assert.match(fs.readFileSync(path.join(PUBLIC, "control-center.js"), "utf8"), /\[DEV_MISSIONS_SECTION\]: "Missions DEV"/);
   assert.match(fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8"), /req\.url === "\/dev-missions-ui\.js"/);
 });

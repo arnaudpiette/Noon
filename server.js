@@ -126,6 +126,7 @@ const { createQuickCaptureService } = require("./services/capture/quick-capture-
 const { createResumeBriefingService, renderResumeBriefing } = require("./services/resume/resume-briefing-service");
 const { createFirstStepService, renderFirstStep } = require("./services/first-step/first-step-service");
 const { createBriefUsageLog, parisDate } = require("./services/daily-brief/brief-usage-log");
+const { readAppBundle } = require("./services/http/app-bundle");
 const { DEFAULT_WEIGHTS, createPriorityEngine } = require("./services/personal-intelligence/priority-engine");
 const { createDeduplicationService } = require("./services/personal-intelligence/deduplication-service");
 const { createFollowUpService } = require("./services/personal-intelligence/follow-up-service");
@@ -6945,14 +6946,13 @@ if (req.method === "GET" && req.url === "/style.css") {
 }
 
 // Sert le code JavaScript exécuté par l'interface.
+// V3-L7 (A.5) : public/app/*.js recollés dans l'ordre et servis en un seul script.
 if (req.method === "GET" && req.url === "/app.js") {
-  const filePath = path.join(__dirname, "public", "app.js");
-
   res.writeHead(200, {
     "Content-Type": "application/javascript; charset=utf-8",
   });
 
-  return res.end(fs.readFileSync(filePath));
+  return res.end(readAppBundle(path.join(__dirname, "public")));
 }
 
 // Sert les fonctions d'échappement partagées par le renderer.

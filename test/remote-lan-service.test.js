@@ -1,4 +1,5 @@
 "use strict";
+const { readAppSource } = require("./helpers/app-source");
 
 // Compagnon iPhone — IP-3 : composition dans Noon, commandes locales /api/remote-lan/* et
 // panneau « Compagnon iPhone » du Control Center.
@@ -292,7 +293,7 @@ test("câblage : Control Center, index, app et serveur", () => {
   const index = fs.readFileSync(path.join(PUBLIC, "index.html"), "utf8");
   assert.ok(index.includes('id="controlCenterIphone"'));
   assert.ok(index.indexOf('<script src="iphone-companion-ui.js"></script>') < index.indexOf('<script src="app.js"></script>'));
-  assert.match(fs.readFileSync(path.join(PUBLIC, "app.js"), "utf8"), /window\.NoonControlCenter\?\.setIphoneCompanionAvailable\?\.\(available === true\)/);
+  assert.match(readAppSource(), /window\.NoonControlCenter\?\.setIphoneCompanionAvailable\?\.\(available === true\)/);
   assert.match(fs.readFileSync(path.join(PUBLIC, "control-center.js"), "utf8"), /\[IPHONE_SECTION\]: "Compagnon iPhone"/);
   const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
   assert.match(server, /req\.url === "\/iphone-companion-ui\.js"/);

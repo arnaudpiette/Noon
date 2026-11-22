@@ -1,4 +1,5 @@
 "use strict";
+const { readAppSource } = require("./helpers/app-source");
 
 // UI Goal Mode DEV sans navigateur : vm + faux DOM. innerHTML lève une erreur,
 // localStorage / sessionStorage / document.cookie / console sont piégés.
@@ -379,7 +380,7 @@ test("UI contrat source : panneau dans le Control Center (B4b), script avant app
   const ui = html.indexOf('<script src="goal-mode-dev-ui.js"></script>');
   const app = html.indexOf('<script src="app.js"></script>');
   assert.ok(ui > 0 && app > ui, "goal-mode-dev-ui.js chargé avant app.js");
-  const appSource = fs.readFileSync(path.join(root, "app.js"), "utf8");
+  const appSource = readAppSource();
   assert.match(appSource, /document\.getElementById\("goalModeDevPanel"\)/);
   assert.match(appSource, /createGoalModeDevApi\(\{ fetchImpl: window\.fetch\.bind\(window\) \}\)/);
   assert.match(appSource, /goalModeDevUi\.init\(\)\.then\(\(available\) => window\.NoonControlCenter\?\.setGoalModeDevAvailable\?\.\(available === true\)\)/);

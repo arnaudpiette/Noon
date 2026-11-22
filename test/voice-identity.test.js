@@ -1,4 +1,5 @@
 "use strict";
+const { readAppSource } = require("./helpers/app-source");
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
@@ -143,8 +144,7 @@ test("audio guards precede remote requests et le micro Live reste distinct", () 
   assert.match(live, /Le micro classique reste disponible/);
 });
 test("wake detection and text greeting remain independent of audio availability", () => {
-  const fs = require("node:fs");
-  const app = fs.readFileSync(require.resolve("../public/app"), "utf8");
+  const app = readAppSource();
   assert.match(app, /link.action === "wake"[\s\S]*?greetArnaudWithDailyBrief/);
   const greeting = app.slice(app.indexOf("async function greetArnaudWithDailyBrief"));
   assert.ok(greeting.indexOf("await loadCreativeBrief(") < greeting.indexOf("await speakNoon("));

@@ -154,7 +154,7 @@ Ne pas profiter d’une petite tâche pour refactoriser des parties sans rapport
 
 * `server.js`
 * `electron/main.js`
-* `public/app.js`
+* `public/app/` (interface découpée par écran, recollée en `/app.js` par `services/http/app-bundle.js`)
 * systèmes de mémoire ;
 * systèmes OAuth ;
 * ModelRouter ;

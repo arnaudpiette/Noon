@@ -1,4 +1,5 @@
 "use strict";
+const { readAppSource } = require("./helpers/app-source");
 
 // SelfDev V1 — SD-4 : relecture consultative, résolution du workspace, carte du Control Center.
 
@@ -266,7 +267,7 @@ test("Control Center : entrée SelfDev à côté de MCP, jamais vidée ; câblag
   assert.deepEqual(labels(), ["Vue d’ensemble", "Objectifs", "Connecteurs MCP"]);
   const index = fs.readFileSync(path.join(PUBLIC, "index.html"), "utf8");
   assert.ok(index.indexOf('<script src="selfdev-ui.js"></script>') < index.indexOf('<script src="app.js"></script>'));
-  assert.match(fs.readFileSync(path.join(PUBLIC, "app.js"), "utf8"), /window\.NoonControlCenter\?\.setSelfDevAvailable\?\.\(available === true\)/);
+  assert.match(readAppSource(), /window\.NoonControlCenter\?\.setSelfDevAvailable\?\.\(available === true\)/);
   const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
   assert.match(server, /req\.url === "\/selfdev-ui\.js"/);
   assert.match(server, /runReview: \(\{ worktreePath, question, signal \}\) => runCodexAnalysis\(\{ question, projectPath: worktreePath, signal \}\)/);

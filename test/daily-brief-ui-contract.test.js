@@ -1,4 +1,5 @@
 "use strict";
+const { readAppSource } = require("./helpers/app-source");
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -6,7 +7,7 @@ const fs = require("node:fs");
 
 const html = fs.readFileSync(require.resolve("../public/index.html"), "utf8");
 const css = fs.readFileSync(require.resolve("../public/style.css"), "utf8");
-const app = fs.readFileSync(require.resolve("../public/app.js"), "utf8");
+const app = readAppSource();
 
 test("le Brief V2 expose sa structure et ses diagnostics secondaires", () => {
   assert.match(html, /id="briefStructuredContent"/);

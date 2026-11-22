@@ -1,4 +1,5 @@
 "use strict";
+const { readAppSource } = require("./helpers/app-source");
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -12,10 +13,7 @@ const html = fs.readFileSync(
   "utf8"
 );
 
-const app = fs.readFileSync(
-  path.join(root, "public/app.js"),
-  "utf8"
-);
+const app = readAppSource();
 
 const css = fs.readFileSync(
   path.join(root, "public/style.css"),

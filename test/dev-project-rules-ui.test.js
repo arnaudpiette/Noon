@@ -1,4 +1,5 @@
 "use strict";
+const { readAppSource } = require("./helpers/app-source");
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -205,7 +206,7 @@ test("le bouton Règles ouvre et referme réellement le panneau", async () => {
 
 test("le câblage monté depuis la page ouvre les règles du projet synthétique sélectionné", async () => {
   const html = fs.readFileSync(path.join(__dirname, "..", "public", "index.html"), "utf8");
-  const app = fs.readFileSync(path.join(__dirname, "..", "public", "app.js"), "utf8");
+  const app = readAppSource();
   const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
   const reads = [];
   const f = setupMountedUi({

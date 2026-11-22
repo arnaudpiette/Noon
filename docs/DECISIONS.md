@@ -177,6 +177,22 @@ structurante, est notée ici avec sa date et sa raison.
 - 30 à 50 cas, fournis par Arnaud ; pas de seuil de réussite fixé : l'indicateur est l'absence de
   régression d'un commit important à l'autre.
 
+## 22/11/2026 — Découpe de `public/app.js` (V3-L7, A.5)
+
+- `public/app.js` (11 718 lignes) devient onze morceaux par écran dans `public/app/` (609 à
+  1 442 lignes). Coupures contiguës, aux limites d'instructions de premier niveau ; les marqueurs
+  `*_START/_END` restent avec leur section.
+- Le serveur recolle les morceaux dans l'ordre (`services/http/app-bundle.js`) et sert toujours un
+  seul `/app.js`, identique octet pour octet à l'ancien fichier (vérifié). Raison : entre deux
+  balises `<script>`, le navigateur peut traiter des événements ; une fonction asynchrone lancée par
+  un morceau pourrait reprendre avant le chargement des suivants. Un seul script garde exactement
+  le comportement d'avant. Analyse statique complémentaire (graphe d'appels au chargement) : aucune
+  fonction appelée avant son morceau.
+- Lint : les morceaux partagent une portée, ESLint les ignore un par un et lint le fichier recollé
+  (`scripts/lint-app-bundle.js`, erreurs ramenées au morceau et à la ligne, plafond 1 500 lignes).
+- Tests : `test/helpers/app-source.js` reconstitue le texte complet ; 26 tests y lisent l'interface.
+- Reste pour le critère de sortie de L7 : `server.js` (≈ 10 900 lignes) et la fusion mémoire (A.6).
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

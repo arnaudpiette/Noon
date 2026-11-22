@@ -1,4 +1,5 @@
 "use strict";
+const { readAppSource } = require("./helpers/app-source");
 
 // B4b : le panneau Goal Mode DEV doit être réellement visible. Les tests UI
 // (vm + faux DOM) ignorent le CSS : au premier essai réel, le panneau était
@@ -316,7 +317,7 @@ test("B4b contrat source : Control Center ne vide jamais le conteneur Goal Mode 
   for (const file of fs.readdirSync(PUBLIC).filter((name) => name.endsWith(".js"))) {
     assert.equal(fs.readFileSync(path.join(PUBLIC, file), "utf8").includes("loadFocusProjects"), false, file);
   }
-  const app = fs.readFileSync(path.join(PUBLIC, "app.js"), "utf8");
+  const app = readAppSource();
   assert.match(app, /await refreshLocalFolderPermissions\(\); await loadLocalProjects\(\);/);
   assert.match(app, /\nasync function loadLocalProjects\(\) \{/);
 });

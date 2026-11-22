@@ -1,4 +1,5 @@
 "use strict";
+const { readAppSource } = require("./helpers/app-source");
 
 // V3-L1 — charte de caractère, cadrans, stockage, intégration au prompt, interface, eval:character.
 const assert = require("node:assert/strict");
@@ -191,5 +192,5 @@ test("UI Caractère : erreur serveur affichée ; câblage index et app", async (
   const index = fs.readFileSync(path.join(__dirname, "..", "public", "index.html"), "utf8");
   assert.ok(index.includes('id="characterSettings"'));
   assert.ok(index.indexOf('<script src="character-ui.js"></script>') < index.indexOf('<script src="app.js"></script>'));
-  assert.match(fs.readFileSync(path.join(__dirname, "..", "public", "app.js"), "utf8"), /window\.NoonCharacterUi\.createCharacterController/);
+  assert.match(readAppSource(), /window\.NoonCharacterUi\.createCharacterController/);
 });

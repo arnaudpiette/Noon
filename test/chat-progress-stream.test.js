@@ -1,4 +1,5 @@
 "use strict";
+const { readAppSource } = require("./helpers/app-source");
 
 const assert =
   require("node:assert/strict");
@@ -111,13 +112,7 @@ test(
   "le renderer traite progress sans HTML dynamique",
   () => {
     const source =
-      fs.readFileSync(
-        path.join(
-          ROOT,
-          "public/app.js"
-        ),
-        "utf8"
-      );
+      readAppSource();
 
     assert.match(
       source,

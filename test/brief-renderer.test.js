@@ -1,7 +1,7 @@
 "use strict";
+const { readAppSource } = require("./helpers/app-source");
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
 const vm = require("node:vm");
 const { renderBriefMarkdown, renderDailyBriefStructured } = require("../public/ui-utils");
 function element(tagName, ownerDocument) {
@@ -67,7 +67,7 @@ test("structured renderer creates assistant sections without parsing provider HT
 });
 
 function loaderFixture(data) {
-  const source = fs.readFileSync(require.resolve('../public/app.js'), 'utf8');
+  const source = readAppSource();
   const start = source.indexOf('async function loadCreativeBrief()');
   const end = source.indexOf('\nasync function ', start + 1);
   const timers = [];

@@ -1,4 +1,5 @@
 "use strict";
+const { readAppSource } = require("./helpers/app-source");
 
 // V3-L2d — journal local d'usage du Brief : à l'heure, ouvert, série, rétention, câblage.
 const assert = require("node:assert/strict");
@@ -78,5 +79,5 @@ test("câblage : génération journalisée, ouverture protégée par l'en-tête,
   assert.match(server, /requestPath === "\/daily-brief\/opened"[\s\S]{0,120}x-noon-request/);
   assert.match(server, /requestPath === "\/daily-brief\/usage"/);
   assert.match(read("electron", "main.js"), /JSON\.stringify\(\{ force, trigger: "scheduled" \}\)/);
-  assert.match(read("public", "app.js"), /fetch\("\/daily-brief\/opened"/);
+  assert.match(readAppSource(), /fetch\("\/daily-brief\/opened"/);
 });
