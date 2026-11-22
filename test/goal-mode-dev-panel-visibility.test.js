@@ -242,7 +242,7 @@ class FakeElement {
 function loadControlCenter() {
   const ids = ["controlCenter", "controlCenterNavigation", "controlCenterOverview", "controlCenterSection",
     "controlCenterLoading", "controlCenterView", "openControlCenterButton", "closeControlCenter",
-    "refreshControlCenter", "quickSettings", "controlCenterGoalModeDev"];
+    "refreshControlCenter", "quickSettings", "controlCenterGoalModeDev", "noonVoicePolicy"];
   const nodes = Object.fromEntries(ids.map((id) => [id, new FakeElement(id === "controlCenter" ? "dialog" : "div", id)]));
   nodes.controlCenterView.value = "USER";
   nodes.controlCenterGoalModeDev.hidden = true;
@@ -319,4 +319,21 @@ test("B4b contrat source : Control Center ne vide jamais le conteneur Goal Mode 
   const app = fs.readFileSync(path.join(PUBLIC, "app.js"), "utf8");
   assert.match(app, /await refreshLocalFolderPermissions\(\); await loadLocalProjects\(\);/);
   assert.match(app, /\nasync function loadLocalProjects\(\) \{/);
+});
+
+test("Control Center : le bandeau de politique vocale n'apparaît que sur la vue d'ensemble", async () => {
+  const h = loadControlCenter();
+  const banner = h.nodes.noonVoicePolicy;
+  await h.api.open();
+  assert.equal(banner.hidden, false);
+  h.navButton("Objectifs").click();
+  await settle();
+  assert.equal(banner.hidden, true);
+  h.api.setGoalModeDevAvailable(true);
+  h.navButton("Goal Mode DEV").click();
+  await settle();
+  assert.equal(banner.hidden, true);
+  h.navButton("Vue d’ensemble").click();
+  await settle();
+  assert.equal(banner.hidden, false);
 });

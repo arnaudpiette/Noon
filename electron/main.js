@@ -609,7 +609,7 @@ async function runCreativeBrief({ force = false, notify = true } = {}) {
     const dailyResponse = await fetch(`${NOON_ORIGIN}/daily-brief/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Noon-Local-Auth": localAuthSecret },
-      body: JSON.stringify({ force }),
+      body: JSON.stringify({ force, trigger: "scheduled" }),
     });
     const dailyData = await dailyResponse.json();
     if (!dailyResponse.ok) {

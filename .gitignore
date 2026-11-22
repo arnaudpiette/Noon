@@ -41,6 +41,8 @@ planning-preferences.json
 planning-preferences.json.tmp
 character-preferences.json
 character-preferences.json.tmp
+brief-usage-log.json
+brief-usage-log.json.*.tmp
 daily-plans.json
 daily-plans.json.tmp
 personal-intelligence.sqlite

@@ -7,6 +7,9 @@
   if (!dialog) return;
   const navigation = document.getElementById("controlCenterNavigation");
   const overview = document.getElementById("controlCenterOverview");
+  // Bandeau de politique vocale : réservé à la vue d'ensemble (il débordait sur toutes les sections).
+  const voicePolicy = document.getElementById("noonVoicePolicy");
+  const showVoicePolicy = (visible) => { if (voicePolicy) voicePolicy.hidden = !visible; };
   const section = document.getElementById("controlCenterSection");
   const loading = document.getElementById("controlCenterLoading");
   const viewSelect = document.getElementById("controlCenterView");
@@ -178,6 +181,7 @@
     if (!goalModeDevAvailable || !goalModeDevContainer) return load("overview");
     activeSection = GOAL_MODE_DEV_SECTION;
     loading.hidden = true; overview.hidden = true; section.hidden = true;
+    showVoicePolicy(false);
     hideClientPanels();
     goalModeDevContainer.hidden = false;
     markActive(GOAL_MODE_DEV_SECTION);
@@ -199,6 +203,7 @@
     if (!panel?.available || !panel.container) return load("overview");
     activeSection = id;
     loading.hidden = true; overview.hidden = true; section.hidden = true;
+    showVoicePolicy(false);
     if (goalModeDevContainer) goalModeDevContainer.hidden = true;
     hideClientPanels(id);
     panel.container.hidden = false;
@@ -227,6 +232,7 @@
     if (goalModeDevContainer) goalModeDevContainer.hidden = true;
     hideClientPanels();
     loading.hidden = false; overview.hidden = true; section.hidden = true;
+    showVoicePolicy(sectionId === "overview");
     const query = new URLSearchParams({ view: viewSelect.value });
     if (force) query.set("refresh", "1");
     try {

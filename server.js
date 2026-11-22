@@ -125,6 +125,7 @@ const { createInboxService } = require("./services/personal-intelligence/inbox-s
 const { createQuickCaptureService } = require("./services/capture/quick-capture-service");
 const { createResumeBriefingService, renderResumeBriefing } = require("./services/resume/resume-briefing-service");
 const { createFirstStepService, renderFirstStep } = require("./services/first-step/first-step-service");
+const { createBriefUsageLog } = require("./services/daily-brief/brief-usage-log");
 const { DEFAULT_WEIGHTS, createPriorityEngine } = require("./services/personal-intelligence/priority-engine");
 const { createDeduplicationService } = require("./services/personal-intelligence/deduplication-service");
 const { createFollowUpService } = require("./services/personal-intelligence/follow-up-service");
@@ -2438,6 +2439,13 @@ const dailyBriefEngine = createDailyBriefEngine({
     };
   },
 });
+
+// V3-L2d : journal local d'usage du Brief (horodatages seulement, aucun contenu).
+const briefUsageLog = createBriefUsageLog({ filePath: path.join(DATA_DIRECTORY, "brief-usage-log.json") });
+function briefScheduledTime() {
+  try { return JSON.parse(fs.readFileSync(path.join(DATA_DIRECTORY, "preferences.json"), "utf8")).creativeBriefTime || "07:00"; } catch { return "07:00"; }
+}
+const safeUsageLog = (fn) => { try { fn(); } catch (error) { toolAuditLog.append("brief_usage.write_failed", { code: error?.code || "WRITE_FAILED" }); } };
 
 async function generateDailyBrief({ force = false } = {}) {
   return dailyBriefEngine.generate({ force, at: new Date() });
@@ -8776,6 +8784,25 @@ if (req.method === "GET" && ["/daily-brief/current", "/daily-brief", "/brief", "
   return res.end(JSON.stringify(state));
 }
 
+if (req.method === "GET" && requestPath === "/daily-brief/usage") {
+  const days = Number(new URL(req.url, `http://${req.headers.host}`).searchParams.get("days")) || 14;
+  res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+  return res.end(JSON.stringify({ status: "ok", usage: briefUsageLog.summary({ days }) }));
+}
+
+if (req.method === "POST" && requestPath === "/daily-brief/opened") {
+  try {
+    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403 });
+    const body = await readJsonBody(req, 1024);
+    const day = briefUsageLog.recordOpened({ date: String(body?.date || "") });
+    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+    return res.end(JSON.stringify({ status: "ok", recorded: Boolean(day) }));
+  } catch (error) {
+    res.writeHead(error.statusCode || 400, { "Content-Type": "application/json; charset=utf-8" });
+    return res.end(JSON.stringify({ status: "error", message: error.statusCode === 403 ? error.message : "Ouverture non enregistrée." }));
+  }
+}
+
 if (req.method === "GET" && requestPath === "/daily-brief/history") {
   const date = new URL(req.url, `http://${req.headers.host}`).searchParams.get("date");
   const brief = dailyBriefEngine.getHistorical(date);
@@ -9384,9 +9411,11 @@ if (req.method === "POST" && ["/daily-brief/generate", "/brief/generate", "/pers
   try {
     const body = await readJsonBody(req, 10 * 1024);
     const brief = await generateDailyBrief({ force: body.force === true });
+    if (brief?.date) safeUsageLog(() => briefUsageLog.recordGenerated({ date: brief.date, generatedAt: brief.generatedAt, trigger: body.trigger, scheduledTime: briefScheduledTime() }));
     res.writeHead(200, { "Content-Type": "application/json" });
     return res.end(JSON.stringify({ status: "ok", brief }));
   } catch (error) {
+    safeUsageLog(() => briefUsageLog.recordFailure({ code: error.code, scheduledTime: briefScheduledTime() }));
     res.writeHead(error.code === "BUDGET_BLOCKED" ? 403 : 500, { "Content-Type": "application/json" });
     return res.end(JSON.stringify({ status: "error", code: error.code || null, message: error.message }));
   }

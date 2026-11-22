@@ -59,6 +59,15 @@ structurante, est notée ici avec sa date et sa raison.
 - « Enregistrer comme prochaine action » : prochaine action du projet du Focus (nom exact),
   sinon note dans la boîte de réception. Aucun projet deviné.
 
+## 22/11/2026 — Mesure d'usage du Brief (V3-L2d)
+
+- Journal local `brief-usage-log.json` : par jour (Europe/Paris), heure prévue, première
+  génération réussie et son déclencheur (planifié ou manuel), échec éventuel, première ouverture
+  du Brief du jour. Aucun contenu stocké ; conservation 120 jours.
+- « À l'heure » = généré le jour même, au plus 15 minutes après l'heure prévue.
+- Bilan : `GET /daily-brief/usage?days=14`. Il sert au critère de sortie de L2 (utilisé chaque jour
+  pendant deux semaines). `opens` compte les chargements de la vue, pas des lectures distinctes.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

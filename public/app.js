@@ -9684,6 +9684,10 @@ async function loadCreativeBrief() {
                 ? "Brief historique"
                 : "Brief du jour indisponible"
     );
+    // V3-L2d : ouverture du Brief du jour (vue affichée), pour le journal local d'usage.
+    if (!historicalDate && brief && currentView === "brief" && document.visibilityState !== "hidden") {
+      void fetch("/daily-brief/opened", { method: "POST", headers: { "Content-Type": "application/json", "X-Noon-Request": "1" }, body: JSON.stringify({ date: brief.date }) }).catch(() => {});
+    }
     briefContent.textContent = "";
     window.NoonUiUtils.renderDailyBriefStructured(briefStructuredContent, brief);
     window.NoonUiUtils.renderBriefMarkdown(personalBriefContent, brief?.content || "");
