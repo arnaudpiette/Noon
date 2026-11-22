@@ -6,6 +6,10 @@
 // Ce qui n'est pas mesuré est dit tel quel (jamais de valeur inventée).
 
 const { parisDate } = require("../daily-brief/brief-usage-log");
+const { MODEL_PRICING } = require("./model-pricing");
+
+// G.4 : coût relatif luna / terra (prix identiquement proportionnels en entrée et en sortie).
+const SMALL_TO_DEFAULT_RATIO = MODEL_PRICING["gpt-5.6-luna"].input / MODEL_PRICING["gpt-5.6-terra"].input;
 
 const DEFAULT_BUDGETS = Object.freeze({ textResponseMs: 2000, voiceFirstAudioMs: 1000, dailyCostUSD: 1 });
 const TEXT_CHANNELS = new Set(["chat"]);
@@ -60,8 +64,15 @@ function createNoonHealthReport({ listTraces, usageStatus, briefUsage = null, bu
     const byDay = new Map(dates.map((date) => [date, { date, exchanges: 0, text: 0, voice: 0, background: 0, failures: 0, textLatency: [], tracedCostUSD: 0 }]));
     const byFunction = {};
     let tracedInput = 0; let tracedCached = 0;
+    let smallMeasured = 0; let smallEligible = 0; let smallSavings = 0; const escalations = {};
     for (const trace of traces) {
       for (const call of trace.modelCalls || []) { tracedInput += finite(call.inputTokens) || 0; tracedCached += finite(call.cachedTokens) || 0; }
+      const small = trace.routing?.smallFirst;
+      if (small && small.reasons && !small.reasons.includes("NOT_DEFAULT_ROUTE")) {
+        smallMeasured += 1;
+        if (small.eligible) { smallEligible += 1; smallSavings += (finite(trace.costs?.text) || 0) * (1 - SMALL_TO_DEFAULT_RATIO); }
+        else for (const reason of small.reasons) escalations[reason] = (escalations[reason] || 0) + 1;
+      }
       const day = byDay.get(parisDate(new Date(trace.startedAt)));
       if (!day) continue;
       const failed = trace.status === "failed" || (Array.isArray(trace.errors) && trace.errors.length > 0);
@@ -109,6 +120,13 @@ function createNoonHealthReport({ listTraces, usageStatus, briefUsage = null, bu
         monthRatio: finite(usage.inputTokens) > 0 ? round(Math.min(1, (finite(usage.cachedInputTokens) || 0) / usage.inputTokens), 3) : null,
         periodRatio: tracedInput > 0 ? round(Math.min(1, tracedCached / tracedInput), 3) : null,
         periodInputTokens: tracedInput,
+      },
+      // G.4 (ombre) : échanges routés par défaut sur terra où luna aurait suffi.
+      smallFirst: {
+        measured: smallMeasured, eligible: smallEligible,
+        ratio: smallMeasured ? round(smallEligible / smallMeasured, 3) : null,
+        estimatedSavingsUSD: round(smallSavings, 4),
+        escalationReasons: Object.fromEntries(Object.entries(escalations).sort((a, b) => b[1] - a[1]).slice(0, 6)),
       },
       byDay: days_,
       byFunction: Object.fromEntries(Object.entries(byFunction).map(([key, value]) => [key, { executions: value.executions, costUSD: round(value.costUSD, 4) }])),

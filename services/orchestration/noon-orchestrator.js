@@ -1364,6 +1364,7 @@ function createNoonOrchestrator({
         routingScore: state.route.score,
         reasonCodes: state.route.reasonCodes,
         signals: state.route.signals,
+        smallFirst: state.route.smallFirst || null,
         providerPrivacyDecision: state.privacyDecision.decision,
         providerPrivacyReasonCodes: state.privacyDecision.reasonCodes,
         providerPrivacyClassificationCounts: state.privacyDecision.classificationCounts,

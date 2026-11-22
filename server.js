@@ -201,6 +201,7 @@ const { createTransactionalExecutionEngine } = require("./services/execution/tra
 const { AsyncLocalStorage } = require("node:async_hooks");
 const { createNoonObservability } = require("./services/observability/noon-observability");
 const { createNoonHealthReport, withDailyCost } = require("./services/observability/noon-health-report");
+const { smallFirstDecision } = require("./services/models/small-first-policy");
 const { toChatProgressEvent } = require("./services/observability/chat-progress-event");
 const { createUserProgressEngine } = require("./services/observability/user-progress-engine");
 const { createUserProgressAdapter } = require("./services/observability/user-progress-adapter");
@@ -419,7 +420,12 @@ function selectConfiguredModelRoute(input = {}) {
     });
     return { ...active, astra: shadow.astra, shadowModel: shadow.model };
   }
-  const route = selectModelRoute(astraInput);
+  const baseRoute = selectModelRoute(astraInput);
+  // V3-L6 (G.4) : décision « luna aurait suffi » calculée en ombre ; la route active ne change pas.
+  const smallFirstFlag = featureFlags.evaluate("router.small-first", input);
+  const route = smallFirstFlag.shadow
+    ? { ...baseRoute, smallFirst: smallFirstDecision(baseRoute, { webSearchEnabled: input.webSearchEnabled === true, channel: input.channel || "chat" }) }
+    : baseRoute;
 
   if (adaptiveLearning.shadow) {
     const adaptiveShadow = adaptiveRoutingService.evaluate(

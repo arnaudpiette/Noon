@@ -88,6 +88,25 @@
       return card;
     }
 
+    const ESCALATION_LABELS = Object.freeze({
+      LONG_REQUEST: "demande longue", LARGE_CONTEXT: "gros contexte", MULTIPLE_SOURCES: "plusieurs sources", ATTACHMENTS: "pièces jointes",
+      MULTIPLE_TOOLS: "plusieurs outils", LONG_OUTPUT: "réponse longue", ARTIFACT: "document à produire", CONSEQUENCE: "conséquences importantes",
+      WEB_RESEARCH: "recherche web", MAX_QUALITY_REQUESTED: "qualité maximale demandée",
+    });
+    const escalationLabel = (code) => ESCALATION_LABELS[code] || (code.startsWith("COMPLEXITY_") ? `complexité (${code.slice(11).toLowerCase().replace(/_/g, " ")})` : code);
+
+    function renderSmallFirst() {
+      const card = el("section", "control-card");
+      card.append(el("h3", "", "Plus petit modèle capable (mesure en ombre)"));
+      const small = data.smallFirst;
+      if (!small?.measured) { card.append(el("p", "noon-health__hint", "Pas encore d'échange mesuré. Noon calcule à chaque échange si gpt-5.6-luna aurait suffi, sans rien changer aux réponses.")); return card; }
+      card.append(el("p", "", `${small.eligible} échange(s) sur ${small.measured} routés par défaut sur terra auraient pu aller sur luna (${percent(small.ratio)}). Économie estimée : ${dollars(small.estimatedSavingsUSD, 3)} sur la période.`));
+      const reasons = Object.entries(small.escalationReasons || {});
+      if (reasons.length) card.append(el("p", "noon-health__hint", `Raisons de rester sur terra : ${reasons.map(([code, count]) => `${escalationLabel(code)} (${count})`).join(", ")}.`));
+      card.append(el("p", "noon-health__hint", "Aucune réponse n'est routée différemment : la décision d'activer viendra de ces chiffres."));
+      return card;
+    }
+
     function renderBrief() {
       const card = el("section", "control-card");
       card.append(el("h3", "", "Brief"));
@@ -117,7 +136,7 @@
       const cache = data.cache || {};
       totals.append(el("p", "", `Cache de prompt : ${percent(cache.periodRatio)} des tokens d'entrée sur la période, ${percent(cache.monthRatio)} sur le mois.`));
       totals.append(el("p", "noon-health__hint", "Taux de correction par toi : pas encore mesuré."));
-      nodes.push(totals, renderBudgets(), renderDays(), renderBrief());
+      nodes.push(totals, renderBudgets(), renderSmallFirst(), renderDays(), renderBrief());
       root.replaceChildren(...nodes);
     }
 

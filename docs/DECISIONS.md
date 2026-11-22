@@ -149,6 +149,20 @@ structurante, est notée ici avec sa date et sa raison.
 - « Santé de Noon » affiche la part des tokens d'entrée servis depuis le cache (période et mois).
 - Hors orchestrateur (Brief, première action, voix Live) : inchangé.
 
+## 22/11/2026 — « Plus petit modèle capable » en ombre (V3-L6, G.4)
+
+- Constat (simulation locale du routeur) : par défaut, presque tout part sur gpt-5.6-terra (profil
+  équilibré) ; gpt-5.6-luna, 10 fois moins cher, ne sert qu'aux salutations et traductions courtes.
+- Choix d'Arnaud : mesurer d'abord. Flag `router.small-first` (SHADOW par défaut, OFF/SHADOW
+  seulement : aucune activation possible sans nouvelle décision). `smallFirstDecision` dit si luna
+  aurait suffi pour une route par défaut, sinon pourquoi rester sur terra (complexité ≥ 2, contexte
+  > 4 000 tokens, pièces jointes, plusieurs outils ou sources, réponse longue, document,
+  conséquences, recherche web, qualité maximale demandée).
+- La route active n'est jamais modifiée ; la décision va dans la trace (`routing.smallFirst`).
+  « Santé de Noon » affiche la part d'échanges éligibles, l'économie estimée et les raisons.
+- Prochaine étape, après quelques semaines de mesure : décider d'un mode actif, avec ses propres
+  évaluations de qualité.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
