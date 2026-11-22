@@ -18,6 +18,26 @@
       .replace(/'/g, "&#039;");
   }
 
+  // V3-L2a : « Noon, note ça : … », « note : … », « note que … » → capture locale, sans
+  // appel au modèle. « Note ce texte », « note ça sur 10 » restent des demandes normales.
+  function parseCaptureCommand(value) {
+    const question = String(value || "").trim();
+    const prefix = String.raw`^(?:(?:hey|salut|ok)\s+)?(?:noon\s*[,:]?\s+)?`;
+    const patterns = [
+      new RegExp(`${prefix}note[- ]?(?:ça|ca|moi)\\s*[:,]?\\s+([\\s\\S]+)$`, "i"),
+      new RegExp(`${prefix}note\\s*:\\s*([\\s\\S]+)$`, "i"),
+      new RegExp(`${prefix}note\\s+que\\s+([\\s\\S]+)$`, "i"),
+    ];
+    for (const pattern of patterns) {
+      const match = question.match(pattern);
+      if (!match) continue;
+      const text = match[1].trim().replace(/[.!]+$/, "").trim();
+      if (!text || /^(?:sur|de)\s+\d/i.test(text)) return null;
+      return { text };
+    }
+    return null;
+  }
+
   function parseFocusCommand(value) {
     const question = String(value || "").trim();
     if (/^(?:retire|enlève|désactive|supprime)\s+(?:le\s+)?focus\b/i.test(question)) {
@@ -595,6 +615,7 @@
 
   return {
     escapeHtml,
+    parseCaptureCommand,
     parseFocusCommand,
     shouldConvertPastedText,
     createPastedTextFileName,

@@ -122,6 +122,7 @@ const { migrateLegacyPersonalData } = require("./services/persistence/migrations
 const { createOperationalProfileService } = require("./services/personal-intelligence/operational-profile");
 const { createProjectIntelligenceService } = require("./services/personal-intelligence/project-intelligence");
 const { createInboxService } = require("./services/personal-intelligence/inbox-service");
+const { createQuickCaptureService } = require("./services/capture/quick-capture-service");
 const { DEFAULT_WEIGHTS, createPriorityEngine } = require("./services/personal-intelligence/priority-engine");
 const { createDeduplicationService } = require("./services/personal-intelligence/deduplication-service");
 const { createFollowUpService } = require("./services/personal-intelligence/follow-up-service");
@@ -2162,6 +2163,7 @@ const privateSeedImporter = privateMemoryService.available
 const operationalProfileService = createOperationalProfileService(personalRepository);
 const projectIntelligenceService = createProjectIntelligenceService(personalRepository);
 const personalInboxService = createInboxService(personalRepository);
+const quickCaptureService = createQuickCaptureService({ inboxService: personalInboxService });
 const deduplicationService = createDeduplicationService(personalRepository);
 const followUpService = createFollowUpService(personalRepository);
 const metricsService = createMetricsService(personalRepository);
@@ -6743,6 +6745,34 @@ if (req.url === "/budget") {
 }
 
 // Sert la page principale de l'interface web locale.
+// V3-L2a : fenêtre de capture rapide et ses ressources.
+if (req.method === "GET" && ["/capture", "/capture.js", "/capture.css"].includes(req.url)) {
+  const file = { "/capture": ["capture.html", "text/html; charset=utf-8"], "/capture.js": ["capture.js", "application/javascript; charset=utf-8"], "/capture.css": ["capture.css", "text/css; charset=utf-8"] }[req.url];
+  res.writeHead(200, { "Content-Type": file[1], "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "Cache-Control": "no-store" });
+  return res.end(fs.readFileSync(path.join(__dirname, "public", file[0])));
+}
+
+if (req.method === "GET" && req.url.startsWith("/capture/recent")) {
+  const limit = Number(new URL(req.url, `http://${req.headers.host || DEFAULT_HOST}`).searchParams.get("limit")) || 10;
+  res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+  return res.end(JSON.stringify({ status: "ok", captures: quickCaptureService.recent(limit) }));
+}
+
+if (req.method === "POST" && req.url === "/capture") {
+  try {
+    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403, code: "CAPTURE_REQUEST_REFUSED" });
+    const body = await readJsonBody(req, 8 * 1024);
+    const saved = quickCaptureService.capture({ text: body?.text, origin: body?.origin || "shortcut" });
+    toolAuditLog.append("capture.saved", { origin: saved.origin, length: saved.text.length });
+    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+    return res.end(JSON.stringify({ status: "ok", capture: saved }));
+  } catch (error) {
+    const known = /^CAPTURE_/.test(String(error?.code || ""));
+    res.writeHead(error.statusCode || (known ? 400 : 500), { "Content-Type": "application/json; charset=utf-8" });
+    return res.end(JSON.stringify({ status: "error", code: known ? error.code : "CAPTURE_ERROR", message: known ? error.message : "Note non enregistrée." }));
+  }
+}
+
 if (req.method === "GET" && req.url === "/app") {
   const filePath = path.join(__dirname, "public", "index.html");
 

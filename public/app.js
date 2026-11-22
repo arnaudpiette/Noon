@@ -4,6 +4,7 @@
 // Références DOM partagées par les différents modules de l’interface.
 const {
   escapeHtml,
+  parseCaptureCommand,
   parseFocusCommand,
   shouldConvertPastedText,
   createPastedTextFileName,
@@ -10398,6 +10399,27 @@ function startRateLimitCooldown(seconds) {
   rateLimitCooldownTimer = setInterval(updateCooldown, 1000);
 }
 
+async function saveQuickCapture(question, text, displayUserMessage = true) {
+  if (displayUserMessage) addMessage("Vous", question, "user", true);
+  promptInput.value = "";
+  resizePromptInput();
+  try {
+    const response = await fetch("/capture", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Noon-Request": "1" },
+      body: JSON.stringify({ text, origin: "chat" }),
+    });
+    let data;
+    try { data = await response.json(); } catch { data = {}; }
+    if (!response.ok) throw new Error(data.message || "Note non enregistrée.");
+    addMessage("Noon", `Noté : « ${data.capture.text} ». Je la garde dans ta boîte de réception pour le tri du Brief.`, "noon", true);
+    updateActivity("Note enregistrée.");
+  } catch (error) {
+    addMessage("Noon", `Je n'ai pas pu enregistrer la note : ${error.message}`, "noon", true);
+    updateActivity("Note non enregistrée.");
+  }
+}
+
 async function sendQuestion(question, options = {}) {
   if (requestInProgress) {
     updateActivity("Noon traite déjà une demande.");
@@ -10419,6 +10441,13 @@ async function sendQuestion(question, options = {}) {
     createAttachmentMetadata(filesToSend);
 
   if (!question && filesToSend.length === 0) return;
+
+  // V3-L2a : « Noon, note ça : … » est enregistré localement, sans appel au modèle.
+  const captureCommand = filesToSend.length === 0 ? parseCaptureCommand(question) : null;
+  if (captureCommand) {
+    await saveQuickCapture(question, captureCommand.text, displayUserMessage);
+    return;
+  }
 
   if (
     !skipWebSuggestion &&

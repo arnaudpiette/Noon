@@ -46,6 +46,7 @@ const NOON_ORIGIN = `http://127.0.0.1:${NOON_PORT}`;
 const PROCESS_STARTED_AT = Date.now();
 const DEFAULT_SHORTCUT = "Control+Option+N";
 const DEFAULT_LIVE_SHORTCUT = "Control+Option+Shift+N";
+const DEFAULT_CAPTURE_SHORTCUT = "Control+Option+C";
 const buildProfile = resolveBuildProfile({ packaged: app.isPackaged });
 const safeModeRequested = process.argv.includes("--safe-mode") || process.env.NOON_SAFE_MODE === "1";
 const smokeTestRequested = process.env.NOON_SMOKE_TEST === "1" || smokeModeFromArguments;
@@ -145,6 +146,7 @@ function loadPreferences() {
     creativeBriefNotifications: true,
     shortcut: DEFAULT_SHORTCUT,
     liveShortcut: DEFAULT_LIVE_SHORTCUT,
+    captureShortcut: DEFAULT_CAPTURE_SHORTCUT,
     wakeWordEnabled: false,
     wakeWordSensitivity: 0.5,
     wakeWordDeviceIndex: -1,
@@ -509,6 +511,7 @@ function rebuildTrayMenu() {
     { label: "Masquer Noon", enabled: Boolean(mainWindow?.isVisible()), click: () => mainWindow?.hide() },
     { label: "Nouvelle conversation", click: () => dispatchDeepLink("noon://new-conversation") },
     { label: "Brief Noon", click: () => dispatchDeepLink("noon://brief") },
+    { label: "Noter…", click: showCaptureWindow },
     { type: "separator" },
     { label: "Salut Noon", type: "checkbox", checked: preferences.wakeWordEnabled,
       click: (item) => { void setPreference("wakeWordEnabled", item.checked).then(syncWakeWordState); } },
@@ -540,6 +543,26 @@ function rebuildTrayMenu() {
     { label: "Quitter complètement Noon", click: () => { isQuitting = true; app.quit(); } },
   ]));
 }
+// V3-L2a : petite fenêtre flottante de capture (raccourci global ou barre de menus).
+// Même session que la fenêtre principale (en-tête d'authentification locale), sans preload,
+// sans navigation possible ; elle se ferme après l'enregistrement, sur Échap ou en perdant le focus.
+let captureWindow = null;
+function showCaptureWindow() {
+  if (!localAuthSecret) return;
+  if (captureWindow && !captureWindow.isDestroyed()) { captureWindow.show(); captureWindow.focus(); return; }
+  captureWindow = new BrowserWindow({
+    width: 560, height: 110, frame: false, resizable: false, minimizable: false, maximizable: false, fullscreenable: false,
+    alwaysOnTop: true, skipTaskbar: true, show: false, title: "Noter — Noon", backgroundColor: "#fdfdfc",
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, allowRunningInsecureContent: false, webviewTag: false, devTools: buildProfile === "development" || buildProfile === "test" },
+  });
+  captureWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  captureWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  captureWindow.webContents.on("will-navigate", (event) => event.preventDefault());
+  captureWindow.on("blur", () => { if (captureWindow && !captureWindow.isDestroyed()) captureWindow.close(); });
+  captureWindow.on("closed", () => { captureWindow = null; });
+  captureWindow.once("ready-to-show", () => { captureWindow?.center(); if (process.platform === "darwin") app.focus({ steal: true }); captureWindow?.show(); captureWindow?.focus(); });
+  captureWindow.loadURL(`${NOON_ORIGIN}/capture`);
+}
 function createTray() {
   const iconPath = path.join(__dirname, "..", "assets", "icons", "noonTemplate.png");
   const icon = nativeImage.createFromPath(iconPath);
@@ -556,19 +579,20 @@ function registerShortcuts() {
   return {
     window: register(preferences.shortcut, () => mainWindow?.isVisible() ? mainWindow.hide() : showMainWindow()),
     live: register(preferences.liveShortcut, () => dispatchDeepLink("noon://live")),
+    capture: register(preferences.captureShortcut, showCaptureWindow),
   };
 }
 async function setPreference(key, value) {
-  const allowed = new Set(["launchAtLogin", "shortcut", "liveShortcut", "wakeWordEnabled", "wakeWordSensitivity", "wakeWordDeviceIndex", "resumeWakeAfterUnlock", "showInDock", "creativeBriefEnabled", "creativeBriefTime", "creativeBriefNotifications"]);
+  const allowed = new Set(["launchAtLogin", "shortcut", "liveShortcut", "captureShortcut", "wakeWordEnabled", "wakeWordSensitivity", "wakeWordDeviceIndex", "resumeWakeAfterUnlock", "showInDock", "creativeBriefEnabled", "creativeBriefTime", "creativeBriefNotifications"]);
   if (!allowed.has(key)) throw new Error("Préférence refusée.");
-  if (["shortcut", "liveShortcut"].includes(key) && !isValidAccelerator(value)) throw new Error("Raccourci clavier invalide.");
+  if (["shortcut", "liveShortcut", "captureShortcut"].includes(key) && !isValidAccelerator(value)) throw new Error("Raccourci clavier invalide.");
   if (key === "wakeWordSensitivity" && (!Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 1)) throw new Error("Sensibilité invalide.");
   if (key === "creativeBriefTime" && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(value))) throw new Error("Heure du brief invalide.");
   const preferences = { ...loadPreferences(), [key]: value };
   writeJson("preferences.json", preferences);
   if (key === "launchAtLogin") app.setLoginItemSettings({ openAtLogin: Boolean(value), openAsHidden: true });
   if (key === "showInDock" && app.dock) value ? app.dock.show() : app.dock.hide();
-  if (["shortcut", "liveShortcut"].includes(key)) registerShortcuts();
+  if (["shortcut", "liveShortcut", "captureShortcut"].includes(key)) registerShortcuts();
   if (["wakeWordEnabled", "wakeWordSensitivity", "wakeWordDeviceIndex"].includes(key)) {
     scheduleWakeWordResume(50);
   }

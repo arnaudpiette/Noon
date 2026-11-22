@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Noter — Noon</title>
+  <link rel="stylesheet" href="/capture.css">
+</head>
+<body>
+  <form id="captureForm" class="capture" autocomplete="off">
+    <label class="sr-only" for="captureText">Note rapide</label>
+    <input id="captureText" name="text" type="text" maxlength="2000" placeholder="Noter quelque chose… (Entrée pour enregistrer, Échap pour fermer)" autofocus>
+    <p id="captureStatus" class="capture__status" role="status" aria-live="polite"></p>
+  </form>
+  <script src="/capture.js"></script>
+</body>
+</html>
