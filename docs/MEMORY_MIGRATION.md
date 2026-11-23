@@ -16,6 +16,13 @@ jamais les sources historiques.
 - Hard Rules : registre central canonique, doublons legacy ignorés ;
 - personnalité et prompts : non considérés comme souvenirs personnels.
 
+## Lecture après migration
+
+Une fois la migration privée terminée, la recherche mémoire et le contexte
+ignorent les copies de `long-term-memory.json` que l'ancien import avait créées
+dans `memory_items`. La gestion locale conserve l'accès à ces lignes
+historiques.
+
 ## Garanties
 
 - profils familiaux séparés, sans attribution déduite du texte ;

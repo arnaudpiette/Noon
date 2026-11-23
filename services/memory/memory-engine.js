@@ -5,6 +5,7 @@
 // (créer, corriger, confirmer, oublier, purger) passent par memory-writes.js.
 
 const { createMemoryWrites } = require("./memory-writes");
+const { LEGACY_PRIVATE_MEMORY_MIGRATION_ID } = require("./legacy-memory-migration");
 
 const SOURCE_PRIORITY = Object.freeze({
   private_memory: 400,
@@ -133,6 +134,14 @@ function createMemoryEngine({
     return { status: existing ? "updated" : "created", candidate };
   }
 
+  // L'ancien import SQLite a dupliqué le JSON sous un statut confirmé. Une fois la migration
+  // privée terminée, ce doublon ne doit plus alimenter le contexte ni resurgir après un oubli.
+  function isRetiredLegacyJsonMirror(item) {
+    return item.sourceType === "legacy-long-term-memory" &&
+      item.metadata?.migratedFrom === "long-term-memory.json" &&
+      privateMemoryService?.migrationStatus?.(LEGACY_PRIVATE_MEMORY_MIGRATION_ID)?.status === "completed";
+  }
+
   // Recherche locale dédiée : elle expose aussi les états non actifs avec leur
   // statut explicite, sans les présenter comme des vérités confirmées.
   function search(input = {}) {
@@ -143,7 +152,7 @@ function createMemoryEngine({
     if (structuredRepository?.searchMemories) {
       for (const item of structuredRepository.searchMemories(query, { limit: input.limit || 20 })) {
         const itemScope = item.metadata?.profileId || "arnaud";
-        if (itemScope !== profileScope) continue;
+        if (itemScope !== profileScope || isRetiredLegacyJsonMirror(item)) continue;
         const mappedStatus = item.status === "inferred" ? "candidate" : item.status;
         if (!includeHistorical && ["historical", "expired", "rejected", "blocked"].includes(mappedStatus)) continue;
         output.push({
@@ -272,7 +281,7 @@ function createMemoryEngine({
       .filter((item) => {
         // Les anciennes contraintes restent stockées pour compatibilité, mais
         // ne sont plus traitées comme souvenirs lorsqu'elles ont un équivalent canonique.
-        if (hardRulesRegistry?.matchesLegacyMemory(item)) return false;
+        if (hardRulesRegistry?.matchesLegacyMemory(item) || isRetiredLegacyJsonMirror(item)) return false;
         const usable = item.useAllowed !== false && !REMOTE_BLOCKED_STATUSES.has(item.status) && !isExpired(item, now());
         if (!usable) counts.excludedPrivacy += 1;
         return usable;
@@ -552,7 +561,7 @@ function createMemoryEngine({
     if (sourceType === "structured_memory") {
       const item = structuredRepository?.getMemory?.(sourceId);
       if (!item) return null;
-      if (item.useAllowed === false || REMOTE_BLOCKED_STATUSES.has(item.status) || isExpired(item, now())) return denied();
+      if (isRetiredLegacyJsonMirror(item) || item.useAllowed === false || REMOTE_BLOCKED_STATUSES.has(item.status) || isExpired(item, now())) return denied();
       const subjectScope = item.metadata?.profileId || null;
       if (ref.subjectScope && subjectScope !== ref.subjectScope) return denied();
       if (authorization.profileScope && ref.profileScope !== authorization.profileScope) return denied();

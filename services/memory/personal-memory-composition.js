@@ -7,7 +7,7 @@ const { parseConversationMemoryCommand, executeConversationMemoryCommand } = req
 const { createMemoryCipher, loadOrCreateProtectedMasterKey } = require("../personal-memory/crypto");
 const { createPrivateMemoryService } = require("../personal-memory/private-memory-service");
 const { createHardRulesRegistry } = require("../rules/hard-rules-registry");
-const { createLegacyMemoryMigration } = require("./legacy-memory-migration");
+const { LEGACY_PRIVATE_MEMORY_MIGRATION_ID, createLegacyMemoryMigration } = require("./legacy-memory-migration");
 const { createMemoryEngine } = require("./memory-engine");
 
 function createPersonalMemoryComposition(dependencies) {
@@ -51,7 +51,7 @@ function createPersonalMemoryComposition(dependencies) {
   const legacyMemoryReadAdapter = {
     relevant(...args) {
       const migrated = privateMemoryService.available &&
-        privateMemoryService.migrationStatus("legacy-private-memory-v1")?.status === "completed";
+        privateMemoryService.migrationStatus(LEGACY_PRIVATE_MEMORY_MIGRATION_ID)?.status === "completed";
       return migrated ? [] : longTermMemoryStore.relevant(...args);
     },
   };
@@ -60,7 +60,7 @@ function createPersonalMemoryComposition(dependencies) {
   function runLegacyMemoryMigrationOnce() {
     if (legacyMemoryMigrationChecked || !legacyMemoryMigration || process.env.NOON_MEMORY_MIGRATION === "false") return null;
     legacyMemoryMigrationChecked = true;
-    const migrationId = "legacy-private-memory-v1";
+    const migrationId = LEGACY_PRIVATE_MEMORY_MIGRATION_ID;
     const dryRun = legacyMemoryMigration.dryRun(migrationId);
     if (dryRun.eligible === 0 || dryRun.eligible === dryRun.duplicates + dryRun.unchanged) {
       toolAuditLog.append("memory-migration.skipped", { migrationId, discovered: dryRun.discovered, eligible: dryRun.eligible });

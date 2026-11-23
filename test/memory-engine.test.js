@@ -267,3 +267,34 @@ test("la relecture offload revérifie la politique mémoire actuelle", () => {
   });
   assert.equal(allowed.allowedForRemoteModel, true);
 });
+
+test("la migration privée retire les copies JSON du contexte, de la recherche et des références", () => {
+  let status = "running";
+  const mirror = {
+    id: "legacy-mirror", sourceType: "legacy-long-term-memory", status: "confirmed",
+    useAllowed: true, subject: "Typographie", value: { text: "Typographie ancienne fictive" },
+    metadata: { migratedFrom: "long-term-memory.json" },
+  };
+  const current = {
+    id: "current-preference", sourceType: "user", status: "confirmed", useAllowed: true,
+    subject: "Typographie", value: { text: "Typographie actuelle fictive" },
+  };
+  const rows = [mirror, current];
+  const engine = createMemoryEngine({
+    privateMemoryService: { ...privateFixture(), migrationStatus: () => ({ status }) },
+    structuredRepository: {
+      searchMemories: () => rows,
+      getMemory: (id) => rows.find((item) => item.id === id),
+    },
+  });
+  const ref = { sourceType: "structured_memory", sourceId: mirror.id };
+  const input = { query: "typographie" };
+  assert.deepEqual(engine.getRelevantContext(input).remoteContext.map((item) => item.id), [mirror.id, current.id]);
+  assert.equal(engine.resolveContextSource(ref, { access: "remote" }).allowedForRemoteModel, true);
+
+  status = "completed";
+  assert.deepEqual(engine.getRelevantContext(input).remoteContext.map((item) => item.id), [current.id]);
+  assert.deepEqual(engine.search(input).map((item) => item.id), [current.id]);
+  assert.deepEqual(engine.resolveContextSource(ref, { access: "remote" }), { authorized: false });
+  assert.deepEqual(engine.listStructured(input).map((item) => item.id), [mirror.id, current.id]);
+});

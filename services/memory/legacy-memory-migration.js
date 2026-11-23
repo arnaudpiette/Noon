@@ -7,6 +7,8 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
+const LEGACY_PRIVATE_MEMORY_MIGRATION_ID = "legacy-private-memory-v1";
+
 const BASE_SUBJECTS = new Set(["arnaud", "alexandra", "sinan", "kaan", "household", "noon", "projects"]);
 const SECRET_PATTERN = /(?:sk-[A-Za-z0-9_-]{12,}|api[_ -]?key|password|mot de passe|BEGIN (?:RSA |EC )?PRIVATE KEY|bearer\s+[A-Za-z0-9._-]+)/i;
 const PROTECTED = new Set(["health", "legal", "finance", "address", "school", "identity"]);
@@ -199,5 +201,5 @@ function createLegacyMemoryMigration({ dataDirectory, privateMemoryService, stru
     rollback: (migrationId) => privateMemoryService.rollbackMigration(migrationId) };
 }
 
-module.exports = { canonicalLegacy, canonicalStructured, createLegacyMemoryMigration,
+module.exports = { LEGACY_PRIVATE_MEMORY_MIGRATION_ID, canonicalLegacy, canonicalStructured, createLegacyMemoryMigration,
   fingerprint, normalize, sourceHash, statementFrom };
