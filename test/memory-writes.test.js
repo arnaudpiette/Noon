@@ -8,6 +8,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const { readServerSource } = require("./helpers/server-source");
 const { createPersonalDatabase } = require("../services/persistence/database");
 const { createPersonalIntelligenceRepository } = require("../services/persistence/repositories/personal-intelligence-repository");
 const { createMemoryCipher } = require("../services/personal-memory/crypto");
@@ -130,8 +131,8 @@ test("routes HTTP : contrats conservés (GET/POST privé, GET/POST structuré, 5
   } finally { ctx.close(); }
 });
 
-test("server.js : plus aucune écriture mémoire ni invalidation en direct hors MemoryEngine", () => {
-  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
+test("câblage serveur : plus aucune écriture mémoire ni invalidation en direct hors MemoryEngine", () => {
+  const server = readServerSource();
   assert.doesNotMatch(server, /privateMemoryService\.(createMemory|updateMemory|forgetMemory|purgeSubject)\(/);
   assert.doesNotMatch(server, /personalRepository\.(upsertMemory|confirmMemory|forgetMemory|blockMemory)\(/);
   assert.equal((server.match(/contextBuilder\.invalidateMemory\(\)/g) || []).length, 1, "une seule invalidation : onChange de MemoryEngine");

@@ -2,6 +2,7 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const { readServerSource } = require("./helpers/server-source");
 const { SEARCH_BODY_METADATA_SCRIPT, SEARCH_BODY_SCRIPT, SEARCH_METADATA_SCRIPT, searchNotes } = require("../services/connectors/apple-notes");
 
 function runnerFor({ metadata = "", bodyMetadata = "", bodies = {}, error = null } = {}) {
@@ -69,8 +70,10 @@ test("searchNotes conserve le repli contenu hors portée titre uniquement", asyn
 });
 
 test("le contrat A3 transmet la portée titre uniquement à Apple Notes", () => {
-  const source = require("fs").readFileSync(require("path").join(__dirname, "..", "server.js"), "utf8");
-  const adapter = source.slice(source.indexOf("notes: {"), source.indexOf("reminders: {"));
+  const source = readServerSource();
+  const start = source.indexOf("const authorizedContextSources = createAuthorizedContextSources");
+  assert.notEqual(start, -1);
+  const adapter = source.slice(source.indexOf("notes: {", start), source.indexOf("reminders: {", start));
   assert.match(adapter, /searchScope:\s*"title"/);
   assert.match(adapter, /includeBody:\s*false/);
   assert.match(adapter, /limit:\s*request\.limit/);

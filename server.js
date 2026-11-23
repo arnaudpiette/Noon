@@ -74,9 +74,8 @@ const {
   runCodexAnalysis,
 } = require("./lib/codex-bridge");
 const { modelFallbacks, normalizeIntelligenceProfile, selectLegacyModelRoute, selectModelRoute, trimHistoryByCharacters, updateConversationSummary } = require("./lib/noon-intelligence");
-const { buildNoonSystemPrompt, noonPersonality, setCharacterProvider } = require("./lib/noon-system-prompt");
-const { DIALS: CHARACTER_DIALS, renderCharacterInstructions } = require("./services/character/character-charter");
-const { createCharacterStore } = require("./services/character/character-store");
+const { buildNoonSystemPrompt, noonPersonality } = require("./lib/noon-system-prompt");
+const { DIALS: CHARACTER_DIALS } = require("./services/character/character-charter");
 const { createCreativeBriefStore } = require("./lib/creative-brief");
 const { redactSecrets } = require("./services/security/redaction");
 const { createOperationalSecurityPolicy } = require("./services/security/operational-security-policy");
@@ -116,7 +115,6 @@ const { createSessionContinuityRepository } = require("./services/persistence/re
 const { createWorkspaceEngine } = require("./services/workspaces/workspace-engine");
 const { createIntentCommandEngine } = require("./services/intents/intent-command-engine");
 const { renderConversationStyleInstruction } = require("./services/personal-assistant/conversation-style-profile");
-const { createSessionContinuityEngine } = require("./services/sessions/session-continuity-engine");
 const { createReliabilityEngine } = require("./services/reliability/reliability-engine");
 const { migrateLegacyPersonalData } = require("./services/persistence/migrations/legacy-personal-data");
 const { createOperationalProfileService } = require("./services/personal-intelligence/operational-profile");
@@ -161,17 +159,9 @@ const { DEFAULT_WEIGHTS, createPriorityEngine } = require("./services/personal-i
 const { createDeduplicationService } = require("./services/personal-intelligence/deduplication-service");
 const { createFollowUpService } = require("./services/personal-intelligence/follow-up-service");
 const { createMetricsService } = require("./services/personal-intelligence/metrics-service");
-const { createMemoryCipher, loadOrCreateProtectedMasterKey } = require("./services/personal-memory/crypto");
-const { createPrivateMemoryService } = require("./services/personal-memory/private-memory-service");
-const { createPrivateContextBuilder } = require("./services/personal-memory/context-builder");
-const { createMemoryEngine } = require("./services/memory/memory-engine");
-const { createLegacyMemoryMigration } = require("./services/memory/legacy-memory-migration");
 const { createMemoryHttpRoutes } = require("./services/memory/memory-http-routes");
-const { createHardRulesRegistry } = require("./services/rules/hard-rules-registry");
-const { createContextBuilder } = require("./services/context/context-builder");
-const { createAuthoritativeContextScopeProvider } = require("./services/context/authoritative-context-scope");
-const { createCanonicalEntityResolver } = require("./services/context/canonical-entity-resolver");
-const { createAuthorizedContextSources, SOURCE_STATUSES } = require("./services/context/authorized-context-sources");
+const { createPersonalMemoryComposition } = require("./services/memory/personal-memory-composition");
+const { createPersonalContextComposition, createPersonalSessionContinuity } = require("./services/context/personal-context-composition");
 const { inspectGitStatus } = require("./lib/git-status");
 const { createAmbientContextEngine } = require("./services/context/ambient-context-engine");
 const { createDecisionSupportEngine } = require("./services/decision/decision-support-engine");
@@ -257,9 +247,6 @@ const {
 const { ApprovalManager } = require("./services/approvals/approval-manager");
 const { createPrivateSeedImporter, validateSeed } = require("./services/personal-memory/seed-importer");
 const { getErrorHeader, readJsonBody, readTextBody, validateAttachment } = require("./services/http/request-utils");
-const { parseConversationMemoryCommand, executeConversationMemoryCommand } = require("./services/personal-memory/conversation-memory-commands");
-const { createAutonomousMemoryPipeline } = require("./services/personal-memory/autonomous-memory-pipeline");
-const { createAttachmentResolver } = require("./services/context/attachment-resolver");
 const { createTimeSlotService } = require("./services/scheduling/time-slot-service");
 const { createProactiveEngine } = require("./services/proactive/proactive-engine");
 const { createDailyPlanStore } = require("./services/planning/daily-plan-store");
@@ -743,105 +730,31 @@ const devProjectRuleResolver = createDevProjectRuleResolver({ repository: devPro
 const sessionContinuityRepository = createSessionContinuityRepository(personalDatabase);
 const executionTrackingRepository = createExecutionTrackingRepository(personalDatabase);
 const reviewLearningRepository = createReviewLearningRepository(personalDatabase);
-let privateMemoryCipher = null;
-try {
-  // Le smoke packagé utilise un profil jetable et ne doit pas créer de clé de
-  // mémoire privée ni attendre le trousseau macOS pour valider le cœur local.
-  // Le service sait déjà fonctionner indisponible lorsque safeStorage manque.
-  const protectedKey = loadOrCreateProtectedMasterKey(DATA_DIRECTORY, runtimeSafeStorage);
-  if (protectedKey) privateMemoryCipher = createMemoryCipher(protectedKey);
-} catch {
-  toolAuditLog.append("private-memory.unavailable", { code: "KEYSTORE_UNAVAILABLE" });
-}
-const privateMemoryService = createPrivateMemoryService({
-  databaseWrapper: personalDatabase,
-  cipher: privateMemoryCipher,
-  audit: (_event, metadata) => toolAuditLog.append("private-memory.audit", metadata),
-});
-const privateContextBuilder = createPrivateContextBuilder(privateMemoryService);
-const hardRulesRegistry = createHardRulesRegistry({
-  debug: (event, metadata) => toolAuditLog.append(event, metadata),
-});
-const legacyMemoryMigration = privateMemoryService.available
-  ? createLegacyMemoryMigration({
-    dataDirectory: DATA_DIRECTORY,
-    privateMemoryService,
-    structuredRepository: personalRepository,
-    legacyStore: longTermMemoryStore,
-    hardRulesRegistry,
-  })
-  : null;
-const legacyMemoryReadAdapter = {
-  relevant(...args) {
-    const migrated = privateMemoryService.available &&
-      privateMemoryService.migrationStatus("legacy-private-memory-v1")?.status === "completed";
-    return migrated ? [] : longTermMemoryStore.relevant(...args);
-  },
-};
-let legacyMemoryMigrationChecked = false;
-
-function runLegacyMemoryMigrationOnce() {
-  if (legacyMemoryMigrationChecked || !legacyMemoryMigration || process.env.NOON_MEMORY_MIGRATION === "false") return null;
-  legacyMemoryMigrationChecked = true;
-  const migrationId = "legacy-private-memory-v1";
-  const dryRun = legacyMemoryMigration.dryRun(migrationId);
-  if (dryRun.eligible === 0 || dryRun.eligible === dryRun.duplicates + dryRun.unchanged) {
-    toolAuditLog.append("memory-migration.skipped", { migrationId, discovered: dryRun.discovered, eligible: dryRun.eligible });
-    return { dryRun, skipped: true };
-  }
-  const backup = legacyMemoryMigration.createBackup(migrationId);
-  const report = legacyMemoryMigration.migrate({ migrationId, backup });
-  const comparison = legacyMemoryMigration.compare();
-  toolAuditLog.append("memory-migration.completed", {
-    migrationId, migrated: report.migrated, duplicates: report.duplicates,
-    quarantined: report.quarantined, failed: report.failed,
-    comparisonCount: comparison.length,
-  });
-  return { dryRun, report, comparison, backup: { fileCount: backup.fileCount } };
-}
-// Point de lecture unique des stockages existants. Les fonctions de
-// conversation sont déclarées plus bas mais ne sont invoquées qu'à la requête.
-const memoryEngine = createMemoryEngine({
-  privateMemoryService,
-  privateContextBuilder,
-  structuredRepository: personalRepository,
-  legacyStore: legacyMemoryReadAdapter,
-  projectProvider: () => personalRepository.listProjects(),
+const {
+  attachmentResolver,
+  autonomousMemoryPipeline,
+  executeExplicitConversationMemoryCommand,
   hardRulesRegistry,
-  conversationProvider: ({ conversationId }) =>
-    getConversationHistory(createConversationKey({ sessionId: conversationId })),
-  // Déclaré plus bas ; résolu seulement au moment d'une correction.
-  operationalProfile: { respondToInference: (...args) => operationalProfileService.respondToInference(...args) },
-  // V3-L7 (A.6) : invalidation unique après toute écriture mémoire, pour qu'un souvenir
-  // corrigé ou oublié ne ressorte pas d'un cache de contexte ou de recherche.
-  onChange: ({ subjectId }) => {
-    contextBuilder.invalidateMemory();
-    personalSearchEngine?.invalidate();
-    multiSourceSynthesisEngine?.invalidate();
-    if (subjectId) contextBuilder.invalidateProfile(subjectId);
-  },
-  debug: (event, counts) => toolAuditLog.append(event, counts),
-});
-const attachmentResolver = createAttachmentResolver();
-const recentAutomaticMemoryIds = new Map();
-// Dernier compte-rendu de mémorisation automatique par conversation (« qu'as-tu retenu de ce fichier ? »).
-const recentAutomaticMemoryReports = new Map();
-const autonomousMemoryPipeline = createAutonomousMemoryPipeline({
-  personalRepository,
+  memoryEngine,
+  privateMemoryCipher,
   privateMemoryService,
-  audit: (event, metadata) => toolAuditLog.append(event, metadata),
+  recentAutomaticMemoryIds,
+  recentAutomaticMemoryReports,
+  runLegacyMemoryMigrationOnce,
+} = createPersonalMemoryComposition({
+  DATA_DIRECTORY,
+  longTermMemoryStore,
+  personalDatabase,
+  personalRepository,
+  runtimeSafeStorage,
+  toolAuditLog,
+  get contextBuilder() { return contextBuilder; },
+  get createConversationKey() { return createConversationKey; },
+  get getConversationHistory() { return getConversationHistory; },
+  get multiSourceSynthesisEngine() { return multiSourceSynthesisEngine; },
+  get operationalProfileService() { return operationalProfileService; },
+  get personalSearchEngine() { return personalSearchEngine; },
 });
-
-function executeExplicitConversationMemoryCommand(question, options = {}) {
-  const command = parseConversationMemoryCommand(question);
-  if (!command) return null;
-  const result = executeConversationMemoryCommand({ privateMemoryService, personalRepository, attachmentResolver }, command, options);
-  if (result && !["not_found", "needs_clarification", "unavailable"].includes(result.status)) {
-    memoryEngine.notifyChanged({ store: "private_memory", action: `conversation-${command.action}` });
-  }
-  toolAuditLog.append("private-memory.conversation-command", { action: command.action, subjectId: command.subjectId, status: result?.status || "unavailable", memoryCount: result?.memoryIds?.length || 0 });
-  return { command, ...result };
-}
 const realtimeVoiceConfig = createRealtimeVoiceConfig({
   voiceIdentity,
   memoryEngine,
@@ -876,136 +789,29 @@ const portfolioCapacityEngine = createPortfolioCapacityEngine({
   featureMode: "SHADOW",
   audit: (event, metadata) => toolAuditLog.append(`portfolio.${event}`, metadata),
 });
-const canonicalEntityResolver = createCanonicalEntityResolver({
-  projectProvider: () => getValidRegisteredProjects(),
-  focusProvider: () => buildFocusCatalog(getAllowedDirectories()),
-  workspaceProvider: () => workspaceEngine?.list?.() || [],
-  observability: (event, metadata) => toolAuditLog.append(`context.${event}`, metadata),
-});
-function connectorContextStatus(connector, { local = false } = {}) {
-  const status = connector?.status;
-  if (local) return process.platform === "darwin"
-    ? { status: SOURCE_STATUSES.AVAILABLE, systemPermission: "TCC_UNVERIFIED" }
-    : SOURCE_STATUSES.UNAVAILABLE;
-  if (status?.authState === "NOT_CONFIGURED") return SOURCE_STATUSES.NOT_CONFIGURED;
-  if (status?.authState === "AUTH_REQUIRED" || status?.authState === "PERMISSION_DENIED") return SOURCE_STATUSES.UNAUTHORIZED;
-  return connector?.connected ? SOURCE_STATUSES.AVAILABLE : SOURCE_STATUSES.UNAVAILABLE;
-}
-function projectPathForContext(projectId) {
-  return getValidRegisteredProjects().find((project) => project.id === projectId)?.rootPath || null;
-}
-const authorizedContextSources = createAuthorizedContextSources({
-  adapters: {
-    notes: {
-      status: () => connectorContextStatus(notesConnector, { local: true }),
-      read: async (request) => {
-        const notes = await notesConnector.searchNotes(request.query, {
-          limit: request.limit,
-          includeBody: false,
-          searchScope: "title",
-          signal: request.signal,
-          timeoutMs: request.timeoutMs,
-        });
-        return notes.map((item) => ({ sourceId: item.id, timestamp: item.modifiedAt, relevance: item.relevance,
-          privacyClass: "PRIVATE", localOnly: true, payload: { title: item.title, excerpt: item.excerpt } }));
-      },
-    },
-    reminders: {
-      status: () => connectorContextStatus(remindersConnector, { local: true }),
-      read: async (request) => {
-        const reminders = await remindersConnector.listIncompleteRemindersForContext({ limit: request.limit, now: request.now, signal: request.signal, timeoutMs: request.timeoutMs });
-        return reminders
-          .map((item) => ({ sourceId: item.id, timestamp: item.dueAt, relevance: item.dueAt ? 0.9 : 0.6,
-            privacyClass: "PRIVATE", localOnly: true, payload: { summary: item.title, dueAt: item.dueAt, status: "active" } }));
-      },
-    },
-    calendar: {
-      status: () => connectorContextStatus(calendarConnector),
-      read: async (request) => {
-        const start = request.timeRange?.from ? new Date(request.timeRange.from) : new Date();
-        const end = request.timeRange?.to ? new Date(request.timeRange.to) : new Date(start.getTime() + 26 * 60 * 60 * 1000);
-        const data = await calendarConnector.listCalendarEvents({ timeMin: start.toISOString(), timeMax: end.toISOString(), maxResults: request.limit });
-        return (data.items || []).slice(0, request.limit).map((item) => ({ sourceId: item.id,
-          timestamp: item.start?.dateTime || item.start?.date || null, relevance: 0.9, privacyClass: "PRIVATE", localOnly: true,
-          payload: { start: item.start?.dateTime || item.start?.date || null, end: item.end?.dateTime || item.end?.date || null,
-            availability: item.transparency === "transparent" ? "free" : "busy", title: item.summary || null, calendarId: "primary" } }));
-      },
-    },
-    gmail: {
-      status: () => connectorContextStatus(gmailConnector),
-      read: async (request) => {
-        const result = await personalSearchEngine.search({ query: request.query, sourceScopes: ["email"],
-          maxResults: request.limit, resultsPerSource: request.limit, allowExpansion: false });
-        return result.results.map((item) => ({ sourceId: item.sourceId, timestamp: item.timestamp, relevance: item.score,
-          privacyClass: "PRIVATE", localOnly: true, payload: { threadId: item.locator?.threadId || null, subject: item.title, excerpt: item.snippet } }));
-      },
-    },
-    files: {
-      status: () => getAllowedDirectories().length ? SOURCE_STATUSES.AVAILABLE : SOURCE_STATUSES.UNAUTHORIZED,
-      read: async (request) => {
-        const result = await personalSearchEngine.search({ query: request.query, sourceScopes: ["file"], projectId: request.projectId || null,
-          projectPath: projectPathForContext(request.projectId), maxResults: request.limit, resultsPerSource: request.limit, allowExpansion: false,
-          fileSearchMode: "metadata", contentReadBudget: 12 });
-        return result.results.map((item) => ({ sourceId: item.sourceId, projectId: item.projectId, timestamp: item.timestamp, relevance: item.score,
-          privacyClass: "PRIVATE", localOnly: true, payload: { name: item.title, excerpt: item.snippet } }));
-      },
-    },
-    git: {
-      status: (request) => projectPathForContext(request?.projectId) ? SOURCE_STATUSES.AVAILABLE : SOURCE_STATUSES.UNAVAILABLE,
-      read: async (request) => {
-        const projectPath = projectPathForContext(request.projectId); if (!projectPath) return [];
-        const status = await inspectGitStatus(projectPath);
-        return status.available ? [{ sourceId: request.projectId, projectId: request.projectId, relevance: 1, privacyClass: "PRIVATE",
-          allowedForRemoteModel: true, payload: { repositoryDetected: true, branch: status.branch, dirty: status.modified + status.untracked > 0,
-            modifiedFilesCount: status.modified, untrackedCount: status.untracked, ahead: status.ahead, behind: status.behind,
-            latestCommit: status.lastCommit ? { hash: status.lastCommit.hash, date: status.lastCommit.date } : null } }] : [];
-      },
-    },
-    execution: {
-      status: () => SOURCE_STATUSES.AVAILABLE,
-      read: async (request) => {
-        const items = executionTrackingEngine.list({
-          subjectScope: "arnaud",
-          projectId: request.projectId || undefined,
-          limit: request.limit,
-        });
-        const counts = items.reduce((result, item) => ({ ...result, [item.status]: (result[item.status] || 0) + 1 }), {});
-        return [{ sourceId: "execution-summary", projectId: request.projectId || null, relevance: 0.9, privacyClass: "PRIVATE",
-          allowedForRemoteModel: true, payload: { pendingActions: (counts.planned || 0) + (counts.delayed || 0), runningActions: counts.in_progress || 0,
-            blockedActions: counts.blocked || 0, deferredActions: counts.deferred || 0 } }];
-      },
-    },
-  },
-  observability: (event, metadata) => toolAuditLog.append(event, metadata),
-});
-// V3-L1 : charte de caractère + cadrans réglés par Arnaud (flag character.charter, ON ;
-// OFF = personnalité de base seule). Un changement de cadran invalide le contexte statique.
-const characterStore = createCharacterStore({
-  filePath: path.join(DATA_DIRECTORY, "character-preferences.json"),
-  onChange: () => contextBuilder.invalidateStatic(),
-});
-setCharacterProvider(() => (featureFlags.evaluate("character.charter", {}).enabled ? renderCharacterInstructions(characterStore.get().dials) : ""));
-const contextBuilder = createContextBuilder({
-  personalityProvider: () => noonPersonality(),
+const { characterStore, contextBuilder } = createPersonalContextComposition({
+  DATA_DIRECTORY,
+  ambientContextEngine,
+  buildFocusCatalog,
+  featureFlags,
+  getAllowedDirectories,
+  goalStrategyEngine,
   hardRulesRegistry,
+  localPermissionStore,
   memoryEngine,
-  conversationProvider: ({ conversationId }) =>
-    getConversationHistory(createConversationKey({ sessionId: conversationId })),
-  workspaceProvider: (workspaceId) => workspaceEngine?.context(workspaceId) || null,
-  entityResolver: canonicalEntityResolver,
-  authorizedContextSources,
-  ambientContextProvider: (input) => ambientContextEngine.buildContext(input),
-  goalContextProvider: (input) => goalStrategyEngine.relevantGoals(input),
-  permissionsProvider: () => localPermissionStore.load().roots.map((entry) => ({
-    mode: entry.mode,
-    output: entry.output === true,
-  })),
-  authoritativeScopeProvider: createAuthoritativeContextScopeProvider({
-    getSession: (sessionId) => sessionContinuityEngine.getSession(sessionId),
-    getWorkspaceContext: (workspaceId) => workspaceEngine?.context(workspaceId) || null,
-  }),
-  privacyClassifier: (fragment) => providerPrivacyPolicy.inspectContextFragment(fragment),
-  debug: (event, metadata) => toolAuditLog.append(event, metadata),
+  providerPrivacyPolicy,
+  toolAuditLog,
+  get calendarConnector() { return calendarConnector; },
+  get createConversationKey() { return createConversationKey; },
+  get executionTrackingEngine() { return executionTrackingEngine; },
+  get getConversationHistory() { return getConversationHistory; },
+  get getValidRegisteredProjects() { return getValidRegisteredProjects; },
+  get gmailConnector() { return gmailConnector; },
+  get notesConnector() { return notesConnector; },
+  get personalSearchEngine() { return personalSearchEngine; },
+  get remindersConnector() { return remindersConnector; },
+  get sessionContinuityEngine() { return sessionContinuityEngine; },
+  get workspaceEngine() { return workspaceEngine; },
 });
 workspaceEngine = createWorkspaceEngine({
   repository: workspaceRepository,
@@ -1058,20 +864,14 @@ const approvalManager = new ApprovalManager({
 const interventionPermissionEngine =
   createInterventionPermissionEngine();
 
-const sessionContinuityEngine = createSessionContinuityEngine({
-repository: sessionContinuityRepository,
+const sessionContinuityEngine = createPersonalSessionContinuity({
+  approvalManager,
+  contextBuilder,
+  sessionContinuityRepository,
+  toolAuditLog,
   workspaceEngine,
-  approvalProvider: ({ executionId = null } = {}) =>
-    approvalManager.listPending({ executionId }),
-  historyTailProvider: (conversationId, limit) =>
-    getConversationTranscript(createConversationKey({ sessionId: conversationId })).slice(-limit),
-  summaryUpdater: updateConversationSummary,
-  contextInvalidator: (conversationId, oldWorkspaceId, newWorkspaceId) => {
-    contextBuilder.invalidateSession(conversationId);
-    if (oldWorkspaceId) contextBuilder.invalidateProject(oldWorkspaceId);
-    if (newWorkspaceId) contextBuilder.invalidateProject(newWorkspaceId);
-  },
-  observability: (event, metadata) => toolAuditLog.append(event, metadata),
+  get createConversationKey() { return createConversationKey; },
+  get getConversationTranscript() { return getConversationTranscript; },
 });
 let sessionRecoveryCompleted = false;
 let nativeDevInterruptedReported = false;

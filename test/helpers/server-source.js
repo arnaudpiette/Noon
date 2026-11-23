@@ -32,6 +32,8 @@ const ROUTE_MODULES = Object.freeze([
   "services/orchestration/ask-ai.js",
   "services/models/usage-tracking.js",
   "services/context/local-projects.js",
+  "services/context/personal-context-composition.js",
+  "services/memory/personal-memory-composition.js",
   "services/sessions/conversation-store.js",
   "services/connectors/google-account.js",
   "services/models/configured-model-route.js",

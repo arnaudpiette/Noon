@@ -5,6 +5,12 @@ Le Context Builder de Noon se trouve dans
 appel distant : quoi charger, pourquoi le charger et ce qui est autorisé à
 quitter la machine.
 
+Le serveur assemble le Context Builder, les adaptateurs de sources autorisées
+et la continuité de session dans `services/context/personal-context-composition.js`.
+`services/memory/personal-memory-composition.js` assemble le service privé chiffré,
+la migration historique et les invalidations après une écriture mémoire.
+Les dépendances initialisées plus tard sont lues au moment de leur utilisation.
+
 ## Contrat stable A1
 
 `buildContext(input)` reste l’unique API de construction du contexte. Il ne
