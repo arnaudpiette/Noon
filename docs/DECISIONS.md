@@ -527,6 +527,38 @@ structurante, est notée ici avec sa date et sa raison.
   complète : 224/224, plus les 21 tests de `connector-validation`, qui lisent désormais la
   source complète.
 
+## 23/11/2026 — Découpe de `server.js`, dixième tranche : application des drapeaux du routeur (V3-L7)
+
+- `legacyRoute` et `selectConfiguredModelRoute` sortent dans
+  `services/models/configured-model-route.js`. Ils appliquent :
+  - `router.policy.v2` ;
+  - Astra ;
+  - multi-fournisseur ;
+  - small-first et apprentissage adaptatif, en ombre.
+
+  Le routeur (`selectModelRoute`) reste dans `lib`. Ni les modèles, ni l'ordre de repli, ni les
+  seuils, ni les drapeaux ne changent. `server.js` passe de 3 613 à 3 510 lignes.
+- Aucun ajout de code : `reliabilityEngine` et `adaptiveRoutingService`, déclarés plus loin,
+  sont lus par accesseur. Contrôle : 965 jetons identiques une fois retirés les préfixes `deps.`.
+  Le test de câblage small-first lit maintenant `server.js` suivi des modules extraits ; son
+  assertion est inchangée.
+- Avant/après avec le faux serveur Responses local, sur quatre configurations de drapeaux :
+  - A : valeurs par défaut ;
+  - B : politique v2 en ombre ;
+  - C : politique v2 coupée ;
+  - D : Astra, adaptatif et small-first coupés.
+
+  Chaque configuration rejoue 9 requêtes `/ai` et `/ai/stream` (salutation, profils économique,
+  approfondi et maximum, question d'architecture, recherche web, agenda). Les 8 appels au modèle
+  de chaque configuration sont identiques : modèle, effort, verbosité et corps. Les branches
+  diffèrent bien d'une configuration à l'autre : la question d'architecture part sur `terra`
+  avec la politique v2, sur `sol` en routage historique.
+
+  Les journaux d'audit ont le même nombre d'entrées, dans le même ordre. Les événements de
+  routage et de comparaison en ombre sont identiques. Seuls diffèrent des latences et les
+  compteurs du cache de contexte, qui varient d'une exécution à l'autre. Tests à assertions
+  d'absence rejoués contre la source complète : 220/220, plus les 4 tests small-first.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

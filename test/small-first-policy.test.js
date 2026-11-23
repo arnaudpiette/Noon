@@ -8,6 +8,7 @@ const path = require("node:path");
 const { selectModelRoute } = require("../lib/noon-intelligence");
 const { smallFirstDecision } = require("../services/models/small-first-policy");
 const { createNoonHealthReport } = require("../services/observability/noon-health-report");
+const { readServerSource } = require("./helpers/server-source");
 
 const route = (query) => selectModelRoute({ query, question: query, channel: "chat" });
 
@@ -31,7 +32,7 @@ test("escalade expliquée : complexité, recherche web, route déjà escaladée 
 });
 
 test("câblage : la route active reste celle du routeur ; décision tracée ; flag OFF/SHADOW uniquement", () => {
-  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
+  const server = readServerSource();
   assert.match(server, /const route = smallFirstFlag\.shadow\s+\? \{ \.\.\.baseRoute, smallFirst:/);
   assert.doesNotMatch(server, /smallFirst[^\n]*model:\s*"gpt-5\.6-luna"/, "aucune réécriture du modèle actif");
   assert.match(fs.readFileSync(path.join(__dirname, "..", "services", "orchestration", "noon-orchestrator.js"), "utf8"), /smallFirst: state\.route\.smallFirst \|\| null/);
