@@ -10,7 +10,8 @@
 //   GET  /figma-bridge/v1/next                         → prochaine commande (attente longue)
 //   POST /figma-bridge/v1/result  { id, ok, result }   → résultat d'une commande
 // Le jeton n'est jamais stocké en clair côté Noon (empreinte SHA-256 seulement). Seules les
-// commandes de la liste blanche partent vers le plugin ; cette tranche ne contient que la lecture.
+// commandes de la liste blanche partent vers le plugin. L'écriture (apply_changes) n'est acceptée
+// qu'avec { authorizedWrite: true }, que seul l'outil Figma passe après validation de l'utilisateur.
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -19,7 +20,9 @@ const path = require("node:path");
 
 const DEFAULT_PORT = 3856;
 const PREFIX = "/figma-bridge/v1/";
-const READ_COMMANDS = Object.freeze(["ping", "get_selection", "get_page"]);
+const READ_COMMANDS = Object.freeze(["ping", "get_selection", "get_page", "get_node", "get_design_tokens"]);
+const WRITE_COMMANDS = Object.freeze(["apply_changes"]);
+const WRITE_TIMEOUT_MS = 60_000;
 const SMALL_BODY = 4 * 1024;
 const RESULT_BODY = 1024 * 1024;
 const PRESENCE_TTL_MS = 35_000;
@@ -44,6 +47,8 @@ function createFigmaBridge({
   let pairing = null;
   let presence = null;
   let server = null;
+  // « localhost » peut viser ::1 sous macOS : seconde écoute IPv6 locale, au mieux (jamais 0.0.0.0).
+  let serverV6 = null;
   let waiter = null;
   const queue = [];
   const pending = new Map();
@@ -71,7 +76,7 @@ function createFigmaBridge({
       connected: connected(),
       file: connected() ? { fileName: presence.fileName, pageName: presence.pageName, editorType: presence.editorType, pluginVersion: presence.pluginVersion } : null,
       pairing: pairing && pairing.expiresAt > now() ? { expiresAt: new Date(pairing.expiresAt).toISOString() } : null,
-      pending: pending.size, readCommands: [...READ_COMMANDS],
+      pending: pending.size, readCommands: [...READ_COMMANDS], writeCommands: [...WRITE_COMMANDS],
     };
   }
 
@@ -189,7 +194,16 @@ function createFigmaBridge({
     server = http.createServer((req, res) => { void handle(req, res); });
     return new Promise((resolve, reject) => {
       server.once("error", (error) => { server = null; reject(bridgeError(error.code === "EADDRINUSE" ? "FIGMA_BRIDGE_PORT_IN_USE" : "FIGMA_BRIDGE_START_FAILED", error.code === "EADDRINUSE" ? `Le port ${port} est déjà utilisé sur ce Mac.` : "Passerelle Figma impossible à démarrer.", 503)); });
-      server.listen(port, host, () => { emit("listening", { port }); resolve({ port: server.address().port }); });
+      server.listen(port, host, () => {
+        const bound = server.address().port;
+        if (host === "127.0.0.1") {
+          serverV6 = http.createServer((req, res) => { void handle(req, res); });
+          serverV6.once("error", () => { serverV6 = null; });
+          serverV6.listen(bound, "::1");
+        }
+        emit("listening", { port: bound });
+        resolve({ port: bound });
+      });
     });
   }
 
@@ -203,6 +217,7 @@ function createFigmaBridge({
     failPending("FIGMA_BRIDGE_STOPPED", "Passerelle Figma arrêtée.");
     presence = null;
     if (!server) return;
+    if (serverV6) { const v6 = serverV6; serverV6 = null; v6.closeAllConnections?.(); v6.close(() => {}); }
     const closing = server; server = null;
     closing.closeAllConnections?.();
     await new Promise((resolve) => closing.close(() => resolve()));
@@ -225,8 +240,11 @@ function createFigmaBridge({
     return status();
   }
 
-  function request(type, params = {}, { timeoutMs = requestTimeoutMs } = {}) {
-    if (!READ_COMMANDS.includes(type)) return Promise.reject(bridgeError("FIGMA_BRIDGE_COMMAND_NOT_ALLOWED", "Commande Figma non autorisée.", 400));
+  function request(type, params = {}, { timeoutMs = null, authorizedWrite = false } = {}) {
+    const write = WRITE_COMMANDS.includes(type);
+    if (!READ_COMMANDS.includes(type) && !write) return Promise.reject(bridgeError("FIGMA_BRIDGE_COMMAND_NOT_ALLOWED", "Commande Figma non autorisée.", 400));
+    if (write && authorizedWrite !== true) return Promise.reject(bridgeError("FIGMA_BRIDGE_WRITE_NOT_AUTHORIZED", "Écriture Figma refusée sans validation de l'utilisateur.", 403));
+    const effectiveTimeoutMs = timeoutMs ?? (write ? Math.max(requestTimeoutMs, WRITE_TIMEOUT_MS) : requestTimeoutMs);
     if (!paired()) return Promise.reject(bridgeError("FIGMA_BRIDGE_NOT_PAIRED", "Plugin Figma non jumelé.", 409));
     if (!connected()) return Promise.reject(bridgeError("FIGMA_BRIDGE_NOT_CONNECTED", "Ouvre le plugin « Noon Bridge » dans Figma.", 409));
     const id = `fig-${crypto.randomUUID()}`;
@@ -235,12 +253,12 @@ function createFigmaBridge({
         pending.delete(id);
         const index = queue.findIndex((command) => command.id === id);
         if (index >= 0) queue.splice(index, 1);
-        reject(bridgeError("FIGMA_BRIDGE_TIMEOUT", "Le plugin Figma n'a pas répondu à temps.", 504));
-      }, timeoutMs);
+        reject(bridgeError("FIGMA_BRIDGE_TIMEOUT", write ? "Le plugin Figma n'a pas confirmé à temps : vérifie dans Figma ce qui a été appliqué." : "Le plugin Figma n'a pas répondu à temps.", 504));
+      }, effectiveTimeoutMs);
       timer.unref?.();
       pending.set(id, { id, resolve, reject, timer });
       queue.push({ id, type, params: params && typeof params === "object" ? params : {} });
-      emit("command_sent", { type });
+      emit("command_sent", { type, write });
       deliver();
     });
   }
@@ -248,4 +266,4 @@ function createFigmaBridge({
   return Object.freeze({ start, stop, status, createPairingCode, unpair, request, isPaired: paired });
 }
 
-module.exports = { DEFAULT_PORT, READ_COMMANDS, createFigmaBridge };
+module.exports = { DEFAULT_PORT, READ_COMMANDS, WRITE_COMMANDS, createFigmaBridge };

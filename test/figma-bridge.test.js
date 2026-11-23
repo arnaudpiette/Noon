@@ -91,11 +91,12 @@ test("aller-retour : Noon envoie get_page, le plugin répond, Noon reçoit le r�
   } finally { await fx.close(); }
 });
 
-test("liste blanche : aucune commande d'écriture dans cette tranche ; plugin fermé ou non jumelé refusé", async () => {
-  assert.deepEqual([...READ_COMMANDS], ["ping", "get_selection", "get_page"]);
+test("liste blanche : écriture refusée sans autorisation explicite ; plugin fermé ou non jumelé refusé", async () => {
+  assert.deepEqual([...READ_COMMANDS], ["ping", "get_selection", "get_page", "get_node", "get_design_tokens"]);
   const fx = await fixture();
   try {
     await assert.rejects(fx.bridge.request("create_frame", {}), { code: "FIGMA_BRIDGE_COMMAND_NOT_ALLOWED" });
+    await assert.rejects(fx.bridge.request("apply_changes", { operations: [] }), { code: "FIGMA_BRIDGE_WRITE_NOT_AUTHORIZED" });
     await assert.rejects(fx.bridge.request("get_page", {}), { code: "FIGMA_BRIDGE_NOT_PAIRED" });
     const { token } = await (await call(fx.base, "POST", "pair", { body: { code: fx.pairing.code } })).json();
     assert.ok(token);
@@ -134,17 +135,17 @@ test("routes Control Center : 404 si flag OFF, mutations exigent x-noon-request"
   assert.equal(routes.matches("/api/figma-bridge/delete"), false);
 });
 
-test("plugin : manifeste limité à 127.0.0.1:3856, code principal en liste blanche de lecture", () => {
+test("plugin : manifeste limité à localhost:3856 (Figma refuse les IP), code principal en liste blanche", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, "figma-plugin/noon-bridge/manifest.json"), "utf8"));
   assert.deepEqual(manifest.networkAccess.allowedDomains, ["none"]);
-  assert.ok(manifest.networkAccess.devAllowedDomains.every((domain) => /^http:\/\/(127\.0\.0\.1|localhost):3856$/.test(domain)));
+  assert.deepEqual(manifest.networkAccess.devAllowedDomains, ["http://localhost:3856"]);
   const code = fs.readFileSync(path.join(ROOT, "figma-plugin/noon-bridge/code.js"), "utf8");
   const sandbox = { figma: { showUI() {}, on() {}, ui: { postMessage() {} }, currentPage: { name: "P", selection: [], children: [] }, root: { name: "F" }, editorType: "figma", clientStorage: {} }, __html__: "" };
   vm.runInNewContext(code, sandbox);
-  assert.deepEqual(Object.keys(vm.runInNewContext("COMMANDS", sandbox)).sort(), [...READ_COMMANDS].sort());
-  assert.doesNotMatch(code, /\bcreate[A-Z]\w*\(|\.remove\(\)|setAsync\("noonToken", [^t]/, "aucune écriture du fichier dans cette tranche");
+  assert.deepEqual(Object.keys(vm.runInNewContext("COMMANDS", sandbox)).sort(), [...READ_COMMANDS, "apply_changes"].sort());
+  assert.doesNotMatch(code, /\.remove\(\)/, "aucune suppression d'élément");
   const ui = fs.readFileSync(path.join(ROOT, "figma-plugin/noon-bridge/ui.html"), "utf8");
-  assert.match(ui, /http:\/\/127\.0\.0\.1:3856\/figma-bridge\/v1\//);
+  assert.match(ui, /http:\/\/localhost:3856\/figma-bridge\/v1\//);
   assert.doesNotMatch(ui, /innerHTML|localStorage/);
 });
 

@@ -25,10 +25,11 @@
     <button type="submit">Jumeler</button>
   </form>
   <button id="unpair" type="button" hidden>Dissocier ce Mac</button>
-  <p class="muted">Le plugin ne parle qu'à Noon sur ce Mac (127.0.0.1). Garde cette fenêtre ouverte pendant que Noon travaille.</p>
+  <p class="muted">Le plugin ne parle qu'à Noon sur ce Mac (localhost). Garde cette fenêtre ouverte pendant que Noon travaille.</p>
 <script>
   "use strict";
-  var BASE = "http://127.0.0.1:3856/figma-bridge/v1/";
+  // Figma n'accepte que « localhost » (pas d'adresse IP) dans devAllowedDomains.
+  var BASE = "http://localhost:3856/figma-bridge/v1/";
   var token = null;
   var context = {};
   var running = false;

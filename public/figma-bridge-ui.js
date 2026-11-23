@@ -58,7 +58,7 @@
       root.hidden = false;
       const header = el("header", "control-section__header");
       const title = el("div");
-      title.append(el("h2", "", "Figma"), el("p", "", "Le plugin « Noon Bridge » donne à Noon l'accès au fichier ouvert dans Figma Desktop, sur ce Mac uniquement. Cette version lit la page et la sélection ; l'écriture viendra avec ta validation."));
+      title.append(el("h2", "", "Figma"), el("p", "", "Le plugin « Noon Bridge » donne à Noon l'accès au fichier ouvert dans Figma Desktop (mode Design), sur ce Mac uniquement. Demande dans le chat : Noon lit la page, la sélection et les styles ; pour créer ou modifier, il te présente le plan et attend « Confirmer exactement ». Aucune suppression ; Cmd+Z dans Figma annule un plan entier."));
       header.append(title);
       const nodes = [header];
       if (notice) { const box = el("p", "control-center__notice", notice.text); box.setAttribute("role", notice.kind === "error" ? "alert" : "status"); box.dataset.kind = notice.kind; nodes.push(box); }

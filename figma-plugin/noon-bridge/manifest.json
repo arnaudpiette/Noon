@@ -8,7 +8,7 @@
   "documentAccess": "dynamic-page",
   "networkAccess": {
     "allowedDomains": ["none"],
-    "devAllowedDomains": ["http://127.0.0.1:3856", "http://localhost:3856"],
-    "reasoning": "Le plugin ne parle qu'à Noon, l'assistant local de l'utilisateur, sur ce Mac (127.0.0.1)."
+    "devAllowedDomains": ["http://localhost:3856"],
+    "reasoning": "Le plugin ne parle qu'à Noon, l'assistant local de l'utilisateur, sur ce Mac (localhost)."
   }
 }

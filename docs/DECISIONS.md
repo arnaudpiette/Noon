@@ -322,6 +322,29 @@ structurante, est notée ici avec sa date et sa raison.
 - Suite : tranche 2 = outils Figma pour le modèle de Noon (lecture) ; tranche 3 = écriture
   (créer, modifier, styler) derrière une validation du plan de modifications.
 
+## 23/11/2026 — Plugin Figma « Noon Bridge », tranches 2 et 3 (lecture par le modèle, écriture validée)
+
+- Manifeste : Figma refuse une IP dans `devAllowedDomains` → `http://localhost:3856` seul ; la
+  passerelle écoute 127.0.0.1 et, au mieux, ::1 (localhost peut viser IPv6 sous macOS). Le plugin
+  ne tourne pas en Dev Mode (`editorType` « figma » seul : Dev Mode n'autorise pas l'écriture).
+- Tranche 2 : outils du modèle `ext_figma_get_selection`, `get_page`, `get_node` (profondeur 1–3 :
+  couleurs, typographie, mise en page), `get_design_tokens` (styles et variables locaux), niveau
+  READ, enregistrés seulement si `figma.bridge` est actif au démarrage. Résultats marqués comme
+  données non fiables. Consigne Figma ajoutée aux instructions du modèle.
+- Tranche 3 : `ext_figma_apply_changes`, niveau EXTERNAL → ordre explicite puis approbation exacte
+  (ApprovalManager / « Confirmer exactement » dans le chat) avant toute écriture. Plan de 1 à 100
+  opérations : `create_frame`, `create_rectangle`, `create_text`, `update_node` ; références
+  `ref:` pour imbriquer ; validation stricte avant envoi (champs connus, bornes, couleurs
+  #RRGGBB, références définies avant usage). Aucune suppression. La passerelle refuse
+  `apply_changes` sans `authorizedWrite`, que seul l'outil passe après confirmation. Le plugin
+  applique le plan d'un bloc (`commitUndo` : un Cmd+Z), sélectionne le résultat, et signale un
+  échec partiel (opérations appliquées + première en échec). Résumé d'approbation lisible.
+- `DRY_RUN_EXTERNAL_WRITES` n'est lu nulle part dans le code (documentation seulement) : la
+  garde réelle des écritures Figma est l'approbation exacte.
+- Vérifié : tests unitaires (validation, niveaux, autorisation, exécution du plan sur une fausse
+  API Figma, résumé d'approbation), `npm test` complet. Non vérifié : dans Figma Desktop réel et
+  dans le flux d'approbation complet du chat avec le modèle (appels payants).
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

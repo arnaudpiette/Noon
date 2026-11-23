@@ -80,6 +80,12 @@ function humanSummary({ skillName, operation, args, target }) {
   if (/calendar|event/i.test(`${skillName} ${operation}`)) {
     return `${action} « ${String(args?.summary || args?.title || args?.eventId || "événement indiqué").slice(0, 180)} » dans l’agenda.`;
   }
+  // Plan Figma (plugin Noon Bridge) : résumé du plan, nombre de créations / modifications, cible.
+  if (/figma/i.test(`${skillName} ${operation}`) && Array.isArray(args?.operations)) {
+    const created = args.operations.filter((item) => String(item?.op || "").startsWith("create_")).length;
+    const updated = args.operations.filter((item) => item?.op === "update_node").length;
+    return `Figma — ${String(args?.summary || "plan de modifications").slice(0, 300)} : ${created} création(s), ${updated} modification(s)${target ? ` dans ${String(target).slice(0, 200)}` : ""}. Aucune suppression ; Cmd+Z dans Figma annule tout le plan.`;
+  }
   if (/file|artifact|document/i.test(`${skillName} ${operation}`)) {
     return `${action} pour ${String(args?.path || args?.name || args?.outputDirectory || target || "le fichier indiqué").slice(0, 240)}.`;
   }
