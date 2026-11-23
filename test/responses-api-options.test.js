@@ -4,8 +4,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { readServerSource } = require("./helpers/server-source");
 
-const serverSource = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
+const serverSource = readServerSource();
 const registrySource = fs.readFileSync(path.join(__dirname, "..", "skills", "registry.js"), "utf8");
 const orchestratorSource = fs.readFileSync(
   path.join(__dirname, "..", "services", "orchestration", "noon-orchestrator.js"),

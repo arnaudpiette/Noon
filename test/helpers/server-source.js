@@ -37,6 +37,10 @@ const ROUTE_MODULES = Object.freeze([
   "services/models/configured-model-route.js",
   "services/daily-brief/daily-brief-composition.js",
   "services/control-center/control-center-composition.js",
+  "services/models/model-response.js",
+  "services/intents/intent-context.js",
+  "services/delegation/chat-delegation-composition.js",
+  "services/orchestration/chat-orchestration-composition.js",
 ]);
 
 function readServerSource() {
