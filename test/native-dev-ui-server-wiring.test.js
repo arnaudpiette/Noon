@@ -53,7 +53,7 @@ test(
 
     const nativeUi =
       value.indexOf(
-        "const nativeDevUiExecutionService = createNativeDevUiExecutionService"
+        "const nativeDevUiExecutionService = createNativeDevUiComposition"
       );
 
     assert.ok(
@@ -64,10 +64,19 @@ test(
       nativeUi > terminal
     );
 
+    const composition =
+      value.indexOf(
+        "function createNativeDevUiComposition"
+      );
+
+    assert.ok(
+      composition > nativeUi
+    );
+
     const wiring =
       value.slice(
-        nativeUi,
-        nativeUi + 1800
+        composition,
+        composition + 1200
       );
 
     assert.match(

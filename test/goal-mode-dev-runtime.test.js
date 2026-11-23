@@ -257,14 +257,20 @@ test("B1 câblage serveur : flag OFF par défaut, composition protégée, signal
   assert.deepEqual(flag.allowedModes, ["OFF", "LIMITED"]);
   assert.deepEqual([...flag.requires].sort(), ["dev.native-core", "goals.engine"]);
   const source = readServerSource();
-  const start = source.indexOf("let goalModeDevRuntime = null;");
+  const compositionCall = source.indexOf("createGoalModeDevComposition({");
+  assert.notEqual(compositionCall, -1);
+  const callBlock = source.slice(compositionCall, source.indexOf("toolAuditLog.append(", compositionCall));
+  const start = source.indexOf("let goalModeDevRuntime = null;", compositionCall);
   assert.notEqual(start, -1);
-  const block = source.slice(start, source.indexOf('"goals.dev-retry.runtime_composed"', start));
+  const block = source.slice(start, source.indexOf("function createNativeDevUiComposition", start));
   assert.match(block, /try \{\s*if \(featureFlags\.evaluate\("goals\.mode-dev", \{\}\)\.mode !== "OFF"\) \{\s*goalModeDevRuntime = createGoalModeDevRuntime\(\{/);
   for (const dependency of ["database: personalDatabase", "devTaskJournal: nativeDevJournal",
     "approvalEngine: approvalManager", "projectRuleResolver: devProjectRuleResolver",
     "nativeDevFacade: nativeDevB3Facade", "devBudgetService: devCostBudgetService"]) {
     assert.ok(block.includes(dependency), dependency);
+  }
+  for (const dependency of ["nativeDevB3Facade", "nativeDevJournal", "dataDirectoryLock", "selfDevPathPolicyProvider"]) {
+    assert.ok(callBlock.includes(dependency), dependency);
   }
   assert.match(block, /catch \(error\) \{\s*goalModeDevRuntime = null;\s*toolAuditLog\.append\("goals\.mode-dev\.runtime_unavailable"/);
   // B3b : aucun accès direct au dispatch depuis server.js (scan via la maintenance du verrou).
@@ -272,7 +278,7 @@ test("B1 câblage serveur : flag OFF par défaut, composition protégée, signal
   assert.deepEqual(direct, []);
   const httpStart = source.indexOf("const goalModeDevHttp = createGoalModeDevHttpHandler({");
   assert.notEqual(httpStart, -1);
-  const httpBlock = source.slice(httpStart, source.indexOf('"goals.dev-retry.runtime_composed"', httpStart));
+  const httpBlock = source.slice(httpStart, source.indexOf("return { goalModeDevHttp", httpStart));
   assert.match(httpBlock, /enabled: \(\) => goalModeDevRuntime !== null && featureFlags\.evaluate\("goals\.mode-dev", \{\}\)\.mode !== "OFF"/);
   assert.match(httpBlock, /req\.headers\["x-noon-request"\] !== "1"/);
   assert.match(httpBlock, /executionPreference: \(\) => runtimeConfig\.get\("runtime\.executionPreference", \{\}\)\.value/);
@@ -292,7 +298,7 @@ test("B1 câblage serveur : flag OFF par défaut, composition protégée, signal
   assert.match(block, /dataDirectoryLock,/);
   // B3b : maintenance composée avec le verrou partagé, le runtime et l'audit ; passée au handler.
   // B4c : journal de diagnostic du verrou dédié (200 entrées), créé seulement runtime composé.
-  assert.match(source, /if \(goalModeDevRuntime\) \{\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*const goalModeDevLockDiagnosticsLog = createAuditLog\(path\.join\(DATA_DIRECTORY, "goal-mode-dev-lock-diagnostics\.json"\), 200\);\s*goalModeDevLockMaintenance = createGoalModeDevLockMaintenance\(\{\s*lock: dataDirectoryLock,\s*runtime: goalModeDevRuntime,\s*audit: \(event, metadata\) => toolAuditLog\.append\(event, metadata\),\s*diagnostics: \(event, metadata\) => goalModeDevLockDiagnosticsLog\.append\(event, metadata\),\s*\}\);/);
+  assert.match(source, /if \(goalModeDevRuntime\) \{\s*const goalModeDevLockDiagnosticsLog = createAuditLog\(path\.join\(DATA_DIRECTORY, "goal-mode-dev-lock-diagnostics\.json"\), 200\);\s*goalModeDevLockMaintenance = createGoalModeDevLockMaintenance\(\{\s*lock: dataDirectoryLock,\s*runtime: goalModeDevRuntime,\s*audit: \(event, metadata\) => toolAuditLog\.append\(event, metadata\),\s*diagnostics: \(event, metadata\) => goalModeDevLockDiagnosticsLog\.append\(event, metadata\),\s*\}\);/);
   assert.match(httpBlock, /lockMaintenance: goalModeDevLockMaintenance,/);
   // Démarrage : une seule fois, hors safe mode, par la maintenance (reprise stricte + scan).
   const scan = startup.slice(startup.indexOf("if (goalModeDevLockMaintenance && !goalModeDevReconcileScanDone"));

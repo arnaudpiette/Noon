@@ -11,6 +11,8 @@ const path =
 
 const test =
   require("node:test");
+const { readServerSource } =
+  require("./helpers/server-source");
 
 const ROOT =
   path.join(
@@ -32,9 +34,7 @@ test(
   "Native B3 utilise Sandbox mais le coordinateur benchmark conserve son runner historique",
   () => {
     const server =
-      source(
-        "server.js"
-      );
+      readServerSource();
 
     const coordinatorStart =
       server.indexOf(

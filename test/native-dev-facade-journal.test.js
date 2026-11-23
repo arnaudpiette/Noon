@@ -7,6 +7,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const { readServerSource } = require("./helpers/server-source");
 
 const { createNativeDevOrchestratorFacade } = require("../services/dev/native-dev-orchestrator-facade");
 const { createDevTaskJournal, hashedJournalName } = require("../services/dev/dev-task-journal");
@@ -157,7 +158,7 @@ test("façade : statut et récupération explicites quand le journal est illisib
 });
 
 test("câblage serveur : la façade B3 reçoit le journal persistant réel", () => {
-  const source = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
+  const source = readServerSource();
   assert.match(source, /const nativeDevJournal = createDevTaskJournal\(\{ directory: path\.join\(DATA_DIRECTORY, "dev-task-journal"\) \}\);/);
   const start = source.indexOf("const nativeDevB3Facade = createNativeDevOrchestratorFacade({");
   assert.notEqual(start, -1);

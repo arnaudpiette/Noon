@@ -629,6 +629,31 @@ structurante, est notée ici avec sa date et sa raison.
   appel au faux `osascript` de chaque côté. Tests à assertions d'absence rejoués contre la
   source complète : 208/208.
 
+## 23/11/2026 — Découpe de `server.js`, dix-septième tranche : composition Native DEV et Goal Mode DEV (V3-L7)
+
+- L'assemblage sort dans `services/dev/dev-runtime-composition.js`, en trois frontières explicites :
+  - Native DEV (reasoner, journal persistant, coordinateur benchmark, orchestrateur B3 et façade) ;
+  - Goal DEV (exécution évaluée et retry runtime) puis Goal Mode DEV (runtime, maintenance du verrou et transport HTTP) ;
+  - le bridge Native DEV UI, toujours construit après le Terminal DEV.
+
+  `server.js` passe de 2 871 à 2 671 lignes. SelfDev, les missions DEV et le benchmark restent
+  volontairement hors de cette tranche.
+- Les autorités ne changent pas : la politique opérationnelle, le sandbox, le journal, le budget,
+  les approbations et le verrou exclusif du dossier de données restent les instances canoniques
+  créées par le serveur. Le handler Goal Mode DEV conserve l'exigence `X-Noon-Request`, et les
+  flags restent réévalués côté serveur.
+- Le premier test serveur réel a détecté que `getValidRegisteredProjects` était passé par valeur
+  avant son initialisation. La composition reçoit désormais un fournisseur différé, ce qui
+  restaure l'ordre d'initialisation historique. Aucun accès projet n'a lieu pendant la composition.
+- Les tests de câblage qui lisaient uniquement `server.js` lisent désormais aussi le module extrait.
+  Les assertions de sécurité sont conservées : Sandbox B3 seulement, journal réel, trusted UI,
+  absence d'accès direct au dispatcher et acquisition du verrou uniquement par sa maintenance.
+- Validation avant/après sur les mêmes 18 scénarios serveur et orchestration : 18/18 des deux côtés.
+  Ils couvrent le flag Goal Mode DEV coupé/actif, deux processus sur le même dossier de données,
+  la reprise d'un verrou périmé, l'orchestrateur B3 et le bridge Native DEV UI. La validation
+  élargie couvre également 448 tests DEV ciblés, le lint, le build et les évaluations critical,
+  smoke, goals, delegation et feature-flags.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

@@ -43,6 +43,7 @@ const ROUTE_MODULES = Object.freeze([
   "services/intents/intent-context.js",
   "services/delegation/chat-delegation-composition.js",
   "services/orchestration/chat-orchestration-composition.js",
+  "services/dev/dev-runtime-composition.js",
 ]);
 
 function readServerSource() {

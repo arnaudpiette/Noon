@@ -167,14 +167,9 @@ const { createAmbientContextEngine } = require("./services/context/ambient-conte
 const { createDecisionSupportEngine } = require("./services/decision/decision-support-engine");
 const { createDevDecisionConsumer } = require("./services/decision/dev-decision-consumer");
 const { createGoalStrategyEngine } = require("./services/goals/goal-strategy-engine");
-const { createGoalDevExecutionService } = require("./services/goals/goal-dev-execution-service");
-const { createGoalDevEvaluatedExecutionService } = require("./services/goals/goal-dev-evaluated-execution-service");
-const { createGoalDevRetryRuntime } = require("./services/goals/goal-dev-retry-runtime");
-const { createGoalModeDevRuntime } = require("./services/goals/goal-mode-dev-runtime");
-const { createGoalModeDevHttpHandler, GOAL_MODE_DEV_HTTP_PREFIX } = require("./services/goals/goal-mode-dev-http-routes");
+const { GOAL_MODE_DEV_HTTP_PREFIX } = require("./services/goals/goal-mode-dev-http-routes");
 const { reportInterruptedNativeDevTasks } = require("./services/dev/native-dev-interrupted-report");
 const { createDataDirectoryLock } = require("./services/runtime/data-directory-lock");
-const { createGoalModeDevLockMaintenance } = require("./services/goals/goal-mode-dev-lock-maintenance");
 const { assertGenericApprovalAllowed, genericApprovals } = require("./services/approvals/goal-mode-dev-approval-guard");
 const {
   goalDevRetryHttpStatus,
@@ -205,16 +200,11 @@ const { createDevMissionHttpRoutes } = require("./services/delegation/dev-missio
 const { createFigmaBridge } = require("./services/figma-bridge/figma-bridge");
 const { createFigmaBridgeHttpRoutes } = require("./services/figma-bridge/figma-bridge-http-routes");
 const { registerFigmaSkills } = require("./services/figma-bridge/figma-skills");
-const { createNativeDevCoordinator } = require("./services/dev/native-dev-coordinator");
-const { createNativeDevOrchestrator } = require("./services/dev/native-dev-orchestrator");
-const { createNativeDevOrchestratorFacade } = require("./services/dev/native-dev-orchestrator-facade");
-const { createNativeDevUiExecutionService } = require("./services/dev/native-dev-ui-execution-service");
+const { createGoalModeDevComposition, createNativeDevComposition, createNativeDevUiComposition } = require("./services/dev/dev-runtime-composition");
 const { assertDevTaskIdNotReserved, isReservedGoalModeDevTaskId } = require("./services/dev/dev-task-id-namespace");
 const { createSandboxDevValidationExecutor } = require("./services/security/dev-validation-runner");
 const { createDevWorkspaceTerminalService } = require("./services/dev/workspace-terminal-service");
 const { createDevWorkspaceAgentExecutionLoop } = require("./services/dev/workspace-agent-execution-loop");
-const { createDevTaskJournal } = require("./services/dev/dev-task-journal");
-const { createNativeDevReasoner } = require("./services/dev/native-dev-reasoner");
 const { createDevCostBudgetService } = require("./services/dev/dev-cost-budget-service");
 const { createBenchmarkRuntime } = require("./services/dev/benchmark/benchmark-runtime");
 const { createBenchmarkControlPlane } = require("./services/dev/benchmark/benchmark-control-plane");
@@ -1124,156 +1114,37 @@ const transactionalExecutionEngine = createTransactionalExecutionEngine({
     );
   },
 });
-const nativeDevReasoner = createNativeDevReasoner({
+const {
+  goalDevExecutionService,
+  goalDevRetryRuntime,
+  nativeDevB3Facade,
+  nativeDevCoordinator,
+  nativeDevJournal,
+} = createNativeDevComposition({
+  DATA_DIRECTORY,
+  approvalManager,
+  authorizeOpenAIPrivacy,
+  devCostBudgetService,
+  devProjectRuleResolver,
+  estimateModelCost,
+  evaluationEngineProvider: () => agentEvaluationEngine,
   featureFlags,
-  budgetService: devCostBudgetService,
-  selectModelRoute: selectConfiguredModelRoute,
-  estimateCost: estimateModelCost,
-  authorizePrivacy: authorizeOpenAIPrivacy,
-  providerAdapter: openAIProviderAdapter,
-  trackUsage,
-});
-const nativeDevJournal = createDevTaskJournal({ directory: path.join(DATA_DIRECTORY, "dev-task-journal") });
-const nativeDevCoordinator = createNativeDevCoordinator({
-  workspaceEngine, transactionalExecutionEngine, operationalSecurityPolicy, skillRegistry, reasoner: nativeDevReasoner, journal: nativeDevJournal,
-  featureMode: (input) => featureFlags.evaluate("dev.native-core", { workspaceId: input.workspaceId, sessionId: input.sessionId }).mode,
-  qualityEscalationMode: (input) => featureFlags.evaluate("dev.quality-escalation", { workspaceId: input.workspaceId, sessionId: input.sessionId }).mode,
-  sameTierRepairAttempts: (input) => runtimeConfig.get("devBudget.sameTierRepairAttempts", { workspaceId: input.workspaceId, sessionId: input.sessionId }).value,
-  observability: (event, metadata) => toolAuditLog.append(`dev.${event}`, metadata),
-});
-
-/*
- * B3 multi-agents :
- * - utilisé par /api/dev/native/tasks et le bridge /api/dev/native-ui
- * - le benchmark conserve nativeDevCoordinator directement.
- */
-const nativeDevB3Orchestrator = createNativeDevOrchestrator({
-  workspaceEngine,
-  transactionalExecutionEngine,
+  getValidRegisteredProjects: () => getValidRegisteredProjects(),
+  goalStrategyEngine,
+  interventionPermissionEngine,
+  openAIProviderAdapter,
   operationalSecurityPolicy,
+  personalDatabase,
+  runtimeConfig,
+  sandboxDevValidationExecutor,
+  selectConfiguredModelRoute,
   skillRegistry,
-  reasoner: nativeDevReasoner,
-  journal: nativeDevJournal,
-  validationRunner:
-    sandboxDevValidationExecutor,
-  qualityEscalationMode: (input) => featureFlags.evaluate("dev.quality-escalation", {
-    workspaceId: input.workspaceId,
-    sessionId: input.sessionId,
-  }).mode,
-  sameTierRepairAttempts: (input) => runtimeConfig.get("devBudget.sameTierRepairAttempts", {
-    workspaceId: input.workspaceId,
-    sessionId: input.sessionId,
-  }).value,
-  observability: (event, metadata) => {
-    toolAuditLog.append(
-      `dev.b3.${event}`,
-      metadata,
-    );
-
-    userProgressAdapter.nativeDev(
-      event,
-      metadata,
-    );
-  },
+  toolAuditLog,
+  trackUsage,
+  transactionalExecutionEngine,
+  userProgressAdapter,
+  workspaceEngine,
 });
-
-const nativeDevB3Facade = createNativeDevOrchestratorFacade({
-  orchestrator: nativeDevB3Orchestrator,
-  journal: nativeDevJournal,
-  featureMode: (input) => featureFlags.evaluate("dev.native-core", {
-    workspaceId: input.workspaceId,
-    sessionId: input.sessionId,
-  }).mode,
-});
-
-const goalDevExecutionCoreService =
-  createGoalDevExecutionService({
-    goalStrategyEngine,
-    nativeDevFacade:
-      nativeDevB3Facade,
-    workspaceEngine,
-    projectRuleResolver:
-      devProjectRuleResolver,
-    budgetService:
-      devCostBudgetService,
-    observability:
-      (event, metadata) =>
-        toolAuditLog.append(
-          `goals.dev.${event}`,
-          metadata
-        ),
-  });
-
-/*
- * 4.5D :
- * AgentEvaluation est appliquée après
- * l'unique exécution Native DEV 4.5C.
- *
- * Le provider est résolu uniquement
- * au moment de la requête HTTP :
- * agentEvaluationEngine est initialisé
- * avant qu'une requête puisse atteindre
- * ce service.
- */
-const goalDevExecutionService =
-  createGoalDevEvaluatedExecutionService({
-    goalExecutionService:
-      goalDevExecutionCoreService,
-
-    evaluationEngineProvider:
-      () =>
-        agentEvaluationEngine,
-
-    observability:
-      (event, metadata) =>
-        toolAuditLog.append(
-          `goals.dev-evaluation.${event}`,
-          metadata
-        ),
-  });
-
-/*
- * 4.6J — Retry Runtime wiring.
- *
- * Une seule chaîne d'autorité :
- * - base personnelle canonique ;
- * - ApprovalEngine serveur existant ;
- * - workspace/projet résolus côté serveur ;
- * - OperationalSecurityPolicy + InterventionPermissionEngine existants ;
- * - Goal DEV évalué existant, donc un seul passage Native DEV.
- *
- * Aucune route HTTP/UI n'est ajoutée dans cette tranche.
- */
-const goalDevRetryRuntime =
-  createGoalDevRetryRuntime({
-    database:
-      personalDatabase,
-
-    approvalEngine:
-      approvalManager,
-
-    operationalSecurityPolicy,
-
-    interventionPermissionEngine,
-
-    goalDevExecutionService,
-
-    workspaceEngine,
-
-    projectProvider:
-      () =>
-        getValidRegisteredProjects(),
-
-    profileScopeProvider:
-      () => "arnaud",
-
-    observability:
-      (event, metadata) =>
-        toolAuditLog.append(
-          `goals.dev-retry.${event}`,
-          metadata
-        ),
-  });
 
 /*
  * Branchement B1 — runtime Goal Mode DEV (flag goals.mode-dev, OFF par défaut).
@@ -1354,77 +1225,29 @@ const remoteLanHttpRoutes = createRemoteLanHttpRoutes({
   observability: (event, metadata) => toolAuditLog.append(event, metadata),
 });
 
-let goalModeDevRuntime = null;
-try {
-  if (featureFlags.evaluate("goals.mode-dev", {}).mode !== "OFF") {
-    goalModeDevRuntime = createGoalModeDevRuntime({
-      database: personalDatabase,
-      goalStrategyEngine,
-      workspaceEngine,
-      devBudgetService: devCostBudgetService,
-      devTaskJournal: nativeDevJournal,
-      approvalEngine: approvalManager,
-      operationalSecurityPolicy,
-      projectRuleResolver: devProjectRuleResolver,
-      nativeDevFacade: nativeDevB3Facade,
-      featureMode: (flagId, context = {}) => featureFlags.evaluate(flagId, context).mode,
-      selectModelRoute: selectConfiguredModelRoute,
-      estimateCost: estimateModelCost,
-      authorizePrivacy: authorizeOpenAIPrivacy,
-      providerAdapter: openAIProviderAdapter,
-      trackUsage,
-      dataDirectoryLock,
-      pathPolicyProvider: selfDevPathPolicyProvider,
-      observability: (event, metadata) => toolAuditLog.append(`goals.mode-dev.${event}`, metadata),
-    });
-  }
-  toolAuditLog.append("goals.mode-dev.runtime_status", { composed: goalModeDevRuntime !== null });
-} catch (error) {
-  goalModeDevRuntime = null;
-  toolAuditLog.append("goals.mode-dev.runtime_unavailable", {
-    code: String(error?.code || error?.name || "COMPOSITION_FAILED").slice(0, 80),
-  });
-}
-
-// B3b : maintenance du verrou (démarrage, état, reprise explicite, scan explicite).
-let goalModeDevLockMaintenance = null;
-try {
-  if (goalModeDevRuntime) {
-    // B4c : journal dédié au diagnostic du verrou (rétention propre, 200 entrées),
-    // créé seulement quand Goal Mode DEV est composé (flag actif).
-    const goalModeDevLockDiagnosticsLog = createAuditLog(path.join(DATA_DIRECTORY, "goal-mode-dev-lock-diagnostics.json"), 200);
-    goalModeDevLockMaintenance = createGoalModeDevLockMaintenance({
-      lock: dataDirectoryLock,
-      runtime: goalModeDevRuntime,
-      audit: (event, metadata) => toolAuditLog.append(event, metadata),
-      diagnostics: (event, metadata) => goalModeDevLockDiagnosticsLog.append(event, metadata),
-    });
-  }
-} catch (error) {
-  goalModeDevLockMaintenance = null;
-  toolAuditLog.append("goals.mode-dev.lock_maintenance_unavailable", {
-    code: String(error?.code || error?.name || "COMPOSITION_FAILED").slice(0, 80),
-  });
-}
-
-/*
- * Branchement B2 — routes HTTP Goal Mode DEV. 404 si le runtime n'est pas
- * composé ou si goals.mode-dev vaut OFF au moment de la requête.
- */
-const goalModeDevHttp = createGoalModeDevHttpHandler({
-  runtime: goalModeDevRuntime,
+const { goalModeDevHttp, goalModeDevLockMaintenance } = createGoalModeDevComposition({
+  DATA_DIRECTORY,
+  approvalManager,
+  authorizeOpenAIPrivacy,
+  createAuditLog,
+  dataDirectoryLock,
+  devCostBudgetService,
+  devProjectRuleResolver,
+  estimateModelCost,
+  featureFlags,
   goalStrategyEngine,
-  enabled: () => goalModeDevRuntime !== null && featureFlags.evaluate("goals.mode-dev", {}).mode !== "OFF",
-  // Même exigence que requireTrustedDevUi (déclarée dans le gestionnaire HTTP).
-  requireTrustedUi: (req) => {
-    if (req.headers["x-noon-request"] !== "1") {
-      throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403, code: "TRUSTED_UI_REQUIRED" });
-    }
-  },
+  nativeDevB3Facade,
+  nativeDevJournal,
+  openAIProviderAdapter,
+  operationalSecurityPolicy,
+  personalDatabase,
   readJsonBody,
-  executionPreference: () => runtimeConfig.get("runtime.executionPreference", {}).value,
-  audit: (event, metadata) => toolAuditLog.append(event, metadata),
-  lockMaintenance: goalModeDevLockMaintenance,
+  runtimeConfig,
+  selectConfiguredModelRoute,
+  selfDevPathPolicyProvider,
+  toolAuditLog,
+  trackUsage,
+  workspaceEngine,
 });
 
 toolAuditLog.append(
@@ -1443,36 +1266,13 @@ const devDecisionConsumer =
     decisionSupportEngine,
   });
 
-const nativeDevUiExecutionService = createNativeDevUiExecutionService({
-  terminalService:
-    devWorkspaceTerminalService,
-
-  nativeDevFacade:
-    nativeDevB3Facade,
-
+const nativeDevUiExecutionService = createNativeDevUiComposition({
+  devProjectRuleResolver,
+  devWorkspaceTerminalService,
+  featureFlags,
+  nativeDevB3Facade,
+  toolAuditLog,
   workspaceEngine,
-
-  projectRuleResolver:
-    devProjectRuleResolver,
-
-  featureMode: ({
-    workspaceId,
-    sessionId,
-  }) =>
-    featureFlags.evaluate(
-      "dev.native-core",
-      {
-        workspaceId,
-        sessionId,
-      }
-    ).mode,
-
-  observability:
-    (event, metadata) =>
-      toolAuditLog.append(
-        `dev.native-ui.${event}`,
-        metadata
-      ),
 });
 
 // Les extensions enrichissent les registries existants ; elles ne reçoivent jamais les services internes bruts.
