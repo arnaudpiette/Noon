@@ -191,12 +191,7 @@ const { createProviderPrivacyPolicy } = require("./services/security/provider-pr
 const { createSpecialistRegistry } = require("./services/delegation/specialist-registry");
 const { createContextCapsuleBuilder } = require("./services/delegation/context-capsule-builder");
 const { createChatDelegation } = require("./services/delegation/chat-delegation-composition");
-const { createCodexSpecialistAgent } = require("./services/delegation/codex-specialist-agent");
-const { createDevDelegationRunner } = require("./services/delegation/dev-delegation-runner");
 const { createExecutorWorktreeManager } = require("./services/delegation/executor-worktree");
-const { createClaudeCodeSpecialistAgent, createExecutorSelector } = require("./services/delegation/claude-code-specialist-agent");
-const { createDevMissionService } = require("./services/delegation/dev-mission-service");
-const { createDevMissionHttpRoutes } = require("./services/delegation/dev-mission-http-routes");
 const { createFigmaBridge } = require("./services/figma-bridge/figma-bridge");
 const { createFigmaBridgeHttpRoutes } = require("./services/figma-bridge/figma-bridge-http-routes");
 const { registerFigmaSkills } = require("./services/figma-bridge/figma-skills");
@@ -206,8 +201,7 @@ const { createSandboxDevValidationExecutor } = require("./services/security/dev-
 const { createDevWorkspaceTerminalService } = require("./services/dev/workspace-terminal-service");
 const { createDevWorkspaceAgentExecutionLoop } = require("./services/dev/workspace-agent-execution-loop");
 const { createDevCostBudgetService } = require("./services/dev/dev-cost-budget-service");
-const { createBenchmarkRuntime } = require("./services/dev/benchmark/benchmark-runtime");
-const { createBenchmarkControlPlane } = require("./services/dev/benchmark/benchmark-control-plane");
+const { createBenchmarkComposition, createDevDelegationComposition, createSelfDevComposition } = require("./services/dev/dev-auxiliary-composition");
 const { createTransactionalExecutionEngine } = require("./services/execution/transactional-execution-engine");
 const { AsyncLocalStorage } = require("node:async_hooks");
 const { createNoonObservability } = require("./services/observability/noon-observability");
@@ -253,11 +247,6 @@ const { createNotificationAttentionEngine, createNotificationStore } = require("
 const { createCapabilityRegistry, createLocalIntelligenceRuntime, createLocalModelAdapter } = require("./services/runtime");
 const { createExtensionRegistry, createExtensionRuntime } = require("./services/extensions");
 const { createMcpService } = require("./services/mcp");
-const {
-  createSelfDevEvidenceService, createSelfDevPathPolicyProvider, createSelfDevTargetStore, createSelfDevWorktreeService,
-} = require("./services/selfdev");
-const { createSelfDevReviewService } = require("./services/selfdev/selfdev-review-service");
-const { createSelfDevHttpRoutes } = require("./services/selfdev/selfdev-http-routes");
 const { createRemoteLanService } = require("./services/remote/remote-lan-service");
 const { createRemoteLanHttpRoutes } = require("./services/remote/remote-lan-http-routes");
 const { createControlCenterService } = require("./services/control-center");
@@ -1158,53 +1147,15 @@ const {
 const dataDirectoryLock = createDataDirectoryLock({ directory: DATA_DIRECTORY });
 process.once("exit", () => { try { dataDirectoryLock.release(); } catch {} });
 
-/*
- * SelfDev V1 (SD-3) — copies isolées du dépôt Noon. La politique de chemins est
- * toujours fournie à Goal Mode DEV (elle ne fait que restreindre, et échoue fermée
- * pour un dossier inconnu du conteneur SelfDev) ; les routes exigent selfdev.v1.
- */
-const selfDevStateDirectory = path.join(DATA_DIRECTORY, "selfdev");
-const selfDevTargetStore = createSelfDevTargetStore({
-  filePath: path.join(selfDevStateDirectory, "selfdev-target.json"),
-  writableRootsProvider: () => localPermissionStore.roots("read-write"),
-});
-let selfDevServiceCache = { key: null, value: null };
-function selfDevServices() {
-  const target = selfDevTargetStore.get();
-  const container = target?.worktreeContainer;
-  if (!container || !fs.existsSync(container)) return { targetStore: selfDevTargetStore, worktreeService: null, evidenceService: null };
-  if (selfDevServiceCache.key !== container) {
-    const stateDirectory = path.join(selfDevStateDirectory, "worktrees");
-    const worktreeService = createSelfDevWorktreeService({ container, stateDirectory });
-    const evidenceService = createSelfDevEvidenceService({ worktreeService, executeValidation: sandboxDevValidationExecutor, stateDirectory });
-    // Relecteur : Codex Bridge en lecture seule s'il est installé ; appel distant soumis
-    // à la politique locale (REMOTE_REASONING).
-    const reviewService = findCodexExecutable() ? createSelfDevReviewService({
-      worktreeService, evidenceService, stateDirectory,
-      runReview: ({ worktreePath, question, signal }) => runCodexAnalysis({ question, projectPath: worktreePath, signal }),
-      isRemoteAllowed: () => localIntelligenceRuntime.preflight({ requiredCapabilities: ["REMOTE_REASONING"] }).status === "AVAILABLE",
-    }) : null;
-    selfDevServiceCache = { key: container, value: { worktreeService, evidenceService, reviewService } };
-  }
-  return { targetStore: selfDevTargetStore, resolveWorkspaceIds: selfDevWorkspaceIds, ...selfDevServiceCache.value };
-}
-// Workspaces dont une racine read-write contient le worktree (indice ; l'exécuteur revérifie).
-function selfDevWorkspaceIds(worktreePath) {
-  const ids = [];
-  for (const workspace of workspaceEngine.list() || []) {
-    try {
-      const roots = (workspaceEngine.context(workspace.id).roots || []).filter((root) => root.mode === "read-write");
-      if (roots.some((root) => worktreePath === root.path || worktreePath.startsWith(`${root.path}${path.sep}`))) ids.push(workspace.id);
-    } catch { /* workspace illisible ignoré */ }
-  }
-  return ids;
-}
-const selfDevPathPolicyProvider = createSelfDevPathPolicyProvider({ getContext: selfDevServices });
-const selfDevHttpRoutes = createSelfDevHttpRoutes({
-  isEnabled: () => featureFlags.evaluate("selfdev.v1", {}).mode !== "OFF" &&
-    !UI_VALIDATION_MODE && process.env.NOON_SMOKE_TEST !== "1" && process.env.NOON_SAFE_MODE !== "1",
-  services: selfDevServices,
-  observability: (event, metadata) => toolAuditLog.append(event, metadata),
+const { selfDevHttpRoutes, selfDevPathPolicyProvider } = createSelfDevComposition({
+  DATA_DIRECTORY,
+  UI_VALIDATION_MODE,
+  featureFlags,
+  localIntelligenceRuntime,
+  localPermissionStore,
+  sandboxDevValidationExecutor,
+  toolAuditLog,
+  workspaceEngine,
 });
 
 // Compagnon iPhone (IP-3, flag remote.lan OFF par défaut) : passerelle LAN démarrée
@@ -1332,52 +1283,16 @@ if (process.env.NOON_ENABLE_EXAMPLE_SEARCH_EXTENSION === "true") {
 
 const specialistRegistry = createSpecialistRegistry();
 const contextCapsuleBuilder = createContextCapsuleBuilder();
-const codexSpecialistAgent = createCodexSpecialistAgent({ observability: (event, metadata) => toolAuditLog.append(`dev.${event}`, metadata) });
-// V3-L5b : exécutant au choix par mission (Codex par défaut, Claude Code si installé).
-const claudeCodeSpecialistAgent = createClaudeCodeSpecialistAgent({ observability: (event, metadata) => toolAuditLog.append(`dev.${event}`, metadata) });
-const devExecutorSelector = createExecutorSelector({ agents: { "codex-cli": codexSpecialistAgent, "claude-code": claudeCodeSpecialistAgent }, defaultId: "codex-cli" });
-const devDelegationRunner = createDevDelegationRunner({
-  specialistAgent: devExecutorSelector,
-  worktreeManager: executorWorktreeManager,
-  workspaceEngine,
+const { codexSpecialistAgent, devDelegationRunner, devMissionHttpRoutes } = createDevDelegationComposition({
+  UI_VALIDATION_MODE,
+  approvalManager,
+  executorWorktreeManager,
+  featureFlags,
   operationalSecurityPolicy,
-  validationExecutor:
-    sandboxDevValidationExecutor,
-  observability: (event, metadata) => toolAuditLog.append(`delegation.${event}`, metadata),
+  sandboxDevValidationExecutor,
+  toolAuditLog,
+  workspaceEngine,
 });
-// V3-L5c : missions DEV (flag dev.missions, OFF par défaut) ; approbations V2 au lancement et à
-// l'application du diff. Le dépôt doit être une racine en écriture de l'espace de travail.
-const devMissionsEnabled = () => featureFlags.evaluate("dev.missions", {}).enabled && process.env.NOON_SAFE_MODE !== "1" && !UI_VALIDATION_MODE;
-const devMissionService = createDevMissionService({
-  runner: devDelegationRunner,
-  approvals: approvalManager,
-  isEnabled: devMissionsEnabled,
-  listExecutors: () => devExecutorSelector.list(),
-  // V3-L5d : dépôts Git proposés dans le panneau = racines en écriture des espaces de travail.
-  listRepositories: () => {
-    const seen = new Set(); const repositories = [];
-    for (const workspace of workspaceEngine.list() || []) {
-      let roots;
-      try { roots = (workspaceEngine.context(workspace.id).roots || []).filter((item) => item.mode === "read-write"); } catch { continue; }
-      for (const root of roots) {
-        let repositoryRoot; try { repositoryRoot = fs.realpathSync(root.path); } catch { continue; }
-        if (!fs.existsSync(path.join(repositoryRoot, ".git")) || seen.has(`${workspace.id}\0${repositoryRoot}`)) continue;
-        seen.add(`${workspace.id}\0${repositoryRoot}`);
-        repositories.push({ workspaceId: workspace.id, workspaceName: String(workspace.name || workspace.id).slice(0, 120), repositoryRoot, name: path.basename(repositoryRoot) });
-      }
-    }
-    return repositories;
-  },
-  authorizeRepository: (workspaceId, repositoryRoot) => {
-    try {
-      const workspace = workspaceEngine.context(workspaceId);
-      const roots = (workspace.relevantRoots || workspace.roots || []).filter((item) => item.mode === "read-write").map((item) => { try { return fs.realpathSync(item.path); } catch { return null; } }).filter(Boolean);
-      return roots.length > 0 && isPathInsideRoots(repositoryRoot, roots);
-    } catch { return false; }
-  },
-  observability: (event, metadata) => toolAuditLog.append(`dev.${event}`, metadata),
-});
-const devMissionHttpRoutes = createDevMissionHttpRoutes({ isEnabled: devMissionsEnabled, service: devMissionService });
 
 // Plugin Figma « Noon Bridge » (flag figma.bridge OFF par défaut) : serveur 127.0.0.1 démarré
 // seulement à la génération d'un code de jumelage, ou au démarrage si un jumelage existe.
@@ -1392,33 +1307,16 @@ const figmaBridgeHttpRoutes = createFigmaBridgeHttpRoutes({ isEnabled: figmaBrid
 // Outils Figma du modèle (lecture ; écriture EXTERNAL sous validation) : seulement si le flag est actif.
 const figmaToolsEnabled = figmaBridgeEnabled();
 if (figmaToolsEnabled) registerFigmaSkills({ skillRegistry, bridge: figmaBridge });
-// Le benchmark possède déjà son propre gate B2 et son snapshot canonique. Son
-// runner ne doit donc pas résoudre l'identifiant de session comme un workspace
-// utilisateur persistant dans WorkspaceEngine.
-const benchmarkDevDelegationRunner = createDevDelegationRunner({
-  specialistAgent: codexSpecialistAgent,
+const { benchmarkControlPlane } = createBenchmarkComposition({
+  DATA_DIRECTORY,
+  codexSpecialistAgent,
+  featureFlags,
+  nativeDevCoordinator,
   operationalSecurityPolicy,
-  observability: (event, metadata) => toolAuditLog.append(`delegation.${event}`, metadata),
+  personalDatabase,
+  runtimeConfig,
+  toolAuditLog,
 });
-let benchmarkRuntime;
-let benchmarkControlPlane = null;
-try {
-  benchmarkRuntime = createBenchmarkRuntime({
-    database: personalDatabase,
-    runtimeConfig,
-    benchmarkWorkspaceRoot: path.join(DATA_DIRECTORY, "benchmark-workspaces"),
-    nativeDevCoordinator,
-    devDelegationRunner: benchmarkDevDelegationRunner,
-    featureMode: (context = {}) => featureFlags.evaluate("dev.benchmark", context).mode,
-    observability: (event, metadata) => toolAuditLog.append(`dev.${event}`, metadata),
-  });
-  benchmarkControlPlane = createBenchmarkControlPlane({
-    runtime: benchmarkRuntime,
-    featureMode: (context = {}) => featureFlags.evaluate("dev.benchmark", context).mode,
-  });
-} catch (error) {
-  toolAuditLog.append("dev.benchmark_service_unavailable", { code: String(error.code || error.name || "INITIALIZATION_FAILED").slice(0, 80) });
-}
 const delegationEngine = createChatDelegation({
   authorizeOpenAIPrivacy,
   contextCapsuleBuilder,

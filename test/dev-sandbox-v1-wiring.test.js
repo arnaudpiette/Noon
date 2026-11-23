@@ -93,9 +93,7 @@ test(
   "le spécialiste principal utilise Sandbox mais le benchmark reste exclu",
   () => {
     const server =
-      source(
-        "server.js"
-      );
+      readServerSource();
 
     const mainStart =
       server.indexOf(
@@ -126,7 +124,7 @@ test(
       server.slice(
         benchmarkStart,
         server.indexOf(
-          "let benchmarkRuntime",
+          "let benchmarkControlPlane",
           benchmarkStart
         )
       );

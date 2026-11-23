@@ -654,6 +654,28 @@ structurante, est notée ici avec sa date et sa raison.
   élargie couvre également 448 tests DEV ciblés, le lint, le build et les évaluations critical,
   smoke, goals, delegation et feature-flags.
 
+## 23/11/2026 — Découpe de `server.js`, dix-huitième tranche : SelfDev, missions et benchmark (V3-L7)
+
+- L'assemblage sort dans `services/dev/dev-auxiliary-composition.js`, sans réunir les autorités :
+  - SelfDev conserve son conteneur de worktrees, sa politique de chemins, son exécuteur sandboxé
+    et sa relecture distante soumise à `REMOTE_REASONING` ;
+  - les missions DEV conservent l'exécuteur sélectionnable, les deux approbations V2 et la
+    revalidation des racines Git en écriture ;
+  - le benchmark conserve son runner historique séparé du sandbox B3, son gate et son contrôle
+    persistant.
+
+  `server.js` passe de 2 671 à 2 569 lignes.
+- Les flags restent réévalués au moment de l'usage. Safe mode et UI validation continuent de
+  couper SelfDev et les missions. Le benchmark reste inerte au démarrage : aucune session ni
+  exécution n'est créée automatiquement.
+- Comparaison avant/après sur les mêmes 59 scénarios : 59/59 des deux côtés. Ils couvrent les
+  worktrees isolés, les chemins protégés, l'approbation de lancement puis d'application, l'usage
+  unique, les dépôts révoqués ou modifiés, le redémarrage benchmark et les processus concurrents
+  Goal Mode DEV.
+- Validation complémentaire : lint, build, évaluations critical 54/54, smoke 99/99,
+  delegation 10/10 et feature-flags 2/2. Le test SelfDev de reproduction déjà instable sous Linux
+  reste le seul échec du sous-ensemble qui l'inclut ; il produit la même sortie avant la tranche.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
