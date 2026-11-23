@@ -6,6 +6,7 @@ const { createCalendarConnector, localDateRange, localDayRange } = require('../s
 const { createReliabilityEngine } = require('../services/reliability/reliability-engine');
 const { createAppleNotesConnector } = require('../services/connectors/apple-notes');
 const { createAppleConnector } = require('../services/connectors/apple-reminders');
+const { readServerSource } = require('./helpers/server-source');
 function tokens() { let value = null; return { get: () => value, set: v => { value = v; }, remove: () => { value = null; } }; }
 test('connector auth state changes after OAuth without reconstructing the connector', () => {
  const tokenStore = tokens(); const gmail = createGmailConnector({ tokenStore });
@@ -57,11 +58,11 @@ test('unwired remote writers fail closed before any network mutation', async () 
  } finally {global.fetch=original;}
 });
 test('read-only OAuth excludes compose/events writes and preserves existing credential on invalid callback', () => {
- const fs=require('node:fs');const source=fs.readFileSync(require.resolve('../server'),'utf8');
+ const source=readServerSource();
  const helperStart=source.indexOf('function createGoogleReadAuthorization()');
- const helper=source.slice(helperStart,source.indexOf('reliabilityEngine.register',helperStart));
+ const helper=source.slice(helperStart,source.indexOf('function decodeGmailBase64',helperStart));
  const start=source.indexOf('req.url === "/integrations/status"');const routes=source.slice(start,source.indexOf('// Intelligence personnelle',start));
- assert.match(helper,/scopes: \[\.\.\.new Set\(\[\.\.\.gmailConnector\.scopes, \.\.\.calendarConnector\.scopes\]\)\]/);
+ assert.match(helper,/scopes: \[\.\.\.new Set\(\[\.\.\.(?:deps\.)?gmailConnector\.scopes, \.\.\.(?:deps\.)?calendarConnector\.scopes\]\)\]/);
  assert.doesNotMatch(routes,/integrationTokenStore.remove\("google"\)/);
  assert.doesNotMatch(routes,/calendarConnector.markSuccess\(\);\s*return sendCallbackPage/);
 });
@@ -160,7 +161,7 @@ test('packaged SQLite health compares the database against the canonical schema 
  assert.doesNotMatch(health,/Number\(version\) !== 10/);
 });
 test('Control Center reuses the canonical read-only Google OAuth flow when auth is missing', () => {
- const fs=require('node:fs');const server=fs.readFileSync(require.resolve('../server'),'utf8');
+ const fs=require('node:fs');const server=readServerSource();
  const renderer=fs.readFileSync(require.resolve('../public/control-center'),'utf8');
  assert.match(server,/function createGoogleReadAuthorization\(\)/);
  const action=fs.readFileSync(require.resolve('../services/control-center/connection-check-action'),'utf8');
@@ -175,7 +176,7 @@ test('Control Center reuses the canonical read-only Google OAuth flow when auth 
  assert.doesNotMatch(renderer,/clientSecret|access_token|refresh_token/);
 });
 test('Google Desktop OAuth uses an ephemeral loopback port bound to localhost', () => {
- const fs=require('node:fs');const server=fs.readFileSync(require.resolve('../server'),'utf8');
+ const server=readServerSource();
  const start=server.indexOf('async function createGoogleLoopbackReceiver()');
  const helper=server.slice(start,server.indexOf('async function createGoogleReadAuthorization()',start));
  assert.match(helper,/receiver\.listen\(0, "127\.0\.0\.1"/);

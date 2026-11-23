@@ -33,6 +33,7 @@ const ROUTE_MODULES = Object.freeze([
   "services/models/usage-tracking.js",
   "services/context/local-projects.js",
   "services/sessions/conversation-store.js",
+  "services/connectors/google-account.js",
 ]);
 
 function readServerSource() {

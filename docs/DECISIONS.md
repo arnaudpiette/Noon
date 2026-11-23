@@ -488,6 +488,45 @@ structurante, est notée ici avec sa date et sa raison.
   identiques ; `conversation-index.json` identique aux horodatages et identifiants aléatoires près.
   Tests à assertions d'absence rejoués contre la source complète : 245/245.
 
+## 23/11/2026 — Découpe de `server.js`, neuvième tranche : OAuth Google et recherche Gmail (V3-L7)
+
+- L'OAuth Google en lecture seule sort dans `services/connectors/google-account.js`
+  (`createGoogleAccount`). Il comprend :
+  - la boucle locale éphémère et la page de retour ;
+  - l'échange du code, la vérification du profil et le renouvellement du jeton, partagé entre
+    appels simultanés.
+
+  La recherche Gmail autorisée l'accompagne (décodage, normalisation des messages,
+  `searchAuthorizedGmail`). Au total, 11 fonctions et leur état ; `server.js` passe de 3 863 à
+  3 613 lignes.
+- Aucun ajout de code. `gmailConnector` et `calendarConnector` ont besoin de
+  `getGoogleAccessToken` pour être construits : ils restent lus par accesseur (`deps.`), comme
+  `integrationTokenStore` et `localIntelligenceRuntime`, déclarés plus loin. Les identifiants OAuth
+  restent lus dans `process.env` à chaque appel, comme avant.
+- Contrôle : 1 984 jetons identiques une fois retirés les préfixes `deps.`. Trois tests de
+  `connector-validation` lisaient `server.js` seul ; ils lisent maintenant `server.js` suivi des
+  modules extraits. Leurs assertions sont inchangées, à deux détails près :
+  - l'assertion sur les scopes accepte le préfixe `deps.` ;
+  - la tranche de la page de retour se termine au helper Gmail qui la suit.
+
+  Au passage, la tranche « routes `/integrations/status` » de ce test était vide depuis la
+  sortie des routes (tranches 3-4), ce qui rendait vacues ses deux assertions d'absence. Elle
+  couvre de nouveau la route.
+- Avant/après, avec des identifiants OAuth factices et `fetch` bloqué (aucune tentative
+  d'appel sortant n'a eu lieu), 15 requêtes ont donné des réponses identiques :
+  - `/integrations/status`, deux fois ;
+  - la santé Gmail et Calendar sans jeton ;
+  - les callbacks à état inconnu ;
+  - la connexion, avec une URL d'autorisation de même forme (scopes lecture seule, PKCE
+    `S256`, retour sur `127.0.0.1`) ;
+  - sur la boucle locale : un 404, un mauvais état, un refus, puis la fermeture de la boucle ;
+  - le rejeu de l'état consommé et la déconnexion.
+
+  Le journal d'audit contient les mêmes 73 entrées, `google-oauth.*` compris ; seules des
+  latences en millisecondes diffèrent. Tests à assertions d'absence rejoués contre la source
+  complète : 224/224, plus les 21 tests de `connector-validation`, qui lisent désormais la
+  source complète.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
