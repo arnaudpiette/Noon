@@ -7,7 +7,7 @@
 
 const { NOT_HANDLED } = require("../http/route-result");
 
-const DEPENDENCIES = Object.freeze(["GENERAL_FOLDER_ID","MAX_CONVERSATIONS_PER_FOLDER","MAX_FOLDERS","clearConversationSession","conversationIndex","createConversationKey","createFolder","crypto","deleteConversation","deleteFolder","getConversationTranscript","getSessionActivity","normalizeFocusName","normalizeFocusPath","normalizeNoonMode","normalizeSessionId","readJsonBody","renameFolder","replaceConversationIndex","resolveFocusCatalogSelection","sessionActivities","sessionContinuityEngine","touchConversation","updateConversation"]);
+const DEPENDENCIES = Object.freeze(["GENERAL_FOLDER_ID","MAX_CONVERSATIONS_PER_FOLDER","MAX_FOLDERS","clearConversationSession","createConversationKey","createFolder","crypto","deleteConversation","deleteFolder","getConversationIndex","getConversationTranscript","getSessionActivity","normalizeFocusName","normalizeFocusPath","normalizeNoonMode","normalizeSessionId","readJsonBody","renameFolder","replaceConversationIndex","resolveFocusCatalogSelection","sessionActivities","sessionContinuityEngine","touchConversation","updateConversation"]);
 
 function createConversationHttpRoutes(deps) {
   for (const name of DEPENDENCIES) if (!(name in deps)) throw new TypeError(`Dépendance manquante : ${name}`);
@@ -22,6 +22,7 @@ function createConversationHttpRoutes(deps) {
       crypto,
       deleteConversation,
       deleteFolder,
+      getConversationIndex,
       getConversationTranscript,
       getSessionActivity,
       normalizeFocusName,
@@ -71,8 +72,8 @@ function createConversationHttpRoutes(deps) {
       return res.end(JSON.stringify({
         status: "ok",
         limits: { folders: MAX_FOLDERS, conversationsPerFolder: MAX_CONVERSATIONS_PER_FOLDER },
-        folders: deps.conversationIndex.folders,
-        conversations: deps.conversationIndex.conversations,
+        folders: getConversationIndex().folders,
+        conversations: getConversationIndex().conversations,
       }));
     }
 
@@ -101,7 +102,7 @@ function createConversationHttpRoutes(deps) {
           throw error;
         }
         const sessionId = decodeURIComponent(requestPath.slice("/conversations/".length));
-        if (!deps.conversationIndex.conversations.some((item) => item.id === sessionId)) {
+        if (!getConversationIndex().conversations.some((item) => item.id === sessionId)) {
           const error = new Error("Conversation introuvable.");
           error.statusCode = 404;
           throw error;
@@ -119,7 +120,7 @@ function createConversationHttpRoutes(deps) {
       try {
         if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403 });
         const body = await readJsonBody(req, 10 * 1024);
-        const result = createFolder(deps.conversationIndex, { id: crypto.randomUUID(), title: body.title });
+        const result = createFolder(getConversationIndex(), { id: crypto.randomUUID(), title: body.title });
         replaceConversationIndex(result.store);
         res.writeHead(201, { "Content-Type": "application/json" });
         return res.end(JSON.stringify({ status: "ok", folder: result.folder }));
@@ -134,7 +135,7 @@ function createConversationHttpRoutes(deps) {
         if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403 });
         const id = decodeURIComponent(requestPath.slice("/conversation-folders/".length));
         const body = await readJsonBody(req, 10 * 1024);
-        replaceConversationIndex(renameFolder(deps.conversationIndex, id, body.title));
+        replaceConversationIndex(renameFolder(getConversationIndex(), id, body.title));
         res.writeHead(200, { "Content-Type": "application/json" });
         return res.end(JSON.stringify({ status: "ok" }));
       } catch (error) {
@@ -148,7 +149,7 @@ function createConversationHttpRoutes(deps) {
         if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403 });
         const id = decodeURIComponent(requestPath.slice("/conversation-folders/".length));
         const url = new URL(req.url, "http://127.0.0.1");
-        const result = deleteFolder(deps.conversationIndex, id, { deleteConversations: url.searchParams.get("deleteConversations") === "true", destinationFolderId: url.searchParams.get("destinationFolderId") || null });
+        const result = deleteFolder(getConversationIndex(), id, { deleteConversations: url.searchParams.get("deleteConversations") === "true", destinationFolderId: url.searchParams.get("destinationFolderId") || null });
         for (const conversationId of result.deletedConversationIds) clearConversationSession(conversationId);
         replaceConversationIndex(result.store);
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -164,7 +165,7 @@ function createConversationHttpRoutes(deps) {
         if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403 });
         const id = decodeURIComponent(requestPath.slice("/conversations/".length));
         const body = await readJsonBody(req, 10 * 1024);
-        replaceConversationIndex(updateConversation(deps.conversationIndex, id, { title: body.title, folderId: body.folderId, pinned: body.pinned }));
+        replaceConversationIndex(updateConversation(getConversationIndex(), id, { title: body.title, folderId: body.folderId, pinned: body.pinned }));
         res.writeHead(200, { "Content-Type": "application/json" });
         return res.end(JSON.stringify({ status: "ok" }));
       } catch (error) {

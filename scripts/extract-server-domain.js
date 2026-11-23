@@ -9,6 +9,7 @@
 // fonction), ou avant la ligne `constructBefore` si une exportée est passée plus tôt au chargement.
 // Refuse aussi : écriture d'une variable du serveur, état ou fonction non exportée utilisés hors du
 // domaine, fonction exportée utilisée au chargement avant la construction, __dirname/require…,
+// état exporté autre qu’une `const` (même objet des deux côtés ; un `let` passe par une fonction),
 // this/arguments. Un usage au chargement via une autre fonction n'est pas visible : vérifier que le
 // serveur démarre (npm test, comparaison avant/après).
 // usage : node scripts/extract-server-domain.js <config.json> [--write]   (sans --write : essai à blanc)
@@ -28,7 +29,7 @@ const functionNames = config.functions || [];
 const stateNames = config.state || [];
 const exportNames = config.exports || [];
 const ownNames = [...functionNames, ...stateNames];
-for (const name of exportNames) if (!functionNames.includes(name)) throw new Error(`export hors des fonctions : ${name}`);
+for (const name of exportNames) if (!ownNames.includes(name)) throw new Error(`export hors du domaine : ${name}`);
 
 const ast = espree.parse(source, { ecmaVersion: "latest", sourceType: "script", range: true, loc: true, ecmaFeatures: { globalReturn: true } });
 const manager = eslintScope.analyze(ast, { ecmaVersion: 2022, nodejsScope: true, sourceType: "script" });
@@ -42,6 +43,7 @@ const nodes = [
   ...stateNames.map((name) => {
     const found = ast.body.filter((node) => node.type === "VariableDeclaration" && node.declarations.some((d) => d.id.name === name));
     if (found.length !== 1 || found[0].declarations.length !== 1) throw new Error(`état absent, ambigu ou déclaré avec d'autres : ${name}`);
+    if (exportNames.includes(name) && found[0].kind !== "const") throw new Error(`état exporté non const (passer par une fonction) : ${name}`);
     return found[0];
   }),
 ].sort((a, b) => a.range[0] - b.range[0]);

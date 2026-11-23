@@ -228,9 +228,19 @@ test("les workspaces UI Validation sont initialisés seulement après conversati
     "utf8"
   );
 
+  // V3-L7 : l'index est chargé à la construction du magasin de conversations
+  // (services/sessions/conversation-store.js), à cet emplacement de server.js.
+  const conversationStore = fs.readFileSync(
+    path.join(__dirname, "..", "services", "sessions", "conversation-store.js"),
+    "utf8"
+  );
+  assert.match(
+    conversationStore,
+    /\n {2}let conversationIndex = loadConversationIndex\(\);\n/
+  );
   const conversationIndex =
     server.indexOf(
-      "let conversationIndex = loadConversationIndex();"
+      "} = createConversationStore({"
     );
 
   const validationInit =

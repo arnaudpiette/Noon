@@ -464,6 +464,30 @@ structurante, est notée ici avec sa date et sa raison.
   identifiants aléatoires près ; idem en mode UI Validation (espaces synthétiques créés pareil).
   Tests à assertions d'absence rejoués contre la source complète : 245/245.
 
+## 23/11/2026 — Découpe de `server.js`, huitième tranche : historique et index des conversations (V3-L7)
+
+- 16 fonctions (chargement/sauvegarde de l'historique, des résumés et de l'index,
+  `rememberConversation`, `getConversationHistory`, `clearConversationSession`…) et leur état
+  (`conversationSessions`, `conversationSummaries`, `conversationSummaryCheckpoints`,
+  `conversationIndex`, plafonds d'historique) sortent dans `services/sessions/conversation-store.js` ;
+  `server.js` passe de 4 120 à 3 863 lignes.
+- Seul ajout de code : `conversationIndex` est un `let` réaffecté à chaque mise à jour et lu par
+  trois fermetures hors du domaine ; elles passent par un accesseur `getConversationIndex()`
+  (ajouté dans `server.js` puis déplacé avec le domaine). Le module de routes des conversations
+  reçoit `getConversationIndex` au lieu de lire `deps.conversationIndex` — même lecture à chaque
+  requête. L'outil accepte désormais d'exporter un état `const` (même objet des deux côtés :
+  la `Map` `conversationSummaries`) et refuse d'exporter un `let`.
+- Contrôle : 1 372 jetons identiques une fois retirés les préfixes `deps.`. Le test d'ordre
+  UI Validation cherchait la déclaration de l'index dans `server.js` : il vérifie maintenant que le
+  module charge l'index à sa construction et que cette construction précède l'initialisation des
+  espaces synthétiques (même exigence).
+- Avant/après (faux serveur Responses local) : 2 × `/ai` et `/ai/stream` avec historique,
+  `/session/history`, `/session/activity`, `/session/clear`, `/conversation/reset`, liste, création,
+  modification et suppression de conversations, création de dossier — réponses, requêtes envoyées au
+  modèle (historique compris), `conversation-memory.json` et `conversation-summaries.json`
+  identiques ; `conversation-index.json` identique aux horodatages et identifiants aléatoires près.
+  Tests à assertions d'absence rejoués contre la source complète : 245/245.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

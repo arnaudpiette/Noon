@@ -32,6 +32,7 @@ const ROUTE_MODULES = Object.freeze([
   "services/orchestration/ask-ai.js",
   "services/models/usage-tracking.js",
   "services/context/local-projects.js",
+  "services/sessions/conversation-store.js",
 ]);
 
 function readServerSource() {
