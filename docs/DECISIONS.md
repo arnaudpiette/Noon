@@ -559,6 +559,47 @@ structurante, est notée ici avec sa date et sa raison.
   compteurs du cache de contexte, qui varient d'une exécution à l'autre. Tests à assertions
   d'absence rejoués contre la source complète : 220/220, plus les 4 tests small-first.
 
+## 23/11/2026 — Découpe de `server.js`, onzième tranche : assemblage du Brief quotidien (V3-L7)
+
+- L'assemblage du Brief sort dans `services/daily-brief/daily-brief-composition.js`
+  (`createDailyBriefComposition`) :
+  - le service du matin ;
+  - le contexte personnel local ;
+  - le moteur du Brief avec ses fournisseurs (planification, suivi, revue) et sa composition
+    distante (préflight `REMOTE_REASONING`, budget, politique de confidentialité, puis appel au
+    modèle) ;
+  - le journal d'usage et la génération.
+
+  `prepareDrafts` reste vide : aucune écriture externe. La « Santé de Noon » reste dans
+  `server.js` et lit le journal d'usage exporté. `server.js` passe de 3 510 à 3 395 lignes.
+- Aucun ajout de code. Ses 37 dépendances sont déjà déclarées à la construction, qui a lieu à
+  la place du service du matin ; les déclarations déplacées étaient contiguës, l'ordre
+  d'exécution est donc inchangé. Contrôle : 1 453 jetons identiques.
+- Deux tests de câblage lisaient `server.js` seul ; ils lisent maintenant `server.js` suivi
+  des modules extraits, avec des assertions inchangées :
+  - le Brief ne fait aucune écriture externe ;
+  - le préflight local-only passe avant tout appel distant.
+
+  Le second, oublié lors du repérage, a échoué au premier `npm test` puis est passé une fois
+  adapté.
+- Avant/après dans deux copies isolées (HEAD et HEAD + modification). Le checkout de travail
+  contient le helper EventKit Rappels, non versionné, qui aurait lu les vrais Rappels. Le rejeu
+  a utilisé :
+  - le faux serveur Responses local ;
+  - des `osascript` et `shortcuts` factices qui refusent ;
+  - `fetch` limité à `127.0.0.1`.
+
+  10 requêtes : brief courant, usage, génération forcée puis non forcée, ouverture, historique,
+  planification. Résultats :
+  - réponses, requête envoyée au modèle, `personal-brief.json`, `daily-plans.json`,
+    `brief-usage-log.json` et journal d'audit identiques une fois normalisés les durées, les
+    identifiants aléatoires et les empreintes de clés du cache de contexte (ces empreintes
+    varient déjà entre deux exécutions de la même version) ;
+  - aucun appel Apple ni réseau sortant n'a été tenté.
+
+  Tests à assertions d'absence rejoués contre la source complète : 208/208, plus les 12 tests
+  de fraîcheur du Brief.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

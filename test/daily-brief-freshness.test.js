@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { createCreativeBriefStore, localDateKey } = require('../lib/creative-brief');
 const { createDailyBriefEngine } = require('../services/daily-brief/daily-brief-engine');
+const { readServerSource } = require('./helpers/server-source');
 function fixture(t, { collect, compose } = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'noon-freshness-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
@@ -103,7 +104,7 @@ test('degraded current generation is PARTIAL, not yesterday or empty', async t =
   assert.ok(state.current.content.length);
 });
 test('canonical brief server wiring does not invoke external draft writes', () => {
-  const source = fs.readFileSync(require.resolve('../server'), 'utf8');
+  const source = readServerSource();
   const wiring = source.slice(source.indexOf('const dailyBriefEngine ='), source.indexOf('async function generateDailyBrief'));
   assert.match(wiring, /prepareDrafts: \(\) => \[\]/);
   assert.doesNotMatch(wiring, /createGmailDraft|createCalendarEvent|updateCalendarEvent|writeFile/);

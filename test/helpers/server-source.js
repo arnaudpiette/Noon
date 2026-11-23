@@ -35,6 +35,7 @@ const ROUTE_MODULES = Object.freeze([
   "services/sessions/conversation-store.js",
   "services/connectors/google-account.js",
   "services/models/configured-model-route.js",
+  "services/daily-brief/daily-brief-composition.js",
 ]);
 
 function readServerSource() {

@@ -148,7 +148,7 @@ test('malformed provider success is an error, never an empty inbox', async () =>
  try {const tokenStore=tokens();tokenStore.set({access_token:'fixture'});await assert.rejects(createGmailConnector({tokenStore}).searchGmailMessages('newer_than:1d'),{code:'INVALID_RESPONSE'});} finally{global.fetch=original;}
 });
 test('Daily Brief composition honors local-only before any remote model call', () => {
- const fs=require('node:fs');const s=fs.readFileSync(require.resolve('../server'),'utf8');
+ const s=readServerSource();
  const a=s.indexOf('compose: async ({ structured, personalContext })');const b=s.indexOf('async function generateDailyBrief',a);const compose=s.slice(a,b);
  assert.ok(compose.indexOf('localIntelligenceRuntime.preflight')>=0);
  assert.ok(compose.indexOf('localIntelligenceRuntime.preflight')<compose.indexOf('openAIProviderAdapter.execute'));
