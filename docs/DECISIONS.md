@@ -446,6 +446,24 @@ structurante, est notée ici avec sa date et sa raison.
   (client OAuth Google) absent de la copie de référence ; identique une fois ce `.env` fourni.
   Les 15 tests à assertions d'absence rejoués contre la source complète : 141/141.
 
+## 23/11/2026 — Découpe de `server.js`, septième tranche : fichiers locaux, projets et Focus (V3-L7)
+
+- 18 fonctions (registre des projets, scan, `listDirectory`, `isPathAllowed`, `searchFiles`,
+  `readAllowedFile`, normalisation et résolution du Focus, `handleLocalCommand`…) et leur état
+  (`projectsRegistry`, `ALLOWED_NOON_MODES`) sortent dans `services/context/local-projects.js`
+  avec `scripts/extract-server-domain.js` ; `server.js` passe de 4 703 à 4 120 lignes. Seize
+  fonctions exportées ; `loadProjectsRegistry` et `saveProjectsRegistry` restent privées.
+- Construction à l'emplacement de `projectsRegistry` (chargé au même moment qu'avant) ; seule
+  `workspaceEngine` (`let` affecté au démarrage) est lue à chaque usage. `uiValidationProjectContexts`
+  reste dans `server.js` (affecté et lu hors du domaine). Contrôle : 2 842 jetons identiques une
+  fois retirés les préfixes `deps.`.
+- Avant/après sur serveurs isolés : `/projects`, `/projects/catalog`, `/focus/catalog`,
+  2 × `/projects/scan`, 2 × `/projects/resolve`, `/projects/:id`, `/browse` (autorisé, refusé,
+  exclu), `/search`, `/read` (autorisé, refusé), 3 × `/ask` (commandes locales), `/workspaces`,
+  `/intents/parse` — réponses et `projects-registry.json` identiques aux horodatages et
+  identifiants aléatoires près ; idem en mode UI Validation (espaces synthétiques créés pareil).
+  Tests à assertions d'absence rejoués contre la source complète : 245/245.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
