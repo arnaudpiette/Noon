@@ -421,6 +421,31 @@ structurante, est notée ici avec sa date et sa raison.
 - Reste ≈ 5 000 lignes : routage de modèles, OAuth Google, suivi d'usage, fichiers locaux, focus,
   mémoire de conversation, démarrage. Prochaine étape : les sortir par domaine avec le même outil.
 
+## 23/11/2026 — Découpe de `server.js`, sixième tranche : suivi d'usage et budgets (V3-L7)
+
+- 19 fonctions (recherche web, voix, modèles, transcription, images, budgets) et leur état
+  (`webSearchUsage`, compteur quotidien) sortent dans `services/models/usage-tracking.js` ;
+  `server.js` passe de 5 092 à 4 703 lignes. Dix fonctions exportées, neuf privées.
+- Nouvel outil `scripts/extract-server-domain.js` pour un domaine (plusieurs fonctions + état
+  qu'elles sont seules à utiliser) : fonctions créées une fois ; une `const` déjà déclarée à la
+  construction est lue une fois, une `const` déclarée plus loin ou un `let` est lu à chaque usage
+  (référence réécrite en `deps.nom`, accesseur — même zone morte qu'avant). Refuse aussi un état ou
+  une fonction privée utilisés hors du domaine et une exportée passée au chargement avant la
+  construction : il a bloqué le premier essai (`trackUsage` passée à deux services lignes 1548 et
+  1599). Construction donc placée avant `createOpenAIMediaAnalyzer` ; seule `metricsService`
+  (déclarée plus loin) est lue à chaque usage. Contrôle : 2 253 jetons identiques une fois retirés
+  les 5 préfixes `deps.`.
+- Effet de bord unique : le compteur de recherche web est lu au chargement ligne 1545 au lieu de
+  2716, dans la même évaluation synchrone ; rien entre les deux ne touche `web-search-usage.json`
+  (la migration des anciens fichiers se fait dans Electron, avant le chargement du serveur).
+- Avant/après (faux serveur Responses local) : `/budget`, `/realtime/budget`, 3 × `/ai`,
+  3 × `/realtime/usage` (dont doublon et requête sans en-tête), vue d'ensemble du centre de
+  contrôle, `/api/noon-health`, diagnostics de session — fichiers `usage.json`,
+  `voice-usage.json`, `web-search-usage.json` identiques, réponses identiques aux horodatages et
+  latences près. Écart Gmail/Agenda `NOT_CONFIGURED` → `AUTH_REQUIRED` : dû au `.env` local
+  (client OAuth Google) absent de la copie de référence ; identique une fois ce `.env` fourni.
+  Les 15 tests à assertions d'absence rejoués contre la source complète : 141/141.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

@@ -30,6 +30,7 @@ const ROUTE_MODULES = Object.freeze([
   "services/config/config-status-http-routes.js",
   "services/runtime/runtime-status-http-routes.js",
   "services/orchestration/ask-ai.js",
+  "services/models/usage-tracking.js",
 ]);
 
 function readServerSource() {
