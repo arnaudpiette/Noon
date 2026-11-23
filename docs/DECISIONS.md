@@ -600,6 +600,35 @@ structurante, est notée ici avec sa date et sa raison.
   Tests à assertions d'absence rejoués contre la source complète : 208/208, plus les 12 tests
   de fraîcheur du Brief.
 
+## 23/11/2026 — Découpe de `server.js`, douzième tranche : assemblage du Control Center (V3-L7)
+
+- Ce qui sort dans `services/control-center/control-center-composition.js`
+  (`createControlCenterComposition`) :
+  - le Control Center : ses 20 lecteurs de supervision et ses 3 actions bornées ;
+  - ses deux utilitaires, `controlState` et `reliabilityItems`.
+
+  `server.js` passe de 3 395 à 3 291 lignes.
+- Aucun ajout de code. `workspaceEngine`, déclaré plus loin, est lu par accesseur. Contrôle :
+  3 048 jetons identiques. Aucun test ne lisait ce câblage dans `server.js`.
+- Avant/après dans deux copies isolées, avec :
+  - faux `osascript` ;
+  - identifiants OAuth factices ;
+  - `fetch` limité à `127.0.0.1`.
+
+  36 requêtes :
+  - la vue d'ensemble, en vues utilisateur et avancée ;
+  - les 20 sections ;
+  - trois sections en vues avancée et développeur (refusée : drapeau coupé) ;
+  - une section inconnue ;
+  - les actions : diagnostic rapide, vérification de connexion Gmail et Notes, extension
+    inconnue, action inconnue, action sans en-tête de confiance.
+
+  35 réponses sont identiques. La 36ᵉ (vérification Gmail → `AUTH_REQUIRED`) ne diffère que
+  par l'état OAuth, le défi PKCE et le port éphémère, tous aléatoires. Le journal d'audit
+  contient les mêmes 492 entrées, dans le même ordre. Aucun appel réseau sortant ; un seul
+  appel au faux `osascript` de chaque côté. Tests à assertions d'absence rejoués contre la
+  source complète : 208/208.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
