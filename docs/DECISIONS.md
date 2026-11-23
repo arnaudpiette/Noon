@@ -397,6 +397,30 @@ structurante, est notée ici avec sa date et sa raison.
 - Reste pour l'objectif « aucun fichier > 1 500 lignes » : ≈ 6 500 lignes de fonctions et d'état
   hors gestionnaire dans `server.js`, à sortir par domaine.
 
+## 23/11/2026 — Découpe de `server.js`, cinquième tranche : `askAI` (V3-L7)
+
+- `askAI` (1 650 lignes, un quart du fichier) sort dans `services/orchestration/ask-ai.js` ;
+  `server.js` passe de 6 680 à 5 092 lignes.
+- Nouvel outil `scripts/extract-server-function.js`, pendant de l'outil des routes pour les
+  fonctions de premier niveau : la déclaration est recopiée telle quelle dans une enveloppe qui lit
+  ses 59 dépendances par accesseurs à chaque appel ; `server.js` garde `const askAI = createAskAI(…)`
+  à l'emplacement d'origine. Mêmes refus que l'outil des routes, plus : fonction auxiliaire utilisée
+  ailleurs, usage pendant le chargement du module (zone morte du `const`). Contrôle : les deux
+  versions de la fonction ont les mêmes 9 319 jetons (contenu des gabarits compris).
+- `personalSearchEngine`, `multiSourceSynthesisEngine`, `multimodalEngine` et `workspaceEngine`
+  déclarés `startupOnly` (une seule affectation, au chargement).
+- `test/figma-skills.test.js` lit `readServerSource()`. Les 15 tests qui lisent encore `server.js`
+  seul et contiennent des assertions d'absence ont été rejoués contre la source complète
+  (server.js + modules extraits) : 141/141, aucune assertion contournée par les tranches 1 à 5.
+- Avant/après avec un faux serveur Responses local (`OPENAI_BASE_URL` sur 127.0.0.1, clé de test
+  factice, aucune sortie réseau) : 9 requêtes `/ai` (simple, focus, flux, appel d'outil, agenda,
+  recherche web, profil approfondi, hors ligne, session) et les 10 requêtes envoyées au modèle
+  journalisées. Réponses et requêtes modèle identiques aux identifiants, horodatages et durées près.
+  Seul écart : `TARGET_OUT_OF_SCOPE` en plus côté référence pour `list_directory(".")`, dû au
+  dossier courant différent (copie sous `/private/tmp`) ; disparu avec un chemin absolu commun.
+- Reste ≈ 5 000 lignes : routage de modèles, OAuth Google, suivi d'usage, fichiers locaux, focus,
+  mémoire de conversation, démarrage. Prochaine étape : les sortir par domaine avec le même outil.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

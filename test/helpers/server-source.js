@@ -1,7 +1,7 @@
 "use strict";
 
-// V3-L7 — les routes HTTP sortent progressivement de server.js vers des modules. Les tests
-// de câblage lisent ici server.js suivi de ces modules, pour garder leurs vérifications.
+// V3-L7 — les routes HTTP et les grandes fonctions sortent progressivement de server.js vers des
+// modules. Les tests de câblage lisent ici server.js suivi de ces modules, pour garder leurs vérifications.
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -29,6 +29,7 @@ const ROUTE_MODULES = Object.freeze([
   "services/orchestration/ai-http-routes.js",
   "services/config/config-status-http-routes.js",
   "services/runtime/runtime-status-http-routes.js",
+  "services/orchestration/ask-ai.js",
 ]);
 
 function readServerSource() {

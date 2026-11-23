@@ -6,6 +6,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { readServerSource } = require("./helpers/server-source");
 const test = require("node:test");
 const vm = require("node:vm");
 const { createSkillRegistry } = require("../skills/registry");
@@ -113,7 +114,7 @@ test("plugin : apply_changes crée, imbrique via ref, modifie, puis un seul pas 
 });
 
 test("câblage : outils enregistrés seulement si le flag est actif, consigne Figma au modèle", () => {
-  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
+  const server = readServerSource();
   assert.match(server, /if \(figmaToolsEnabled\) registerFigmaSkills\(\{ skillRegistry, bridge: figmaBridge \}\)/);
   assert.match(server, /figmaInstruction = figmaToolsEnabled/);
   assert.match(server, /creativeImageInstruction \+ " " \+ figmaInstruction/);
