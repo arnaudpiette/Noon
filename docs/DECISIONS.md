@@ -345,6 +345,58 @@ structurante, est notée ici avec sa date et sa raison.
   API Figma, résumé d'approbation), `npm test` complet. Non vérifié : dans Figma Desktop réel et
   dans le flux d'approbation complet du chat avec le modèle (appels payants).
 
+## 23/11/2026 — Découpe de `server.js`, troisième tranche (V3-L7, reprise après Figma)
+
+- Reprise de L7 une fois le plugin Figma livré (tranches 1–3). L3 et L4 restent bloqués par les
+  critères de sortie de L1 (notation `eval:character`) et de L2 (deux semaines d'usage).
+- `server.js` passe de 7 619 à 7 091 lignes. Huit modules de routes, même méthode (bloc déplacé
+  tel quel, dépendances par accesseurs) : `services/workspaces/workspace-http-routes.js`
+  (espaces de travail, `/intents/parse`), `services/search/local-files-http-routes.js`
+  (`/browse`, `/search`, `/read`, `/ask`), `services/models/budget-http-routes.js` (`/budget`),
+  `services/capture/capture-http-routes.js` (capture rapide, `/resume`, `/first-step`),
+  `services/jobs/jobs-http-routes.js` (`/jobs`, `/background-analyses`),
+  `services/memory/legacy-memory-http-routes.js` (adaptateur `/memory`),
+  `services/daily-brief/brief-http-routes.js` (planification et génération du Brief) et
+  `services/approvals/approvals-http-routes.js` (approbations génériques, reprise de
+  l'orchestrateur).
+- Outil : `scripts/extract-server-routes.js` refuse désormais un bloc qui utilise `__dirname`,
+  `__filename`, `require`, `module` ou `exports` (leur sens changerait une fois déplacé). Il a
+  bloqué la fenêtre de capture, qui lisait `path.join(__dirname, "public", …)` : seul changement
+  de code hors déplacement, la constante `PUBLIC_DIRECTORY` (même chemin, partagée avec
+  `staticAssets`).
+- `workspaceEngine` (`let`) déclaré `startupOnly` : affecté une seule fois au chargement du module.
+- Vérification avant/après sur serveur isolé (copie `git worktree` de HEAD contre le dossier de
+  travail) : 57 requêtes couvrant les huit modules, avec et sans en-tête `X-Noon-Request` —
+  en-têtes identiques, corps identiques aux horodatages et empreintes d'entrée près. Le seul autre
+  écart (Brief sans Rappels dans la référence) venait du binaire natif `resources/native/`
+  (ignoré par Git) absent de la copie ; disparu une fois ce binaire fourni à la référence.
+  Non rejoué : `GET /workspaces` et `/search?q=` parcourent les dossiers autorisés du Mac et
+  restent bloqués sous un serveur lancé hors de l'app (accès macOS) ; leur code est déplacé tel
+  quel et couvert par les tests de câblage.
+- Reste dans `server.js` : la route `/ai` (≈ 450 lignes, la plus risquée), quelques petites
+  routes (`/api/config/status`, `/api/features`, `/api/lifecycle/status`) et ≈ 6 000 lignes de
+  fonctions et d'état hors gestionnaire HTTP. L'objectif « aucun fichier > 1 500 lignes » exige
+  donc de sortir aussi ces fonctions, par domaine, dans les prochaines tranches.
+
+## 23/11/2026 — Découpe de `server.js`, quatrième tranche : fin des routes (V3-L7)
+
+- `server.js` passe de 7 091 à 6 680 lignes ; le gestionnaire HTTP ne garde que l'authentification
+  locale, le garde de validation UI, `/` et la suite ordonnée des modules (≈ 170 lignes).
+- Trois modules, même méthode : `services/orchestration/ai-http-routes.js` (`POST /ai` et
+  `/ai/stream`, 449 lignes, 32 dépendances, `workspaceEngine` en `startupOnly`),
+  `services/config/config-status-http-routes.js` (`/api/config/status`) et
+  `services/runtime/runtime-status-http-routes.js` (`/api/features`, `/api/lifecycle/status`).
+  Deux modules distincts pour les routes d'état afin de garder leur place de part et d'autre des
+  routes DEV, sans réordonner.
+- `test/chat-progress-stream.test.js` lit désormais `readServerSource()` (vérifications inchangées).
+- Avant/après sur serveur isolé (HEAD contre dossier de travail, sans clé OpenAI) : 21 requêtes
+  (`/ai` corps vide, invalide, focus, hors ligne, pièce jointe invalide, commande mémoire,
+  `/ai/stream`, `/ai/autre`, `GET /ai`, routes d'état, route inconnue) — en-têtes identiques,
+  corps identiques aux identifiants d'exécution, de session, d'intention et horodatages près.
+  Non rejoué : une réponse réelle du modèle (aucune clé dans le serveur isolé).
+- Reste pour l'objectif « aucun fichier > 1 500 lignes » : ≈ 6 500 lignes de fonctions et d'état
+  hors gestionnaire dans `server.js`, à sortir par domaine.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

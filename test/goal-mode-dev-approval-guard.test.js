@@ -1,19 +1,16 @@
 "use strict";
+const { readServerSource } = require("./helpers/server-source");
 
 // B3a : les approbations Goal Mode DEV n'apparaissent pas dans la liste
 // générique et ne peuvent pas être reprises par POST /approvals/:id/*.
 
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
 const test = require("node:test");
 
 const { ApprovalManager } = require("../services/approvals/approval-manager");
 const {
   assertGenericApprovalAllowed, genericApprovals, isGoalModeDevApproval,
 } = require("../services/approvals/goal-mode-dev-approval-guard");
-
-const ROOT = path.join(__dirname, "..");
 
 function prepare(manager, skillName, executionId) {
   return manager.prepareAction({
@@ -46,7 +43,7 @@ test("garde : liste générique sans Goal Mode DEV, reprise générique refusée
 });
 
 test("garde : server.js l'applique à GET /approvals et à POST /approvals/:id/* avant resume", () => {
-  const source = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+  const source = readServerSource();
   assert.match(source, /require\("\.\/services\/approvals\/goal-mode-dev-approval-guard"\)/);
   const list = source.slice(source.indexOf('req.url === "/approvals"'));
   assert.match(list.slice(0, 600), /approvals: genericApprovals\(approvalManager\.listPending\(\)\)/);

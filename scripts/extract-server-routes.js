@@ -39,7 +39,10 @@ for (const scope of manager.scopes) {
   for (const reference of scope.references) {
     if (!inBlock(reference.identifier.range)) continue;
     const variable = reference.resolved;
-    if (!variable) continue; // global (JSON, URL, process…)
+    if (!variable) { // global (JSON, URL, process…) ; __dirname/__filename changeraient de sens
+      if (["__dirname", "__filename", "require", "module", "exports"].includes(reference.identifier.name)) problems.push(`${reference.identifier.name} dans le bloc`);
+      continue;
+    }
     const defined = variable.defs.some((def) => inBlock(def.name.range));
     if (defined) continue;
     const name = variable.name;

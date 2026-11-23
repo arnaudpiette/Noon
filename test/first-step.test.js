@@ -1,15 +1,13 @@
 "use strict";
+const { readServerSource } = require("./helpers/server-source");
 const { readAppSource } = require("./helpers/app-source");
 
 // V3-L2c — « Je dois faire X » → une première action de 2 à 5 minutes.
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
 const test = require("node:test");
 const { createFirstStepService, parseModelAnswer, renderFirstStep } = require("../services/first-step/first-step-service");
 const { parseFirstStepCommand } = require("../public/ui-utils");
 
-const read = (...parts) => fs.readFileSync(path.join(__dirname, "..", ...parts), "utf8");
 
 test("parseFirstStepCommand reconnaît « je dois faire X » et ignore les questions et phrases sans verbe d'action", () => {
   assert.deepEqual(parseFirstStepCommand("Je dois faire ma déclaration d'impôts"), { task: "faire ma déclaration d'impôts" });
@@ -70,7 +68,7 @@ test("save : prochaine action du projet du Focus (nom exact), sinon boîte de r�
 });
 
 test("câblage : routes protégées par l'en-tête Noon, petit modèle, store:false, local-only respecté, interception avant le modèle", () => {
-  const server = read("server.js");
+  const server = readServerSource();
   assert.match(server, /FIRST_STEP_MODEL = "gpt-5\.6-luna"/);
   assert.match(server, /store: false, max_output_tokens: 400/);
   assert.match(server, /state === "LOCAL_ONLY"[\s\S]{0,200}FIRST_STEP_REMOTE_FORBIDDEN/);

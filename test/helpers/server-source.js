@@ -18,6 +18,17 @@ const ROUTE_MODULES = Object.freeze([
   "services/goals/goals-http-routes.js",
   "services/voice/transcription-http-routes.js",
   "services/planning/day-http-routes.js",
+  "services/workspaces/workspace-http-routes.js",
+  "services/search/local-files-http-routes.js",
+  "services/models/budget-http-routes.js",
+  "services/capture/capture-http-routes.js",
+  "services/jobs/jobs-http-routes.js",
+  "services/memory/legacy-memory-http-routes.js",
+  "services/daily-brief/brief-http-routes.js",
+  "services/approvals/approvals-http-routes.js",
+  "services/orchestration/ai-http-routes.js",
+  "services/config/config-status-http-routes.js",
+  "services/runtime/runtime-status-http-routes.js",
 ]);
 
 function readServerSource() {

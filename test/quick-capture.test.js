@@ -1,4 +1,5 @@
 "use strict";
+const { readServerSource } = require("./helpers/server-source");
 const { readAppSource } = require("./helpers/app-source");
 
 // V3-L2a — capture rapide : repérage de « note ça », enregistrement local dans la boîte de
@@ -106,7 +107,7 @@ test("fenêtre de capture : Entrée enregistre puis ferme, Échap ferme, erreur 
 });
 
 test("câblage : routes serveur bornées, chat sans appel au modèle, raccourci et barre de menus Electron", () => {
-  const server = read("server.js");
+  const server = readServerSource();
   assert.match(server, /req\.method === "POST" && req\.url === "\/capture"[\s\S]{0,200}x-noon-request/);
   assert.match(server, /\["\/capture", "\/capture\.js", "\/capture\.css"\]/);
   assert.match(server, /form-action 'none'/);

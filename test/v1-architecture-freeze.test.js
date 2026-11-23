@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
+const { readServerSource } = require("./helpers/server-source");
 
 const root = path.join(__dirname, "..");
 
@@ -12,7 +13,7 @@ function source(relativePath) {
 }
 
 test("le chemin chat principal conserve le NoonOrchestrator canonique derrière la façade d'évaluation runtime", () => {
-  const server = source("server.js");
+  const server = readServerSource();
 
   assert.match(
     server,

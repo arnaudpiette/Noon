@@ -127,6 +127,17 @@ const { createResumeBriefingService, renderResumeBriefing } = require("./service
 const { createFirstStepService, renderFirstStep } = require("./services/first-step/first-step-service");
 const { createBriefUsageLog, parisDate } = require("./services/daily-brief/brief-usage-log");
 const { createStaticAssets } = require("./services/http/static-assets");
+const { createRuntimeStatusHttpRoutes } = require("./services/runtime/runtime-status-http-routes");
+const { createConfigStatusHttpRoutes } = require("./services/config/config-status-http-routes");
+const { createAiHttpRoutes } = require("./services/orchestration/ai-http-routes");
+const { createApprovalsHttpRoutes } = require("./services/approvals/approvals-http-routes");
+const { createBriefHttpRoutes } = require("./services/daily-brief/brief-http-routes");
+const { createLegacyMemoryHttpRoutes } = require("./services/memory/legacy-memory-http-routes");
+const { createJobsHttpRoutes } = require("./services/jobs/jobs-http-routes");
+const { createCaptureHttpRoutes } = require("./services/capture/capture-http-routes");
+const { createBudgetHttpRoutes } = require("./services/models/budget-http-routes");
+const { createLocalFilesHttpRoutes } = require("./services/search/local-files-http-routes");
+const { createWorkspaceHttpRoutes } = require("./services/workspaces/workspace-http-routes");
 const { createCheckConnectionAction } = require("./services/control-center/connection-check-action");
 const { createDayHttpRoutes } = require("./services/planning/day-http-routes");
 const { createTranscriptionHttpRoutes } = require("./services/voice/transcription-http-routes");
@@ -2265,7 +2276,8 @@ const privateSeedImporter = privateMemoryService.available
   ? createPrivateSeedImporter(privateMemoryService)
   : null;
 const memoryHttpRoutes = createMemoryHttpRoutes({ memoryEngine, seedImporter: privateSeedImporter, validateSeed });
-const staticAssets = createStaticAssets({ publicDirectory: path.join(__dirname, "public") });
+const PUBLIC_DIRECTORY = path.join(__dirname, "public");
+const staticAssets = createStaticAssets({ publicDirectory: PUBLIC_DIRECTORY });
 const operationalProfileService = createOperationalProfileService(personalRepository);
 const projectIntelligenceService = createProjectIntelligenceService(personalRepository);
 const personalInboxService = createInboxService(personalRepository);
@@ -6239,6 +6251,119 @@ const dayHttpRoutes = createDayHttpRoutes({
   get sendGoogleCallbackPage() { return sendGoogleCallbackPage; },
   get toolAuditLog() { return toolAuditLog; },
 });
+const workspaceHttpRoutes = createWorkspaceHttpRoutes({
+  get PRIORITY_DIRECTORIES() { return PRIORITY_DIRECTORIES; },
+  get buildIntentContext() { return buildIntentContext; },
+  get getAllowedDirectories() { return getAllowedDirectories; },
+  get intentCommandEngine() { return intentCommandEngine; },
+  get listDirectory() { return listDirectory; },
+  get normalizeSessionId() { return normalizeSessionId; },
+  get readJsonBody() { return readJsonBody; },
+  get sessionContinuityEngine() { return sessionContinuityEngine; },
+  get workspaceEngine() { return workspaceEngine; },
+});
+const localFilesHttpRoutes = createLocalFilesHttpRoutes({
+  get buildIntentContext() { return buildIntentContext; },
+  get fs() { return fs; },
+  get handleLocalCommand() { return handleLocalCommand; },
+  get intentCommandEngine() { return intentCommandEngine; },
+  get isPathAllowed() { return isPathAllowed; },
+  get listDirectory() { return listDirectory; },
+  get readAllowedFile() { return readAllowedFile; },
+  get searchFiles() { return searchFiles; },
+  get toolAuditLog() { return toolAuditLog; },
+});
+const budgetHttpRoutes = createBudgetHttpRoutes({
+  get WEB_SEARCH_PRICE_PER_CALL() { return WEB_SEARCH_PRICE_PER_CALL; },
+  get calculateTranscriptionCostUSD() { return calculateTranscriptionCostUSD; },
+  get getBudgetStatus() { return getBudgetStatus; },
+  get getVoiceBudgetStatus() { return getVoiceBudgetStatus; },
+});
+const captureHttpRoutes = createCaptureHttpRoutes({
+  get DEFAULT_HOST() { return DEFAULT_HOST; },
+  get FIRST_STEP_MODEL() { return FIRST_STEP_MODEL; },
+  get PUBLIC_DIRECTORY() { return PUBLIC_DIRECTORY; },
+  get firstStepService() { return firstStepService; },
+  get fs() { return fs; },
+  get path() { return path; },
+  get quickCaptureService() { return quickCaptureService; },
+  get readJsonBody() { return readJsonBody; },
+  get renderFirstStep() { return renderFirstStep; },
+  get renderResumeBriefing() { return renderResumeBriefing; },
+  get resolveFocusCatalogSelection() { return resolveFocusCatalogSelection; },
+  get resumeBriefingService() { return resumeBriefingService; },
+  get toolAuditLog() { return toolAuditLog; },
+});
+const jobsHttpRoutes = createJobsHttpRoutes({
+  get DEFAULT_HOST() { return DEFAULT_HOST; },
+  get backgroundAnalysisService() { return backgroundAnalysisService; },
+  get backgroundJobEngine() { return backgroundJobEngine; },
+  get getBudgetStatus() { return getBudgetStatus; },
+  get readJsonBody() { return readJsonBody; },
+  get selectConfiguredModelRoute() { return selectConfiguredModelRoute; },
+});
+const legacyMemoryHttpRoutes = createLegacyMemoryHttpRoutes({
+  get longTermMemoryStore() { return longTermMemoryStore; },
+  get readJsonBody() { return readJsonBody; },
+});
+const briefHttpRoutes = createBriefHttpRoutes({
+  get briefScheduledTime() { return briefScheduledTime; },
+  get briefUsageLog() { return briefUsageLog; },
+  get generateDailyBrief() { return generateDailyBrief; },
+  get personalBriefStore() { return personalBriefStore; },
+  get readJsonBody() { return readJsonBody; },
+  get safeUsageLog() { return safeUsageLog; },
+});
+const approvalsHttpRoutes = createApprovalsHttpRoutes({
+  get approvalManager() { return approvalManager; },
+  get assertGenericApprovalAllowed() { return assertGenericApprovalAllowed; },
+  get genericApprovals() { return genericApprovals; },
+  get noonOrchestrator() { return noonOrchestrator; },
+  get readJsonBody() { return readJsonBody; },
+});
+const aiHttpRoutes = createAiHttpRoutes({
+  get WEB_SEARCH_DAILY_LIMIT() { return WEB_SEARCH_DAILY_LIMIT; },
+  get askAI() { return askAI; },
+  get attachmentResolver() { return attachmentResolver; },
+  get autonomousMemoryPipeline() { return autonomousMemoryPipeline; },
+  get buildIntentContext() { return buildIntentContext; },
+  get chatProgressRequestContext() { return chatProgressRequestContext; },
+  get createConversationKey() { return createConversationKey; },
+  get executeExplicitConversationMemoryCommand() { return executeExplicitConversationMemoryCommand; },
+  get featureFlags() { return featureFlags; },
+  get getConversationHistory() { return getConversationHistory; },
+  get getErrorHeader() { return getErrorHeader; },
+  get intentCommandEngine() { return intentCommandEngine; },
+  get internetDecisionRouter() { return internetDecisionRouter; },
+  get memoryEngine() { return memoryEngine; },
+  get metricsService() { return metricsService; },
+  get normalizeFocusName() { return normalizeFocusName; },
+  get normalizeFocusPath() { return normalizeFocusPath; },
+  get normalizeIntelligenceProfile() { return normalizeIntelligenceProfile; },
+  get normalizeNoonMode() { return normalizeNoonMode; },
+  get normalizeSessionId() { return normalizeSessionId; },
+  get readJsonBody() { return readJsonBody; },
+  get recentAutomaticMemoryIds() { return recentAutomaticMemoryIds; },
+  get recentAutomaticMemoryReports() { return recentAutomaticMemoryReports; },
+  get refreshDailyWebSearchUsage() { return refreshDailyWebSearchUsage; },
+  get rememberConversation() { return rememberConversation; },
+  get resolveChatResearchPlan() { return resolveChatResearchPlan; },
+  get resolveFocusCatalogSelection() { return resolveFocusCatalogSelection; },
+  get sessionContinuityEngine() { return sessionContinuityEngine; },
+  get toChatProgressEvent() { return toChatProgressEvent; },
+  get touchConversation() { return touchConversation; },
+  get validateAttachment() { return validateAttachment; },
+  get workspaceEngine() { return workspaceEngine; },
+});
+const configStatusHttpRoutes = createConfigStatusHttpRoutes({
+  get DEFAULT_HOST() { return DEFAULT_HOST; },
+  get runtimeConfig() { return runtimeConfig; },
+});
+const runtimeStatusHttpRoutes = createRuntimeStatusHttpRoutes({
+  get DEFAULT_HOST() { return DEFAULT_HOST; },
+  get featureFlags() { return featureFlags; },
+  get updateRecoveryEngine() { return updateRecoveryEngine; },
+});
 const server = http.createServer(async (req, res) => {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
 
@@ -6282,901 +6407,29 @@ const server = http.createServer(async (req, res) => {
     );
   }
 
-  if (req.url === "/workspaces" && req.method === "POST") {
-    try {
-      const body = await readJsonBody(req, 64 * 1024);
-      const workspace = workspaceEngine.create(body);
-      for (const projectId of Array.isArray(body.projectIds) ? body.projectIds : []) workspaceEngine.linkProject(workspace.id, String(projectId));
-      for (const root of Array.isArray(body.roots) ? body.roots : []) workspaceEngine.bindRoot(workspace.id, root.path, root.mode);
-      res.writeHead(201, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-      return res.end(JSON.stringify({ status: "ok", workspace: workspaceEngine.context(workspace.id) }));
-    } catch (error) {
-      res.writeHead(error.code === "WORKSPACE_NOT_FOUND" ? 404 : 400, { "Content-Type": "application/json" });
-      return res.end(JSON.stringify({ status: "error", code: error.code, message: error.message }));
-    }
-  }
-
-  if (req.url === "/intents/parse" && req.method === "POST") {
-    try {
-      const body = await readJsonBody(req, 128 * 1024);
-      const channel = ["chat", "voice", "shortcut", "ui", "system", "proactive", "brief"].includes(body.channel) ? body.channel : "chat";
-      const conversationId = normalizeSessionId(body.conversationId || body.sessionId);
-      const workspaceId = typeof body.workspaceId === "string" && body.workspaceId ? body.workspaceId : null;
-      if (workspaceId) workspaceEngine.get(workspaceId);
-      const continuitySession = sessionContinuityEngine.resolveSession({
-        conversationId, workspaceId, channel,
-        mode: body.uiAction?.mode || body.input?.mode || null,
-        profileScope: body.profileScope || "arnaud",
-      });
-      const intent = await intentCommandEngine.parse(channel, {
-        ...(body.input && typeof body.input === "object" ? body.input : {}),
-        text: body.text,
-        transcript: body.transcript,
-        uiAction: body.uiAction,
-        shortcutPayload: body.shortcutPayload,
-        sessionId: continuitySession.id,
-        conversationId,
-        workspaceId,
-        locale: body.locale || "fr-FR",
-        originTrust: body.originTrust,
-      }, buildIntentContext({ sessionId: continuitySession.id, conversationId, workspaceId, ttsActive: body.ttsActive === true, activeExecutionId: body.activeExecutionId || null }));
-      sessionContinuityEngine.applyIntent(continuitySession.id, intent);
-      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-      return res.end(JSON.stringify({ status: "ok", parseOnly: true, sessionId: continuitySession.id, conversationId, intent }));
-    } catch (error) {
-      res.writeHead(error.code === "INTENT_UNTRUSTED_ORIGIN" ? 403 : 400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-      return res.end(JSON.stringify({ status: "error", code: error.code || "INTENT_FAILED", message: error.message }));
-    }
-  }
-
-  const workspaceRoute = req.url.match(/^\/workspaces\/([^/?]+)(?:\/(activate|archive|conversations|artifacts))?$/);
-  if (workspaceRoute) {
-    try {
-      const workspaceId = decodeURIComponent(workspaceRoute[1]);
-      const action = workspaceRoute[2] || null;
-      let result;
-      if (req.method === "GET" && !action) result = workspaceEngine.context(workspaceId);
-      else if (req.method === "PATCH" && !action) result = workspaceEngine.update(workspaceId, await readJsonBody(req, 64 * 1024));
-      else if (req.method === "POST" && action === "activate") result = workspaceEngine.activate(workspaceId, await readJsonBody(req, 16 * 1024));
-      else if (req.method === "POST" && action === "archive") result = workspaceEngine.archive(workspaceId);
-      else if (req.method === "POST" && action === "conversations") { const body = await readJsonBody(req, 16 * 1024); workspaceEngine.moveConversation(body.conversationId, workspaceId); result = workspaceEngine.context(workspaceId); }
-      else if (req.method === "POST" && action === "artifacts") { const body = await readJsonBody(req, 16 * 1024); workspaceEngine.linkArtifact(workspaceId, body.artifactId, body.projectId); result = workspaceEngine.context(workspaceId); }
-      else { res.writeHead(405, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ status: "error", message: "Opération Workspace non autorisée." })); }
-      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-      return res.end(JSON.stringify({ status: "ok", workspace: result }));
-    } catch (error) {
-      res.writeHead(error.code === "WORKSPACE_NOT_FOUND" ? 404 : 400, { "Content-Type": "application/json" });
-      return res.end(JSON.stringify({ status: "error", code: error.code, message: error.message }));
-    }
-  }
-
-  if (req.url === "/workspaces" && req.method === "GET") {
-    // Liste les espaces autorisés et leur contenu de premier niveau.
-    try {
-      const allowedLocations = getAllowedDirectories().map((dirPath) => ({
-        path: dirPath,
-        priority: PRIORITY_DIRECTORIES.some((priorityPath) =>
-          priorityPath.startsWith(dirPath)
-        ),
-        contents: listDirectory(dirPath),
-      }));
-
-      res.writeHead(200);
-      return res.end(
-        JSON.stringify(
-          {
-            status: "ok",
-            mode: "read-only",
-            workspaces: workspaceEngine.list().map((workspace) => ({
-              ...workspace,
-              context: workspaceEngine.context(workspace.id),
-            })),
-            allowedLocations,
-          },
-          null,
-          2
-        )
-      );
-    } catch (error) {
-      res.writeHead(500);
-      return res.end(
-        JSON.stringify(
-          {
-            status: "error",
-            message: error.message,
-          },
-          null,
-          2
-        )
-      );
-    }
-  }
-
-// Parcourt un dossier autorisé indiqué avec le paramètre ?path=.
-if (req.url.startsWith("/browse")) {
-  try {
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const requestedPath = url.searchParams.get("path");
-
-    if (!requestedPath) {
-      res.writeHead(400);
-      return res.end(
-        JSON.stringify({
-          status: "error",
-          message: "Le paramètre path est obligatoire.",
-        })
-      );
-    }
-
-    if (!isPathAllowed(requestedPath)) {
-      res.writeHead(403);
-      return res.end(
-        JSON.stringify({
-          status: "error",
-          message: "Accès refusé : dossier non autorisé.",
-        })
-      );
-    }
-
-    if (!fs.existsSync(requestedPath)) {
-      res.writeHead(404);
-      return res.end(
-        JSON.stringify({
-          status: "error",
-          message: "Dossier introuvable.",
-        })
-      );
-    }
-
-    const contents = listDirectory(requestedPath);
-
-    res.writeHead(200);
-    return res.end(
-      JSON.stringify(
-        {
-          status: "ok",
-          mode: "read-only",
-          path: requestedPath,
-          contents,
-        },
-        null,
-        2
-      )
-    );
-  } catch (error) {
-    res.writeHead(500);
-    return res.end(
-      JSON.stringify({
-        status: "error",
-        message: error.message,
-      })
-    );
-  }
+{
+  const routed = await workspaceHttpRoutes(req, res, requestPath);
+  if (routed !== NOT_HANDLED) return routed;
 }
 
-// Recherche des fichiers et dossiers avec le paramètre ?q=.
-if (req.url.startsWith("/search")) {
-  try {
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const query = url.searchParams.get("q");
-
-    if (!query || query.trim().length < 2) {
-      res.writeHead(400);
-
-      return res.end(
-        JSON.stringify({
-          status: "error",
-          message: "La recherche doit contenir au moins 2 caractères.",
-        })
-      );
-    }
-
-    const results = searchFiles(query.trim());
-
-    res.writeHead(200);
-
-    return res.end(
-      JSON.stringify(
-        {
-          status: "ok",
-          mode: "read-only",
-          query,
-          count: results.length,
-          results,
-        },
-        null,
-        2
-      )
-    );
-  } catch (error) {
-    res.writeHead(500);
-
-    return res.end(
-      JSON.stringify({
-        status: "error",
-        message: error.message,
-      })
-    );
-  }
+{
+  const routed = await localFilesHttpRoutes(req, res, requestPath);
+  if (routed !== NOT_HANDLED) return routed;
 }
 
-// Lit un fichier texte autorisé indiqué avec le paramètre ?path=.
-if (req.url.startsWith("/read")) {
-  try {
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const filePath = url.searchParams.get("path");
-
-    if (!filePath) {
-      res.writeHead(400);
-
-      return res.end(
-        JSON.stringify({
-          status: "error",
-          message: "Le paramètre path est obligatoire.",
-        })
-      );
-    }
-
-    const file = readAllowedFile(filePath);
-
-    res.writeHead(200);
-
-    return res.end(
-      JSON.stringify(
-        {
-          status: "ok",
-          mode: "read-only",
-          file,
-        },
-        null,
-        2
-      )
-    );
-  } catch (error) {
-    res.writeHead(403);
-
-    return res.end(
-      JSON.stringify({
-        status: "error",
-        message: error.message,
-      })
-    );
-  }
+{
+  const routed = await aiHttpRoutes(req, res, requestPath);
+  if (routed !== NOT_HANDLED) return routed;
 }
 
-// Traite une commande locale simple sans utiliser OpenAI.
-if (req.url.startsWith("/ask")) {
-  try {
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const question = url.searchParams.get("q");
-    
-
-    if (!question) {
-      res.writeHead(400);
-
-      return res.end(
-        JSON.stringify({
-          status: "error",
-          message: "La question est obligatoire.",
-        })
-      );
-    }
-
-    const result = handleLocalCommand(question);
-    const normalizedIntent = await intentCommandEngine.parse("chat", {
-      text: question,
-      sessionId: "noon-local",
-      conversationId: "noon-local",
-      locale: "fr-FR",
-    }, buildIntentContext({ sessionId: "noon-local" }));
-    const legacyType = result.action === "search" ? "SEARCH" : result.action === "list_workspaces" ? "OPEN" : "ASK";
-    toolAuditLog.append(
-      legacyType === normalizedIntent.type ? "intent_legacy_match" : "intent_legacy_mismatch",
-      { legacyType, normalizedType: normalizedIntent.type, channel: "chat" }
-    );
-
-    res.writeHead(200);
-
-    return res.end(
-      JSON.stringify(
-        {
-          status: "ok",
-          assistant: "Noon",
-          question,
-          normalizedIntent,
-          legacyParity: legacyType === normalizedIntent.type ? "same" : "different",
-          ...result,
-        },
-        null,
-        2
-      )
-    );
-  } catch (error) {
-    res.writeHead(500);
-
-    return res.end(
-      JSON.stringify({
-        status: "error",
-        message: error.message,
-      })
-    );
-  }
+{
+  const routed = await budgetHttpRoutes(req, res, requestPath);
+  if (routed !== NOT_HANDLED) return routed;
 }
 
-// Confie la question à l'IA, qui peut appeler les outils locaux en lecture seule.
-if (req.method === "POST" && req.url.startsWith("/ai")) {
-  const upstreamController = new AbortController();
-  const requestStartedAt = Date.now();
-  let streamRequested = false;
-
-  const removeAbortListeners = () => {
-    req.off("aborted", abortUpstream);
-    res.off("close", abortUpstream);
-    res.off("finish", removeAbortListeners);
-  };
-
-  const abortUpstream = () => {
-    if (!res.writableEnded) {
-      upstreamController.abort();
-    }
-
-    removeAbortListeners();
-  };
-
-  req.once("aborted", abortUpstream);
-  res.once("close", abortUpstream);
-  res.once("finish", removeAbortListeners);
-
-  try {
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    streamRequested = url.pathname === "/ai/stream";
-    if (!new Set(["/ai", "/ai/stream"]).has(url.pathname)) {
-      res.writeHead(404);
-      return res.end(
-        JSON.stringify({ status: "error", message: "Route introuvable." })
-      );
-    }
-
-    const body = await readJsonBody(req);
-    const question =
-      typeof body.question === "string"
-        ? body.question.trim()
-        : "";
-    let focus = normalizeFocusName(
-      typeof body.focus === "string"
-        ? body.focus.slice(0, 100)
-        : null,
-      body.runtimeNetworkState === "OFFLINE" ? "OFFLINE" : "ONLINE"
-    );
-    const visualDetail =
-      body.visualDetail === "high" ? "high" : "low";
-    const webSearchPreference = body.webSearchEnabled === true;
-    const webSearchForbidden = body.webSearchForbidden === true;
-    let webSearchEnabled = false;
-    const intelligenceProfile = normalizeIntelligenceProfile(body.intelligenceProfile);
-    let maxWebToolCalls = 0;
-
-    let focusPath = normalizeFocusPath(body.focusPath);
-    const catalogSelection = resolveFocusCatalogSelection(
-      body.focusId,
-      body.focusPath
-    );
-    if (body.focusId) {
-      if (!catalogSelection) {
-        const error = new Error("Le Focus demandé est indisponible.");
-        error.statusCode = 400;
-        throw error;
-      }
-      focus = catalogSelection.name;
-      focusPath = catalogSelection.path;
-    }
-    const mode = normalizeNoonMode(
-      body.mode
-    );
-    const sessionId = normalizeSessionId(
-      body.sessionId
-    );
-    let workspaceId = typeof body.workspaceId === "string" ? body.workspaceId.trim().slice(0, 160) : null;
-    if (workspaceId) {
-      workspaceEngine.get(workspaceId);
-    } else if (body.focusId && focusPath) {
-      workspaceId = workspaceEngine.ensureLegacy({
-        legacyId: String(body.focusId),
-        name: focus || String(body.focusId),
-        rootPath: focusPath,
-        type: String(body.focusId).startsWith("projet-") ? "learning" : "project",
-      }).id;
-      if (workspaceEngine.active()?.id !== workspaceId) workspaceEngine.activate(workspaceId);
-    }
-    const continuitySession = sessionContinuityEngine.resolveSession({
-      conversationId: sessionId,
-      workspaceId,
-      projectId: focus || null,
-      mode,
-      channel: "chat",
-      profileScope: "arnaud",
-    });
-
-    const rawAttachments = Array.isArray(body.attachments)
-      ? body.attachments
-      : body.attachment
-        ? [body.attachment]
-        : [];
-
-    if (rawAttachments.length > 3) {
-      const error = new Error("Maximum 3 fichiers par question.");
-      error.statusCode = 400;
-      throw error;
-    }
-
-    const attachmentsJsonSize = Buffer.byteLength(
-      JSON.stringify(rawAttachments),
-      "utf8"
-    );
-
-    if (attachmentsJsonSize > 7 * 1024 * 1024) {
-      const error = new Error(
-        "La taille totale des fichiers est trop importante."
-      );
-      error.statusCode = 413;
-      throw error;
-    }
-
-    const attachments = rawAttachments.map(validateAttachment);
-    const registeredAttachments = attachmentResolver.registerAttachments({
-      conversationId: sessionId,
-      sessionId: continuitySession.id,
-      attachments,
-    });
-
-    const conversationKey = createConversationKey({
-      sessionId,
-      mode,
-      focus,
-      focusPath,
-    });
-    const history = getConversationHistory(
-      conversationKey
-    );
-
-    if (!question && attachments.length === 0) {
-      res.writeHead(400, {
-        "Content-Type": "application/json",
-      });
-      return res.end(
-        JSON.stringify({
-          status: "error",
-          message: "La question est obligatoire.",
-        })
-      );
-    }
-
-    const normalizedIntent = await intentCommandEngine.parse("chat", {
-      text: question || "Analyse les fichiers joints.",
-      conversationId: sessionId,
-      sessionId: continuitySession.id,
-      workspaceId,
-      locale: body.locale || "fr-FR",
-      metadata: { attachmentCount: attachments.length },
-    }, buildIntentContext({ sessionId: continuitySession.id, conversationId: sessionId, workspaceId }), {
-      allowSemanticFallback: body.allowIntentFallback === true,
-      forceSemanticFallback: body.allowIntentFallback === true,
-    });
-    const internetDecision = internetDecisionRouter.decide({
-      query: question || "Analyse les fichiers joints.",
-      webAllowed: !webSearchForbidden,
-      privacy: attachments.some((item) => item?.sensitivity === "LOCAL_ONLY") ? "LOCAL_ONLY" : "STANDARD",
-    });
-    const publicResearchFlag = featureFlags.evaluate("research.public.v1", {
-      workspaceId, sessionId, channel: "chat",
-    });
-    const internetResearchPlan = resolveChatResearchPlan({
-      internetDecision,
-      webSearchPreference,
-      publicResearchEnabled: publicResearchFlag.enabled,
-      remainingWebCalls: WEB_SEARCH_DAILY_LIMIT - refreshDailyWebSearchUsage().calls,
-    });
-    webSearchEnabled = internetResearchPlan.execute === true;
-    maxWebToolCalls = internetResearchPlan.maxWebToolCalls || 0;
-    sessionContinuityEngine.applyIntent(continuitySession.id, normalizedIntent);
-    const memoryCommand = executeExplicitConversationMemoryCommand(question, {
-      conversationId: sessionId,
-      sessionId: continuitySession.id,
-      currentAttachments: registeredAttachments,
-      projectId: focus || workspaceId || null,
-      recentMemoryIds: recentAutomaticMemoryIds.get(sessionId) || [],
-      recentMemoryReport: recentAutomaticMemoryReports.get(sessionId) || "",
-    });
-    if (memoryCommand) {
-      const memoryContext = { sourcesUsed: ["structured_memory", "private_memory"], memoryIds: memoryCommand.memoryIds || [], truncated: false };
-      sessionContinuityEngine.recordCompletedTurn(continuitySession.id, { channel: "chat", normalizedIntent, executionId: null, approvalIds: [], artifacts: [], messages: [{ role: "user", content: question, state: "completed" }, { role: "assistant", content: memoryCommand.answer, state: "completed" }], lastMessageId: null });
-      const response = { status: "ok", assistant: "Noon", question, answer: memoryCommand.answer, workspaceId, sessionId: continuitySession.id, conversationId: sessionId, normalizedIntent, sources: [], artifacts: [], memoryContext, memoryReceipt: memoryCommand.receipt || null };
-      if (streamRequested) {
-        if (!res.headersSent) res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-transform" });
-        res.write(`event: final\ndata: ${JSON.stringify(response)}\n\n`);
-        return res.end();
-      }
-      res.writeHead(200, { "Content-Type": "application/json" });
-      return res.end(JSON.stringify(response));
-    }
-    const continuityContext = {
-      ...sessionContinuityEngine.contextForRequest(continuitySession.id),
-      version: sessionContinuityEngine.getSession(continuitySession.id).version,
-      // Identifiants opaques uniquement : leur source, leur portée et leurs
-      // droits sont relus par ContextBuilder avant toute récupération.
-      offloadRefIds: Array.isArray(body.offloadRefIds)
-        ? [...new Set(body.offloadRefIds.map(String))]
-          .filter((id) => /^offload_[a-f0-9]{32}$/.test(id))
-          .slice(0, 20)
-        : [],
-    };
-
-    const executeAskAI = () =>
-      askAI(
-      question,
-      focus,
-      focusPath,
-      mode,
-      history,
-      sessionId,
-      attachments,
-      visualDetail,
-      webSearchEnabled,
-      maxWebToolCalls,
-      intelligenceProfile,
-      workspaceId,
-      normalizedIntent,
-      continuityContext,
-      upstreamController.signal,
-      streamRequested
-        ? (delta) => {
-            if (!res.headersSent) {
-              res.writeHead(200, {
-                "Content-Type": "text/event-stream; charset=utf-8",
-                "Cache-Control": "no-cache, no-transform",
-                Connection: "keep-alive",
-              });
-            }
-            res.write(`event: delta\ndata: ${JSON.stringify({ delta })}\n\n`);
-          }
-        : null,
-      body.runtimeNetworkState === "OFFLINE" ? "OFFLINE" : "ONLINE",
-      0,
-      internetDecision,
-      internetResearchPlan
-    );
-
-    const result =
-      streamRequested
-        ? await chatProgressRequestContext.run(
-            {
-              writeProgress(event) {
-                if (
-                  res.writableEnded ||
-                  res.destroyed
-                ) {
-                  return;
-                }
-
-                const progress =
-                  toChatProgressEvent(
-                    event
-                  );
-
-                if (!progress) {
-                  return;
-                }
-
-                if (!res.headersSent) {
-                  res.writeHead(
-                    200,
-                    {
-                      "Content-Type":
-                        "text/event-stream; charset=utf-8",
-                      "Cache-Control":
-                        "no-cache, no-transform",
-                      Connection:
-                        "keep-alive",
-                    }
-                  );
-                }
-
-                res.write(
-                  "event: progress\ndata: "
-                  + JSON.stringify({
-                    progress,
-                  })
-                  + "\n\n"
-                );
-              },
-            },
-            executeAskAI
-          )
-        : await executeAskAI();
-
-    if (result.status !== "approval_required" && memoryEngine.privateStatus().available && memoryEngine.privateSettings().enabled) {
-      const automaticMemory = autonomousMemoryPipeline.process({
-        text: question,
-        attachments: registeredAttachments,
-        projectId: focus || workspaceId || null,
-        projectName: focus || null,
-      });
-      result.memoryReceipt = automaticMemory.receipt;
-      if (automaticMemory.notification) result.answer = `${result.answer}\n\n${automaticMemory.notification}`;
-      if (automaticMemory.receipt.memoryIds.length) {
-        recentAutomaticMemoryIds.set(sessionId, automaticMemory.receipt.memoryIds);
-        if (automaticMemory.receipt.success && automaticMemory.notification) recentAutomaticMemoryReports.set(sessionId, automaticMemory.notification);
-        memoryEngine.notifyChanged({ store: "private_memory", action: "automatic" });
-      }
-    }
-
-    metricsService.record("response_time_ms", Date.now() - requestStartedAt, {
-      category: "chat",
-    });
-
-    sessionContinuityEngine.recordCompletedTurn(continuitySession.id, {
-      channel: "chat",
-      normalizedIntent,
-      executionId: result.executionId || result.execution?.id || null,
-      approvalIds: result.approval?.id ? [result.approval.id] : [],
-      artifacts: result.artifacts || [],
-      messages: result.status === "approval_required" ? [] : [
-        { role: "user", content: question, state: "completed" },
-        { role: "assistant", content: result.answer, state: "completed" },
-      ],
-      lastMessageId: result.executionId || null,
-    });
-
-    if (result.status !== "approval_required") {
-      rememberConversation(
-        conversationKey,
-        question,
-        result.answer,
-        result.artifacts || []
-      );
-      touchConversation(sessionId, question);
-      if (workspaceId) {
-        workspaceEngine.linkConversation(workspaceId, sessionId);
-        for (const artifact of result.artifacts || []) {
-          const artifactId = artifact.artifactId || artifact.id;
-          if (artifactId) workspaceEngine.linkArtifact(workspaceId, artifactId, focus || null);
-        }
-      }
-      for (const artifact of result.artifacts || []) {
-        const artifactId = artifact.artifactId || artifact.id;
-        if (artifactId) intentCommandEngine.rememberEntity(sessionId, { type: "artifact", id: artifactId, label: artifact.name || artifact.title || null, workspaceId });
-      }
-    }
-
-    if (streamRequested) {
-      if (!res.headersSent) res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-transform" });
-      const currentWebUsage = refreshDailyWebSearchUsage();
-      res.write(`event: final\ndata: ${JSON.stringify({ status: result.status === "approval_required" ? "approval_required" : "ok", assistant: "Noon", question, answer: result.answer, workspaceId, sessionId: continuitySession.id, conversationId: sessionId, normalizedIntent, approval: result.approval || null, executionId: result.executionId || result.execution?.id || null, sources: result.sources, research: result.research || null, multimodal: result.multimodal || null, artifacts: result.artifacts || [], memoryContext: result.memoryContext, memoryReceipt: result.memoryReceipt || null, webSearchCalls: result.webSearchCalls, webSearchCostUsd: result.webSearchCostUsd, webSearchUsage: { used: currentWebUsage.calls, limit: WEB_SEARCH_DAILY_LIMIT, remaining: WEB_SEARCH_DAILY_LIMIT - currentWebUsage.calls } })}\n\n`);
-      return res.end();
-    }
-
-    res.writeHead(200, {
-      "Content-Type": "application/json",
-    });
-    return res.end(
-      JSON.stringify(
-        {
-          status: result.status === "approval_required" ? "approval_required" : "ok",
-          assistant: "Noon",
-          question,
-          answer: result.answer,
-          workspaceId,
-          sessionId: continuitySession.id,
-          conversationId: sessionId,
-          normalizedIntent,
-          approval: result.approval || null,
-          executionId: result.executionId || result.execution?.id || null,
-          sources: result.sources,
-          research: result.research || null,
-          multimodal: result.multimodal || null,
-          artifacts: result.artifacts || [],
-          memoryContext: result.memoryContext,
-          memoryReceipt: result.memoryReceipt || null,
-          webSearchCalls: result.webSearchCalls,
-          webSearchCostUsd: result.webSearchCostUsd,
-          webSearchUsage: {
-            used: refreshDailyWebSearchUsage().calls,
-            limit: WEB_SEARCH_DAILY_LIMIT,
-            remaining:
-              WEB_SEARCH_DAILY_LIMIT -
-              refreshDailyWebSearchUsage().calls,
-          },
-        },
-        null,
-        2
-      )
-    );
-  } catch (error) {
-    if (upstreamController.signal.aborted) {
-      return;
-    }
-
-    const statusCode =
-      Number(error.status) ||
-      Number(error.statusCode) ||
-      500;
-    const errorCode = error.code || null;
-    const permanentRateLimitCodes = [
-      "credit_balance_exhausted",
-      "organization_spend_limit_exceeded",
-      "project_spend_limit_exceeded",
-      "organization_usage_limit_exceeded",
-      "WEB_SEARCH_DAILY_LIMIT",
-    ];
-    const isTemporaryRateLimit =
-      statusCode === 429 &&
-      !permanentRateLimitCodes.includes(errorCode);
-
-    let retryAfter = null;
-
-    if (isTemporaryRateLimit) {
-      const retryAfterHeader =
-        getErrorHeader(error, "retry-after");
-      const parsedRetryAfter = Number(retryAfterHeader);
-
-      retryAfter =
-        Number.isFinite(parsedRetryAfter) &&
-        parsedRetryAfter > 0
-          ? Math.ceil(parsedRetryAfter)
-          : 20;
-    }
-
-    if (streamRequested && res.headersSent) {
-      res.write(`event: error\ndata: ${JSON.stringify({ message: error.message, errorCode, retryable: isTemporaryRateLimit, retryAfter })}\n\n`);
-      return res.end();
-    }
-
-    const responseHeaders = {
-      "Content-Type": "application/json",
-    };
-
-    if (retryAfter) {
-      responseHeaders["Retry-After"] = String(retryAfter);
-    }
-
-    res.writeHead(statusCode, responseHeaders);
-    return res.end(
-      JSON.stringify({
-        status: "error",
-        message: error.message,
-        errorCode,
-        retryable: isTemporaryRateLimit,
-        retryAfter,
-      })
-    );
-  }
-}
-
-// Expose la consommation mensuelle et le mode budgétaire actuel.
-if (req.url === "/budget") {
-  const budget = getBudgetStatus();
-
-  res.writeHead(200);
-
-  return res.end(
-    JSON.stringify(
-      {
-        status: "ok",
-        assistant: "Noon",
-        budget: {
-          month: budget.month,
-          requests: budget.requests,
-          inputTokens: budget.inputTokens,
-          cachedInputTokens: budget.cachedInputTokens || 0,
-          outputTokens: budget.outputTokens,
-          modelUsage: budget.modelUsage || {},
-          transcriptionSeconds: Number(
-            (budget.transcriptionSeconds || 0).toFixed(1)
-          ),
-          transcriptionRequests:
-            budget.transcriptionRequests || 0,
-          transcriptionCostUSD: Number(
-            calculateTranscriptionCostUSD(budget).toFixed(6)
-          ),
-          webSearchCalls: budget.webSearchCalls || 0,
-          webSearchCostUSD: Number(
-            (
-              (budget.webSearchCalls || 0) *
-              WEB_SEARCH_PRICE_PER_CALL
-            ).toFixed(4)
-          ),
-          voiceCostUSD: Number(
-            (budget.voiceCostUSD || 0).toFixed(6)
-          ),
-          imageGenerationRequests:
-            budget.imageGenerationRequests || 0,
-          imageGenerationCostUSD: Number(
-            (budget.imageGenerationCostUSD || 0).toFixed(4)
-          ),
-          voiceBudget: getVoiceBudgetStatus(),
-          costUSD: Number(budget.costUSD.toFixed(4)),
-          remainingUSD: Number(
-            budget.remainingUSD.toFixed(4)
-          ),
-          monthlyBudgetUSD: budget.monthlyBudgetUSD,
-          mode: budget.mode,
-        },
-      },
-      null,
-      2
-    )
-  );
-}
-
-// Sert la page principale de l'interface web locale.
-// V3-L2a : fenêtre de capture rapide et ses ressources.
-if (req.method === "GET" && ["/capture", "/capture.js", "/capture.css"].includes(req.url)) {
-  const file = { "/capture": ["capture.html", "text/html; charset=utf-8"], "/capture.js": ["capture.js", "application/javascript; charset=utf-8"], "/capture.css": ["capture.css", "text/css; charset=utf-8"] }[req.url];
-  res.writeHead(200, { "Content-Type": file[1], "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "Cache-Control": "no-store" });
-  return res.end(fs.readFileSync(path.join(__dirname, "public", file[0])));
-}
-
-if (req.method === "GET" && (req.url === "/resume" || req.url.startsWith("/resume?"))) {
-  try {
-    const url = new URL(req.url, `http://${req.headers.host || DEFAULT_HOST}`);
-    const focusId = String(url.searchParams.get("focusId") || "").trim();
-    const briefing = await resumeBriefingService.build({
-      focusId: /^[a-zA-Z0-9_-]{1,80}$/.test(focusId) ? focusId : null,
-      focusPath: url.searchParams.get("focusPath") || null,
-    });
-    toolAuditLog.append("resume.briefing_built", { focus: Boolean(briefing.focus), project: Boolean(briefing.project), captures: briefing.captures.length, nextStep: briefing.nextStep?.source || null });
-    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "ok", briefing, text: renderResumeBriefing(briefing) }));
-  } catch {
-    res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
-    return res.end(JSON.stringify({ status: "error", code: "RESUME_ERROR", message: "Point de reprise indisponible." }));
-  }
-}
-
-if (req.method === "POST" && (req.url === "/first-step" || req.url === "/first-step/save")) {
-  try {
-    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403, code: "FIRST_STEP_REQUEST_REFUSED" });
-    const body = await readJsonBody(req, 8 * 1024);
-    if (req.url === "/first-step") {
-      const result = await firstStepService.suggest({ task: body?.task });
-      toolAuditLog.append("first_step.suggested", { model: FIRST_STEP_MODEL, minutes: result.minutes, taskLength: result.task.length });
-      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
-      return res.end(JSON.stringify({ status: "ok", result, text: renderFirstStep(result) }));
-    }
-    const focusId = String(body?.focusId || "").trim();
-    const focus = /^[a-zA-Z0-9_-]{1,80}$/.test(focusId) ? (() => { try { return resolveFocusCatalogSelection(focusId, body?.focusPath || null); } catch { return null; } })() : null;
-    const saved = await firstStepService.save({ task: body?.task, step: body?.step, focusName: focus?.name || null });
-    toolAuditLog.append("first_step.saved", { savedTo: saved.savedTo });
-    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-    return res.end(JSON.stringify({ status: "ok", saved }));
-  } catch (error) {
-    const code = String(error?.code || "");
-    const known = /^(FIRST_STEP_|CAPTURE_)/.test(code) || error?.statusCode === 503;
-    toolAuditLog.append("first_step.failed", { code: code || "FIRST_STEP_ERROR" });
-    res.writeHead(error.statusCode || (known ? 400 : 500), { "Content-Type": "application/json; charset=utf-8" });
-    return res.end(JSON.stringify({ status: "error", code: known ? (code || "FIRST_STEP_UNAVAILABLE") : "FIRST_STEP_ERROR", message: known ? error.message : "Premier pas indisponible." }));
-  }
-}
-
-if (req.method === "GET" && req.url.startsWith("/capture/recent")) {
-  const limit = Number(new URL(req.url, `http://${req.headers.host || DEFAULT_HOST}`).searchParams.get("limit")) || 10;
-  res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
-  return res.end(JSON.stringify({ status: "ok", captures: quickCaptureService.recent(limit) }));
-}
-
-if (req.method === "POST" && req.url === "/capture") {
-  try {
-    if (req.headers["x-noon-request"] !== "1") throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403, code: "CAPTURE_REQUEST_REFUSED" });
-    const body = await readJsonBody(req, 8 * 1024);
-    const saved = quickCaptureService.capture({ text: body?.text, origin: body?.origin || "shortcut" });
-    toolAuditLog.append("capture.saved", { origin: saved.origin, length: saved.text.length });
-    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-    return res.end(JSON.stringify({ status: "ok", capture: saved }));
-  } catch (error) {
-    const known = /^CAPTURE_/.test(String(error?.code || ""));
-    res.writeHead(error.statusCode || (known ? 400 : 500), { "Content-Type": "application/json; charset=utf-8" });
-    return res.end(JSON.stringify({ status: "error", code: known ? error.code : "CAPTURE_ERROR", message: known ? error.message : "Note non enregistrée." }));
-  }
+{
+  const routed = await captureHttpRoutes(req, res, requestPath);
+  if (routed !== NOT_HANDLED) return routed;
 }
 
 // V3-L7 : fichiers de l'interface (table exacte dans services/http/static-assets.js).
@@ -7234,210 +6487,29 @@ if (memoryHttpRoutes.matches(req)) {
   if (routed !== NOT_HANDLED) return routed;
 }
 
-if (req.method === "GET" && req.url.startsWith("/jobs")) {
-  if (!backgroundJobEngine) { res.writeHead(503); return res.end(JSON.stringify({ status: "error", code: "JOB_STORE_UNAVAILABLE" })); }
-  const url = new URL(req.url, `http://${req.headers.host || DEFAULT_HOST}`);
-  const match = url.pathname.match(/^\/jobs\/([^/]+)$/);
-  const profileScope = url.searchParams.get("profileScope") || "arnaud";
-  if (match) {
-    const job = backgroundJobEngine.get(match[1]);
-    if (!job || job.profile_scope !== profileScope) { res.writeHead(404); return res.end(JSON.stringify({ status: "error", message: "Job introuvable." })); }
-    res.writeHead(200, { "Cache-Control": "no-store" }); return res.end(JSON.stringify({ status: "ok", job }));
-  }
-  const jobs = backgroundJobEngine.list({ profileScope, workspaceId: url.searchParams.get("workspaceId") || null, state: url.searchParams.get("state") || null, limit: url.searchParams.get("limit") || 100 });
-  res.writeHead(200, { "Cache-Control": "no-store" }); return res.end(JSON.stringify({ status: "ok", mode: backgroundJobEngine.mode(), count: jobs.length, stats: backgroundJobEngine.stats(), jobs }));
-}
-if (req.method === "POST" && req.url === "/jobs") {
-  try {
-    if (!backgroundJobEngine) throw Object.assign(new Error("Moteur de jobs indisponible."), { statusCode: 503 });
-    const body = await readJsonBody(req, 48 * 1024);
-    const result = backgroundJobEngine.enqueue({ type: body.type, inputRef: body.inputRef || {}, profileScope: body.profileScope || "arnaud", workspaceId: body.workspaceId || null, projectId: body.projectId || null, sessionId: body.sessionId || null, conversationId: body.conversationId || null, priority: body.priority, scheduledAt: body.scheduledAt, idempotencyKey: body.idempotencyKey, dedupeKey: body.dedupeKey, dependencies: body.dependencies, budget: body.budget || {} });
-    res.writeHead(result.accepted ? 202 : 200); return res.end(JSON.stringify({ status: "ok", ...result }));
-  } catch (error) { res.writeHead(error.statusCode || 400); return res.end(JSON.stringify({ status: "error", code: error.code || null, message: error.message })); }
-}
-if (req.method === "POST" && /^\/jobs\/[^/]+\/cancel$/.test(req.url)) {
-  try {
-    const body = await readJsonBody(req, 8 * 1024); const id = req.url.split("/")[2];
-    const job = backgroundJobEngine?.cancel(id, { profileScope: body.profileScope || "arnaud" });
-    if (!job) { res.writeHead(404); return res.end(JSON.stringify({ status: "error", message: "Job introuvable." })); }
-    res.writeHead(200); return res.end(JSON.stringify({ status: "ok", job }));
-  } catch (error) { res.writeHead(400); return res.end(JSON.stringify({ status: "error", message: error.message })); }
-}
-if (req.method === "POST" && req.url === "/jobs/recover") {
-  const recovered = backgroundJobEngine?.recover() || 0;
-  res.writeHead(200); return res.end(JSON.stringify({ status: "ok", recovered }));
+{
+  const routed = await jobsHttpRoutes(req, res, requestPath);
+  if (routed !== NOT_HANDLED) return routed;
 }
 
-if (req.method === "GET" && req.url === "/background-analyses") {
-  res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" }); return res.end(JSON.stringify({ status: "ok", enabled: backgroundAnalysisService.enabled, interrupted: backgroundAnalysisService.interrupted(), tasks: backgroundAnalysisService.list() }));
-}
-if (req.method === "POST" && req.url === "/background-analyses/start") {
-  try {
-    const body = await readJsonBody(req, 2 * 1024 * 1024);
-    const requestedProfile = body.profile || ({
-      "gpt-5.6-luna": "economical",
-      "gpt-5.6-terra": "balanced",
-      "gpt-5.6-sol": "maximum",
-      "gpt-6-astra": "exceptional",
-    }[body.model]) || "balanced";
-    const route = selectConfiguredModelRoute({
-      question: typeof body.input === "string" ? body.input : String(body.kind || "Analyse en arrière-plan"),
-      profile: requestedProfile,
-      budgetMode: getBudgetStatus().mode,
-      context: { estimatedTokens: Number(body.metadata?.estimatedTokens) || 0 },
-      tools: { expectedCount: Number(body.metadata?.expectedToolCount) || 0 },
-      output: { expectedLength: "long" },
-    });
-    const task = await backgroundAnalysisService.start({
-      kind: body.kind,
-      input: body.input,
-      model: route.model,
-      metadata: {
-        ...(body.metadata || {}),
-        routingPolicyVersion: route.routingPolicyVersion,
-        routingScore: route.score,
-        routingReasonCodes: route.reasonCodes,
-      },
-    });
-    res.writeHead(202, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "ok", task }));
-  }
-  catch (error) { res.writeHead(error.code === "BACKGROUND_DISABLED" ? 409 : 400, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ status: "error", code: error.code || null, message: error.message })); }
-}
-if (req.method === "POST" && /^\/background-analyses\/[^/]+\/(poll|cancel)$/.test(req.url)) {
-  try { const [, , id, action] = req.url.split("/"); const task = action === "cancel" ? await backgroundAnalysisService.cancel(id) : await backgroundAnalysisService.poll(id); res.writeHead(200, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ status: "ok", task })); }
-  catch (error) { res.writeHead(400, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ status: "error", message: error.message })); }
+{
+  const routed = await legacyMemoryHttpRoutes(req, res, requestPath);
+  if (routed !== NOT_HANDLED) return routed;
 }
 
-// @deprecated Compatibility UI adapter. La lecture métier passe exclusivement
-// par MemoryEngine ; cette route sera retirée après migration du panneau UI.
-if (req.method === "GET" && req.url === "/memory") {
-  const state = longTermMemoryStore.load();
-  res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-  return res.end(JSON.stringify({ status: "ok", enabled: state.enabled, memories: state.memories }));
+{
+  const routed = await briefHttpRoutes(req, res, requestPath);
+  if (routed !== NOT_HANDLED) return routed;
 }
 
-if (req.method === "POST" && req.url === "/memory") {
-  try {
-    const body = await readJsonBody(req, 20 * 1024); const action = String(body.action || ""); let result;
-    if (action === "enable") result = longTermMemoryStore.setEnabled(body.enabled === true);
-    else if (action === "add") result = longTermMemoryStore.add(body.text, Array.isArray(body.tags) ? body.tags : []);
-    else if (action === "update") result = longTermMemoryStore.update(String(body.id || ""), body.text);
-    else if (action === "delete") result = longTermMemoryStore.remove(String(body.id || ""));
-    else if (action === "clear") result = longTermMemoryStore.clear();
-    else { const error = new Error("Action mémoire non autorisée."); error.statusCode = 400; throw error; }
-    res.writeHead(200, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ status: "ok", result }));
-  } catch (error) { res.writeHead(error.statusCode || 400, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ status: "error", message: error.message })); }
+{
+  const routed = await approvalsHttpRoutes(req, res, requestPath);
+  if (routed !== NOT_HANDLED) return routed;
 }
 
-if (req.method === "POST" && ["/daily-brief/schedule", "/brief/schedule"].includes(req.url)) {
-  try {
-    const body = await readJsonBody(req, 10 * 1024);
-    const nextScheduledAt = new Date(body.nextScheduledAt);
-    if (!Number.isFinite(nextScheduledAt.getTime())) {
-      const error = new Error("Date de planification invalide.");
-      error.statusCode = 400;
-      throw error;
-    }
-    const state = personalBriefStore.markScheduled(nextScheduledAt);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "ok", nextScheduledAt: state.nextScheduledAt }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 400, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", message: error.message }));
-  }
-}
-
-if (req.method === "POST" && ["/daily-brief/generate", "/brief/generate", "/personal-brief/generate"].includes(req.url)) {
-  try {
-    const body = await readJsonBody(req, 10 * 1024);
-    const brief = await generateDailyBrief({ force: body.force === true });
-    if (brief?.date) safeUsageLog(() => briefUsageLog.recordGenerated({ date: brief.date, generatedAt: brief.generatedAt, trigger: body.trigger, scheduledTime: briefScheduledTime() }));
-    res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "ok", brief }));
-  } catch (error) {
-    safeUsageLog(() => briefUsageLog.recordFailure({ code: error.code, scheduledTime: briefScheduledTime() }));
-    res.writeHead(error.code === "BUDGET_BLOCKED" ? 403 : 500, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "error", code: error.code || null, message: error.message }));
-  }
-}
-
-if (req.method === "GET" && req.url === "/approvals") {
-  res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-  // B3a : les approbations Goal Mode DEV ont leur carte dédiée (jamais reprises ici).
-  return res.end(JSON.stringify({
-    status: "ok",
-    approvals: genericApprovals(approvalManager.listPending()),
-  }));
-}
-
-if (req.method === "POST" && requestPath.startsWith("/approvals/")) {
-  try {
-    if (req.headers["x-noon-request"] !== "1") {
-      throw Object.assign(new Error("Requête Noon refusée."), { statusCode: 403 });
-    }
-    const [, , encodedId, action] = requestPath.split("/");
-    if (!["confirm", "reject"].includes(action)) {
-      throw Object.assign(new Error("Décision invalide."), { statusCode: 400 });
-    }
-    // B3a : une approbation Goal Mode DEV ne se reprend que par sa carte dédiée.
-    const approval = assertGenericApprovalAllowed(approvalManager.get(decodeURIComponent(encodedId)));
-    const result = await noonOrchestrator.resume({
-      executionId: approval.executionId,
-      approvalId: approval.id,
-      decision: action === "confirm" ? "approve" : "reject",
-    });
-    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: result.status, answer: result.text, executionId: result.executionId }));
-  } catch (error) {
-    const conflict = ["approval_expired", "approval_stale", "APPROVAL_CONSUMED", "APPROVAL_ACTION_CHANGED"].includes(error.code);
-    res.writeHead(error.statusCode || (conflict ? 409 : 400), { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({ status: "error", code: error.code || error.type || null, message: error.message }));
-  }
-}
-
-if (req.method === "POST" && req.url === "/orchestrator/approval") {
-  try {
-    if (req.headers["x-noon-request"] !== "1") {
-      const error = new Error("Requête Noon refusée.");
-      error.statusCode = 403;
-      throw error;
-    }
-    const body = await readJsonBody(req, 20 * 1024);
-    const result = await noonOrchestrator.resume({
-      executionId: String(body.executionId || ""),
-      approvalId: String(body.approvalId || ""),
-      approved: body.approved === true,
-      decision: body.decision,
-      resumeToken: body.resumeToken,
-    });
-    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({
-      status: result.status,
-      answer: result.text,
-      executionId: result.executionId,
-      requestedModel: result.requestedModel,
-      modelUsed: result.modelUsed,
-      toolCalls: result.toolCalls,
-      latency: result.latency,
-      approval: result.approval || null,
-      specialistProposal: result.specialistProposal || null,
-    }));
-  } catch (error) {
-    res.writeHead(error.statusCode || 400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    return res.end(JSON.stringify({
-      status: "error",
-      type: error.type || "approval_required",
-      message: error.message,
-    }));
-  }
-}
-
-if (req.method === "GET" && req.url.startsWith("/api/config/status")) {
-  const url = new URL(req.url, `http://${req.headers.host || DEFAULT_HOST}`);
-  const context = { workspaceId: url.searchParams.get("workspaceId"), sessionId: url.searchParams.get("sessionId") };
-  res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-  return res.end(JSON.stringify({ status: "ok", config: runtimeConfig.getPublicConfig(context), snapshot: runtimeConfig.snapshot(context) }));
+{
+  const routed = await configStatusHttpRoutes(req, res, requestPath);
+  if (routed !== NOT_HANDLED) return routed;
 }
 
 {
@@ -7445,20 +6517,9 @@ if (req.method === "GET" && req.url.startsWith("/api/config/status")) {
   if (routed !== NOT_HANDLED) return routed;
 }
 
-if (req.method === "GET" && req.url.startsWith("/api/features")) {
-  const url = new URL(req.url, `http://${req.headers.host || DEFAULT_HOST}`);
-  const context = { workspaceId: url.searchParams.get("workspaceId"), sessionId: url.searchParams.get("sessionId") };
-  const snapshot = featureFlags.snapshot(context);
-  res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-  return res.end(JSON.stringify({ status: "ok", ...snapshot, debt: featureFlags.debt() }));
-}
-
-if (req.method === "GET" && req.url === "/api/lifecycle/status") {
-  const diagnostic = updateRecoveryEngine.startupDiagnostic();
-  const updatePlan = updateRecoveryEngine.plan();
-  const preflight = updateRecoveryEngine.preflight(updatePlan);
-  res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-  return res.end(JSON.stringify({ status: "ok", diagnostic, plan: updatePlan, preflight }));
+{
+  const routed = await runtimeStatusHttpRoutes(req, res, requestPath);
+  if (routed !== NOT_HANDLED) return routed;
 }
 
   res.writeHead(404);

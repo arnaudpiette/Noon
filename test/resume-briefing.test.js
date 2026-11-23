@@ -1,4 +1,5 @@
 "use strict";
+const { readServerSource } = require("./helpers/server-source");
 const { readAppSource } = require("./helpers/app-source");
 
 // V3-L2b — « Où j'en étais ? » : assemblage local, prochain pas, rendu honnête, câblage.
@@ -72,7 +73,7 @@ test("commande et câblage : repérage strict, route locale, lien profond et bar
   for (const input of ["Où j'en étais ?", "ou j'en etais", "Noon, où j’en étais ?", "on en était où ?", "je reprends", "Où en suis-je ?"]) assert.equal(isResumeCommand(input), true, input);
   for (const input of ["Où est le fichier ?", "je reprends le dessin demain", "", null]) assert.equal(isResumeCommand(input), false, String(input));
   assert.deepEqual(parseNoonDeepLink("noon://resume"), { action: "resume" });
-  const server = read("server.js");
+  const server = readServerSource();
   assert.match(server, /resolveFocus: \(focusId, focusPath\) => resolveFocusCatalogSelection\(focusId, focusPath\)/);
   assert.match(server, /req\.url === "\/resume" \|\| req\.url\.startsWith\("\/resume\?"\)/);
   const app = readAppSource();

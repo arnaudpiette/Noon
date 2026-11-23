@@ -1,14 +1,9 @@
 "use strict";
 const { readAppSource } = require("./helpers/app-source");
+const { readServerSource } = require("./helpers/server-source");
 
 const assert =
   require("node:assert/strict");
-
-const fs =
-  require("node:fs");
-
-const path =
-  require("node:path");
 
 const test =
   require("node:test");
@@ -18,12 +13,6 @@ const {
 } = require(
   "../services/observability/chat-progress-event"
 );
-
-const ROOT =
-  path.join(
-    __dirname,
-    ".."
-  );
 
 test(
   "le payload SSE Progress ne conserve que le contrat public",
@@ -82,14 +71,7 @@ test(
 test(
   "le serveur isole Progress avec AsyncLocalStorage",
   () => {
-    const source =
-      fs.readFileSync(
-        path.join(
-          ROOT,
-          "server.js"
-        ),
-        "utf8"
-      );
+    const source = readServerSource();
 
     assert.match(
       source,
