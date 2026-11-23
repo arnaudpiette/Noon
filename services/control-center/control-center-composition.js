@@ -6,7 +6,10 @@
 // Domaine déplacé tel quel depuis server.js. Dépendances déjà déclarées quand server.js le
 // construit : lues une fois ; les autres (`deps.x`) : lues à chaque usage, par accesseur.
 
-const DEPENDENCIES = Object.freeze(["ambientContextEngine","approvalManager","backgroundJobEngine","calendarConnector","configRegistry","createCheckConnectionAction","createControlCenterService","createGoogleReadAuthorization","extensionRegistry","featureFlags","gmailConnector","goalStrategyEngine","hardRulesRegistry","localIntelligenceRuntime","localPermissionStore","memoryEngine","notesConnector","notificationAttentionEngine","portfolioCapacityEngine","privateMemoryService","reliabilityEngine","remindersConnector","runtimeConfig","toolAuditLog","updateRecoveryEngine","workspaceEngine"]);
+const { createCheckConnectionAction } = require("./connection-check-action");
+const { createControlCenterService } = require("./control-center-service");
+
+const DEPENDENCIES = Object.freeze(["ambientContextEngine","approvalManager","backgroundJobEngine","calendarConnector","configRegistry","createGoogleReadAuthorization","extensionRegistry","featureFlags","gmailConnector","goalStrategyEngine","hardRulesRegistry","localIntelligenceRuntime","localPermissionStore","memoryEngine","notesConnector","notificationAttentionEngine","portfolioCapacityEngine","privateMemoryService","reliabilityEngine","remindersConnector","runtimeConfig","toolAuditLog","updateRecoveryEngine","workspaceEngine"]);
 
 function createControlCenterComposition(deps) {
   for (const name of DEPENDENCIES) if (!(name in deps)) throw new TypeError(`Dépendance manquante : ${name}`);
@@ -16,8 +19,6 @@ function createControlCenterComposition(deps) {
     backgroundJobEngine,
     calendarConnector,
     configRegistry,
-    createCheckConnectionAction,
-    createControlCenterService,
     createGoogleReadAuthorization,
     extensionRegistry,
     featureFlags,

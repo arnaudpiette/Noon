@@ -5,7 +5,13 @@
 // Domaine déplacé tel quel depuis server.js. Dépendances déjà déclarées quand server.js le
 // construit : lues une fois ; les autres (`deps.x`) : lues à chaque usage, par accesseur.
 
-const DEPENDENCIES = Object.freeze(["CACHED_INPUT_DISCOUNT","IMAGE_GENERATION_ESTIMATED_COST_USD","LUNA_INPUT_PRICE","LUNA_OUTPUT_PRICE","MODEL_PRICES","MONTHLY_BUDGET_USD","TRANSCRIPTION_PRICE_PER_MINUTE","USAGE_FILE","VOICE_BUDGET_USD","VOICE_USAGE_FILE","WEB_SEARCH_DAILY_LIMIT","WEB_SEARCH_PRICE_PER_CALL","WEB_SEARCH_USAGE_FILE","appendUniqueRealtimeResponse","calculateRealtimeCost","countWebSearchCalls","fs","metricsService","parisDate","withDailyCost"]);
+const fs = require("node:fs");
+const { appendUniqueRealtimeResponse, calculateRealtimeCost } = require("../../lib/voice-utils");
+const { parisDate } = require("../daily-brief/brief-usage-log");
+const { withDailyCost } = require("../observability/noon-health-report");
+const { countWebSearchCalls } = require("./model-response");
+
+const DEPENDENCIES = Object.freeze(["CACHED_INPUT_DISCOUNT","IMAGE_GENERATION_ESTIMATED_COST_USD","LUNA_INPUT_PRICE","LUNA_OUTPUT_PRICE","MODEL_PRICES","MONTHLY_BUDGET_USD","TRANSCRIPTION_PRICE_PER_MINUTE","USAGE_FILE","VOICE_BUDGET_USD","VOICE_USAGE_FILE","WEB_SEARCH_DAILY_LIMIT","WEB_SEARCH_PRICE_PER_CALL","WEB_SEARCH_USAGE_FILE","metricsService"]);
 
 function createUsageTracking(deps) {
   for (const name of DEPENDENCIES) if (!(name in deps)) throw new TypeError(`Dépendance manquante : ${name}`);
@@ -23,12 +29,6 @@ function createUsageTracking(deps) {
     WEB_SEARCH_DAILY_LIMIT,
     WEB_SEARCH_PRICE_PER_CALL,
     WEB_SEARCH_USAGE_FILE,
-    appendUniqueRealtimeResponse,
-    calculateRealtimeCost,
-    countWebSearchCalls,
-    fs,
-    parisDate,
-    withDailyCost,
   } = deps;
 
   function getCurrentDateKey() {

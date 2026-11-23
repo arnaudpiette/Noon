@@ -676,6 +676,22 @@ structurante, est notée ici avec sa date et sa raison.
   delegation 10/10 et feature-flags 2/2. Le test SelfDev de reproduction déjà instable sous Linux
   reste le seul échec du sous-ensemble qui l'inclut ; il produit la même sortie avant la tranche.
 
+## 23/11/2026 — Découpe de `server.js`, dix-neuvième tranche : imports statiques des domaines (V3-L7)
+
+- Les modules déjà extraits importent désormais directement leurs constructeurs et utilitaires
+  statiques : Brief quotidien, Control Center, projets locaux, conversations, suivi d'usage et
+  `askAI`. `server.js` ne leur transmet plus les modules Node, fonctions pures ou fabriques qui
+  ne dépendent pas du runtime.
+- Les instances et autorités restent injectées : base personnelle, moteurs, connecteurs,
+  approbations, politique de sécurité, budget, feature flags, dossiers autorisés et observabilité.
+  Aucun singleton runtime n'a été recréé dans un module extrait.
+- `server.js` passe de 2 569 à 2 496 lignes. Les contrats `DEPENDENCIES` ont été réduits en même
+  temps afin qu'une dépendance statique ne puisse plus être remplacée depuis la composition.
+- Validation : 67/67 tests ciblés Brief, Control Center, conversations et recherche ; démarrage
+  serveur réel avec Goal Mode DEV actif/inactif ; lint et build ; évaluations critical 54/54,
+  smoke 99/99, privacy 3/3 et delegation 10/10. La suite complète conserve uniquement les trois
+  échecs Linux déjà connus (SelfDev SD-2 et deux fixtures macOS `/private/tmp`).
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

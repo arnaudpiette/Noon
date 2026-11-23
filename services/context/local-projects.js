@@ -4,25 +4,22 @@
 // Domaine déplacé tel quel depuis server.js. Dépendances déjà déclarées quand server.js le
 // construit : lues une fois ; les autres (`deps.x`) : lues à chaque usage, par accesseur.
 
-const DEPENDENCIES = Object.freeze(["EXCLUDED_NAMES","PRIORITY_DIRECTORIES","PROJECTS_REGISTRY_FILE","PROJECT_DIRECTORIES","UI_VALIDATION_MODE","buildFocusCatalog","crypto","findFocusEntry","fs","getAllowedDirectories","isPathInsideRoots","path","resolveProject","scanProjectsInAllowedRoots","uiValidationFixtures","workspaceEngine"]);
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
+const { EXCLUDED_NAMES, PRIORITY_DIRECTORIES, PROJECT_DIRECTORIES } = require("../../config");
+const { buildFocusCatalog, findFocusEntry } = require("../../lib/focus-catalog");
+const { isPathInsideRoots } = require("../../lib/path-utils");
+const { resolveProject, scanProjectsInAllowedRoots } = require("../../lib/projects-registry");
+
+const DEPENDENCIES = Object.freeze(["PROJECTS_REGISTRY_FILE","UI_VALIDATION_MODE","getAllowedDirectories","uiValidationFixtures","workspaceEngine"]);
 
 function createLocalProjects(deps) {
   for (const name of DEPENDENCIES) if (!(name in deps)) throw new TypeError(`Dépendance manquante : ${name}`);
   const {
-    EXCLUDED_NAMES,
-    PRIORITY_DIRECTORIES,
     PROJECTS_REGISTRY_FILE,
-    PROJECT_DIRECTORIES,
     UI_VALIDATION_MODE,
-    buildFocusCatalog,
-    crypto,
-    findFocusEntry,
-    fs,
     getAllowedDirectories,
-    isPathInsideRoots,
-    path,
-    resolveProject,
-    scanProjectsInAllowedRoots,
     uiValidationFixtures,
   } = deps;
 

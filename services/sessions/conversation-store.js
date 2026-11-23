@@ -4,7 +4,12 @@
 // Domaine déplacé tel quel depuis server.js. Dépendances déjà déclarées quand server.js le
 // construit : lues une fois ; les autres (`deps.x`) : lues à chaque usage, par accesseur.
 
-const DEPENDENCIES = Object.freeze(["CONVERSATION_INDEX_FILE","CONVERSATION_MEMORY_FILE","CONVERSATION_SUMMARIES_FILE","GENERAL_FOLDER_ID","contextBuilder","fs","multiSourceSynthesisEngine","normalizeConversationStore","personalSearchEngine","sessionActivities","trimConversationHistory","trimHistoryByCharacters","updateConversationSummary","upsertConversationIndex"]);
+const fs = require("node:fs");
+const { GENERAL_FOLDER_ID, normalizeConversationStore, upsertConversationIndex } = require("../../lib/conversation-index");
+const { trimHistoryByCharacters, updateConversationSummary } = require("../../lib/noon-intelligence");
+const { trimConversationHistory } = require("../../lib/voice-utils");
+
+const DEPENDENCIES = Object.freeze(["CONVERSATION_INDEX_FILE","CONVERSATION_MEMORY_FILE","CONVERSATION_SUMMARIES_FILE","contextBuilder","multiSourceSynthesisEngine","personalSearchEngine","sessionActivities"]);
 
 function createConversationStore(deps) {
   for (const name of DEPENDENCIES) if (!(name in deps)) throw new TypeError(`Dépendance manquante : ${name}`);
@@ -12,14 +17,7 @@ function createConversationStore(deps) {
     CONVERSATION_INDEX_FILE,
     CONVERSATION_MEMORY_FILE,
     CONVERSATION_SUMMARIES_FILE,
-    GENERAL_FOLDER_ID,
     contextBuilder,
-    fs,
-    normalizeConversationStore,
-    trimConversationHistory,
-    trimHistoryByCharacters,
-    updateConversationSummary,
-    upsertConversationIndex,
   } = deps;
 
   function loadConversationSessions() {

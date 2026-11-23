@@ -7,26 +7,28 @@
 // Domaine déplacé tel quel depuis server.js. Dépendances déjà déclarées quand server.js le
 // construit : lues une fois ; les autres (`deps.x`) : lues à chaque usage, par accesseur.
 
-const DEPENDENCIES = Object.freeze(["DATA_DIRECTORY","authorizeOpenAIPrivacy","buildMorningBriefPrompt","calendarConnector","contextBuilder","countWebSearchCalls","createBriefUsageLog","createDailyBriefEngine","createMorningBriefService","creativeBriefStore","dailyPlanningEngine","estimateModelCost","executionTrackingEngine","extractWebSources","fs","getBudgetStatus","gmailConnector","localIntelligenceRuntime","memoryEngine","noonObservability","normalizeGmailMessage","notesConnector","openAIProviderAdapter","path","personalBriefStore","planningPreferenceStore","priorityEngine","proactiveEngine","projectIntelligenceService","redactSecrets","registerWebSearchCalls","reliabilityEngine","remindersConnector","reviewLearningEngine","selectModelRoute","toolAuditLog","trackUsage"]);
+const fs = require("node:fs");
+const path = require("node:path");
+const { buildMorningBriefPrompt } = require("../../lib/morning-brief");
+const { createMorningBriefService } = require("../personal-assistant/morning-brief-service");
+const { createBriefUsageLog } = require("./brief-usage-log");
+const { createDailyBriefEngine } = require("./daily-brief-engine");
+
+const DEPENDENCIES = Object.freeze(["DATA_DIRECTORY","authorizeOpenAIPrivacy","calendarConnector","contextBuilder","countWebSearchCalls","creativeBriefStore","dailyPlanningEngine","estimateModelCost","executionTrackingEngine","extractWebSources","getBudgetStatus","gmailConnector","localIntelligenceRuntime","memoryEngine","noonObservability","normalizeGmailMessage","notesConnector","openAIProviderAdapter","personalBriefStore","planningPreferenceStore","priorityEngine","proactiveEngine","projectIntelligenceService","redactSecrets","registerWebSearchCalls","reliabilityEngine","remindersConnector","reviewLearningEngine","selectModelRoute","toolAuditLog","trackUsage"]);
 
 function createDailyBriefComposition(deps) {
   for (const name of DEPENDENCIES) if (!(name in deps)) throw new TypeError(`Dépendance manquante : ${name}`);
   const {
     DATA_DIRECTORY,
     authorizeOpenAIPrivacy,
-    buildMorningBriefPrompt,
     calendarConnector,
     contextBuilder,
     countWebSearchCalls,
-    createBriefUsageLog,
-    createDailyBriefEngine,
-    createMorningBriefService,
     creativeBriefStore,
     dailyPlanningEngine,
     estimateModelCost,
     executionTrackingEngine,
     extractWebSources,
-    fs,
     getBudgetStatus,
     gmailConnector,
     localIntelligenceRuntime,
@@ -35,7 +37,6 @@ function createDailyBriefComposition(deps) {
     normalizeGmailMessage,
     notesConnector,
     openAIProviderAdapter,
-    path,
     personalBriefStore,
     planningPreferenceStore,
     priorityEngine,

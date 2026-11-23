@@ -4,7 +4,23 @@
 // Fonction déplacée telle quelle depuis server.js ; ses dépendances sont lues à chaque appel
 // (accesseurs), ce qui préserve les variables initialisées plus tard au démarrage.
 
-const DEPENDENCIES = Object.freeze(["CREATIVE_IMAGE_PREVIEW_DIRECTORY","WEB_SEARCH_PRICE_PER_CALL","artifactEngine","authorizeOpenAIPrivacy","backgroundJobEngine","calendarConnector","contextBuilder","countWebSearchCalls","crypto","executeChatResearchPlan","executionTrackingEngine","extractWebSources","featureFlags","figmaToolsEnabled","findCodexExecutable","fs","generateCreativeImage","getAllowedDirectories","getBudgetStatus","getOpenAIClient","getProjectContextVersion","getRuntimeLimits","getValidRegisteredProjects","gmailConnector","hasExplicitToolOrder","inferFreshness","inferResearchMode","isPathAllowed","listDirectory","localDayRange","localIntelligenceRuntime","localPermissionStore","memoryEngine","multiSourceSynthesisEngine","multimodalEngine","noonOrchestrator","notesConnector","path","personalInboxService","personalSearchEngine","planningPreferenceStore","publicResearchEngine","readAllowedFile","reliabilityEngine","remindersConnector","renderConversationStyleInstruction","resolveExecutableResearchScope","resolveResearchScope","runCodexAnalysis","runtimeConfig","sanitizePublicQuery","searchAuthorizedGmail","searchFiles","sessionContinuityEngine","setSessionActivity","timeSlotService","toolAuditLog","trackImageGenerationUsage","workspaceEngine"]);
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
+const { findCodexExecutable, runCodexAnalysis } = require("../../lib/codex-bridge");
+const { localDayRange } = require("../connectors/google-calendar");
+const { renderConversationStyleInstruction } = require("../personal-assistant/conversation-style-profile");
+const { countWebSearchCalls, extractWebSources } = require("../models/model-response");
+const { generateCreativeImage } = require("../production/creative-image-generator");
+const { sanitizePublicQuery } = require("../research/privacy-query-sanitizer");
+const { executeChatResearchPlan } = require("../research/chat-research-gate");
+const { inferFreshness, inferResearchMode, resolveExecutableResearchScope, resolveResearchScope } = require("../research/research-resolver");
+
+const DEPENDENCIES = Object.freeze(["CREATIVE_IMAGE_PREVIEW_DIRECTORY","WEB_SEARCH_PRICE_PER_CALL","artifactEngine","authorizeOpenAIPrivacy","backgroundJobEngine","calendarConnector","contextBuilder","executionTrackingEngine","featureFlags","figmaToolsEnabled","getAllowedDirectories","getBudgetStatus","getOpenAIClient","getProjectContextVersion","getRuntimeLimits","getValidRegisteredProjects","gmailConnector","isPathAllowed","listDirectory","localIntelligenceRuntime","localPermissionStore","memoryEngine","multiSourceSynthesisEngine","multimodalEngine","noonOrchestrator","notesConnector","personalInboxService","personalSearchEngine","planningPreferenceStore","publicResearchEngine","readAllowedFile","reliabilityEngine","remindersConnector","runtimeConfig","searchAuthorizedGmail","searchFiles","sessionContinuityEngine","setSessionActivity","timeSlotService","toolAuditLog","trackImageGenerationUsage","workspaceEngine"]);
+
+function hasExplicitToolOrder(question) {
+  return /\b(crée|créer|génère|générer|produis|produire|fabrique|fabriquer|exporte|exporter|enregistre|enregistrer|envoie|envoyer|supprime|supprimer|efface|effacer|modifie|modifier|écris|écrire|publie|publier|fais|prépare|préparer|j.?ai fini|termin[eé]|c.?est fait|j.?ai commenc[eé]|je suis dessus|en cours|je suis bloqu[eé]|annule|abandonne|reporte|diffère)\b/i.test(String(question));
+}
 
 function createAskAI(deps) {
   for (const name of DEPENDENCIES) if (!(name in deps)) throw new TypeError(`Dépendance manquante : ${name}`);
@@ -17,16 +33,9 @@ function createAskAI(deps) {
       backgroundJobEngine,
       calendarConnector,
       contextBuilder,
-      countWebSearchCalls,
-      crypto,
-      executeChatResearchPlan,
       executionTrackingEngine,
-      extractWebSources,
       featureFlags,
       figmaToolsEnabled,
-      findCodexExecutable,
-      fs,
-      generateCreativeImage,
       getAllowedDirectories,
       getBudgetStatus,
       getOpenAIClient,
@@ -34,12 +43,8 @@ function createAskAI(deps) {
       getRuntimeLimits,
       getValidRegisteredProjects,
       gmailConnector,
-      hasExplicitToolOrder,
-      inferFreshness,
-      inferResearchMode,
       isPathAllowed,
       listDirectory,
-      localDayRange,
       localIntelligenceRuntime,
       localPermissionStore,
       memoryEngine,
@@ -47,7 +52,6 @@ function createAskAI(deps) {
       multimodalEngine,
       noonOrchestrator,
       notesConnector,
-      path,
       personalInboxService,
       personalSearchEngine,
       planningPreferenceStore,
@@ -55,12 +59,7 @@ function createAskAI(deps) {
       readAllowedFile,
       reliabilityEngine,
       remindersConnector,
-      renderConversationStyleInstruction,
-      resolveExecutableResearchScope,
-      resolveResearchScope,
-      runCodexAnalysis,
       runtimeConfig,
-      sanitizePublicQuery,
       searchAuthorizedGmail,
       searchFiles,
       sessionContinuityEngine,

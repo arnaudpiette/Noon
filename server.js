@@ -48,32 +48,21 @@ const crypto = require("crypto");
 const {
   ALLOWED_DIRECTORIES,
   PRIORITY_DIRECTORIES,
-  PROJECT_DIRECTORIES,
-  EXCLUDED_NAMES,
 } = require("./config");
 const {
-  appendUniqueRealtimeResponse,
-  calculateRealtimeCost,
   modelForQuality,
   normalizeAccent,
   normalizeLanguage,
   normalizeVoiceQuality,
-  trimConversationHistory,
 } = require("./lib/voice-utils");
-const { isPathInsideRoots } = require("./lib/path-utils");
 const {
   buildFocusCatalog,
-  findFocusEntry,
 } = require("./lib/focus-catalog");
 const {
   resolveProject,
-  scanProjectsInAllowedRoots,
 } = require("./lib/projects-registry");
-const {
-  findCodexExecutable,
-  runCodexAnalysis,
-} = require("./lib/codex-bridge");
-const { modelFallbacks, normalizeIntelligenceProfile, selectLegacyModelRoute, selectModelRoute, trimHistoryByCharacters, updateConversationSummary } = require("./lib/noon-intelligence");
+const { findCodexExecutable } = require("./lib/codex-bridge");
+const { modelFallbacks, normalizeIntelligenceProfile, selectLegacyModelRoute, selectModelRoute } = require("./lib/noon-intelligence");
 const { buildNoonSystemPrompt, noonPersonality } = require("./lib/noon-system-prompt");
 const { DIALS: CHARACTER_DIALS } = require("./services/character/character-charter");
 const { createCreativeBriefStore } = require("./lib/creative-brief");
@@ -83,7 +72,7 @@ const { createLongTermMemoryStore } = require("./lib/long-term-memory");
 const { createLocalPermissionStore } = require("./lib/local-permissions");
 const {
   GENERAL_FOLDER_ID, MAX_FOLDERS, MAX_CONVERSATIONS_PER_FOLDER,
-  normalizeConversationStore, upsertConversationIndex, createFolder,
+  normalizeConversationStore, createFolder,
   renameFolder, updateConversation, deleteFolder,
 } = require("./lib/conversation-index");
 const { createTokenStore } = require("./services/security/token-store");
@@ -91,9 +80,6 @@ const { createGmailConnector } = require("./services/connectors/gmail");
 const { createCalendarConnector, localDayRange } = require("./services/connectors/google-calendar");
 const { createAppleConnector } = require("./services/connectors/apple-reminders");
 const { createAppleNotesConnector } = require("./services/connectors/apple-notes");
-const { createMorningBriefService } = require("./services/personal-assistant/morning-brief-service");
-const { buildMorningBriefPrompt } = require("./lib/morning-brief");
-const { createDailyBriefEngine } = require("./services/daily-brief/daily-brief-engine");
 const { createVoiceIdentity } = require("./services/voice/voice-identity");
 const { REALTIME_MODELS } = require("./services/voice/openai-voice-provider");
 const { assertRemoteVoiceAvailable, createRealtimeVoiceConfig } = require("./services/voice/realtime-config");
@@ -114,7 +100,6 @@ const { executeTrustedDevProjectRuleMutation: executeDevProjectRuleCommand, list
 const { createSessionContinuityRepository } = require("./services/persistence/repositories/session-continuity-repository");
 const { createWorkspaceEngine } = require("./services/workspaces/workspace-engine");
 const { createIntentCommandEngine } = require("./services/intents/intent-command-engine");
-const { renderConversationStyleInstruction } = require("./services/personal-assistant/conversation-style-profile");
 const { createReliabilityEngine } = require("./services/reliability/reliability-engine");
 const { migrateLegacyPersonalData } = require("./services/persistence/migrations/legacy-personal-data");
 const { createOperationalProfileService } = require("./services/personal-intelligence/operational-profile");
@@ -123,7 +108,6 @@ const { createInboxService } = require("./services/personal-intelligence/inbox-s
 const { createQuickCaptureService } = require("./services/capture/quick-capture-service");
 const { createResumeBriefingService, renderResumeBriefing } = require("./services/resume/resume-briefing-service");
 const { createFirstStepService, renderFirstStep } = require("./services/first-step/first-step-service");
-const { createBriefUsageLog, parisDate } = require("./services/daily-brief/brief-usage-log");
 const { createStaticAssets } = require("./services/http/static-assets");
 const { createControlCenterComposition } = require("./services/control-center/control-center-composition");
 const { createDailyBriefComposition } = require("./services/daily-brief/daily-brief-composition");
@@ -144,7 +128,6 @@ const { createCaptureHttpRoutes } = require("./services/capture/capture-http-rou
 const { createBudgetHttpRoutes } = require("./services/models/budget-http-routes");
 const { createLocalFilesHttpRoutes } = require("./services/search/local-files-http-routes");
 const { createWorkspaceHttpRoutes } = require("./services/workspaces/workspace-http-routes");
-const { createCheckConnectionAction } = require("./services/control-center/connection-check-action");
 const { createDayHttpRoutes } = require("./services/planning/day-http-routes");
 const { createTranscriptionHttpRoutes } = require("./services/voice/transcription-http-routes");
 const { createGoalsHttpRoutes } = require("./services/goals/goals-http-routes");
@@ -205,7 +188,7 @@ const { createBenchmarkComposition, createDevDelegationComposition, createSelfDe
 const { createTransactionalExecutionEngine } = require("./services/execution/transactional-execution-engine");
 const { AsyncLocalStorage } = require("node:async_hooks");
 const { createNoonObservability } = require("./services/observability/noon-observability");
-const { createNoonHealthReport, withDailyCost } = require("./services/observability/noon-health-report");
+const { createNoonHealthReport } = require("./services/observability/noon-health-report");
 const { smallFirstDecision } = require("./services/models/small-first-policy");
 const { toChatProgressEvent } = require("./services/observability/chat-progress-event");
 const { createUserProgressEngine } = require("./services/observability/user-progress-engine");
@@ -249,10 +232,8 @@ const { createExtensionRegistry, createExtensionRuntime } = require("./services/
 const { createMcpService } = require("./services/mcp");
 const { createRemoteLanService } = require("./services/remote/remote-lan-service");
 const { createRemoteLanHttpRoutes } = require("./services/remote/remote-lan-http-routes");
-const { createControlCenterService } = require("./services/control-center");
 const noonExampleSearchExtension = require("./services/extensions/sample/noon-example-search");
 const { createArtifactEngine } = require("./services/artifacts/artifact-engine");
-const { generateCreativeImage } = require("./services/production/creative-image-generator");
 const { createAuditLog } = require("./services/security/audit-log");
 const { createSkillRegistry } = require("./skills/registry");
 const { createPersonalSearchEngine } = require("./services/search/personal-search-engine");
@@ -260,10 +241,8 @@ const { createMultiSourceSynthesisEngine } = require("./services/synthesis/multi
 const { createFileSearchAdapter } = require("./services/search/file-search-adapter");
 const { createOpenAIWebSearchAdapter } = require("./services/research/web-search-adapter");
 const { createPublicResearchEngine } = require("./services/research/public-research-engine");
-const { sanitizePublicQuery } = require("./services/research/privacy-query-sanitizer");
-const { inferFreshness, inferResearchMode, resolveExecutableResearchScope, resolveResearchScope } = require("./services/research/research-resolver");
 const { createInternetDecisionRouter } = require("./services/research/internet-decision-router");
-const { executeChatResearchPlan, resolveChatResearchPlan } = require("./services/research/chat-research-gate");
+const { resolveChatResearchPlan } = require("./services/research/chat-research-gate");
 const { createMultimodalEngine, createNativePdfAnalyzer } = require("./services/multimodal/multimodal-engine");
 const { createOpenAIMediaAnalyzer } = require("./services/multimodal/openai-media-analyzer");
 const {
@@ -1048,13 +1027,7 @@ const { refreshDailyWebSearchUsage, registerWebSearchCalls, getVoiceBudgetStatus
   WEB_SEARCH_DAILY_LIMIT,
   WEB_SEARCH_PRICE_PER_CALL,
   WEB_SEARCH_USAGE_FILE,
-  appendUniqueRealtimeResponse,
-  calculateRealtimeCost,
-  countWebSearchCalls,
-  fs,
   get metricsService() { return metricsService; },
-  parisDate,
-  withDailyCost,
 });
 const openAIMediaAnalyzer = createOpenAIMediaAnalyzer({
   client: getOpenAIClient,
@@ -1531,19 +1504,14 @@ if (backgroundJobEngine) {
 const { dailyBriefEngine, briefUsageLog, briefScheduledTime, safeUsageLog, generateDailyBrief } = createDailyBriefComposition({
   DATA_DIRECTORY,
   authorizeOpenAIPrivacy,
-  buildMorningBriefPrompt,
   calendarConnector,
   contextBuilder,
   countWebSearchCalls,
-  createBriefUsageLog,
-  createDailyBriefEngine,
-  createMorningBriefService,
   creativeBriefStore,
   dailyPlanningEngine,
   estimateModelCost,
   executionTrackingEngine,
   extractWebSources,
-  fs,
   getBudgetStatus,
   gmailConnector,
   localIntelligenceRuntime,
@@ -1552,7 +1520,6 @@ const { dailyBriefEngine, briefUsageLog, briefScheduledTime, safeUsageLog, gener
   normalizeGmailMessage,
   notesConnector,
   openAIProviderAdapter,
-  path,
   personalBriefStore,
   planningPreferenceStore,
   priorityEngine,
@@ -1578,20 +1545,10 @@ const noonHealthReport = createNoonHealthReport({
 });
 
 const { getValidRegisteredProjects, initializeUiValidationWorkspaces, scanRegisteredProjects, isExcluded, listDirectory, isPathAllowed, normalizeFocusPath, getProjectContextVersion, normalizeFocusName, normalizeNoonMode, listLocalProjects, resolveFocusProject, resolveFocusCatalogSelection, searchFiles, readAllowedFile, handleLocalCommand } = createLocalProjects({
-  EXCLUDED_NAMES,
   PRIORITY_DIRECTORIES,
   PROJECTS_REGISTRY_FILE,
-  PROJECT_DIRECTORIES,
   UI_VALIDATION_MODE,
-  buildFocusCatalog,
-  crypto,
-  findFocusEntry,
-  fs,
   getAllowedDirectories,
-  isPathInsideRoots,
-  path,
-  resolveProject,
-  scanProjectsInAllowedRoots,
   uiValidationFixtures,
   get workspaceEngine() { return workspaceEngine; },
 });
@@ -1611,10 +1568,6 @@ const buildIntentContext = createIntentContextBuilder({
   get workspaceEngine() { return workspaceEngine; },
 });
 
-function hasExplicitToolOrder(question) {
-  return /\b(crée|créer|génère|générer|produis|produire|fabrique|fabriquer|exporte|exporter|enregistre|enregistrer|envoie|envoyer|supprime|supprimer|efface|effacer|modifie|modifier|écris|écrire|publie|publier|fais|prépare|préparer|j.?ai fini|termin[eé]|c.?est fait|j.?ai commenc[eé]|je suis dessus|en cours|je suis bloqu[eé]|annule|abandonne|reporte|diffère)\b/i.test(String(question));
-}
-
 const askAI = createAskAI({
   get CREATIVE_IMAGE_PREVIEW_DIRECTORY() { return CREATIVE_IMAGE_PREVIEW_DIRECTORY; },
   get WEB_SEARCH_PRICE_PER_CALL() { return WEB_SEARCH_PRICE_PER_CALL; },
@@ -1623,16 +1576,9 @@ const askAI = createAskAI({
   get backgroundJobEngine() { return backgroundJobEngine; },
   get calendarConnector() { return calendarConnector; },
   get contextBuilder() { return contextBuilder; },
-  get countWebSearchCalls() { return countWebSearchCalls; },
-  get crypto() { return crypto; },
-  get executeChatResearchPlan() { return executeChatResearchPlan; },
   get executionTrackingEngine() { return executionTrackingEngine; },
-  get extractWebSources() { return extractWebSources; },
   get featureFlags() { return featureFlags; },
   get figmaToolsEnabled() { return figmaToolsEnabled; },
-  get findCodexExecutable() { return findCodexExecutable; },
-  get fs() { return fs; },
-  get generateCreativeImage() { return generateCreativeImage; },
   get getAllowedDirectories() { return getAllowedDirectories; },
   get getBudgetStatus() { return getBudgetStatus; },
   get getOpenAIClient() { return getOpenAIClient; },
@@ -1640,12 +1586,8 @@ const askAI = createAskAI({
   get getRuntimeLimits() { return getRuntimeLimits; },
   get getValidRegisteredProjects() { return getValidRegisteredProjects; },
   get gmailConnector() { return gmailConnector; },
-  get hasExplicitToolOrder() { return hasExplicitToolOrder; },
-  get inferFreshness() { return inferFreshness; },
-  get inferResearchMode() { return inferResearchMode; },
   get isPathAllowed() { return isPathAllowed; },
   get listDirectory() { return listDirectory; },
-  get localDayRange() { return localDayRange; },
   get localIntelligenceRuntime() { return localIntelligenceRuntime; },
   get localPermissionStore() { return localPermissionStore; },
   get memoryEngine() { return memoryEngine; },
@@ -1653,7 +1595,6 @@ const askAI = createAskAI({
   get multimodalEngine() { return multimodalEngine; },
   get noonOrchestrator() { return noonOrchestrator; },
   get notesConnector() { return notesConnector; },
-  get path() { return path; },
   get personalInboxService() { return personalInboxService; },
   get personalSearchEngine() { return personalSearchEngine; },
   get planningPreferenceStore() { return planningPreferenceStore; },
@@ -1661,12 +1602,7 @@ const askAI = createAskAI({
   get readAllowedFile() { return readAllowedFile; },
   get reliabilityEngine() { return reliabilityEngine; },
   get remindersConnector() { return remindersConnector; },
-  get renderConversationStyleInstruction() { return renderConversationStyleInstruction; },
-  get resolveExecutableResearchScope() { return resolveExecutableResearchScope; },
-  get resolveResearchScope() { return resolveResearchScope; },
-  get runCodexAnalysis() { return runCodexAnalysis; },
   get runtimeConfig() { return runtimeConfig; },
-  get sanitizePublicQuery() { return sanitizePublicQuery; },
   get searchAuthorizedGmail() { return searchAuthorizedGmail; },
   get searchFiles() { return searchFiles; },
   get sessionContinuityEngine() { return sessionContinuityEngine; },
@@ -1744,8 +1680,6 @@ const { controlCenterService } = createControlCenterComposition({
   backgroundJobEngine,
   calendarConnector,
   configRegistry,
-  createCheckConnectionAction,
-  createControlCenterService,
   createGoogleReadAuthorization,
   extensionRegistry,
   featureFlags,
@@ -1773,17 +1707,10 @@ const { getConversationIndex, conversationSummaries, replaceConversationIndex, t
   CONVERSATION_INDEX_FILE,
   CONVERSATION_MEMORY_FILE,
   CONVERSATION_SUMMARIES_FILE,
-  GENERAL_FOLDER_ID,
   contextBuilder,
-  fs,
   get multiSourceSynthesisEngine() { return multiSourceSynthesisEngine; },
-  normalizeConversationStore,
   get personalSearchEngine() { return personalSearchEngine; },
   get sessionActivities() { return sessionActivities; },
-  trimConversationHistory,
-  trimHistoryByCharacters,
-  updateConversationSummary,
-  upsertConversationIndex,
 });
 
 // UI_VALIDATION_INIT_ORDER_FIX
