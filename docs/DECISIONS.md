@@ -1140,6 +1140,29 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
     - la construction des opérations ;
     - le refus d'une dépendance manquante.
 
+## 24/11/2026 — V3-L7, fichiers > 1 500 lignes : `goal-mode-run-state.js` (1 975 → 1 343)
+
+- Fichier plat, composé de fonctions et de constantes de module. Le bloc qui va de `VERSION`
+  à `normalizeUsage` part dans `services/goals/goal-mode-run-state-rules.js`. Il contient :
+  - la version et les statuts ;
+  - les transitions autorisées et les bornes ;
+  - les primitives de validation ;
+  - les validateurs d'exécution, de réservation, de planification, de contrat et d'usage.
+- `goal-mode-run-state.js` garde la création, les transitions, l'usage, les réservations et
+  `assertGoalModeRunForward`. Il réexporte les mêmes constantes.
+- Contrôle : 59 déclarations comparées jeton par jeton, toutes identiques.
+- **Piège rencontré, et désormais contrôlé** : le bloc utilisait `crypto.createHash`. Node
+  expose aussi un `crypto` global (Web Crypto, sans `createHash`), donc le lint ne signalait
+  aucune variable manquante. 36 tests ont échoué tant que le module n'importait pas
+  `node:crypto`.
+  - Correction : import explicite.
+  - Tous les modules créés pendant V3-L7 ont été vérifiés : aucun autre n'utilise
+    `crypto.` sans l'importer.
+- Tests :
+  - suites existantes de l'état des runs : 87/87 ;
+  - `test/goal-mode-run-state-modules.test.js` vérifie les mêmes constantes réexportées, des
+    constantes figées et une empreinte de réservation stable.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
