@@ -1603,6 +1603,34 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
 - Non vérifié : un échec réel de chargement dans Electron. Le smoke s'arrête avant la création
   des fenêtres.
 
+## 24/11/2026 — Les tests ne remplissent plus le disque temporaire
+
+- Le constat :
+  - le disque était à 100 %, avec 1,2 Go libres, ce qui bloquait le build packagé ;
+  - `$TMPDIR` contenait 116 077 dossiers `noon-*` (24,3 Go), laissés par les tests ;
+  - mesuré avec un `TMPDIR` dédié, chaque `npm test` en laissait environ 950 (≈ 200 Mo),
+    sur 135 préfixes. Il s'agit de dossiers `mkdtemp` jamais supprimés, créés par les tests
+    ou par le code testé : worktrees de mission, journaux DEV, copies de benchmark.
+  - C'est la cause probable des incidents « disque plein ».
+- Nettoyage, avec l'accord d'Arnaud : suppression des dossiers `noon-*` du dossier temporaire
+  modifiés depuis plus d'une heure. Résultat : 25 Go libres.
+- Correctif : `test/helpers/temp-dir-cleanup.js`, préchargé par
+  `node --require … --test` dans le script `npm test`.
+  - `node --test` transmet ce `--require` à chaque processus de test.
+  - Le module retient les dossiers créés par `fs.mkdtemp`, `fs.mkdtempSync` et
+    `fs.promises.mkdtemp` directement sous `os.tmpdir()`, puis les supprime à la sortie du
+    processus.
+  - Les nettoyages explicites des tests restent en place. Aucune assertion n'a été modifiée.
+- Mesure, sur une suite complète avec un `TMPDIR` dédié : 950 dossiers restants avant, 0 après.
+  Seul subsiste `node-compile-cache`, le cache de Node lui-même. Tests : 2 988/2 988, le module
+  compte pour une entrée vide.
+- Limites :
+  - un processus de test tué par un délai dépassé ne nettoie pas ;
+  - un dossier créé autrement que par `mkdtemp` n'est pas suivi.
+- Observation hors tests, non traitée : `services/dev/dev-benchmark-service.js`
+  (`copySnapshot`) crée aussi des copies `noon-benchmark-*` dans `os.tmpdir()` en
+  fonctionnement normal. Il faudrait vérifier qu'elles sont supprimées après chaque benchmark.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

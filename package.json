@@ -43,7 +43,7 @@
     "build": "npm run lint && npm run lint:release",
     "remote:vectors": "node scripts/generate-remote-interop-vectors.js",
     "typecheck": "tsc -p tsconfig.check.json",
-    "test": "node --check server.js && node --check config.js && node --check forge.config.js && node --check electron/app-core.js && node --check electron/preload.js && node --check electron/main.js && node --check public/ui-utils.js && node scripts/lint-app-bundle.js --syntax-only && node --check public/noon-particles.js && node --check public/live-voice-core.js && node --check public/live-voice.js && node --test",
+    "test": "node --check server.js && node --check config.js && node --check forge.config.js && node --check electron/app-core.js && node --check electron/preload.js && node --check electron/main.js && node --check public/ui-utils.js && node scripts/lint-app-bundle.js --syntax-only && node --check public/noon-particles.js && node --check public/live-voice-core.js && node --check public/live-voice.js && node --require ./test/helpers/temp-dir-cleanup.js --test",
     "eval:multimodal": "node scripts/run-evaluations.js --tag=multimodal",
     "eval:delegation": "node scripts/run-evaluations.js --tag=delegation",
     "eval:sync": "node scripts/run-evaluations.js --tag=multi-device-sync",
