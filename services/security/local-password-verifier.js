@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 const crypto = require("node:crypto");
@@ -5,8 +6,13 @@ const crypto = require("node:crypto");
 const MIN_PASSWORD_LENGTH = 8;
 const MAX_PASSWORD_LENGTH = 128;
 
+/**
+ * @param {unknown} password
+ * @returns {string}
+ */
 function validatePassword(password) {
   if (typeof password !== "string" || password.length < MIN_PASSWORD_LENGTH || password.length > MAX_PASSWORD_LENGTH) {
+    /** @type {Error & { code?: string }} */
     const error = new Error("Le mot de passe Noon doit contenir entre 8 et 128 caractères.");
     error.code = "PRIVATE_MEMORY_PASSWORD_INVALID";
     throw error;
@@ -14,13 +20,26 @@ function validatePassword(password) {
   return password;
 }
 
+/**
+ * @typedef {{ version: number, salt: string, hash: string }} PasswordVerifier
+ */
+/**
+ * @param {unknown} password
+ * @param {Buffer} [salt]
+ * @returns {PasswordVerifier}
+ */
 function createPasswordVerifier(password, salt = crypto.randomBytes(16)) {
   validatePassword(password);
   const normalizedSalt = Buffer.from(salt);
-  const hash = crypto.scryptSync(password, normalizedSalt, 64);
+  const hash = crypto.scryptSync(/** @type {string} */ (password), normalizedSalt, 64);
   return { version: 1, salt: normalizedSalt.toString("base64"), hash: hash.toString("base64") };
 }
 
+/**
+ * @param {unknown} password
+ * @param {Partial<PasswordVerifier> | null | undefined} verifier
+ * @returns {boolean}
+ */
 function verifyPassword(password, verifier) {
   if (typeof password !== "string" || !verifier?.salt || !verifier?.hash) return false;
   try {

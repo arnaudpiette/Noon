@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 const crypto = require("crypto");
@@ -51,6 +52,112 @@ const REASON_CODES = Object.freeze({
   NEGATED_OR_HYPOTHETICAL: "NEGATED_OR_HYPOTHETICAL",
 });
 
+/**
+ * Politique déclarée par une skill (skills/registry).
+ * @typedef {{
+ *   destructive?: boolean,
+ *   level?: string,
+ *   networkAccess?: boolean,
+ *   explicitOrderRequired?: boolean,
+ * }} SkillPolicy
+ */
+/**
+ * Demande d'action brute construite par l'appelant (chat, voix, planificateur, spécialistes).
+ * createActionRequest revalide et normalise chaque champ ; rien ici n'est supposé fiable.
+ * @typedef {{
+ *   origin?: string,
+ *   channel?: string,
+ *   actionId?: string,
+ *   intentId?: string | null,
+ *   executionId?: string | null,
+ *   actor?: string,
+ *   skillId?: string,
+ *   operation?: string,
+ *   args?: Record<string, any>,
+ *   targets?: any[],
+ *   workspaceId?: string | null,
+ *   projectId?: string | null,
+ *   profileScope?: string,
+ *   sourceProfileScope?: string,
+ *   sideEffects?: unknown[],
+ *   context?: Record<string, any>,
+ *   explicitOrder?: boolean,
+ *   negated?: boolean,
+ *   hypothetical?: boolean,
+ *   localOnly?: boolean,
+ *   protectedProfile?: boolean,
+ *   hasLocalData?: boolean,
+ *   overwriteExisting?: boolean,
+ *   preconditions?: Record<string, unknown>,
+ *   preconditionsValid?: boolean,
+ *   safeMode?: boolean,
+ *   targetCount?: number,
+ *   scope?: string,
+ *   dataFlow?: string,
+ *   reversibility?: string,
+ *   toRemoteModel?: boolean,
+ *   isSpecialistProposal?: boolean,
+ * }} ActionRequestInput
+ */
+/**
+ * @typedef {{
+ *   checked: boolean,
+ *   allowed: boolean,
+ *   exists: boolean,
+ *   symlink: boolean,
+ *   pathState: string,
+ *   selectedRoots: string[],
+ *   code?: string,
+ *   requestedPath?: string,
+ *   checkedPath?: string,
+ * }} PathDecision
+ */
+/** @typedef {{ allowed?: boolean, code?: string }} PermissionResult */
+/**
+ * Demande normalisée par createActionRequest, classification comprise.
+ * @typedef {{
+ *   actionId: string,
+ *   intentId: string | null,
+ *   executionId: string | null,
+ *   actor: string,
+ *   origin: string,
+ *   trustLevel: string,
+ *   skillId: string,
+ *   operation: string,
+ *   args: Record<string, any>,
+ *   targets: any[],
+ *   workspaceId: string | null,
+ *   projectId: string | null,
+ *   profileScope: string,
+ *   sourceProfileScope: string,
+ *   sideEffects: unknown[],
+ *   context: Record<string, any>,
+ *   explicitOrder: boolean,
+ *   negated: boolean,
+ *   hypothetical: boolean,
+ *   localOnly: boolean,
+ *   protectedProfile: boolean,
+ *   hasLocalData: boolean,
+ *   overwriteExisting: boolean,
+ *   preconditions: Record<string, unknown>,
+ *   preconditionsValid: boolean,
+ *   safeMode: boolean,
+ *   targetCount?: number,
+ *   scope?: string,
+ *   dataFlow: string,
+ *   toRemoteModel: boolean,
+ *   isSpecialistProposal: boolean,
+ *   actionClass: string,
+ *   target: ReturnType<typeof classifyTarget>,
+ *   reversibility: string,
+ *   actionFingerprint: string,
+ * }} ActionRequest
+ */
+
+/**
+ * @param {any} value
+ * @returns {string}
+ */
 function stableStringify(value) {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
   if (value && typeof value === "object") {
@@ -59,10 +166,16 @@ function stableStringify(value) {
   return JSON.stringify(value);
 }
 
+/** @param {unknown} value */
 function fingerprint(value) {
   return crypto.createHash("sha256").update(stableStringify(value)).digest("hex");
 }
 
+/**
+ * @param {unknown} value
+ * @param {string} [channel]
+ * @returns {string}
+ */
 function originFor(value, channel = "chat") {
   const raw = String(value || "");
   if (ORIGINS.has(raw)) return raw;
@@ -73,6 +186,7 @@ function originFor(value, channel = "chat") {
   return raw === "trusted_ui" ? raw : "model_generated";
 }
 
+/** @param {string} origin */
 function trustFor(origin) {
   if (["explicit_user_chat", "explicit_user_voice", "trusted_ui", "trusted_shortcut", "approval_resume"].includes(origin)) return TRUST_LEVELS.HIGH;
   if (origin === "system_scheduler") return TRUST_LEVELS.MEDIUM;
@@ -80,10 +194,16 @@ function trustFor(origin) {
   return TRUST_LEVELS.UNTRUSTED;
 }
 
+/** @param {{ skillId?: string, operation?: string }} request */
 function operationText(request) {
   return `${request.skillId || ""} ${request.operation || ""}`.toLowerCase();
 }
 
+/**
+ * @param {ActionRequestInput} request
+ * @param {SkillPolicy} [skillPolicy]
+ * @returns {string}
+ */
 function classifyAction(request, skillPolicy = {}) {
   const operation = operationText(request);
   if (/generate_creative_image/.test(operation)) return ACTION_CLASSES.PREPARE;
@@ -98,6 +218,10 @@ function classifyAction(request, skillPolicy = {}) {
   return ACTION_CLASSES.EXECUTE;
 }
 
+/**
+ * @param {ActionRequestInput} request
+ * @param {SkillPolicy} [skillPolicy]
+ */
 function classifyTarget(request, skillPolicy = {}) {
   const operation = operationText(request);
   const args = request.args || {};
@@ -116,8 +240,15 @@ function classifyTarget(request, skillPolicy = {}) {
   return { targetType, scope, targetCount, scopeName };
 }
 
+/**
+ * @param {ActionRequestInput} request
+ * @param {{ scope: string }} target
+ * @param {string} actionClass
+ * @param {SkillPolicy} [skillPolicy]
+ * @returns {string}
+ */
 function classifyDataFlow(request, target, actionClass, skillPolicy = {}) {
-  if (request.dataFlow && Object.values(DATA_FLOWS).includes(request.dataFlow)) return request.dataFlow;
+  if (request.dataFlow && /** @type {ReadonlyArray<string | undefined>} */ (Object.values(DATA_FLOWS)).includes(request.dataFlow)) return request.dataFlow;
   if (request.toRemoteModel === true) return DATA_FLOWS.LOCAL_TO_MODEL;
   if (target.scope === TARGET_SCOPES.LOCAL) return DATA_FLOWS.LOCAL_ONLY;
   if (actionClass === ACTION_CLASSES.READ || actionClass === ACTION_CLASSES.SUGGEST) return DATA_FLOWS.REMOTE_READ;
@@ -127,8 +258,13 @@ function classifyDataFlow(request, target, actionClass, skillPolicy = {}) {
   return DATA_FLOWS.LOCAL_ONLY;
 }
 
+/**
+ * @param {ActionRequestInput} request
+ * @param {string} actionClass
+ * @returns {string}
+ */
 function classifyReversibility(request, actionClass) {
-  if (request.reversibility && Object.values(REVERSIBILITY).includes(request.reversibility)) return request.reversibility;
+  if (request.reversibility && /** @type {ReadonlyArray<string | undefined>} */ (Object.values(REVERSIBILITY)).includes(request.reversibility)) return request.reversibility;
   const operation = operationText(request);
   if (actionClass === ACTION_CLASSES.READ || actionClass === ACTION_CLASSES.SUGGEST || actionClass === ACTION_CLASSES.PREPARE) return REVERSIBILITY.REVERSIBLE;
   if (/send|push|publish|post|delete|trash|reset|clean|purge/.test(operation)) return REVERSIBILITY.IRREVERSIBLE;
@@ -137,10 +273,18 @@ function classifyReversibility(request, actionClass) {
   return REVERSIBILITY.UNKNOWN;
 }
 
+/**
+ * @param {ActionRequestInput} request
+ * @param {string[]} allowedRoots
+ * @param {string[]} allowedWriteRoots
+ * @param {string} actionClass
+ * @returns {PathDecision}
+ */
 function inspectPath(request, allowedRoots, allowedWriteRoots, actionClass) {
   const requestedPath = request.args?.path || request.args?.outputDirectory || request.targets?.find((item) => item?.path)?.path;
   if (!requestedPath) return { checked: false, allowed: true, exists: false, symlink: false, pathState: "MISSING", selectedRoots: [] };
   const resolved = path.resolve(String(requestedPath));
+  /** @type {string} */
   let checkedPath;
   let exists;
   try {
@@ -158,7 +302,7 @@ function inspectPath(request, allowedRoots, allowedWriteRoots, actionClass) {
   } catch {
     return { checked: true, allowed: false, code: REASON_CODES.TARGET_OUT_OF_SCOPE, exists: false, symlink: true, pathState: "CANONICALIZATION_FAILURE", requestedPath: resolved, selectedRoots: [] };
   }
-  const roots = ([ACTION_CLASSES.WRITE, ACTION_CLASSES.DESTRUCTIVE].includes(actionClass) ? allowedWriteRoots : allowedRoots)
+  const roots = (/** @type {ReadonlyArray<string | undefined>} */ ([ACTION_CLASSES.WRITE, ACTION_CLASSES.DESTRUCTIVE]).includes(actionClass) ? allowedWriteRoots : allowedRoots)
     .map((root) => { try { return fs.realpathSync(root); } catch { return path.resolve(root); } });
   return {
     checked: true,
@@ -173,9 +317,14 @@ function inspectPath(request, allowedRoots, allowedWriteRoots, actionClass) {
   };
 }
 
+/**
+ * @param {ActionRequestInput} [input]
+ * @param {SkillPolicy} [skillPolicy]
+ */
 function createActionRequest(input = {}, skillPolicy = {}) {
   const origin = originFor(input.origin, input.channel);
-  const request = {
+  // La classification (actionClass, target, dataFlow, reversibility, empreinte) est complétée ci-dessous.
+  const request = /** @type {ActionRequest} */ ({
     actionId: String(input.actionId || `action-${crypto.randomUUID()}`),
     intentId: input.intentId || null,
     executionId: input.executionId || null,
@@ -196,7 +345,7 @@ function createActionRequest(input = {}, skillPolicy = {}) {
     negated: input.negated === true,
     hypothetical: input.hypothetical === true,
     localOnly: input.localOnly === true,
-    protectedProfile: input.protectedProfile === true || ["alexandra", "sinan", "kaan"].includes(input.profileScope),
+    protectedProfile: input.protectedProfile === true || /** @type {ReadonlyArray<string | undefined>} */ (["alexandra", "sinan", "kaan"]).includes(input.profileScope),
     hasLocalData: input.hasLocalData === true,
     overwriteExisting: input.overwriteExisting === true || input.args?.overwrite === true,
     preconditions: input.preconditions && typeof input.preconditions === "object" ? input.preconditions : {},
@@ -207,7 +356,7 @@ function createActionRequest(input = {}, skillPolicy = {}) {
     dataFlow: input.dataFlow,
     toRemoteModel: input.toRemoteModel === true,
     isSpecialistProposal: input.isSpecialistProposal === true,
-  };
+  });
   request.actionClass = classifyAction(request, skillPolicy);
   request.target = classifyTarget(request, skillPolicy);
   request.dataFlow = classifyDataFlow(request, request.target, request.actionClass, skillPolicy);
@@ -224,11 +373,33 @@ function createActionRequest(input = {}, skillPolicy = {}) {
   return request;
 }
 
+/**
+ * @param {{
+ *   hardRulesRegistry?: {
+ *     version?: () => string,
+ *     getRulesForContext?: (context: object) => Array<{ id: string }>,
+ *     isProtectedCalendarTime?: (time: unknown) => boolean,
+ *   } | null,
+ *   reliabilityEngine?: { snapshot: (componentId: string) => { state?: string } | null } | null,
+ *   permissionProvider?: ((skillId: string, args: Record<string, any>, context: object) => PermissionResult | null | undefined) | null,
+ *   allowedRootsProvider?: () => string[],
+ *   allowedWriteRootsProvider?: () => string[],
+ *   observability?: ((event: string, metadata: unknown) => void) | null,
+ *   now?: () => number,
+ *   traceLimit?: number,
+ * }} [options]
+ */
 function createOperationalSecurityPolicy({ hardRulesRegistry = null, reliabilityEngine = null, permissionProvider = null, allowedRootsProvider = () => [], allowedWriteRootsProvider = () => [], observability = null, now = () => Date.now(), traceLimit = 200 } = {}) {
+  /** @type {unknown[]} */
   const traces = [];
   const policyVersion = `${POLICY_BASE_VERSION}:${hardRulesRegistry?.version?.() || "rules-unknown"}`;
+  /**
+   * @param {string} event
+   * @param {unknown} metadata
+   */
   const emit = (event, metadata) => { try { observability?.(event, sanitizeAuditDetails(metadata)); } catch {} };
 
+  /** @param {{ skillId?: string, operation?: string }} request */
   function componentFor(request) {
     const text = operationText(request);
     if (/gmail|email/.test(text)) return "gmail";
@@ -239,10 +410,26 @@ function createOperationalSecurityPolicy({ hardRulesRegistry = null, reliability
     return null;
   }
 
+  /**
+   * Une demande déjà normalisée (porteuse d'une empreinte) est réutilisée telle quelle.
+   * @typedef {{
+   *   skillPolicy?: SkillPolicy,
+   *   actionRequest?: ActionRequestInput & { actionFingerprint?: string },
+   *   authorizedRoots?: string[],
+   *   authorizedWriteRoots?: string[],
+   *   currentPermissions?: PermissionResult,
+   *   permissionContext?: object,
+   *   pendingApproval?: { valid?: boolean },
+   *   reliabilityState?: { state?: string } | null,
+   *   scopeTelemetry?: { benchmark?: boolean, workspaceRoot?: string, sessionId?: string, runId?: string },
+   * }} EvaluateInput
+   */
+  /** @param {EvaluateInput} [input] */
   function evaluate(input = {}) {
     const started = now();
     const skillPolicy = input.skillPolicy || {};
-    const request = input.actionRequest?.actionFingerprint ? input.actionRequest : createActionRequest(input.actionRequest, skillPolicy);
+    const request = /** @type {ActionRequest} */ (input.actionRequest?.actionFingerprint ? input.actionRequest : createActionRequest(input.actionRequest, skillPolicy));
+    /** @type {string[]} */
     const reasons = [];
     const blockedBy = [];
     const constraints = [];
@@ -251,13 +438,14 @@ function createOperationalSecurityPolicy({ hardRulesRegistry = null, reliability
       intent: request.target.targetType === "email" ? "email" : request.target.targetType === "calendar" ? "calendar" : request.target.targetType === "memory" ? "memory" : request.target.targetType === "local_file" ? "files" : null,
       tools: [request.skillId], projectId: request.projectId, channel: request.origin.includes("voice") ? "live" : "chat",
     }) || [];
+    /** @param {string} code */
     const add = (code) => { if (!reasons.includes(code)) reasons.push(code); };
 
     const authorizedRoots = Array.isArray(input.authorizedRoots) ? input.authorizedRoots : allowedRootsProvider();
     const authorizedWriteRoots = Array.isArray(input.authorizedWriteRoots) ? input.authorizedWriteRoots : allowedWriteRootsProvider();
     const pathDecision = inspectPath(request, authorizedRoots, authorizedWriteRoots, request.actionClass);
     const permission = input.currentPermissions || permissionProvider?.(request.skillId, request.args, input.permissionContext || {}) || { allowed: true, code: "AUTHORIZED" };
-    const mutating = [ACTION_CLASSES.WRITE, ACTION_CLASSES.EXECUTE, ACTION_CLASSES.DESTRUCTIVE].includes(request.actionClass);
+    const mutating = /** @type {ReadonlyArray<string | undefined>} */ ([ACTION_CLASSES.WRITE, ACTION_CLASSES.EXECUTE, ACTION_CLASSES.DESTRUCTIVE]).includes(request.actionClass);
     const approvalValid = input.pendingApproval?.valid === true;
 
     if (request.negated || request.hypothetical) { add(REASON_CODES.NEGATED_OR_HYPOTHETICAL); blockedBy.push(REASON_CODES.HARD_RULE_DENY); }
@@ -290,7 +478,7 @@ function createOperationalSecurityPolicy({ hardRulesRegistry = null, reliability
     if (!reliabilityState && componentId && reliabilityEngine) {
       try { reliabilityState = reliabilityEngine.snapshot(componentId); } catch {}
     }
-    if (reliabilityState && ["UNAVAILABLE", "MISCONFIGURED", "UNAUTHORIZED"].includes(reliabilityState.state)) {
+    if (reliabilityState && /** @type {ReadonlyArray<string | undefined>} */ (["UNAVAILABLE", "MISCONFIGURED", "UNAUTHORIZED"]).includes(reliabilityState.state)) {
       add(reliabilityState.state === "UNAUTHORIZED" ? REASON_CODES.AUTH_REQUIRED : REASON_CODES.SERVICE_UNAVAILABLE);
     }
 
@@ -300,6 +488,7 @@ function createOperationalSecurityPolicy({ hardRulesRegistry = null, reliability
     if (request.overwriteExisting || (/write|create/.test(operationText(request)) && pathDecision.exists && request.args?.path)) add(REASON_CODES.OVERWRITE_EXISTING);
     if (request.target.targetCount > 1) add(REASON_CODES.BATCH_SCOPE_HIGH);
 
+    /** @type {string} */
     let riskLevel = RISK_LEVELS.LOW;
     if (request.actionClass === ACTION_CLASSES.PREPARE || request.actionClass === ACTION_CLASSES.WRITE || request.target.targetCount > 1 || request.protectedProfile) riskLevel = RISK_LEVELS.MEDIUM;
     if (request.actionClass === ACTION_CLASSES.EXECUTE || request.actionClass === ACTION_CLASSES.DESTRUCTIVE || reasons.includes(REASON_CODES.OVERWRITE_EXISTING) || reasons.includes(REASON_CODES.IRREVERSIBLE_ACTION)) riskLevel = RISK_LEVELS.HIGH;
@@ -309,6 +498,7 @@ function createOperationalSecurityPolicy({ hardRulesRegistry = null, reliability
     const serviceUnavailable = reasons.includes(REASON_CODES.SERVICE_UNAVAILABLE) || reasons.includes(REASON_CODES.AUTH_REQUIRED);
     const approvalReasons = [REASON_CODES.REMOTE_SIDE_EFFECT, REASON_CODES.IRREVERSIBLE_ACTION, REASON_CODES.OVERWRITE_EXISTING, REASON_CODES.BATCH_SCOPE_HIGH, REASON_CODES.PROTECTED_PROFILE, REASON_CODES.UNKNOWN_REVERSIBILITY];
     const mustApprove = reasons.includes(REASON_CODES.APPROVAL_REQUIRED) || approvalReasons.some((code) => reasons.includes(code));
+    /** @type {string} */
     let outcome = OUTCOMES.ALLOW;
     if (absoluteDeny) outcome = OUTCOMES.DENY;
     else if (serviceUnavailable) outcome = OUTCOMES.UNAVAILABLE;
@@ -358,6 +548,7 @@ function createOperationalSecurityPolicy({ hardRulesRegistry = null, reliability
     });
     if (input.scopeTelemetry?.benchmark === true) {
       const telemetryRoot = String(input.scopeTelemetry.workspaceRoot || "");
+      /** @param {string | null | undefined} value */
       const safePath = (value) => {
         if (!value) return null;
         if (telemetryRoot && isPathInsideRoots(value, [telemetryRoot])) return path.relative(telemetryRoot, value) || "<benchmark-root>";
@@ -374,14 +565,19 @@ function createOperationalSecurityPolicy({ hardRulesRegistry = null, reliability
     return decision;
   }
 
+  /**
+   * @param {{ outcome: string }} decision
+   * @param {{ allowed?: boolean, code?: unknown } | null | undefined} legacyDecision
+   */
   function compareLegacy(decision, legacyDecision) {
     const legacyAllowed = legacyDecision?.allowed === true;
-    const policyAllowed = [OUTCOMES.ALLOW, OUTCOMES.ALLOW_WITH_CONSTRAINTS].includes(decision.outcome);
+    const policyAllowed = /** @type {ReadonlyArray<string | undefined>} */ ([OUTCOMES.ALLOW, OUTCOMES.ALLOW_WITH_CONSTRAINTS]).includes(decision.outcome);
     const result = legacyAllowed === policyAllowed ? "same_decision" : legacyAllowed ? "legacy_allowed_new_restricted" : "legacy_denied_new_allowed";
     emit("security_policy_shadow_compared", { result, outcome: decision.outcome, legacyCode: String(legacyDecision?.code || "unknown").slice(0, 80) });
     return result;
   }
 
+  /** @param {{ localOnly?: boolean, workspaceId?: string | null, profileScope?: string }} [input] */
   function evaluateDataFlow(input = {}) {
     const decision = evaluate({
       actionRequest: {
@@ -399,6 +595,7 @@ function createOperationalSecurityPolicy({ hardRulesRegistry = null, reliability
       currentPermissions: { allowed: true, code: "AUTHORIZED_USER_MEDIA" },
     });
     if (decision.outcome === OUTCOMES.DENY) {
+      /** @type {Error & { code?: string }} */
       const error = new Error("La politique de confidentialité interdit l’envoi distant de ce média.");
       error.code = input.localOnly ? "MEDIA_LOCAL_ONLY_REMOTE_BLOCKED" : "MEDIA_REMOTE_FLOW_DENIED";
       throw error;
@@ -411,7 +608,7 @@ function createOperationalSecurityPolicy({ hardRulesRegistry = null, reliability
     evaluateDataFlow,
     createActionRequest,
     compareLegacy,
-    requiresApproval: (request, options = {}) => evaluate({ ...options, actionRequest: request }).requiredApproval,
+    requiresApproval: (/** @type {ActionRequestInput} */ request, /** @type {EvaluateInput} */ options = {}) => evaluate({ ...options, actionRequest: request }).requiredApproval,
     traces: () => structuredClone(traces),
     version: () => policyVersion,
     enums: { OUTCOMES, RISK_LEVELS, ACTION_CLASSES, REVERSIBILITY, TARGET_SCOPES, DATA_FLOWS, TRUST_LEVELS },

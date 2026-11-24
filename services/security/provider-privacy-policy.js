@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 const DATA_CLASSES = Object.freeze(["PUBLIC", "PERSONAL", "PRIVATE", "HIGHLY_SENSITIVE", "LOCAL_ONLY"]);
@@ -38,18 +39,41 @@ const SECRET_PATTERNS = Object.freeze([
   /(?:^|[\\/])(?:\.env(?:\.[^\\/]+)?|credentials?(?:\.json)?|token-store(?:\.json)?)(?:$|[\\/])/i,
 ]);
 
+/**
+ * @param {unknown} value
+ * @returns {string | null}
+ */
 function normalizeClassification(value) {
   const normalized = String(value || "").toUpperCase();
   return DATA_CLASSES.includes(normalized) ? normalized : null;
 }
 
+/**
+ * @param {unknown} value
+ * @returns {boolean}
+ */
 function containsSecret(value) {
   if (typeof value !== "string") {
     try { value = JSON.stringify(value ?? ""); } catch { value = ""; }
   }
-  return SECRET_PATTERNS.some((pattern) => pattern.test(value));
+  return SECRET_PATTERNS.some((pattern) => pattern.test(/** @type {string} */ (value)));
 }
 
+/**
+ * Métadonnées d'un fragment de contexte, avant normalisation.
+ * @typedef {{
+ *   classification?: string,
+ *   source?: string,
+ *   localOnly?: boolean,
+ *   providerRestrictions?: string[],
+ *   secretDetected?: boolean,
+ *   content?: unknown,
+ *   redactionRequired?: boolean,
+ * }} ContextFragmentInput
+ */
+/**
+ * @param {ContextFragmentInput} [fragment]
+ */
 function sanitizeFragment(fragment = {}) {
   const classification = normalizeClassification(fragment.classification);
   return Object.freeze({
@@ -62,17 +86,39 @@ function sanitizeFragment(fragment = {}) {
   });
 }
 
+/**
+ * @param {{
+ *   providerRegistry?: Record<string, { status?: string }>,
+ *   providerTiers?: Record<string, string>,
+ *   observability?: ((event: string, metadata: unknown) => void) | null,
+ * }} [options]
+ */
 function createProviderPrivacyPolicy({ providerRegistry = {}, providerTiers = {}, observability = null } = {}) {
   const permissions = new WeakMap();
 
+  /** @param {ContextFragmentInput} [fragment] */
   function inspectContextFragment(fragment) { return sanitizeFragment(fragment); }
 
+  /**
+   * @param {{
+   *   provider?: string,
+   *   contextMetadata?: { fragments?: ContextFragmentInput[] },
+   *   requestPolicy?: {
+   *     providerTier?: string,
+   *     providerConfigured?: boolean,
+   *     localOnly?: boolean,
+   *     allowPrivate?: boolean,
+   *     secretDetected?: boolean,
+   *   },
+   * }} [request]
+   */
   function evaluateProviderAccess({ provider, contextMetadata = {}, requestPolicy = {} } = {}) {
     const providerId = String(provider || "");
     const providerDefinition = providerRegistry[providerId];
-    const providerPolicy = PROVIDER_POLICIES[providerId];
+    const providerPolicy = /** @type {Record<string, { remote: boolean, allowedClasses: readonly string[] }>} */ (PROVIDER_POLICIES)[providerId];
     const providerTier = String(requestPolicy.providerTier || providerTiers[providerId] || "UNKNOWN").toUpperCase();
     const fragments = Array.isArray(contextMetadata.fragments) ? contextMetadata.fragments.map(sanitizeFragment) : [];
+    /** @type {Record<string, number>} */
     const classificationCounts = Object.fromEntries(DATA_CLASSES.map((classification) => [classification, 0]));
     for (const fragment of fragments) if (fragment.classification) classificationCounts[fragment.classification] += 1;
     const reasons = [];
@@ -120,6 +166,10 @@ function createProviderPrivacyPolicy({ providerRegistry = {}, providerTiers = {}
     return Object.freeze({ ...diagnostic, permissionToken });
   }
 
+  /**
+   * @param {object | null | undefined} permissionToken
+   * @param {unknown} provider
+   */
   function assertAccess(permissionToken, provider) {
     if (!permissionToken || permissions.get(permissionToken) !== String(provider || "")) throw new ProviderPrivacyError();
     return true;

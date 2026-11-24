@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 const crypto = require("node:crypto");
@@ -26,11 +27,19 @@ const SECURITY_OUTCOMES = Object.freeze({
   UNAVAILABLE: "UNAVAILABLE",
 });
 
+/**
+ * @param {unknown} value
+ * @returns {string | null}
+ */
 function normalizeString(value) {
   const normalized = String(value ?? "").trim();
   return normalized || null;
 }
 
+/**
+ * @param {any} value
+ * @returns {unknown}
+ */
 function canonicalize(value) {
   if (value === undefined || value === null) {
     return null;
@@ -73,6 +82,13 @@ function canonicalize(value) {
   return String(value);
 }
 
+/**
+ * @param {{
+ *   actionRequest?: InterventionActionRequest,
+ *   profileScope?: string | null,
+ *   workspaceId?: string | null,
+ * }} [input]
+ */
 function fingerprintAction({
   actionRequest = {},
   profileScope = null,
@@ -126,20 +142,34 @@ function fingerprintAction({
     .digest("hex");
 }
 
+/**
+ * @param {unknown} reasons
+ * @returns {string[]}
+ */
 function normalizeReasons(reasons) {
   if (!Array.isArray(reasons)) {
     return [];
   }
 
-  return [
+  // filter(Boolean) retire les null.
+  return /** @type {string[]} */ ([
     ...new Set(
       reasons
         .map(normalizeString)
         .filter(Boolean)
     ),
-  ];
+  ]);
 }
 
+/**
+ * @param {{
+ *   decision: string,
+ *   reasons: string[],
+ *   securityOutcome: string | null,
+ *   actionFingerprint: string,
+ *   policyVersion: string,
+ * }} result
+ */
 function buildResult({
   decision,
   reasons,
@@ -171,10 +201,39 @@ function buildResult({
   });
 }
 
+/**
+ * Demande d'action vue par le moteur d'intervention (forme produite par
+ * OperationalSecurityPolicy.createActionRequest ou par un adaptateur).
+ * @typedef {{
+ *   origin?: string,
+ *   skillId?: string,
+ *   operation?: string,
+ *   actionClass?: string,
+ *   args?: unknown,
+ *   target?: unknown,
+ *   guidanceOnly?: boolean,
+ *   executionSupported?: boolean,
+ *   confirmationRequired?: boolean,
+ *   externalSideEffect?: boolean,
+ *   irreversible?: boolean,
+ *   sensitivity?: string,
+ * }} InterventionActionRequest
+ */
+/**
+ * @param {{ policyVersion?: string }} [options]
+ */
 function createInterventionPermissionEngine({
   policyVersion =
     "intervention-permission-v1",
 } = {}) {
+  /**
+   * @param {{
+   *   actionRequest?: InterventionActionRequest,
+   *   securityDecision?: { outcome?: string, reasons?: unknown },
+   *   profileScope?: string | null,
+   *   workspaceId?: string | null,
+   * }} [input]
+   */
   function evaluate(input = {}) {
     const actionRequest =
       input.actionRequest || {};
@@ -259,11 +318,11 @@ function createInterventionPermissionEngine({
      * Tout autre outcome échoue fermé.
      */
     if (
-      ![
+      !/** @type {Array<string | null>} */ ([
         SECURITY_OUTCOMES.ALLOW,
         SECURITY_OUTCOMES.ALLOW_WITH_CONSTRAINTS,
         SECURITY_OUTCOMES.REQUIRE_APPROVAL,
-      ].includes(securityOutcome)
+      ]).includes(securityOutcome)
     ) {
       return buildResult({
         decision: DECISIONS.DENY,

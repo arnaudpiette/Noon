@@ -6,8 +6,12 @@
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "target": "es2023",
-    "lib": ["es2023"],
-    "types": ["node"],
+    "lib": [
+      "es2023"
+    ],
+    "types": [
+      "node"
+    ],
     "strict": true,
     "useUnknownInCatchVariables": false,
     "skipLibCheck": true
@@ -15,6 +19,13 @@
   "files": [
     "electron/preload.js",
     "electron/production-hardening.js",
-    "electron/main.js"
+    "electron/main.js",
+    "services/security/audit-log.js",
+    "services/security/local-password-verifier.js",
+    "services/security/redaction.js",
+    "services/security/token-store.js",
+    "services/security/provider-privacy-policy.js",
+    "services/security/intervention-permission-engine.js",
+    "services/security/operational-security-policy.js"
   ]
 }

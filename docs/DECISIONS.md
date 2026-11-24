@@ -1382,6 +1382,45 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   des jetons.
 - Reste à faire pour A.4 : connecteurs, sécurité, mémoire.
 
+## 24/11/2026 — V3-L0, A.4 (tranche 3) : `// @ts-check` sur les politiques de sécurité
+
+- Sept fichiers de `services/security/` sont vérifiés en mode strict, puis par
+  `no-floating-promises` : 219 erreurs au départ, 0 à l'arrivée.
+  - Primitives : `audit-log`, `local-password-verifier`, `redaction`, `token-store`.
+  - Politiques : `provider-privacy-policy`, `intervention-permission-engine`,
+    `operational-security-policy`.
+- Contrats désormais écrits en JSDoc :
+  - `operational-security-policy` :
+    - `ActionRequestInput` : la demande brute, chaque champ étant revalidé ;
+    - `ActionRequest` : la demande normalisée, classification comprise ;
+    - `SkillPolicy`, `PathDecision`, `PermissionResult`, `EvaluateInput` ;
+    - les dépendances de la fabrique : règles dures, fiabilité, permissions, racines,
+      observabilité ;
+  - `provider-privacy-policy` : `ContextFragmentInput` et la requête d'accès fournisseur ;
+  - `intervention-permission-engine` : `InterventionActionRequest` et l'entrée de `evaluate` ;
+  - `token-store` : `SafeStorageLike`, le sous-ensemble de `safeStorage` utilisé ;
+  - `local-password-verifier` : `PasswordVerifier`.
+- Assertions ciblées, toutes commentées :
+  - la demande littérale reçoit le type `ActionRequest`, puis la classification la complète ;
+  - une demande déjà porteuse d'une empreinte est réutilisée telle quelle ;
+  - `includes` sur des tableaux d'énumérations figées : 7 conversions vers
+    `ReadonlyArray<string | undefined>` ;
+  - `safeStorage` est présent quand `persistent` est vrai ;
+  - `filter(Boolean)` retire bien les `null`.
+- Les variables `outcome` et `riskLevel` sont annotées `string` : TypeScript les figeait sur
+  leur valeur initiale (`"ALLOW"`, `"LOW"`).
+- Aucune règle, aucun seuil, aucune décision ni aucun message n'a changé. Les jetons sont
+  identiques à HEAD, à 16 paires de parenthèses d'assertion près.
+- Validation :
+  - tests : 2 978/2 978 ;
+  - évaluations : `eval:critical` 54/54, `eval:privacy` 3/3, `eval:smoke` 99/99,
+    `eval:delegation` 10/10.
+- Reste à faire pour A.4 :
+  - sécurité, tranche 4 : `dev-process-runner`, `dev-process-sandbox-primitives`,
+    `dev-validation-runner` (131 erreurs) ;
+  - connecteurs ;
+  - mémoire.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

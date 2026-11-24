@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 // Détecte et masque les clés, jetons et autres secrets avant affichage ou journalisation.
@@ -10,12 +11,20 @@ const SECRET_PATTERNS = [
   /mongodb(?:\+srv)?:\/\/[^\s]+/gi,
 ];
 
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
 function redactSecrets(value) {
   let text = String(value ?? "");
   for (const pattern of SECRET_PATTERNS) text = text.replace(pattern, "[SECRET_REDACTED]");
   return text.slice(0, 10_000);
 }
 
+/**
+ * @param {unknown} [details]
+ * @returns {any}
+ */
 function sanitizeAuditDetails(details = {}) {
   return JSON.parse(redactSecrets(JSON.stringify(details)));
 }

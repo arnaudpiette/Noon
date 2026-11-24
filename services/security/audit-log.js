@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 // Journal d’audit local des actions sensibles, enregistré sans exposer les secrets manipulés.
@@ -9,9 +10,16 @@ const fs = require("fs");
 const path = require("path");
 const { sanitizeAuditDetails } = require("./redaction");
 
+/**
+ * @param {string} filePath
+ * @param {number} [maxEntries]
+ * @param {{ warn?: (message: string) => void }} [options]
+ */
 function createAuditLog(filePath, maxEntries = 500, { warn = (message) => console.warn(message) } = {}) {
   let failures = 0;
+  /** @type {string | null} */
   let lastErrorCode = null;
+  /** @type {string | null} */
   let lastFailureAt = null;
   const reportedCodes = new Set();
 
@@ -19,6 +27,11 @@ function createAuditLog(filePath, maxEntries = 500, { warn = (message) => consol
     try { const value = JSON.parse(fs.readFileSync(filePath, "utf8")); return Array.isArray(value) ? value : []; }
     catch { return []; }
   }
+  /**
+   * @param {string} event
+   * @param {unknown} [details]
+   * @returns {boolean}
+   */
   function append(event, details = {}) {
     const temporary = `${filePath}.tmp`;
     try {
