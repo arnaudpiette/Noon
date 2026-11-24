@@ -6,6 +6,8 @@ const { assertModelProviderAdapter } = require("../models/model-provider-adapter
 const { getModelDefinition } = require("../models/model-registry");
 const { classifyFailureCategory } = require("../models/routing-metadata");
 const { estimateModelCost } = require("../observability/model-pricing");
+const { createOrchestratorIntervention } = require("./orchestrator-intervention");
+const { createOrchestratorResults } = require("./orchestrator-results");
 
 class OrchestratorError extends Error {
   constructor(type, message, cause = null) {
@@ -88,80 +90,6 @@ function createNoonOrchestrator({
   now = () => Date.now(),
 } = {}) {
 
-  function applyInterventionDecision({
-    actionRequest,
-    securityDecision,
-    skillPolicy = {},
-    profileScope = null,
-    workspaceId = null,
-  } = {}) {
-    if (
-      !interventionPermissionEngine ||
-      !securityDecision
-    ) {
-      return securityDecision;
-    }
-
-    const rawActionClass =
-      String(
-        securityDecision.actionClass ||
-        skillPolicy.level ||
-        actionRequest?.actionClass ||
-        "READ"
-      ).toUpperCase();
-
-    const normalizedActionClass =
-      ({
-        EXTERNAL: "EXECUTE",
-        DELETE: "DESTRUCTIVE",
-        UPDATE: "WRITE",
-        CREATE: "WRITE",
-      })[rawActionClass] ||
-      rawActionClass;
-
-    const actionClass =
-      [
-        "READ",
-        "SUGGEST",
-        "PREPARE",
-        "WRITE",
-        "EXECUTE",
-        "DESTRUCTIVE",
-      ].includes(
-        normalizedActionClass
-      )
-        ? normalizedActionClass
-        : (
-            securityDecision.outcome ===
-              "REQUIRE_APPROVAL"
-              ? "EXECUTE"
-              : "READ"
-          );
-
-    const interventionDecision =
-      interventionPermissionEngine
-        .evaluate({
-          actionRequest: {
-            ...(actionRequest || {}),
-            actionClass,
-          },
-
-          securityDecision,
-          profileScope,
-          workspaceId,
-        });
-
-    /*
-     * OperationalSecurityPolicy reste l'autorité canonique.
-     * InterventionPermissionEngine n'écrase jamais son outcome
-     * dans le chemin NoonOrchestrator.
-     */
-    return {
-      ...securityDecision,
-      interventionDecision,
-    };
-  }
-
   if (!contextBuilder?.buildContext) throw new TypeError("Context Builder requis.");
   if (typeof selectModel !== "function") throw new TypeError("Model Router requis.");
   if (typeof modelFallbacks !== "function") throw new TypeError("Fallbacks modèle requis.");
@@ -175,6 +103,10 @@ function createNoonOrchestrator({
   if (typeof getTools !== "function") throw new TypeError("Sélecteur d'outils requis.");
 
   const pending = new Map();
+  // Décision d'intervention (orchestrator-intervention.js) et résultats (orchestrator-results.js),
+  // construits avec les dépendances de cet orchestrateur.
+  const { applyInterventionDecision } = createOrchestratorIntervention({ interventionPermissionEngine });
+  const { specialistProposalResult, finalResult } = createOrchestratorResults({ now, observability, trace });
 
   function isNonConsumingResumeRejection(error) {
     return error instanceof ApprovalError
@@ -820,106 +752,6 @@ function createNoonOrchestrator({
         recoveryAction: normalized?.recoveryAction || null,
       };
     }
-  }
-
-  function specialistProposalResult(state, { status, proposal, result = null, policyDecision = null }) {
-    state.metrics.totalMs = now() - state.startedAt;
-    const executed = status === "executed";
-    const rejected = status === "rejected";
-    const text = executed
-      ? `La proposition du spécialiste a été approuvée et exécutée : ${proposal.purpose || proposal.operation || proposal.skillId}.`
-      : rejected
-        ? `La proposition du spécialiste a été refusée et n’a pas été exécutée : ${proposal.purpose || proposal.operation || proposal.skillId}.`
-        : `La proposition du spécialiste a été bloquée par la politique de sécurité et n’a pas été exécutée : ${proposal.purpose || proposal.operation || proposal.skillId}.`;
-    return {
-      status: "completed",
-      text,
-      executionId: state.executionId,
-      requestedModel: null,
-      modelUsed: null,
-      route: null,
-      toolCalls: state.toolCalls,
-      approvals: [],
-      usage: null,
-      latency: { ...state.metrics },
-      metadata: {
-        context: state.context.metadata,
-        delegation: state.delegation ? {
-          delegationPlanId: state.delegation.plan?.delegationPlanId || null,
-          status: state.delegation.status,
-          reasonCodes: state.delegation.reasonCodes || [],
-        } : null,
-        specialistProposals: [{
-          toolRequestId: proposal.toolRequestId,
-          skillId: proposal.skillId,
-          operation: proposal.operation,
-          status,
-          outcome: policyDecision?.outcome || null,
-          reasonCodes: policyDecision?.reasons || [],
-        }],
-        toolRounds: state.metrics.toolRounds,
-        fallbackCount: state.metrics.fallbackCount,
-        secondOpinion: state.secondOpinion || null,
-      },
-      specialistProposal: { status, proposal, result, policyDecision },
-      response: null,
-    };
-  }
-
-  function finalResult(state, response, text) {
-    state.metrics.totalMs = now() - state.startedAt;
-    const deniedProposalCount = (state.proposalResults || []).filter((item) => item.denied === true).length;
-    const visibleText = deniedProposalCount > 0
-      ? `${text || "Je n'ai pas réussi à produire une réponse exploitable."}\n\nNoon a bloqué ${deniedProposalCount} proposition${deniedProposalCount > 1 ? "s" : ""} de spécialiste par mesure de sécurité ; aucune action correspondante n’a été exécutée.`
-      : text || "Je n'ai pas réussi à produire une réponse exploitable.";
-    const result = {
-      status: "completed",
-      text: visibleText,
-      executionId: state.executionId,
-      requestedModel: state.route.model,
-      modelUsed: state.modelUsed || state.route.model,
-      route: state.route,
-      toolCalls: state.toolCalls,
-      approvals: [],
-      usage: response?.usage || null,
-      latency: { ...state.metrics },
-      metadata: {
-        context: state.context.metadata,
-        delegation: state.delegation ? {
-          delegationPlanId: state.delegation.plan?.delegationPlanId || null,
-          status: state.delegation.status,
-          reasonCodes: state.delegation.reasonCodes || [],
-          specialists: (state.delegation.results || []).map((item) => ({ specialistId: item.specialistId, status: item.status })),
-          metrics: state.delegation.metrics || {},
-        } : null,
-        specialistProposals: (state.proposalResults || []).map((item) => ({
-          toolRequestId: item.toolRequestId,
-          skillId: item.skillId,
-          operation: item.operation,
-          outcome: item.policyDecision?.outcome || null,
-          reasonCodes: item.policyDecision?.reasons || [],
-          denied: item.denied === true,
-        })),
-        priorities: state.priorities.map(({ id, score, priorityLevel, scoringVersion }) => ({ id, score, priorityLevel, scoringVersion })),
-        toolRounds: state.metrics.toolRounds,
-        fallbackCount: state.metrics.fallbackCount,
-        secondOpinion: state.secondOpinion || null,
-      },
-      response,
-    };
-    trace("completed", state, {
-      modelUsed: result.modelUsed,
-      toolRounds: result.metadata.toolRounds,
-      fallbackCount: result.metadata.fallbackCount,
-      totalMs: result.latency.totalMs,
-    });
-    observability?.completeExecution(state.executionId, {
-      status: "completed",
-      toolRounds: state.metrics.toolRounds,
-      wallClockTotalMs: state.metrics.totalMs,
-      technicalExecutionMs: Math.max(0, state.metrics.totalMs - state.metrics.approvalWaitMs),
-    });
-    return result;
   }
 
   async function continueExecution(state, startRound = 0) {

@@ -1238,6 +1238,27 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
     - des limites figées ;
     - l'erreur typée.
 
+## 24/11/2026 — V3-L7, fichiers > 1 500 lignes : `orchestration/noon-orchestrator.js` (1 643 → 1 475)
+
+- Trois fonctions internes de `createNoonOrchestrator` sont déplacées telles quelles. Chacune
+  passe dans une petite fabrique qui reçoit exactement ce qu'elle utilisait :
+  - `orchestrator-intervention.js` : `applyInterventionDecision`, avec
+    `interventionPermissionEngine` ;
+  - `orchestrator-results.js` : `specialistProposalResult` et `finalResult`, avec `now`,
+    `observability` et `trace`.
+- `trace` reste dans l'orchestrateur. C'est une déclaration hissée : la passer à la
+  construction est sûr.
+- Les opérations sont construites juste après `const pending = new Map()`, après les contrôles
+  de dépendances et avant tout usage. Les paramètres concernés ne sont jamais réaffectés.
+- Contrôle : 25 déclarations comparées jeton par jeton, toutes identiques. Aucun usage de
+  `crypto` dans les nouveaux modules.
+- Tests :
+  - suites de l'orchestrateur : 55/55 ;
+  - `test/orchestrator-modules.test.js` vérifie :
+    - les opérations attendues ;
+    - qu'aucune fonction n'est partagée entre deux constructions ;
+    - le refus d'une dépendance manquante.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
