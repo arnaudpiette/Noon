@@ -161,8 +161,11 @@ test("les lignes historiques sans portée sont exclues d'une review ciblée et l
 });
 
 test("les callbacks serveur de review transmettent le scope aux requêtes bornées", () => {
-  const source = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
-  const wiring = source.slice(source.indexOf("const reviewLearningEngine"), source.indexOf("const personalMigration"));
+  // V3-L7 : ce câblage vit dans services/personal-intelligence/personal-intelligence-composition.js.
+  const source = require("./helpers/server-source").readServerSource();
+  const start = source.indexOf("const reviewLearningEngine");
+  assert.notEqual(start, -1);
+  const wiring = source.slice(start, source.indexOf("const personalMigration", start));
   assert.match(wiring, /recommendationProvider: \(\{ start, end, subjectScope \}\) => personalRepository\.listRecommendations\(\{\s*start: start\.toISOString\(\), end: end\.toISOString\(\), subjectScope, limit: 500,/);
   assert.match(wiring, /feedbackProvider: \(\{ start, end, subjectScope \}\) => personalRepository\.listFeedbackEvents\(\{\s*start: start\.toISOString\(\), end: end\.toISOString\(\), subjectScope, limit: 500,/);
 });

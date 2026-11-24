@@ -939,6 +939,40 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
     `CLEAN`, aucune sauvegarde ni écriture ;
   - la position et les arguments de l'appel.
 
+## 24/11/2026 — Découpe de `server.js`, vingt-cinquième tranche : services d'intelligence personnelle (V3-L7)
+
+- Ce qui sort dans `services/personal-intelligence/personal-intelligence-composition.js`
+  (`createPersonalIntelligenceComposition`) :
+  - profil opérationnel, projets, inbox, capture rapide ;
+  - « Où j'en étais ? » et premier pas ;
+  - déduplication, relances, métriques, créneaux ;
+  - planning du jour, proactivité, suivi d'exécution, revues ;
+  - migration des anciennes données et analyses de fond ;
+  - gestionnaires de jobs `PUBLIC_RESEARCH` et `MAINTENANCE`.
+- Le bloc est déplacé tel quel (1 194 jetons), avec une seule substitution :
+  `deps.resolveFocusCatalogSelection`. Cette fonction est déclarée plus loin dans `server.js`,
+  elle est donc relue par accesseur, comme le faisait la fermeture.
+- `server.js` l'appelle au même endroit qu'avant. La migration, `ensurePermanentRules()` et
+  l'enregistrement des gestionnaires de jobs ont donc lieu au même moment du démarrage.
+  - Les 21 autres dépendances sont déjà initialisées et lues une fois.
+  - Les 15 fabriques et 4 utilitaires sont importés par le module (`noonPersonality`,
+    `localDayRange`, `inspectGitStatus`, `migrateLegacyPersonalData`). Ces modules n'ont aucun
+    effet de bord au chargement.
+  - 16 services sont renvoyés ; `deduplicationService` reste interne.
+- `server.js` passe de 1 801 à 1 695 lignes.
+- Tests :
+  - `test/personal-intelligence-composition.test.js` vérifie, sur une base SQLite temporaire :
+    - le refus d'une dépendance manquante ;
+    - les services renvoyés et les règles permanentes écrites ;
+    - les gestionnaires de jobs enregistrés seulement si le moteur de jobs existe ;
+    - la fonction de Focus relue après remplacement ;
+    - le premier pas refusé en mode local (`FIRST_STEP_REMOTE_FORBIDDEN`, 409) ;
+    - la position de l'appel.
+  - `review-learning-scope` lisait `server.js` seul ; il lit maintenant `server.js` suivi des
+    modules extraits.
+  - `resume-briefing` accepte le préfixe `deps.` devant `resolveFocusCatalogSelection`.
+  - Les autres assertions de ces tests sont inchangées.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

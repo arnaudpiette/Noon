@@ -57,7 +57,7 @@ const {
   buildFocusCatalog,
 } = require("./lib/focus-catalog");
 const { modelFallbacks, normalizeIntelligenceProfile, selectLegacyModelRoute, selectModelRoute } = require("./lib/noon-intelligence");
-const { buildNoonSystemPrompt, noonPersonality } = require("./lib/noon-system-prompt");
+const { buildNoonSystemPrompt } = require("./lib/noon-system-prompt");
 const { createCreativeBriefStore } = require("./lib/creative-brief");
 const { redactSecrets } = require("./services/security/redaction");
 const { createOperationalSecurityPolicy } = require("./services/security/operational-security-policy");
@@ -68,7 +68,7 @@ const {
 } = require("./lib/conversation-index");
 const { createTokenStore } = require("./services/security/token-store");
 const { createGmailConnector } = require("./services/connectors/gmail");
-const { createCalendarConnector, localDayRange } = require("./services/connectors/google-calendar");
+const { createCalendarConnector } = require("./services/connectors/google-calendar");
 const { createAppleConnector } = require("./services/connectors/apple-reminders");
 const { createAppleNotesConnector } = require("./services/connectors/apple-notes");
 const { createVoiceIdentity } = require("./services/voice/voice-identity");
@@ -91,13 +91,6 @@ const { createSessionContinuityRepository } = require("./services/persistence/re
 const { createWorkspaceEngine } = require("./services/workspaces/workspace-engine");
 const { createIntentCommandEngine } = require("./services/intents/intent-command-engine");
 const { createReliabilityEngine } = require("./services/reliability/reliability-engine");
-const { migrateLegacyPersonalData } = require("./services/persistence/migrations/legacy-personal-data");
-const { createOperationalProfileService } = require("./services/personal-intelligence/operational-profile");
-const { createProjectIntelligenceService } = require("./services/personal-intelligence/project-intelligence");
-const { createInboxService } = require("./services/personal-intelligence/inbox-service");
-const { createQuickCaptureService } = require("./services/capture/quick-capture-service");
-const { createResumeBriefingService } = require("./services/resume/resume-briefing-service");
-const { createFirstStepService } = require("./services/first-step/first-step-service");
 const { createStaticAssets } = require("./services/http/static-assets");
 const { createSessionActivityAndTranscription } = require("./services/voice/session-activity-and-transcription");
 const { createNoonHttpServer } = require("./services/http/noon-http-server");
@@ -111,13 +104,9 @@ const { createUsageTracking } = require("./services/models/usage-tracking");
 const { createAskAI } = require("./services/orchestration/ask-ai");
 const { NOT_HANDLED } = require("./services/http/route-result");
 const { createPriorityEngine } = require("./services/personal-intelligence/priority-engine");
-const { createDeduplicationService } = require("./services/personal-intelligence/deduplication-service");
-const { createFollowUpService } = require("./services/personal-intelligence/follow-up-service");
-const { createMetricsService } = require("./services/personal-intelligence/metrics-service");
 const { createMemoryHttpRoutes } = require("./services/memory/memory-http-routes");
 const { createPersonalMemoryComposition } = require("./services/memory/personal-memory-composition");
 const { createPersonalContextComposition, createPersonalSessionContinuity } = require("./services/context/personal-context-composition");
-const { inspectGitStatus } = require("./lib/git-status");
 const { createAmbientContextEngine } = require("./services/context/ambient-context-engine");
 const { createDecisionSupportEngine } = require("./services/decision/decision-support-engine");
 const { createDevDecisionConsumer } = require("./services/decision/dev-decision-consumer");
@@ -171,15 +160,9 @@ const {
 const { ApprovalManager } = require("./services/approvals/approval-manager");
 const { createPrivateSeedImporter, validateSeed } = require("./services/personal-memory/seed-importer");
 const { readJsonBody } = require("./services/http/request-utils");
-const { createTimeSlotService } = require("./services/scheduling/time-slot-service");
-const { createProactiveEngine } = require("./services/proactive/proactive-engine");
 const { createDailyPlanStore } = require("./services/planning/daily-plan-store");
-const { createDailyPlanningEngine } = require("./services/planning/daily-planning-engine");
-const { createExecutionTrackingEngine } = require("./services/tracking/execution-tracking-engine");
-const { createReviewLearningEngine } = require("./services/review/review-learning-engine");
 const { createModelPerformanceEngine } = require("./services/learning/model-performance-engine");
 const { createAdaptiveRoutingService } = require("./services/learning/adaptive-routing-service");
-const { createBackgroundAnalysisService } = require("./services/openai/background-analysis");
 const { createJobRegistry } = require("./services/jobs/job-registry");
 const { createJobStore } = require("./services/jobs/job-store");
 const { createBackgroundJobEngine } = require("./services/jobs/background-job-engine");
@@ -212,6 +195,7 @@ const { createHttpRouteModules } = require("./services/http/route-modules-compos
 const { registerCoreReliabilityComponents } = require("./services/reliability/core-reliability-components");
 const { createPersonalSearchComposition } = require("./services/search/personal-search-composition");
 const { createLifecycleComposition } = require("./services/lifecycle/lifecycle-composition");
+const { createPersonalIntelligenceComposition } = require("./services/personal-intelligence/personal-intelligence-composition");
 
 // Tous les chemins manipulés par les outils sont contrôlés par config.js.
 
@@ -1232,137 +1216,47 @@ const privateSeedImporter = privateMemoryService.available
 const memoryHttpRoutes = createMemoryHttpRoutes({ memoryEngine, seedImporter: privateSeedImporter, validateSeed });
 const PUBLIC_DIRECTORY = path.join(__dirname, "public");
 const staticAssets = createStaticAssets({ publicDirectory: PUBLIC_DIRECTORY });
-const operationalProfileService = createOperationalProfileService(personalRepository);
-const projectIntelligenceService = createProjectIntelligenceService(personalRepository);
-const personalInboxService = createInboxService(personalRepository);
-const quickCaptureService = createQuickCaptureService({ inboxService: personalInboxService });
-// V3-L2b : « Où j'en étais ? », assemblé localement (aucun appel au modèle).
-const resumeBriefingService = createResumeBriefingService({
-  getActiveSession: () => sessionContinuityEngine.getActiveSession({}),
-  resolveFocus: (focusId, focusPath) => resolveFocusCatalogSelection(focusId, focusPath),
-  inspectGit: (projectPath) => inspectGitStatus(projectPath),
-  listProjects: () => personalRepository.listProjects(),
-  recentCaptures: (limit) => quickCaptureService.recent(limit),
-});
-// V3-L2c : « Je dois faire X » → une première action de 2 à 5 min (petit modèle + charte).
-const FIRST_STEP_MODEL = "gpt-5.6-luna";
-const firstStepService = createFirstStepService({
-  personality: () => noonPersonality(),
-  generate: async ({ instructions, input }) => {
-    if (localIntelligenceRuntime.snapshot({ internetAvailable: true }).state === "LOCAL_ONLY") {
-      throw Object.assign(new Error("Mode local uniquement : je ne contacte pas le modèle pour proposer un premier pas."), { code: "FIRST_STEP_REMOTE_FORBIDDEN", statusCode: 409 });
-    }
-    authorizeOpenAIPrivacy([{ source: "first_step", classification: "PERSONAL", content: input }]);
-    const response = await getOpenAIClient().responses.create({ model: FIRST_STEP_MODEL, instructions, input, store: false, max_output_tokens: 400 });
-    trackUsage(response);
-    return response.output_text || "";
-  },
-  listProjects: () => personalRepository.listProjects(),
-  saveProject: (project) => personalRepository.upsertProject(project),
-  capture: (item) => quickCaptureService.capture(item),
-});
-const deduplicationService = createDeduplicationService(personalRepository);
-const followUpService = createFollowUpService(personalRepository);
-const metricsService = createMetricsService(personalRepository);
-const timeSlotService = createTimeSlotService(calendarConnector);
-const dailyPlanningEngine = createDailyPlanningEngine({
-  priorityEngine,
+const {
+  operationalProfileService,
+  projectIntelligenceService,
+  personalInboxService,
+  quickCaptureService,
+  resumeBriefingService,
+  FIRST_STEP_MODEL,
+  firstStepService,
+  followUpService,
+  metricsService,
   timeSlotService,
+  dailyPlanningEngine,
+  proactiveEngine,
+  executionTrackingEngine,
+  reviewLearningEngine,
+  personalMigration,
+  backgroundAnalysisService,
+} = createPersonalIntelligenceComposition({
+  DATA_DIRECTORY,
+  approvalManager,
+  authorizeOpenAIPrivacy,
+  backgroundJobEngine,
+  calendarConnector,
+  dailyPlanStore,
+  executionTrackingRepository,
+  getBudgetStatus,
+  getOpenAIClient,
   hardRulesRegistry,
-  store: dailyPlanStore,
-  settingsProvider: () => planningPreferenceStore.load().settings,
-  learningHintsProvider: () => reviewLearningRepository.list({
-    reviewType: "weekly", subjectScope: "arnaud", limit: 1,
-  })[0]?.planningHints || {},
-  approvalEngine: approvalManager,
-  calendarReader: async (date, calendarId) => {
-    if (!calendarConnector.connected) return null;
-    const result = await calendarConnector.listCompleteCalendarEvents({
-      calendarId,
-      ...localDayRange(new Date(`${date}T12:00:00Z`)),
-    });
-    if (!result.complete) throw Object.assign(new Error("Agenda incomplet : validation du planning impossible."), { code: "CALENDAR_INCOMPLETE" });
-    return result.items || [];
-  },
-  metrics: metricsService,
-  audit: (event, metadata) => toolAuditLog.append(event, metadata),
-});
-const proactiveEngine = createProactiveEngine({
+  jobRegistry,
+  localIntelligenceRuntime,
+  memoryEngine,
+  personalRepository,
+  planningPreferenceStore,
   priorityEngine,
-  deduplicationService,
-  repository: personalRepository,
-  metrics: metricsService,
-  approvalEngine: approvalManager,
-  hardRulesRegistry,
-  timeSlotService,
-  planningEngine: dailyPlanningEngine,
-  maxNotificationsPerDay: Math.max(1, Math.min(10,
-    Number(process.env.NOON_MAX_PROACTIVE_NOTIFICATIONS) || 3)),
-  audit: (event, metadata) => toolAuditLog.append(event, metadata),
+  publicResearchEngine,
+  get resolveFocusCatalogSelection() { return resolveFocusCatalogSelection; },
+  reviewLearningRepository,
+  sessionContinuityEngine,
+  toolAuditLog,
+  trackUsage,
 });
-const executionTrackingEngine = createExecutionTrackingEngine({
-  repository: executionTrackingRepository,
-  proactiveEngine,
-  planningEngine: dailyPlanningEngine,
-  metrics: metricsService,
-  memoryEngine,
-  audit: (event, metadata) => toolAuditLog.append(event, metadata),
-});
-const reviewLearningEngine = createReviewLearningEngine({
-  repository: reviewLearningRepository,
-  trackingProvider: ({ subjectScope }) => executionTrackingEngine.list({ subjectScope }),
-  planProvider: (date) => dailyPlanStore.get(date),
-  recommendationProvider: ({ start, end, subjectScope }) => personalRepository.listRecommendations({
-    start: start.toISOString(), end: end.toISOString(), subjectScope, limit: 500,
-  }),
-  feedbackProvider: ({ start, end, subjectScope }) => personalRepository.listFeedbackEvents({
-    start: start.toISOString(), end: end.toISOString(), subjectScope, limit: 500,
-  }),
-  memoryEngine,
-  proactiveEngine,
-  subjectScope: "arnaud",
-  metrics: metricsService,
-  audit: (event, metadata) => toolAuditLog.append(event, metadata),
-});
-const personalMigration = migrateLegacyPersonalData({
-  repository: personalRepository, dataDirectory: DATA_DIRECTORY,
-  logger: (level, event, code) => toolAuditLog.append(event, { level, code }),
-});
-operationalProfileService.ensurePermanentRules();
-const backgroundAnalysisService = createBackgroundAnalysisService({
-  client: {
-    responses: {
-      create: (options, ...args) => {
-        authorizeOpenAIPrivacy([
-          { source: "background_analysis", classification: "PERSONAL", content: options?.input || "" },
-        ]);
-        return getOpenAIClient().responses.create({ ...options, store: false }, ...args);
-      },
-      retrieve: (...args) => getOpenAIClient().responses.retrieve(...args),
-      cancel: (...args) => getOpenAIClient().responses.cancel(...args),
-    },
-  },
-  stateFile: path.join(DATA_DIRECTORY, "background-analyses.json"),
-  logger: (level, event, code) => toolAuditLog.append(event, { level, code }),
-});
-if (backgroundJobEngine) {
-  jobRegistry.registerHandler("PUBLIC_RESEARCH", async ({ job, signal, reportProgress }) => {
-    reportProgress({ percent: 10, stage: "planning" });
-    const pack = await publicResearchEngine.research({
-      query: String(job.inputRef.query || "").slice(0, 2000),
-      mode: job.inputRef.mode || "STANDARD",
-      freshnessRequirement: job.inputRef.freshnessRequirement || "CURRENT",
-      scope: "PUBLIC",
-      budgetMode: getBudgetStatus().mode,
-      signal,
-    });
-    if (pack.state === "CANCELLED") throw Object.assign(new Error("Recherche annulée."), { name: "AbortError" });
-    if (pack.state === "FAILED") throw Object.assign(new Error("Recherche publique indisponible."), { code: "SERVICE_UNAVAILABLE", transient: true });
-    reportProgress({ percent: 90, stage: "finalizing" });
-    return { outputRef: { evidencePackId: pack.evidencePackId, researchId: pack.researchId, state: pack.state } };
-  });
-  jobRegistry.registerHandler("MAINTENANCE", async ({ job }) => ({ outputRef: { taskRef: job.inputRef.taskRef, completed: true } }));
-}
 const { dailyBriefEngine, briefUsageLog, briefScheduledTime, safeUsageLog, generateDailyBrief } = createDailyBriefComposition({
   DATA_DIRECTORY,
   authorizeOpenAIPrivacy,

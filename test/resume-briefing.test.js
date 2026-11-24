@@ -74,7 +74,8 @@ test("commande et câblage : repérage strict, route locale, lien profond et bar
   for (const input of ["Où est le fichier ?", "je reprends le dessin demain", "", null]) assert.equal(isResumeCommand(input), false, String(input));
   assert.deepEqual(parseNoonDeepLink("noon://resume"), { action: "resume" });
   const server = readServerSource();
-  assert.match(server, /resolveFocus: \(focusId, focusPath\) => resolveFocusCatalogSelection\(focusId, focusPath\)/);
+  // V3-L7 : dans la composition, la fonction (déclarée plus loin dans server.js) est relue par accesseur.
+  assert.match(server, /resolveFocus: \(focusId, focusPath\) => (deps\.)?resolveFocusCatalogSelection\(focusId, focusPath\)/);
   assert.match(server, /req\.url === "\/resume" \|\| req\.url\.startsWith\("\/resume\?"\)/);
   const app = readAppSource();
   assert.ok(app.indexOf("isResumeCommand(question)") < app.indexOf('const response = await fetch("/ai/stream"'), "traité avant tout appel au modèle");
