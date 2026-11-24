@@ -81,10 +81,12 @@ function requiredPolicy(subjectId, category, sensitivity, requested) {
  *   databaseWrapper: { kind: string, database: SqliteDatabaseLike },
  *   cipher: ReturnType<typeof import("./crypto").createMemoryCipher> | null | undefined,
  *   audit?: (event: string, details: object) => void,
+ *   unavailableReason?: string | null,
  * }} options
+ *   `unavailableReason` : raison affichée quand `cipher` manque (par défaut, coffre indisponible).
  */
-function createPrivateMemoryService({ databaseWrapper, cipher, audit = () => {} }) {
-  if (!cipher) return { available: false, reason: "Le coffre macOS est indisponible." };
+function createPrivateMemoryService({ databaseWrapper, cipher, audit = () => {}, unavailableReason = null }) {
+  if (!cipher) return { available: false, reason: unavailableReason || "Le coffre macOS est indisponible." };
   if (databaseWrapper.kind !== "sqlite") return { available: false, reason: "SQLite local est requis pour la mémoire privée." };
   const db = databaseWrapper.database;
   // Plus bas, `cipher` est présent : le service s'est déclaré indisponible sinon.

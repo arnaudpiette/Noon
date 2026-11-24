@@ -1556,8 +1556,12 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   la mémoire privée revient au lancement suivant avec toutes ses données. Sinon, elle reste
   indisponible. Supprimer la clé, et perdre les souvenirs chiffrés, est une décision qui revient
   à Arnaud, jamais à Noon.
-- L'interface affiche toujours « Le coffre macOS est indisponible. » : le service reçoit
-  `cipher = null` dans les deux cas. Un message plus précis serait une évolution séparée.
+- Message affiché : `createPrivateMemoryService` accepte une raison facultative,
+  `unavailableReason`, que la composition fournit quand la clé est illisible. L'interface affiche
+  donc « Clé de la mémoire privée illisible : vos souvenirs sont conservés mais inaccessibles.
+  Déverrouillez le trousseau macOS, puis relancez Noon. » au lieu de « Le coffre macOS est
+  indisponible. ». Ce dernier message reste celui par défaut. Cas de test ajouté ; suite
+  complète : 2 985/2 985.
 - Tests : nouveau `test/private-memory-master-key.test.js`, 6 cas :
   - création, relecture et droits 0600 ;
   - clé indéchiffrable ;

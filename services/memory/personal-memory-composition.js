@@ -21,6 +21,7 @@ function createPersonalMemoryComposition(dependencies) {
   } = dependencies;
 
   let privateMemoryCipher = null;
+  let privateMemoryUnavailableReason = null;
   try {
     // Le smoke packagé utilise un profil jetable et ne doit pas créer de clé de
     // mémoire privée ni attendre le trousseau macOS pour valider le cœur local.
@@ -32,10 +33,14 @@ function createPersonalMemoryComposition(dependencies) {
     toolAuditLog.append("private-memory.unavailable", error?.code === "PRIVATE_MEMORY_KEY_UNREADABLE"
       ? { code: error.code, stage: error.stage || null }
       : { code: "KEYSTORE_UNAVAILABLE" });
+    if (error?.code === "PRIVATE_MEMORY_KEY_UNREADABLE") {
+      privateMemoryUnavailableReason = "Clé de la mémoire privée illisible : vos souvenirs sont conservés mais inaccessibles. Déverrouillez le trousseau macOS, puis relancez Noon.";
+    }
   }
   const privateMemoryService = createPrivateMemoryService({
     databaseWrapper: personalDatabase,
     cipher: privateMemoryCipher,
+    unavailableReason: privateMemoryUnavailableReason,
     audit: (_event, metadata) => toolAuditLog.append("private-memory.audit", metadata),
   });
   const privateContextBuilder = createPrivateContextBuilder(privateMemoryService);

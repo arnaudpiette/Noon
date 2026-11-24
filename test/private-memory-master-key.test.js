@@ -12,6 +12,7 @@ const test = require("node:test");
 
 const { createMemoryCipher, loadOrCreateProtectedMasterKey } = require("../services/personal-memory/crypto");
 const { createPersonalMemoryComposition } = require("../services/memory/personal-memory-composition");
+const { createPrivateMemoryService } = require("../services/personal-memory/private-memory-service");
 
 const KEY_FILE = "private-memory-master-key.bin";
 
@@ -82,6 +83,12 @@ test("emplacement de la clé illisible (autre que absent) : erreur de lecture, r
   assert.ok(fs.statSync(path.join(directory, KEY_FILE)).isDirectory());
 });
 
+test("service sans chiffrement : raison par défaut inchangée, raison précise si fournie", () => {
+  const wrapper = { kind: "sqlite" };
+  assert.equal(createPrivateMemoryService({ databaseWrapper: wrapper, cipher: null }).reason, "Le coffre macOS est indisponible.");
+  assert.equal(createPrivateMemoryService({ databaseWrapper: wrapper, cipher: null, unavailableReason: "Clé illisible." }).reason, "Clé illisible.");
+});
+
 test("coffre macOS indisponible : aucune clé créée", (t) => {
   const directory = tempDirectory(t);
   assert.equal(loadOrCreateProtectedMasterKey(directory, fakeSafeStorage({ available: false })), null);
@@ -105,6 +112,8 @@ test("composition : clé illisible → mémoire privée indisponible, audit pré
   });
   assert.equal(composition.privateMemoryCipher, null);
   assert.equal(composition.privateMemoryService.available, false);
+  assert.match(composition.privateMemoryService.reason, /Clé de la mémoire privée illisible/);
+  assert.deepEqual(composition.memoryEngine.privateStatus(), { available: false, reason: composition.privateMemoryService.reason });
   assert.deepEqual(audit.find((entry) => entry.event === "private-memory.unavailable")?.details, { code: "PRIVATE_MEMORY_KEY_UNREADABLE", stage: "decrypt" });
   assert.ok(fs.readFileSync(keyPath).equals(before));
 });
