@@ -359,9 +359,9 @@ validation `USER` plus récente.
 
 Les suites à étendre sont principalement :
 
-- `test/workspace-terminal-service.test.js` ;
+- `test/workspace-terminal-service*.test.js` (découpé en deux fichiers) ;
 - `test/workspace-agent-execution-loop.test.js` ;
-- `test/native-dev-core.test.js` ;
+- `test/native-dev-core*.test.js` (découpé en trois fichiers) ;
 - `test/dev-specialist-delegation.test.js` ;
 - une nouvelle suite ciblée `test/dev-process-runner.test.js` ;
 - `test/v1-architecture-freeze.test.js` pour le câblage canonique.

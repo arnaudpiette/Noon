@@ -207,7 +207,7 @@ La réservation de planning est hors périmètre : elle garde son modèle actuel
 ## Tests de référence
 
 - `test/goal-mode-execution-reservation.test.js` : 4C-0 / 4C-1A.
-- `test/goal-mode-dev-dispatch-service.test.js` : 4C-1B (par `resume`), 4C-1C, empreinte, Goal, RELEASED × dispatch.
+- `test/goal-mode-dev-dispatch-service*.test.js` (deux fichiers) : 4C-1B (par `resume`), 4C-1C, empreinte, Goal, RELEASED × dispatch.
 - `test/approval-engine-consume-boundary.test.js` : option `consumeAtBoundary` et lecture bornée Goal Mode d'`ApprovalEngine`.
 - `test/goal-mode-execution-release.test.js` : RELEASED (transitions, forme, ledger, course, SQLite, compatibilité ancien ↔ nouveau code).
 - `test/dev-task-journal-reliability.test.js` : réservation de démarrage exclusive, ordre des `fsync` (y compris dans le repli), lecture stricte, noms exacts, anciens fichiers, `interrupted`.

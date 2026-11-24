@@ -1281,6 +1281,35 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   `services/`, `lib/`, `electron/`, `public/` ou `server.js`. Des fichiers de tests dépassent
   encore ce seuil.
 
+## 24/11/2026 — V3-L7, fichiers de tests > 1 500 lignes
+
+- Six fichiers de tests concernés :
+  - `native-dev-core` : 2 744 lignes → trois fichiers ;
+  - `workspace-terminal-service` : 2 123 → deux fichiers ;
+  - `goal-mode-next-step-planner` : 2 121 → deux fichiers ;
+  - `goal-dev-retry-chain-persistence` : 2 036 → deux fichiers ;
+  - `goal-mode-dev-dispatch-service` : 1 694 → deux fichiers ;
+  - `goal-mode-planning-call-service` : 1 632 → un seul fichier, son en-tête part dans les
+    fixtures.
+- Méthode, identique pour les six :
+  - l'en-tête (imports, fonctions de préparation) part tel quel dans
+    `test/helpers/<nom>-fixtures.js`. Seuls les chemins `require("../…")` deviennent
+    `"../../…"` ;
+  - les appels `test(...)` sont répartis dans l'ordre d'origine entre `<nom>.test.js`,
+    `<nom>-2.test.js` et, pour `native-dev-core`, `<nom>-3.test.js` ;
+  - chaque fichier recopie les `require` simples qu'il utilise et importe le reste des
+    fixtures.
+- Contrôle :
+  - les 182 tests sont identiques jeton par jeton, dans le même ordre ;
+  - chaque instruction d'en-tête est identique à l'original ;
+  - aucune variable `let`/`var` au premier niveau, aucun `__dirname`, dossiers temporaires
+    créés par `mkdtemp`. Les fichiers peuvent donc tourner dans des processus séparés.
+- Aucune assertion n'a été modifiée.
+- Documentation : `SANDBOX_V1_DESIGN.md` et `GOAL_MODE_DEV_EXECUTION.md` désignent désormais ces
+  suites par un motif `*.test.js`. Les audits datés (`DEV_RULES_AUDIT.md`,
+  `CODE_CONTEXT_AUDIT.md`) restent inchangés : ils rapportent des exécutions passées.
+- **Critère V3-L7 « aucun fichier > 1 500 lignes »** : atteint pour le code et les tests.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
