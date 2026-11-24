@@ -1259,6 +1259,28 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
     - qu'aucune fonction n'est partagée entre deux constructions ;
     - le refus d'une dépendance manquante.
 
+## 24/11/2026 — V3-L7, fichiers > 1 500 lignes : `decision/decision-support-engine.js` (1 613 → 1 187)
+
+- Ce qui part dans `services/decision/decision-evidence-v2.js` :
+  - `stable` et `fingerprint` ;
+  - les autorités d'attestation et le rang des preuves ;
+  - `sameScope`, `evidenceAttested`, `evidenceEligibilityV2` ;
+  - l'éligibilité liée aux dépendances et la fusion des preuves.
+- Le bloc ne dépendait que de `fingerprint` : le déplacer avec elle évite tout import
+  circulaire.
+- Le moteur garde les conflits, les contraintes, la comparaison V2 et la fabrique. Il réexporte
+  les mêmes `fingerprint`, `evidenceAttested` et `evidenceEligibilityV2` : les identités sont
+  vérifiées.
+- Contrôle : 26 déclarations comparées jeton par jeton, toutes identiques. Le module importe
+  `node:crypto`.
+- Tests :
+  - suites du moteur de décision : 145/145 ;
+  - `test/decision-evidence-v2-modules.test.js` vérifie les mêmes identités et une empreinte
+    indépendante de l'ordre des clés.
+- **Bilan V3-L7** : plus aucun fichier de code au-delà de 1 500 lignes, que ce soit dans
+  `services/`, `lib/`, `electron/`, `public/` ou `server.js`. Des fichiers de tests dépassent
+  encore ce seuil.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
