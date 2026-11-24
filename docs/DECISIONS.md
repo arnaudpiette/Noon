@@ -1046,6 +1046,43 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   - que `setSessionActivity` n'est jamais lue à la construction ;
   - la position de l'appel.
 
+## 24/11/2026 — Découpe de `server.js`, vingt-neuvième tranche : clients des fournisseurs (V3-L7)
+
+- Ce qui sort dans `services/models/provider-clients.js` (`createProviderClients`) :
+  `getOpenAIClient`, `getGeminiClient` et `setProviderKeyLoaders`, avec leur état : clients
+  créés au premier appel et chargeurs de clés fournis par Electron.
+- Le bloc est déplacé tel quel (269 jetons identiques). Le comportement reste le même :
+  - refus en validation UI isolée ;
+  - clé lue dans `process.env` et chargée à la demande ;
+  - 503 si la clé est absente.
+- Les trois fonctions étaient des déclarations hissées en tête du fichier. Elles deviennent des
+  constantes créées au même endroit, et rien ne les utilise avant.
+- Les imports `OpenAI` et `GoogleGenAI` suivent le code.
+- `server.js` passe de 1 512 à 1 479 lignes, sous l'objectif de 1 500.
+- Tests : `test/provider-clients.test.js` vérifie, sans appel réseau ni vraie clé :
+  - clé absente → 503 ;
+  - refus en validation UI ;
+  - chargeurs appelés seulement à la demande ;
+  - client créé une fois puis réutilisé ;
+  - chargeurs invalides ignorés ;
+  - création avant tout usage.
+- Avant/après dans des copies isolées : réponses identiques une fois normalisées. Comme à la
+  vingt-deuxième tranche, seul l'ordre des règles permanentes du profil a varié. Elles sont
+  triées par `updated_at` à la milliseconde, et leur contenu est identique.
+- **Bilan de la découpe** : `server.js` est passé de 10 831 à 1 479 lignes en 29 tranches. Le
+  critère de sortie de V3-L7 (« aucun fichier > 1 500 lignes ») n'est pas encore atteint pour
+  tout le dépôt. Huit fichiers de code le dépassent :
+  - `services/dev/workspace-terminal-service.js` (2 294) ;
+  - `services/dev/native-dev-implementation-engine.js` (2 179) ;
+  - `services/goals/goal-mode-run-state.js` (1 975) ;
+  - `services/orchestration/ask-ai.js` (1 728) ;
+  - `services/goals/goal-mode-next-step-planner.js` (1 695) ;
+  - `services/security/dev-process-runner.js` (1 667) ;
+  - `services/orchestration/noon-orchestrator.js` (1 643) ;
+  - `services/decision/decision-support-engine.js` (1 613).
+
+  Plusieurs fichiers de tests dépassent aussi ce seuil.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

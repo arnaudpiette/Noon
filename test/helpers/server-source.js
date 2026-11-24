@@ -55,6 +55,7 @@ const ROUTE_MODULES = Object.freeze([
   "services/extensions/extensions-composition.js",
   "services/observability/progress-composition.js",
   "services/runtime/local-runtime-and-jobs-composition.js",
+  "services/models/provider-clients.js",
 ]);
 
 function readServerSource() {

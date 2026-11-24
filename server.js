@@ -5,45 +5,12 @@ const {
 // Le profil UI isolé ne doit jamais importer l'environnement du dépôt.
 if (process.env.NOON_UI_VALIDATION !== "1") require("dotenv").config();
 const { assertUiValidationDataDirectory, isUiValidationExternalRequest, isUiValidationWorkspaceId, resolveUiValidationFixtures } = require("./electron/ui-validation-mode");
-const OpenAI = require("openai");
 const { toFile } = require("openai");
-const { GoogleGenAI } = require("@google/genai");
 
-// Le client est créé au premier appel afin que l’application locale puisse
-// démarrer et rester utile hors ligne même sans clé OpenAI configurée.
-let openai = null;
-let loadOpenAIKeyOnDemand = null;
-function getOpenAIClient() {
-  if (process.env.NOON_UI_VALIDATION === "1") {
-    throw Object.assign(new Error("Le fournisseur OpenAI est désactivé pendant la validation UI isolée."), { code: "UI_VALIDATION_EXTERNAL_DISABLED", statusCode: 503 });
-  }
-  if (openai) return openai;
-  if (!process.env.OPENAI_API_KEY && loadOpenAIKeyOnDemand) loadOpenAIKeyOnDemand();
-  if (!process.env.OPENAI_API_KEY) {
-    const error = new Error("Clé OpenAI absente. Configurez-la dans Noon.");
-    error.statusCode = 503;
-    throw error;
-  }
-  openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  return openai;
-}
-let gemini = null;
-let loadGeminiKeyOnDemand = null;
-function getGeminiClient() {
-  if (process.env.NOON_UI_VALIDATION === "1") {
-    throw Object.assign(new Error("Le fournisseur Gemini est désactivé pendant la validation UI isolée."), { code: "UI_VALIDATION_EXTERNAL_DISABLED", statusCode: 503 });
-  }
-  if (gemini) return gemini;
-  if (!process.env.GEMINI_API_KEY && loadGeminiKeyOnDemand) loadGeminiKeyOnDemand();
-  if (!process.env.GEMINI_API_KEY) throw Object.assign(new Error("Credential Gemini absent."), { statusCode: 503 });
-  gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  return gemini;
-}
-// Chargeurs de clés fournis par Electron au démarrage (lus par les deux clients ci-dessus).
-function setProviderKeyLoaders(loadOpenAIKey, loadGeminiKey) {
-  loadOpenAIKeyOnDemand = typeof loadOpenAIKey === "function" ? loadOpenAIKey : null;
-  loadGeminiKeyOnDemand = typeof loadGeminiKey === "function" ? loadGeminiKey : null;
-}
+// Clients OpenAI/Gemini créés au premier appel (Noon démarre et reste utile hors ligne sans clé) ;
+// chargeurs de clés fournis par Electron au démarrage (services/models/provider-clients.js).
+const { createProviderClients } = require("./services/models/provider-clients");
+const { getOpenAIClient, getGeminiClient, setProviderKeyLoaders } = createProviderClients();
 
 const http = require("http");
 const fs = require("fs");
