@@ -71,3 +71,31 @@ test("B12 un workspace absent échoue avant tout participant", async () => { con
 test("B12 un realpath différent est refusé par B2", async () => { const f = setup(); const other = fs.mkdtempSync(path.join(f.root, "other-")); const service = createDevBenchmarkService({ repository: f.repository, armingRepository: f.armingRepository, runtimeAuthorization: f.authorization, templates: f.fixtures, participants: { NATIVE_NOON: { run: async () => { f.counters.native += 1; } } }, validator: async () => ({ finalValid: true }), featureMode: () => "LIMITED", workspaceFactory(template) { copy(template, other); const peer = fs.mkdtempSync(path.join(f.root, "peer-wrong-")); fs.cpSync(template, peer, { recursive: true }); return { workspace: other, peer }; } }); await assert.rejects(service.runNext(f.prepared.session.id), (error) => error.code === "BENCHMARK_EXECUTION_DENIED" && error.reason === "WORKSPACE_NOT_ALLOWED"); assert.equal(f.counters.native, 0); f.database.close(); });
 test("B12 une fixture copiée incomplète est refusée avant participant", async () => { const f = setup({ workspaceFactory(template) { const corrupt = path.join(f.root, "corrupt"); copy(template, corrupt); fs.rmSync(path.join(corrupt, fs.readdirSync(corrupt)[0]), { recursive: true, force: true }); const peer = fs.mkdtempSync(path.join(f.root, "peer-corrupt-")); fs.cpSync(template, peer, { recursive: true }); return { workspace: corrupt, peer }; } }); await assert.rejects(f.service.runNext(f.prepared.session.id), (error) => error.code === "BENCHMARK_INVALID_START_STATE"); assert.equal(f.counters.native, 0); f.database.close(); });
 test("B12 l'adapter reçoit le realpath canonique autorisé et aucun coût", async () => { const f = setup(); await f.service.runNext(f.prepared.session.id); await f.service.runNext(f.prepared.session.id); assert.equal(f.seen.length, 1); assert.equal(f.seen[0].repositoryRoot, fs.realpathSync(f.authorization.current().workspacePath)); assert.equal(f.seen[0].workspaceId, f.prepared.runs[1].id); assert.deepEqual({ provider: f.counters.provider, budget: f.counters.budget }, { provider: 0, budget: 0 }); f.database.close(); });
+
+// La copie témoin créée par copySnapshot (fabrique qui renvoie un chemin) ne sert qu'à l'empreinte
+// de départ : elle est supprimée ensuite, même si la vérification du workspace échoue.
+async function withPrivateTmpdir(run) {
+  const privateTmp = fs.mkdtempSync(path.join(os.tmpdir(), "noon-peer-cleanup-"));
+  const previous = process.env.TMPDIR;
+  process.env.TMPDIR = privateTmp;
+  try { await run(); } finally { if (previous === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = previous; }
+  return fs.readdirSync(privateTmp).filter((name) => name.startsWith("noon-benchmark-"));
+}
+
+test("B12 la copie témoin créée par le service est supprimée après l'empreinte de départ", async () => {
+  const f = setup({ workspaceFactory(template) { materializeBenchmarkWorkspace(template, f.workspace); return f.workspace; } });
+  const leftovers = await withPrivateTmpdir(async () => { await f.service.runNext(f.prepared.session.id); });
+  assert.equal(f.counters.native, 1);
+  assert.deepEqual(leftovers, []);
+  f.database.close();
+});
+
+test("B12 la copie témoin est supprimée même quand le workspace est refusé", async () => {
+  const f = setup({ workspaceFactory() { return path.join(f.root, "absent-workspace"); } });
+  const leftovers = await withPrivateTmpdir(async () => {
+    await assert.rejects(f.service.runNext(f.prepared.session.id), (error) => error.code === "BENCHMARK_WORKSPACE_INVALID");
+  });
+  assert.equal(f.counters.native, 0);
+  assert.deepEqual(leftovers, []);
+  f.database.close();
+});

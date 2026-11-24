@@ -101,8 +101,12 @@ function createDevBenchmarkService({templates={},participants={},validator,repos
     if(!template)throw error("Fixture benchmark invalide.","BENCHMARK_FIXTURE_INVALID");
     const snapshots=workspaceFactory(template,{session:current,run:item,task});
     const workspace=typeof snapshots==="string"?snapshots:snapshots?.workspace;
-    const peer=typeof snapshots==="string"?copySnapshot(template):snapshots?.peer;
-    const startFingerprint=preparedWorkspace(template,workspace,peer);
+    const ownsPeer=typeof snapshots==="string";
+    const peer=ownsPeer?copySnapshot(template):snapshots?.peer;
+    // La copie témoin ne sert qu'à cette empreinte de départ : supprimée ensuite si ce service l'a créée.
+    let startFingerprint;
+    try{startFingerprint=preparedWorkspace(template,workspace,peer);}
+    finally{if(ownsPeer)fs.rmSync(peer,{recursive:true,force:true});}
     const authorization=runtimeAuthorization?.canExecuteBenchmarkRun?.({sessionId:current.id,runId:item.id,executor:item.participant,workspacePath:workspace,fixturePath:template});
     if(!authorization?.eligible){const reason=authorization?.reason||"AUTHORIZATION_UNAVAILABLE";emit("benchmark_authorization_denied",{sessionId:current.id,runId:item.id,reason});throw Object.assign(error("Exécution benchmark non autorisée.","BENCHMARK_EXECUTION_DENIED"),{reason});}
     const benchmarkBudget=item.participant==="NATIVE_NOON"?benchmarkBudgetContext(current.id,armingRepository,repository):null;

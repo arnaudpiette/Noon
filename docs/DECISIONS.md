@@ -1627,9 +1627,8 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
 - Limites :
   - un processus de test tué par un délai dépassé ne nettoie pas ;
   - un dossier créé autrement que par `mkdtemp` n'est pas suivi.
-- Observation hors tests, non traitée : `services/dev/dev-benchmark-service.js`
-  (`copySnapshot`) crée aussi des copies `noon-benchmark-*` dans `os.tmpdir()` en
-  fonctionnement normal. Il faudrait vérifier qu'elles sont supprimées après chaque benchmark.
+- Observation hors tests : `copySnapshot` laissait aussi une copie dans `os.tmpdir()` à chaque
+  benchmark. Traitée depuis : voir « Copie témoin du benchmark supprimée ».
 
 ## 24/11/2026 — Build packagé validé ; fichiers locaux exclus de Noon.app
 
@@ -1666,6 +1665,24 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   - ouvrir l'interface avec le vrai profil et obtenir une réponse à « Bonjour » (A.1).
 - Note : lancé depuis le dépôt, le smoke charge le `.env` du dossier courant (4 variables
   injectées). Une application lancée depuis `/Applications` n'a pas ce dossier courant.
+
+## 24/11/2026 — Copie témoin du benchmark supprimée
+
+- Le défaut : dans `services/dev/dev-benchmark-service.js`, quand la fabrique d'espace de
+  travail renvoie un simple chemin, le service crée une copie témoin
+  (`copySnapshot` → `noon-benchmark-*` dans `os.tmpdir()`).
+  - Cette copie ne sert qu'à l'empreinte de départ (`preparedWorkspace`) et n'était jamais
+    supprimée : un dossier de plus par run de benchmark.
+  - Cela ne concerne que le flag `dev.benchmark`, OFF par défaut.
+- Correctif : la copie est supprimée juste après l'empreinte, y compris en cas d'échec
+  (`try … finally`), et seulement si le service l'a créée lui-même. Une copie fournie par la
+  fabrique (`{ workspace, peer }`) reste sous la responsabilité de celle-ci.
+- Tests : deux cas dans `test/benchmark-workspace-lifecycle.test.js`, l'un pour un run normal,
+  l'autre pour un workspace refusé. Chacun utilise un `TMPDIR` privé. Les deux échouent sur
+  l'ancien code.
+- Validation :
+  - tests : 2 991/2 991 ;
+  - évaluations : `eval:critical` 54/54, `eval:smoke` 99/99, `eval:delegation` 10/10.
 
 ## À trancher
 
