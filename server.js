@@ -198,22 +198,11 @@ const noonExampleSearchExtension = require("./services/extensions/sample/noon-ex
 const { createArtifactEngine } = require("./services/artifacts/artifact-engine");
 const { createAuditLog } = require("./services/security/audit-log");
 const { createSkillRegistry } = require("./skills/registry");
-const { createPersonalSearchEngine } = require("./services/search/personal-search-engine");
-const { createMultiSourceSynthesisEngine } = require("./services/synthesis/multi-source-synthesis-engine");
-const { createFileSearchAdapter } = require("./services/search/file-search-adapter");
 const { createOpenAIWebSearchAdapter } = require("./services/research/web-search-adapter");
 const { createPublicResearchEngine } = require("./services/research/public-research-engine");
 const { createInternetDecisionRouter } = require("./services/research/internet-decision-router");
 const { createMultimodalEngine, createNativePdfAnalyzer } = require("./services/multimodal/multimodal-engine");
 const { createOpenAIMediaAnalyzer } = require("./services/multimodal/openai-media-analyzer");
-const {
-  createCalendarAdapter,
-  createConversationAdapter,
-  createEmailAdapter,
-  createMemoryAdapter,
-  createProjectAdapter,
-  createSimpleLocalAdapter,
-} = require("./services/search/source-adapters");
 const {
   GOOGLE_AUTH_LIBRARY_VERSION,
   createGoogleAuthorization,
@@ -226,6 +215,7 @@ const {
 } = require("./services/connectors/google-auth");
 const { createHttpRouteModules } = require("./services/http/route-modules-composition");
 const { registerCoreReliabilityComponents } = require("./services/reliability/core-reliability-components");
+const { createPersonalSearchComposition } = require("./services/search/personal-search-composition");
 
 // Tous les chemins manipulés par les outils sont contrôlés par config.js.
 
@@ -1594,72 +1584,27 @@ const { getConversationIndex, conversationSummaries, replaceConversationIndex, t
 uiValidationProjectContexts =
   initializeUiValidationWorkspaces();
 
-personalSearchEngine = createPersonalSearchEngine({
-  adapters: {
-    conversation: createConversationAdapter({
-      indexProvider: () => getConversationIndex(),
-      transcriptProvider: (conversationId) =>
-        getConversationTranscript(createConversationKey({ sessionId: conversationId })),
-      summaryProvider: (conversationId) =>
-        conversationSummaries.get(createConversationKey({ sessionId: conversationId })) || "",
-    }),
-    memory: createMemoryAdapter({ memoryEngine }),
-    project: createProjectAdapter({
-      projectsProvider: () => {
-        const projects = [...projectIntelligenceService.listWithSignals()];
-        const known = new Set(projects.map((project) => project.id || project.rootPath || project.name));
-        for (const project of getValidRegisteredProjects()) {
-          const key = project.id || project.rootPath || project.name;
-          if (!known.has(key)) projects.push(project);
-        }
-        return projects;
-      },
-    }),
-    file: createFileSearchAdapter({
-      rootsProvider: getAllowedDirectories,
-      isExcluded,
-    }),
-    document: createFileSearchAdapter({
-      rootsProvider: getAllowedDirectories,
-      isExcluded,
-    }),
-    media: {
-      version: () => `multimodal-${multimodalEngine.listAssets().length}`,
-      search: (request) => multimodalEngine.search({
-        query: request.query,
-        workspaceId: request.workspaceId,
-        sourceScope: request.privacyContext?.sourceScope,
-        limit: request.resultsPerSource,
-      }),
-    },
-    note: createSimpleLocalAdapter({
-      sourceType: "note",
-      list: () => notesConnector.listRecentNotes(),
-    }),
-    reminder: createSimpleLocalAdapter({
-      sourceType: "reminder",
-      list: () => remindersConnector.listIncompleteReminders(),
-      content: "title",
-      timestamp: "dueAt",
-    }),
-    email: createEmailAdapter({ connector: gmailConnector, account: GOOGLE_ACCOUNT_EMAIL }),
-    calendar: createCalendarAdapter({ connector: calendarConnector }),
-  },
-  metrics: metricsService,
-  reliability: reliabilityEngine,
-  audit: (event, metadata) => toolAuditLog.append(event, metadata),
-});
-multiSourceSynthesisEngine = createMultiSourceSynthesisEngine({
-  metrics: metricsService,
-  audit: (event, metadata) => toolAuditLog.append(event, metadata),
-  permissionValidator: (evidence, options) => {
-    if (options.profileScope && evidence.profileScope !== options.profileScope) return false;
-    if (evidence.locator?.path && !isPathAllowed(evidence.locator.path)) return false;
-    if (evidence.sourceType === "email" && !gmailConnector.connected) return false;
-    if (evidence.sourceType === "calendar" && !calendarConnector.connected) return false;
-    return true;
-  },
-});
+({ personalSearchEngine, multiSourceSynthesisEngine } = createPersonalSearchComposition({
+  GOOGLE_ACCOUNT_EMAIL,
+  calendarConnector,
+  conversationSummaries,
+  createConversationKey,
+  getAllowedDirectories,
+  getConversationIndex,
+  getConversationTranscript,
+  getValidRegisteredProjects,
+  gmailConnector,
+  isExcluded,
+  isPathAllowed,
+  memoryEngine,
+  metricsService,
+  get multimodalEngine() { return multimodalEngine; },
+  notesConnector,
+  projectIntelligenceService,
+  reliabilityEngine,
+  remindersConnector,
+  toolAuditLog,
+}));
 
 const { sessionActivities, setSessionActivity, getSessionActivity, MAX_AUDIO_BYTES, transcribeAudioBuffer } = createSessionActivityAndTranscription({
   getOpenAIClient,

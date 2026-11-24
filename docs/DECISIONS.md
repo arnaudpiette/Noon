@@ -887,6 +887,37 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   triées par `updated_at` à la milliseconde et écrites en quelques millisecondes au
   démarrage. Le contenu est identique, et l'écart vient de l'horloge, pas du déplacement.
 
+## 24/11/2026 — Découpe de `server.js`, vingt-troisième tranche : assemblage de la recherche personnelle (V3-L7)
+
+- Ce qui sort dans `services/search/personal-search-composition.js`
+  (`createPersonalSearchComposition`) :
+  - la construction de `personalSearchEngine` et de ses dix adaptateurs (conversation,
+    mémoire, projets, fichiers, documents, médias, notes, rappels, email, agenda) ;
+  - la construction de `multiSourceSynthesisEngine` et de son contrôle de permissions.
+- Le bloc est déplacé tel quel (493 jetons), avec quatre substitutions :
+  - deux `const` au lieu de deux affectations ;
+  - `deps.multimodalEngine` aux deux usages. C'est une variable réaffectée de `server.js`, lue
+    par accesseur comme le faisaient les fermetures.
+- `server.js` affecte les deux `let` au même endroit qu'avant :
+  `({ personalSearchEngine, multiSourceSynthesisEngine } = createPersonalSearchComposition(…))`.
+  - Les 18 autres dépendances sont déjà initialisées et lues une fois.
+  - Les 9 fabriques (moteur, synthèse, adaptateurs) sont importées par le module, et leurs 4
+    imports quittent `server.js`.
+- `server.js` passe de 1 888 à 1 833 lignes.
+- Tests : `test/personal-search-composition.test.js` vérifie :
+  - le refus d'une dépendance manquante ;
+  - la construction des deux moteurs ;
+  - que la recherche média lit le moteur multimodal courant (relu après remplacement) ;
+  - la position et les arguments de l'appel.
+- Avant/après dans des copies isolées, référence : tranche 22. Requêtes rejouées :
+  - les 96 routes en GET ;
+  - 2 `POST /personal-search` (toutes sources, recherche globale) ;
+  - 2 `POST /personal-synthesis` ;
+  - `GET /search`.
+
+  Les réponses sont identiques une fois normalisées, sauf `resultId` : c'est une empreinte qui
+  inclut l'horodatage de la règle trouvée, réécrite à chaque démarrage.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

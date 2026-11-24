@@ -49,6 +49,7 @@ const ROUTE_MODULES = Object.freeze([
   "services/voice/session-activity-and-transcription.js",
   "services/http/route-modules-composition.js",
   "services/reliability/core-reliability-components.js",
+  "services/search/personal-search-composition.js",
 ]);
 
 function readServerSource() {
