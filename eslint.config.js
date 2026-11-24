@@ -2,10 +2,12 @@
 
 // V3-L0 (A.3) : vrai lint, en complément de `node --check` (syntaxe seule).
 // Règles retenues : socle `recommended` d'ESLint + no-undef, no-unused-vars, eqeqeq.
-// no-floating-promises exige typescript-eslint avec informations de types : reporté à A.4
-// (// @ts-check + JSDoc), voir docs/CURRENT_STATE.md.
+// A.4 : no-floating-promises (typescript-eslint, informations de types) sur les fichiers
+// `// @ts-check` listés dans tsconfig.check.json, vérifiés aussi par `npm run typecheck`.
 const js = require("@eslint/js");
 const globals = require("globals");
+const tseslint = require("typescript-eslint");
+const typedBoundaryFiles = require("./tsconfig.check.json").files;
 
 // Paramètres non utilisés tolérés : les options déstructurées font partie des signatures
 // publiques des services (l'appelant peut les passer). Variables et imports : stricts.
@@ -39,5 +41,14 @@ module.exports = [
   {
     files: ["public/**/*.js"],
     languageOptions: { sourceType: "script", globals: { ...globals.browser } },
+  },
+  {
+    files: typedBoundaryFiles,
+    languageOptions: {
+      parser: tseslint.parser,
+      parserOptions: { project: "./tsconfig.check.json", tsconfigRootDir: __dirname },
+    },
+    plugins: { "@typescript-eslint": tseslint.plugin },
+    rules: { "@typescript-eslint/no-floating-promises": "error" },
   },
 ];

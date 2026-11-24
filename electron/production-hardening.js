@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 // Primitives de hardening du shell Electron. Ce module reste pur et testable sans Electron.
@@ -7,12 +8,21 @@ const path = require("path");
 
 const BUILD_PROFILES = Object.freeze(["development", "test", "production", "release"]);
 
+/**
+ * @param {{ value?: string, packaged?: boolean }} [options]
+ * @returns {string}
+ */
 function resolveBuildProfile({ value = process.env.NOON_BUILD_PROFILE, packaged = false } = {}) {
   const normalized = String(value || "").trim().toLowerCase();
   if (BUILD_PROFILES.includes(normalized)) return normalized;
   return packaged ? "production" : process.env.NODE_ENV === "test" ? "test" : "development";
 }
 
+/**
+ * @param {unknown} rawUrl
+ * @param {string} trustedOrigin
+ * @returns {boolean}
+ */
 function isTrustedRendererUrl(rawUrl, trustedOrigin) {
   try {
     const url = new URL(String(rawUrl || ""));
@@ -22,6 +32,11 @@ function isTrustedRendererUrl(rawUrl, trustedOrigin) {
   }
 }
 
+/**
+ * @param {unknown[]} args
+ * @param {number} [maxBytes]
+ * @returns {void}
+ */
 function assertBoundedIpcArguments(args, maxBytes = 512 * 1024) {
   let serialized;
   try { serialized = JSON.stringify(args); }
@@ -31,8 +46,24 @@ function assertBoundedIpcArguments(args, maxBytes = 512 * 1024) {
   }
 }
 
+/**
+ * Handler IPC de confiance : reçoit l'événement Electron et les arguments bruts du renderer,
+ * qu'il doit revalider lui-même.
+ * @typedef {(event: import("electron").IpcMainInvokeEvent, ...args: any[]) => unknown} TrustedIpcHandler
+ */
+/**
+ * @param {{
+ *   ipcMain: Pick<import("electron").IpcMain, "handle">,
+ *   trustedOrigin: string,
+ *   now?: () => number,
+ *   maxCalls?: number,
+ *   windowMs?: number,
+ * }} options
+ * @returns {(channel: string, handler: TrustedIpcHandler) => void}
+ */
 function createTrustedIpcRegistrar({ ipcMain, trustedOrigin, now = Date.now, maxCalls = 120, windowMs = 10_000 }) {
   if (!ipcMain?.handle || !trustedOrigin) throw new TypeError("Configuration IPC incomplète.");
+  /** @type {Map<string, { startedAt: number, count: number }>} */
   const buckets = new Map();
 
   return function registerTrustedHandler(channel, handler) {
@@ -59,6 +90,10 @@ function createTrustedIpcRegistrar({ ipcMain, trustedOrigin, now = Date.now, max
   };
 }
 
+/**
+ * @param {string} markerPath
+ * @returns {"unclean" | "clean" | "first-run"}
+ */
 function readPreviousStartupState(markerPath) {
   try {
     const value = JSON.parse(fs.readFileSync(markerPath, "utf8"));
@@ -68,6 +103,12 @@ function readPreviousStartupState(markerPath) {
   }
 }
 
+/**
+ * @param {string} markerPath
+ * @param {"starting" | "running" | "clean"} state
+ * @param {Record<string, unknown>} [details]
+ * @returns {void}
+ */
 function writeStartupState(markerPath, state, details = {}) {
   if (!new Set(["starting", "running", "clean"]).has(state)) throw new TypeError("État de démarrage invalide.");
   fs.mkdirSync(path.dirname(markerPath), { recursive: true });

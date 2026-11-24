@@ -1310,6 +1310,41 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   `CODE_CONTEXT_AUDIT.md`) restent inchangés : ils rapportent des exécutions passées.
 - **Critère V3-L7 « aucun fichier > 1 500 lignes »** : atteint pour le code et les tests.
 
+## 24/11/2026 — V3-L0, A.4 (tranche 1) : `// @ts-check` sur la frontière IPC Electron
+
+- Nouvelles dépendances de développement, en version exacte :
+  - `typescript` 6.0.3 (Apache-2.0) : seule la 6.0 est compatible avec `typescript-eslint`,
+    qui accepte `<6.1.0` ;
+  - `typescript-eslint` 8.74.0 (MIT).
+  - Installées par Arnaud le 24/11. Hors de `Noon.app` : Forge élague les devDependencies.
+  - Jusqu'ici, TypeScript n'arrivait qu'en dépendance transitive de l'outillage Forge.
+  - `@types/node` vient d'`electron`, qui en dépend directement.
+- `tsconfig.check.json` (strict, `checkJs`, `noEmit`) liste les fichiers vérifiés. Il est lancé
+  par `npm run typecheck`, branché à la fin de `npm run lint`.
+- Même liste dans `eslint.config.js` : `@typescript-eslint/no-floating-promises` y est activée
+  avec les informations de types. C'est la règle reportée par A.3.
+  - Contrôle : une promesse non attendue ajoutée temporairement à `preload.js` est bien signalée.
+  - Limite : l'analyse typée lit le fichier sur disque, donc `eslint --stdin` ne la déclenche
+    pas.
+- Fichiers de cette tranche :
+  - `electron/preload.js` : type `NoonBridge` décrivant toute l'API `window.noon`, appliqué par
+    `@satisfies`, et types des charges utiles (règles DEV, mémoire privée, aperçu DEV,
+    partage, permissions locales). Ces types documentent le contrat ; `main.js` continue de
+    revalider chaque entrée comme non fiable ;
+  - `electron/production-hardening.js` : JSDoc du registraire IPC de confiance, des bornes de
+    charge et du marqueur de démarrage.
+- Aucun changement d'exécution : jetons identiques à HEAD, sauf deux parenthèses autour de
+  l'objet passé à `Object.freeze`, nécessaires pour `@satisfies`.
+- Nouveau `test/preload-bridge-contract.test.js` : il exécute le preload avec un module
+  `electron` simulé et vérifie :
+  - que l'API publiée est gelée et a exactement les clés de `NoonBridge` ;
+  - que les 39 méthodes visent chacune un canal `noon:*` enregistré dans `electron/main.js` ;
+  - les formes historiques des charges utiles ;
+  - le filtrage de l'événement et le désabonnement des trois écouteurs.
+- Reste à faire pour A.4 :
+  - `electron/main.js`, avec ses handlers IPC (221 erreurs en mode strict) ;
+  - les connecteurs, la sécurité, la mémoire.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
