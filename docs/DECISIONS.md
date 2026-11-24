@@ -1111,6 +1111,35 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   - `test/workspace-terminal-modules.test.js` vérifie la même classe d'erreur, des projections
     sans état partagé et l'absence d'inspection si la session est refusée.
 
+## 24/11/2026 — V3-L7, fichiers > 1 500 lignes : `native-dev-implementation-engine.js` (2 179 → 1 364)
+
+- Même méthode : déplacements à l'identique, avec 18 déclarations comparées jeton par jeton,
+  toutes identiques. Les déclarations restées dans le moteur sont `applyEdits` et
+  `runImplementation`.
+- Nouveaux modules dans `services/dev/` :
+  - `native-dev-implementation-helpers.js` : tout le niveau module situé entre les imports et
+    la fabrique (phases autorisées, `safeError`, `normalizeReasoning`, `unique`, bornes et
+    candidats de dépendances locales, `isBlockingValidationFailure`), plus `modelFiles`.
+    Fonctions pures et constantes. Le moteur réexporte les mêmes `normalizeReasoning` et
+    `isBlockingValidationFailure`.
+  - `native-dev-implementation-inspection.js` : `inspect` et `inspectLocalDependencies`,
+    construits avec le `journal` du moteur.
+  - `native-dev-implementation-skills.js` : `authorize`, `executeSkill` et `validate`,
+    construits avec la politique de sécurité, le registre de skills, l'exécution
+    transactionnelle, le journal et le `validationRunner` du moteur.
+- Les opérations sont construites juste après les contrôles de dépendances du moteur.
+  - Une dépendance manquante est donc toujours refusée avant toute construction.
+  - Ces dépendances sont des paramètres jamais réaffectés.
+- Tests :
+  - `dev-sandbox-v1-wiring` cherchait l'appel à `validationRunner` dans le texte du moteur. Il
+    lit maintenant le moteur suivi du module des skills, avec la même expression.
+  - Les suites Native DEV concernées passent : 59/59.
+  - `test/native-dev-implementation-modules.test.js` vérifie :
+    - les mêmes exports publics ;
+    - les aides pures ;
+    - la construction des opérations ;
+    - le refus d'une dépendance manquante.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

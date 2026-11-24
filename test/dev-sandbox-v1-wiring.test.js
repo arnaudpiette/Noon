@@ -144,9 +144,13 @@ test(
 test(
   "Native transmet le contexte canonique au validationRunner",
   () => {
+    // V3-L7 : `validate` vit dans native-dev-implementation-skills.js, construit par le moteur.
     const value =
       source(
         "services/dev/native-dev-implementation-engine.js"
+      ) +
+      source(
+        "services/dev/native-dev-implementation-skills.js"
       );
 
     assert.match(
