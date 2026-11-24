@@ -1191,6 +1191,29 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
     - l'activité attribuée à la bonne session ;
     - l'appel à la même place.
 
+## 24/11/2026 — V3-L7, fichiers > 1 500 lignes : `goal-mode-next-step-planner.js` (1 695 → 1 400)
+
+- Le bloc qui va de `VERSION` à `assertRunSnapshot` part dans
+  `services/goals/goal-mode-next-step-primitives.js`. Il contient :
+  - la version, les statuts de jalons et les clés de proposition ;
+  - `fail`, `deepFreeze`, `canonical`, `fingerprint`, `requiredString`, `strictObject` ;
+  - le contrôle de l'instantané de run.
+- Le planificateur garde la sélection de cible, la validation des propositions et la fabrique.
+  Il réexporte les mêmes constantes.
+- Contrôle : 28 déclarations comparées jeton par jeton, toutes identiques.
+- L'empreinte utilise `crypto` sur deux lignes (`crypto` puis `.createHash`). Le contrôle des
+  imports par expression régulière ne voyait pas ce cas : il est maintenant fait sur les
+  jetons, pour tous les modules créés pendant V3-L7. Seuls deux modules de routes semblaient
+  en faute ; ils reçoivent `crypto` par leurs dépendances, fourni par la composition des
+  routes (`node:crypto`).
+- Tests :
+  - suites du planificateur : 47/47 ;
+  - `test/goal-mode-next-step-modules.test.js` vérifie :
+    - les mêmes constantes ;
+    - une forme canonique stable ;
+    - une empreinte `sha256` déterministe ;
+    - le gel profond.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
