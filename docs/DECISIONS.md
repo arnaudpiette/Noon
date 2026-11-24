@@ -1214,6 +1214,30 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
     - une empreinte `sha256` déterministe ;
     - le gel profond.
 
+## 24/11/2026 — V3-L7, fichiers > 1 500 lignes : `security/dev-process-runner.js` (1 667 → 1 278)
+
+- Le bloc qui va de `SANDBOX_LEVELS` à `deepFreeze` part dans
+  `services/security/dev-process-sandbox-primitives.js`. Il contient :
+  - les niveaux, les statuts et les capacités OS ;
+  - les limites par défaut et maximales, et les clés de contrat ;
+  - `DevProcessRunnerError`, les contrôles de clés et l'empreinte ;
+  - la racine existante canonique et la résolution d'exécutable ;
+  - l'environnement minimal ;
+  - la normalisation des limites, des capacités et de l'autorité ;
+  - le gel profond.
+- Aucune règle du bac à sable n'est modifiée.
+  - Le contrat d'exécution (`createSandboxExecutionContractV1`) et le runner restent dans
+    `dev-process-runner.js`.
+  - Celui-ci réexporte les mêmes valeurs : les identités sont vérifiées.
+- Contrôle : 24 déclarations comparées jeton par jeton, toutes identiques.
+- Tests :
+  - suites du runner et du bac à sable : 67/67 ;
+  - `test/dev-process-sandbox-primitives.test.js` vérifie :
+    - les mêmes identités exportées ;
+    - un environnement minimal sans variable secrète ;
+    - des limites figées ;
+    - l'erreur typée.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
