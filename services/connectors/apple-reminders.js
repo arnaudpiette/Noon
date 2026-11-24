@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 // Apple Reminders connector.
@@ -51,6 +52,12 @@ return (id of itemRef) & tab & (name of itemRef) & tab & dueText
 end tell
 end run`;
 
+/**
+ * @param {string[]} args
+ * @param {unknown} input
+ * @param {import("./base-connector").ProcessRunner} [runner]
+ * @returns {Promise<string>}
+ */
 function runShortcut(args, input, runner = execFile) {
   return new Promise((resolve, reject) => {
     const child = runner(
@@ -69,10 +76,15 @@ function runShortcut(args, input, runner = execFile) {
   });
 }
 
+/** @param {import("./base-connector").ProcessRunner} [runner] */
 function listAppleShortcuts(runner) {
   return runShortcut(["list"], undefined, runner);
 }
 
+/**
+ * @param {unknown} input
+ * @param {import("./base-connector").ProcessRunner} [runner]
+ */
 function runNoonReminderShortcut(input, runner) {
   if (!String(input || "").trim()) {
     throw new Error("Texte du rappel obligatoire.");
@@ -81,6 +93,7 @@ function runNoonReminderShortcut(input, runner) {
   return runShortcut(["run", SHORTCUT_NAME], String(input), runner);
 }
 
+/** @param {import("./base-connector").ProcessRunner} [runner] */
 async function checkNoonReminderShortcut(runner) {
   const list = await listAppleShortcuts(runner);
   return list
@@ -88,10 +101,12 @@ async function checkNoonReminderShortcut(runner) {
     .some((name) => name.trim() === SHORTCUT_NAME);
 }
 
+/** @param {unknown} value */
 function normalizeLimit(value) {
   return Math.max(1, Math.min(100, Number(value) || 100));
 }
 
+/** @param {unknown} value */
 function parseReminderMetadata(value) {
   return String(value || "").split("\n").filter(Boolean).map((line) => {
     const [id, dueAt] = line.split("\t");
@@ -99,6 +114,10 @@ function parseReminderMetadata(value) {
   }).filter((item) => item.id);
 }
 
+/**
+ * @param {Array<{ id: string, dueAt: string | null }>} items
+ * @param {Date | string} [now]
+ */
 function rankContextReminders(items, now = new Date()) {
   const timestamp = now instanceof Date ? now.getTime() : Date.parse(now);
   return [...items].sort((left, right) => {
@@ -114,21 +133,34 @@ function contextTimeoutError() {
   return Object.assign(new Error("Authorized context source timeout"), { code: "CONTEXT_SOURCE_TIMEOUT" });
 }
 
+/**
+ * @param {string} script
+ * @param {Array<string | number>} args
+ * @param {import("./base-connector").ProcessRunner} [runner]
+ * @param {{ signal?: AbortSignal, timeoutMs?: number }} [options]
+ * @returns {Promise<string>}
+ */
 function runReminderScript(script, args, runner = execFile, { signal, timeoutMs = 5_000 } = {}) {
   if (signal?.aborted) return Promise.reject(signal.reason || contextTimeoutError());
   const boundedTimeoutMs = Math.max(1, Math.min(5_000, Number(timeoutMs) || 5_000));
   return new Promise((resolve, reject) => {
+    /** @type {any} */
     let child = null;
     let settled = false;
+    /**
+     * @param {(value: any) => void} callback
+     * @param {unknown} value
+     */
     const finish = (callback, value) => {
       if (settled) return;
       settled = true;
       signal?.removeEventListener("abort", abort);
       callback(value);
     };
+    // abort n'est enregistré que si signal est fourni.
     const abort = () => {
       try { child?.kill?.(); } catch {}
-      finish(reject, signal.reason || contextTimeoutError());
+      finish(reject, /** @type {AbortSignal} */ (signal).reason || contextTimeoutError());
     };
     child = runner(
       "osascript", ["-e", script, "--", ...args.map(String)],
@@ -144,6 +176,17 @@ function runReminderScript(script, args, runner = execFile, { signal, timeoutMs 
   });
 }
 
+/**
+ * @param {{
+ *   limit?: number,
+ *   windowDays?: number,
+ *   now?: Date | string,
+ *   signal?: AbortSignal,
+ *   timeoutMs?: number,
+ *   clock?: () => number,
+ * }} [options]
+ * @param {import("./base-connector").ProcessRunner} [runner]
+ */
 async function listIncompleteRemindersForContext({ limit = 5, windowDays = A3_REMINDER_WINDOW_DAYS, now = new Date(), signal, timeoutMs = 5_000, clock = Date.now } = {}, runner = execFile) {
   const boundedLimit = Math.max(1, Math.min(5, Number(limit) || 5));
   const boundedWindowDays = Math.max(1, Math.min(31, Number(windowDays) || A3_REMINDER_WINDOW_DAYS));
@@ -190,6 +233,10 @@ function resolveRemindersHelperPath() {
   );
 }
 
+/**
+ * @param {number} [limit]
+ * @param {import("./base-connector").ProcessRunner} [runner]
+ */
 function listIncompleteRemindersEventKit(limit = 100, runner = execFile) {
   const boundedLimit = normalizeLimit(limit);
   const helperPath = resolveRemindersHelperPath();
@@ -260,10 +307,15 @@ function listIncompleteRemindersEventKit(limit = 100, runner = execFile) {
   });
 }
 
+/**
+ * @param {any} [limitOrRunner]
+ * @param {import("./base-connector").ProcessRunner} [maybeRunner]
+ */
 function listIncompleteRemindersAppleScript(
   limitOrRunner = 100,
   maybeRunner = execFile
 ) {
+  /** @type {import("./base-connector").ProcessRunner} */
   const runner =
     typeof limitOrRunner === "function"
       ? limitOrRunner
@@ -358,6 +410,10 @@ end run`;
   );
 }
 
+/**
+ * @param {any} [limitOrRunner]
+ * @param {import("./base-connector").ProcessRunner} [maybeRunner]
+ */
 async function listIncompleteReminders(
   limitOrRunner = 100,
   maybeRunner = execFile
@@ -389,6 +445,7 @@ async function listIncompleteReminders(
   }
 }
 
+/** @param {import("./base-connector").ConnectorDependencies} deps */
 function createAppleConnector(deps) {
   const base = createConnector(
     {
@@ -415,7 +472,7 @@ function createAppleConnector(deps) {
     runNoonReminderShortcut,
     checkNoonReminderShortcut,
 
-    listIncompleteReminders: (...args) =>
+    listIncompleteReminders: (/** @type {any[]} */ ...args) =>
       base.run(
         () => listIncompleteReminders(...args),
         {
@@ -423,7 +480,7 @@ function createAppleConnector(deps) {
           maxRetries: 0,
         }
       ),
-    listIncompleteRemindersForContext: (options, runner) =>
+    listIncompleteRemindersForContext: (/** @type {Parameters<typeof listIncompleteRemindersForContext>[0]} */ options, /** @type {import("./base-connector").ProcessRunner | undefined} */ runner) =>
       base.run(
         () => listIncompleteRemindersForContext(options, runner),
         { idempotent: true, maxRetries: 0 }

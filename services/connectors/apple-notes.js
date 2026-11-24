@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 const { execFile } = require("child_process");
@@ -111,6 +112,7 @@ return output
 end tell
 end run`;
 
+/** @param {unknown} value */
 function normalize(value) {
   return String(value || "")
     .toLocaleLowerCase("fr")
@@ -120,23 +122,36 @@ function normalize(value) {
     .trim();
 }
 
+/**
+ * @param {string} script
+ * @param {Array<string | number>} args
+ * @param {import("./base-connector").ProcessRunner} [runner]
+ * @param {{ signal?: AbortSignal, timeoutMs?: number }} [options]
+ * @returns {Promise<string>}
+ */
 function runAppleScript(script, args, runner = execFile, { signal, timeoutMs = 10_000 } = {}) {
   if (signal?.aborted) {
     return Promise.reject(signal.reason || Object.assign(new Error("Apple Notes annulé."), { code: "ABORT_ERR" }));
   }
   const boundedTimeoutMs = Math.max(1, Math.min(10_000, Number(timeoutMs) || 10_000));
   return new Promise((resolve, reject) => {
+    /** @type {any} */
     let child = null;
     let settled = false;
+    /**
+     * @param {(value: any) => void} callback
+     * @param {unknown} value
+     */
     const finish = (callback, value) => {
       if (settled) return;
       settled = true;
       signal?.removeEventListener("abort", abort);
       callback(value);
     };
+    // abort n'est enregistré que si signal est fourni.
     const abort = () => {
       try { child?.kill?.(); } catch {}
-      finish(reject, signal.reason || Object.assign(new Error("Apple Notes annulé."), { code: "ABORT_ERR" }));
+      finish(reject, /** @type {AbortSignal} */ (signal).reason || Object.assign(new Error("Apple Notes annulé."), { code: "ABORT_ERR" }));
     };
     child = runner(
       "osascript",
@@ -167,6 +182,10 @@ function runAppleScript(script, args, runner = execFile, { signal, timeoutMs = 1
   });
 }
 
+/**
+ * @param {unknown} query
+ * @param {{ title?: string }} note
+ */
 function noteScore(query, note) {
   const tokens = normalize(query)
     .split(" ")
@@ -189,6 +208,7 @@ function noteScore(query, note) {
       : 0;
 }
 
+/** @param {any} optionsOrRunner */
 function normalizeRecentOptions(optionsOrRunner) {
   if (
     optionsOrRunner &&
@@ -214,6 +234,10 @@ function normalizeRecentOptions(optionsOrRunner) {
   };
 }
 
+/**
+ * @param {any} [optionsOrRunner]
+ * @param {import("./base-connector").ProcessRunner} [maybeRunner]
+ */
 async function listRecentNotes(
   optionsOrRunner = {},
   maybeRunner = execFile
@@ -254,6 +278,11 @@ async function listRecentNotes(
     });
 }
 
+/**
+ * @param {unknown} stdout
+ * @param {string} matchType
+ * @param {unknown} query
+ */
 function parseMetadata(stdout, matchType, query) {
   return String(stdout)
     .split("\n")
@@ -279,6 +308,18 @@ function parseMetadata(stdout, matchType, query) {
     .filter((note) => note.id && note.title);
 }
 
+/**
+ * @param {unknown} query
+ * @param {{
+ *   limit?: number,
+ *   includeBody?: boolean,
+ *   searchScope?: string,
+ *   maxExcerptLength?: number,
+ *   signal?: AbortSignal,
+ *   timeoutMs?: number,
+ * }} [options]
+ * @param {import("./base-connector").ProcessRunner} [runner]
+ */
 async function searchNotes(
   query,
   {
@@ -326,6 +367,7 @@ async function searchNotes(
     value
   );
 
+  /** @type {ReturnType<typeof parseMetadata>} */
   let bodyCandidates = [];
 
   if (searchScope !== "title" && titleCandidates.length < resultLimit) {
@@ -408,6 +450,7 @@ async function searchNotes(
   return results;
 }
 
+/** @param {import("./base-connector").ConnectorDependencies} deps */
 function createAppleNotesConnector(deps) {
   const base = createConnector(
     {
@@ -429,7 +472,7 @@ function createAppleNotesConnector(deps) {
   );
 
   return Object.assign(base, {
-    listRecentNotes: (optionsOrRunner, maybeRunner) =>
+    listRecentNotes: (/** @type {any} */ optionsOrRunner, /** @type {import("./base-connector").ProcessRunner | undefined} */ maybeRunner) =>
       base.run(
         () =>
           listRecentNotes(
@@ -442,7 +485,7 @@ function createAppleNotesConnector(deps) {
         }
       ),
 
-    searchNotes: (query, options, runner) =>
+    searchNotes: (/** @type {unknown} */ query, /** @type {Parameters<typeof searchNotes>[1]} */ options, /** @type {import("./base-connector").ProcessRunner | undefined} */ runner) =>
       base.run(
         () => searchNotes(query, options, runner),
         {

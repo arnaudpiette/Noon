@@ -17,6 +17,7 @@
     "skipLibCheck": true
   },
   "files": [
+    "types/noon-error.d.ts",
     "electron/preload.js",
     "electron/production-hardening.js",
     "electron/main.js",
@@ -29,6 +30,15 @@
     "services/security/operational-security-policy.js",
     "services/security/dev-process-sandbox-primitives.js",
     "services/security/dev-process-runner.js",
-    "services/security/dev-validation-runner.js"
+    "services/security/dev-validation-runner.js",
+    "services/connectors/base-connector.js",
+    "services/connectors/figma.js",
+    "services/connectors/github.js",
+    "services/connectors/gmail.js",
+    "services/connectors/google-calendar.js",
+    "services/connectors/google-auth.js",
+    "services/connectors/google-account.js",
+    "services/connectors/apple-notes.js",
+    "services/connectors/apple-reminders.js"
   ]
 }

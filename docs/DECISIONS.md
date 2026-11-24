@@ -1456,6 +1456,44 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
     `eval:delegation` 10/10.
 - Reste à faire pour A.4 : connecteurs, mémoire.
 
+## 24/11/2026 — V3-L0, A.4 (tranche 5) : `// @ts-check` sur les connecteurs
+
+- Les neuf fichiers de `services/connectors/` sont vérifiés en mode strict, puis par
+  `no-floating-promises` : 274 erreurs au départ, 0 à l'arrivée.
+  - `base-connector`, `figma`, `github`, `gmail`, `google-calendar` ;
+  - `google-auth`, `google-account` ;
+  - `apple-notes`, `apple-reminders`.
+- Nouveau fichier `types/noon-error.d.ts`, pour la vérification de types seulement (rien n'est
+  chargé à l'exécution). Il déclare la convention du dépôt : un `Error` peut porter `code` et
+  `status`. Cela évite d'annoter chaque `error.code = …`.
+  - `eslint.config.js` ne retient que les fichiers `.js` de la liste de `tsconfig.check.json` :
+    sans ce filtre, `npm run lint` analysait le `.d.ts`.
+  - Le fichier est embarqué dans l'ASAR, car il n'est pas exclu du packaging. Il est inerte.
+- Contrats désormais écrits en JSDoc :
+  - `ConnectorDefinition` et `ConnectorDependencies` (le stockage des tokens, la fiabilité,
+    les approbations, le runtime, `getGoogleAccessToken`) ;
+  - `ProcessRunner` : un exécuteur au format `execFile`, injectable dans les tests ;
+  - `providerFetch` ;
+  - pour Google OAuth : `GoogleAuthError` (`reasonCode`, `oauthDiagnostic`,
+    `profileDiagnostic`), `PendingGoogleState` (la transaction PKCE en mémoire),
+    `GoogleClientConfig`, `OAuthFailure`.
+  - `rejectGoogleAuthorization` est annoté `@returns {never}`.
+- `google-account` reçoit ses dépendances de `server.js`, contrôlées à l'exécution par
+  `DEPENDENCIES`. Elles sont typées `Record<string, any>`.
+- Assertions ciblées, toutes commentées :
+  - réponses JSON du fournisseur (`Record<string, any>`) ;
+  - `req.url` présent sur une requête serveur ;
+  - `signal` présent quand l'écouteur d'abandon est enregistré.
+- Aucun scope OAuth n'a changé, ni l'approbation des écritures, ni le refus des écritures
+  distantes (`REMOTE_WRITE_NOT_ENABLED`), ni l'exécution AppleScript ou EventKit. Les jetons
+  sont identiques à HEAD, à 5 paires de parenthèses près. Aucun risque de point-virgule
+  implicite.
+- Validation :
+  - tests : 2 978/2 978 ;
+  - évaluations : `eval:critical` 54/54, `eval:privacy` 3/3, `eval:smoke` 99/99,
+    `eval:remote` 8/8, `eval:offline` 7/7.
+- Reste à faire pour A.4 : la mémoire.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

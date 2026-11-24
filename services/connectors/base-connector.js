@@ -1,9 +1,60 @@
+// @ts-check
 "use strict";
 
 // Fabrique commune des connecteurs : état de santé, capacités et gestion normalisée des erreurs.
 
+/**
+ * Description statique d'un connecteur.
+ * @typedef {{
+ *   id: string,
+ *   displayName: string,
+ *   credentialId?: string,
+ *   local?: boolean,
+ *   remoteCapability?: string,
+ *   capabilities?: string[],
+ *   readCapabilities?: string[],
+ *   writeCapabilities?: string[],
+ *   scopes?: string[],
+ * }} ConnectorDefinition
+ */
+/**
+ * Dépendances injectées par server.js. Les écritures externes passent par `approvals`.
+ * @typedef {{
+ *   tokenStore?: { get: (id: string) => any, remove: (id: string) => void },
+ *   reliability?: {
+ *     recordSuccess: (id: string) => void,
+ *     recordFailure: (id: string, error: unknown, details?: object) => void,
+ *     snapshot: (id: string) => { state: string },
+ *     execute: (id: string, operation: () => Promise<any>, options?: object) => Promise<{ data: any }>,
+ *   } | null,
+ *   disabledReason?: string | null,
+ *   runtime?: { preflight: (input: { requiredCapabilities: string[] }) => { status: string } } | null,
+ *   configured?: () => boolean,
+ *   approvals?: {
+ *     requestApproval: (input: object) => any,
+ *     consumeApproval: (approvalId: string, scope: object) => any,
+ *   },
+ *   getGoogleAccessToken?: () => Promise<string | null | undefined> | string | null | undefined,
+ *   dryRun?: boolean,
+ * }} ConnectorDependencies
+ */
+/**
+ * Exécuteur de processus au format execFile (injectable dans les tests). L'erreur reçue est celle
+ * de child_process (code, killed), lue telle quelle.
+ * @typedef {(
+ *   file: string,
+ *   args: string[],
+ *   options: { timeout?: number, maxBuffer?: number },
+ *   callback: (error: any, stdout: string | Buffer, stderr?: string | Buffer) => void,
+ * ) => any} ProcessRunner
+ */
+/**
+ * @param {ConnectorDefinition} definition
+ * @param {ConnectorDependencies} [dependencies]
+ */
 function createConnector(definition, dependencies = {}) {
   const { classifyFailure } = require("../reliability/reliability-engine");
+  /** @type {{ lastSuccessfulRequestAt: string | null, lastError: any }} */
   const state = { lastSuccessfulRequestAt: null, lastError: null };
   const tokenStore = dependencies.tokenStore;
   const reliability = dependencies.reliability;
@@ -21,6 +72,10 @@ function createConnector(definition, dependencies = {}) {
     state.lastSuccessfulRequestAt = new Date().toISOString(); state.lastError = null;
     try { reliability?.recordSuccess(definition.id); } catch {}
   }
+  /**
+   * @param {unknown} error
+   * @param {boolean} [record]
+   */
   function markError(error, record = true) {
     state.lastError = classifyFailure(error);
     if (record) try { reliability?.recordFailure(definition.id, error); } catch {}
@@ -45,6 +100,12 @@ function createConnector(definition, dependencies = {}) {
       };
     },
     assertRemoteAvailable, markSuccess, markError,
+    /**
+     * @template T
+     * @param {() => Promise<T>} operation
+     * @param {object} [options]
+     * @returns {Promise<T>}
+     */
     async run(operation, options = {}) {
       try {
         assertRemoteAvailable();
@@ -61,6 +122,19 @@ function createConnector(definition, dependencies = {}) {
   };
 }
 
+/**
+ * Appel HTTP authentifié vers un fournisseur ; renvoie le JSON décodé.
+ * @param {string} url
+ * @param {{
+ *   token?: string | null,
+ *   method?: string,
+ *   headers?: Record<string, string>,
+ *   body?: string,
+ *   signal?: AbortSignal,
+ *   timeoutMs?: number,
+ * }} [options]
+ * @returns {Promise<any>}
+ */
 async function providerFetch(url, { token, method = "GET", headers = {}, body, signal, timeoutMs = 10_000 } = {}) {
   if (!token) throw new Error("Intégration non connectée.");
   const controller = new AbortController();

@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 const { createConnector, providerFetch } = require("./base-connector");
@@ -7,11 +8,19 @@ const COMPLETE_MAX_PAGES = 20;
 const COMPLETE_MAX_ITEMS = 1000;
 const COMPLETE_TIMEOUT_MS = 30_000;
 
+/**
+ * @param {Date} date
+ * @param {string} timeZone
+ */
 function localDateParts(date, timeZone) {
   const values = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(date).map(({ type, value }) => [type, value]));
   return { year: Number(values.year), month: Number(values.month), day: Number(values.day), hour: Number(values.hour), minute: Number(values.minute) };
 }
 
+/**
+ * @param {Date} date
+ * @param {string} [timeZone]
+ */
 function zonedMidnight(date, timeZone = "Europe/Paris") {
   const { year, month, day } = localDateParts(date, timeZone);
   const desired = Date.UTC(year, month - 1, day);
@@ -26,6 +35,10 @@ function zonedMidnight(date, timeZone = "Europe/Paris") {
   return new Date(instant);
 }
 
+/**
+ * @param {Date} date
+ * @param {string} [timeZone]
+ */
 function localDayRange(date, timeZone = "Europe/Paris") {
   const start = zonedMidnight(date, timeZone);
   const nextLocalDay = new Date(start.getTime() + 36 * 60 * 60 * 1000);
@@ -33,6 +46,11 @@ function localDayRange(date, timeZone = "Europe/Paris") {
   return { timeMin: start.toISOString(), timeMax: end.toISOString() };
 }
 
+/**
+ * @param {Date} date
+ * @param {number} [days]
+ * @param {string} [timeZone]
+ */
 function localDateRange(date, days = 1, timeZone = "Europe/Paris") {
   if (!Number.isInteger(days) || days < 1) throw new TypeError("Durée Calendar invalide.");
   const { year, month, day } = localDateParts(date, timeZone);
@@ -41,6 +59,7 @@ function localDateRange(date, days = 1, timeZone = "Europe/Paris") {
   return { timeMin: start.toISOString(), timeMax: end.toISOString() };
 }
 
+/** @param {import("./base-connector").ConnectorDependencies & { tokenStore: NonNullable<import("./base-connector").ConnectorDependencies["tokenStore"]>, approvals: NonNullable<import("./base-connector").ConnectorDependencies["approvals"]> }} deps */
 function createCalendarConnector(deps) {
   const base = createConnector({ id: "google-calendar", credentialId: "google", remoteCapability: "REMOTE_GOOGLE_CALENDAR", displayName: "Google Calendar",
     capabilities: ["events", "availability", "conflicts", "changes_with_approval"],
@@ -51,6 +70,9 @@ function createCalendarConnector(deps) {
     base.assertRemoteAvailable();
     return deps.getGoogleAccessToken ? deps.getGoogleAccessToken() : deps.tokenStore.get("google")?.access_token;
   };
+  /**
+   * @param {{ timeMin?: string, timeMax?: string, calendarId?: string, maxResults?: number }} [query]
+   */
   async function listCalendarEvents({ timeMin = new Date().toISOString(), timeMax, calendarId = "primary", maxResults = 50 } = {}) {
     const limit = maxResults;
     if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new TypeError("Limite Calendar invalide.");
@@ -58,15 +80,19 @@ function createCalendarConnector(deps) {
     if (timeMax) params.set("timeMax", timeMax);
     return base.run(async () => providerFetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?${params}`, { token: await token() }), { idempotent: true });
   }
+  /**
+   * @param {{ timeMin?: string, timeMax?: string, calendarId?: string, maxPages?: number, maxItems?: number, timeoutMs?: number }} [query]
+   */
   async function listCompleteCalendarEvents({ timeMin = new Date().toISOString(), timeMax, calendarId = "primary", maxPages = COMPLETE_MAX_PAGES, maxItems = COMPLETE_MAX_ITEMS, timeoutMs = COMPLETE_TIMEOUT_MS } = {}) {
     if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > COMPLETE_MAX_PAGES) throw new TypeError("Nombre de pages Calendar invalide.");
     if (!Number.isInteger(maxItems) || maxItems < 1 || maxItems > COMPLETE_MAX_ITEMS) throw new TypeError("Volume Calendar invalide.");
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > COMPLETE_TIMEOUT_MS) throw new TypeError("Durée Calendar invalide.");
-    const startedAt = Date.now(); const items = []; const seenTokens = new Set(); let pageToken = null; let pages = 0;
+    const startedAt = Date.now(); /** @type {any[]} */ const items = []; /** @type {Set<string>} */ const seenTokens = new Set(); /** @type {string | null} */ let pageToken = null; let pages = 0;
     while (pages < maxPages && items.length < maxItems) {
       const params = new URLSearchParams({ timeMin, singleEvents: "true", orderBy: "startTime", maxResults: String(Math.min(COMPLETE_PAGE_SIZE, maxItems - items.length)) });
       if (timeMax) params.set("timeMax", timeMax);
       if (pageToken) params.set("pageToken", pageToken);
+      /** @type {any} */
       let data;
       try {
         const remaining = timeoutMs - (Date.now() - startedAt);
@@ -90,26 +116,44 @@ function createCalendarConnector(deps) {
     if (!colors?.event?.[BLUEBERRY_COLOR_ID]) throw new Error("La couleur Myrtille n’est pas disponible dans Google Calendar.");
     return BLUEBERRY_COLOR_ID;
   }
+  /**
+   * @typedef {{ summary?: string, start?: any, end?: any, calendarId?: string, timezone?: string }} CalendarEventInput
+   */
+  /** @param {CalendarEventInput | null | undefined} event */
   function prepareCalendarEvent(event) {
     if (!event?.summary || !event?.start || !event?.end) throw new Error("Titre, début et fin obligatoires.");
     return { calendarId: event.calendarId || "primary", timezone: event.timezone || "Europe/Paris", ...event };
   }
+  /** @param {Array<{ start: any, end: any }>} events */
   function detectCalendarConflicts(events) {
     return events.flatMap((event, index) => events.slice(index + 1).filter((other) =>
       new Date(event.start) < new Date(other.end) && new Date(other.start) < new Date(event.end)).map((other) => [event, other]));
   }
+  /**
+   * @param {CalendarEventInput} event
+   * @param {string} [action]
+   */
   function previewCalendarChange(event, action = "create") {
     const prepared = prepareCalendarEvent(event);
     return deps.approvals.requestApproval({ provider: "google-calendar", action: `${action}_event`,
       target: prepared.calendarId, payload: prepared, preview: prepared,
       strengthened: action === "delete", consequences: action === "delete" ? "Supprimera l’événement affiché." : "Modifiera le calendrier affiché." });
   }
+  /**
+   * @param {CalendarEventInput} event
+   * @param {string} action
+   * @param {string} approvalId
+   */
   async function applyCalendarChangeWithApproval(event, action, approvalId) {
     const prepared = prepareCalendarEvent(event);
     deps.approvals.consumeApproval(approvalId, { provider: "google-calendar", action: `${action}_event`, target: prepared.calendarId, payload: prepared });
     if (deps.dryRun) return { dryRun: true, applied: false };
     throw new Error("Écriture Calendar réelle non activée dans cette version.");
   }
+  /**
+   * @param {string} calendarId
+   * @param {string} planningKey
+   */
   async function findManagedEvent(calendarId, planningKey) {
     const params = new URLSearchParams({ privateExtendedProperty: `planningKey=${planningKey}`, maxResults: "2", singleEvents: "true" });
     const data = await providerFetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?${params}`, { token: await token() });

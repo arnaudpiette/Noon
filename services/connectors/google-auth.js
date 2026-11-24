@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 const crypto = require("crypto");
@@ -5,17 +6,46 @@ const { OAuth2Client, CodeChallengeMethod } = require("google-auth-library");
 const { version: GOOGLE_AUTH_LIBRARY_VERSION } = require("google-auth-library/package.json");
 
 const GOOGLE_OAUTH_TRANSACTION_TTL_MS = 10 * 60 * 1000;
+/**
+ * Erreur OAuth Google : code stable et diagnostic sans secret.
+ * @typedef {Error & { reasonCode?: string, oauthDiagnostic?: object, profileDiagnostic?: object }} GoogleAuthError
+ */
+/**
+ * Transaction PKCE en attente, identifiée par son `state` (mémoire seulement, TTL 10 min).
+ * @typedef {{
+ *   codeVerifier: string,
+ *   createdAt: number,
+ *   redirectUri: string,
+ *   clientIdFingerprint: string,
+ *   clientSecretFingerprint: string,
+ *   pkce: ReturnType<typeof inspectGooglePkceAuthorizationUrl>,
+ * }} PendingGoogleState
+ */
+/**
+ * @typedef {{
+ *   clientId?: string,
+ *   clientSecret?: string,
+ *   redirectUri?: string,
+ *   oauthClientFactory?: ((config: { clientId?: string, clientSecret?: string, redirectUri?: string })
+ *     => Pick<OAuth2Client, "generateCodeVerifierAsync" | "generateAuthUrl" | "getToken">) | null,
+ * }} GoogleClientConfig
+ */
+/** @typedef {{ status?: number | null, error?: string | null, description?: string | null }} OAuthFailure */
+/** @type {Map<string, PendingGoogleState>} */
 const pendingStates = new Map();
 
+/** @param {unknown} value */
 function safeFingerprint(value) {
   return crypto.createHash("sha256").update(String(value), "utf8").digest("hex").slice(0, 16);
 }
 
+/** @param {GoogleClientConfig} config */
 function createOfficialClient({ clientId, clientSecret, redirectUri, oauthClientFactory = null }) {
   if (oauthClientFactory) return oauthClientFactory({ clientId, clientSecret, redirectUri });
   return new OAuth2Client(clientId, clientSecret, redirectUri);
 }
 
+/** @param {string} authorizationUrl */
 function inspectGooglePkceAuthorizationUrl(authorizationUrl) {
   const params = new URL(authorizationUrl).searchParams;
   const challengePresent = params.has("code_challenge") && Boolean(params.get("code_challenge"));
@@ -29,9 +59,14 @@ function inspectGooglePkceAuthorizationUrl(authorizationUrl) {
   };
 }
 
+/**
+ * @param {string} authorizationUrl
+ * @param {string} expectedRedirectUri
+ */
 function assertGoogleRedirectAuthorizationUrl(authorizationUrl, expectedRedirectUri) {
   const actualRedirectUri = new URL(authorizationUrl).searchParams.get("redirect_uri");
   if (actualRedirectUri !== expectedRedirectUri) {
+    /** @type {GoogleAuthError} */
     const error = new Error("URI de callback Google invalide.");
     error.code = "GOOGLE_OAUTH_REDIRECT_URI_INVALID";
     error.oauthDiagnostic = { redirectUriMatch: "FAIL" };
@@ -40,9 +75,11 @@ function assertGoogleRedirectAuthorizationUrl(authorizationUrl, expectedRedirect
   return "PASS";
 }
 
+/** @param {string} authorizationUrl */
 function assertGooglePkceAuthorizationUrl(authorizationUrl) {
   const pkceUrl = inspectGooglePkceAuthorizationUrl(authorizationUrl);
   if (pkceUrl.codeChallengePresent !== "YES" || pkceUrl.codeChallengeMethodValue !== "S256") {
+    /** @type {GoogleAuthError} */
     const error = new Error("Méthode PKCE Google invalide.");
     error.code = "GOOGLE_PKCE_METHOD_INVALID";
     error.oauthDiagnostic = pkceUrl;
@@ -51,6 +88,10 @@ function assertGooglePkceAuthorizationUrl(authorizationUrl) {
   return pkceUrl;
 }
 
+/**
+ * @param {any} error
+ * @returns {OAuthFailure}
+ */
 function providerFailure(error) {
   const payload = error?.response?.data;
   const status = Number(error?.response?.status || error?.status);
@@ -61,6 +102,14 @@ function providerFailure(error) {
   };
 }
 
+/**
+ * @param {{
+ *   previousToken?: { refresh_token?: string | null } | null,
+ *   token: Record<string, any>,
+ *   email?: string | null,
+ *   now?: number,
+ * }} input
+ */
 function normalizeGoogleTokenForPersistence({ previousToken = null, token, email, now = Date.now() }) {
   return {
     ...token,
@@ -70,14 +119,19 @@ function normalizeGoogleTokenForPersistence({ previousToken = null, token, email
   };
 }
 
+/**
+ * @param {unknown} value
+ * @returns {string | null}
+ */
 function safeGoogleApiCode(value) {
   return typeof value === "string" && /^[A-Za-z0-9_.-]{1,120}$/.test(value) ? value : null;
 }
 
+/** @param {any} payload */
 function inspectGoogleApiFailure(payload) {
   const providerError = payload && typeof payload === "object" ? payload.error : null;
   const providerReason = Array.isArray(providerError?.errors)
-    ? providerError.errors.map((entry) => safeGoogleApiCode(entry?.reason)).find(Boolean) || null
+    ? providerError.errors.map((/** @type {{ reason?: unknown }} */ entry) => safeGoogleApiCode(entry?.reason)).find(Boolean) || null
     : null;
   return {
     providerStatus: safeGoogleApiCode(providerError?.status),
@@ -85,6 +139,15 @@ function inspectGoogleApiFailure(payload) {
   };
 }
 
+/**
+ * @param {{
+ *   status?: unknown,
+ *   ok?: boolean,
+ *   emailAddress?: unknown,
+ *   expectedEmail?: string | null,
+ *   providerFailure?: { providerStatus?: unknown, providerReason?: unknown },
+ * }} input
+ */
 function assertGoogleProfileResponse({ status, ok, emailAddress, expectedEmail, providerFailure = {} }) {
   const diagnostic = {
     httpStatus: Number.isInteger(Number(status)) ? Number(status) : null,
@@ -96,12 +159,14 @@ function assertGoogleProfileResponse({ status, ok, emailAddress, expectedEmail, 
     providerReason: safeGoogleApiCode(providerFailure.providerReason),
   };
   if (!ok) {
+    /** @type {GoogleAuthError} */
     const error = new Error("Vérification du profil Gmail refusée.");
     error.code = "GOOGLE_GMAIL_PROFILE_FAILED";
     error.profileDiagnostic = diagnostic;
     throw error;
   }
   if (diagnostic.accountMatched !== "YES") {
+    /** @type {GoogleAuthError} */
     const error = new Error("Le compte Google autorisé ne correspond pas au compte Noon attendu.");
     error.code = "GOOGLE_ACCOUNT_MISMATCH";
     error.profileDiagnostic = diagnostic;
@@ -110,6 +175,16 @@ function assertGoogleProfileResponse({ status, ok, emailAddress, expectedEmail, 
   return diagnostic;
 }
 
+/**
+ * @param {{
+ *   pending?: PendingGoogleState | null,
+ *   clientId?: string,
+ *   clientSecret?: string,
+ *   failure?: OAuthFailure,
+ *   stateMatched?: boolean,
+ *   exchangeCount?: number,
+ * }} [input]
+ */
 function oauthDiagnostic({ pending = null, clientId, clientSecret, failure = {}, stateMatched, exchangeCount = 0 } = {}) {
   return {
     tokenEndpointStatus: Number.isInteger(failure.status) ? failure.status : null,
@@ -133,6 +208,7 @@ function oauthDiagnostic({ pending = null, clientId, clientSecret, failure = {},
   };
 }
 
+/** @param {GoogleClientConfig & { scopes: string[] }} input */
 async function createGoogleAuthorization({ clientId, clientSecret, redirectUri, scopes, oauthClientFactory = null }) {
   if (!clientId || !clientSecret || !redirectUri) throw new Error("Identifiants OAuth Google non configurés.");
   const oauth2Client = createOfficialClient({ clientId, clientSecret, redirectUri, oauthClientFactory });
@@ -140,12 +216,14 @@ async function createGoogleAuthorization({ clientId, clientSecret, redirectUri, 
   try {
     officialPkce = await oauth2Client.generateCodeVerifierAsync();
   } catch {
+    /** @type {GoogleAuthError} */
     const error = new Error("Transaction PKCE Google indisponible.");
     error.code = "GOOGLE_PKCE_GENERATION_FAILED";
     throw error;
   }
   const { codeVerifier, codeChallenge } = officialPkce || {};
   if (!codeVerifier || !codeChallenge) {
+    /** @type {GoogleAuthError} */
     const error = new Error("Transaction PKCE Google indisponible.");
     error.code = "GOOGLE_PKCE_GENERATION_FAILED";
     throw error;
@@ -162,6 +240,7 @@ async function createGoogleAuthorization({ clientId, clientSecret, redirectUri, 
       code_challenge_method: CodeChallengeMethod.S256,
     });
   } catch {
+    /** @type {GoogleAuthError} */
     const error = new Error("Autorisation Google indisponible.");
     error.code = "GOOGLE_OAUTH_AUTHORIZATION_UNAVAILABLE";
     throw error;
@@ -179,6 +258,11 @@ async function createGoogleAuthorization({ clientId, clientSecret, redirectUri, 
   return { url, state, pkce: { ...pkce, redirectUriMatch } };
 }
 
+/**
+ * @param {unknown} state
+ * @param {number} [now]
+ * @returns {PendingGoogleState}
+ */
 function consumeGoogleState(state, now = Date.now()) {
   const key = String(state);
   const pending = pendingStates.get(key);
@@ -189,21 +273,29 @@ function consumeGoogleState(state, now = Date.now()) {
   return pending;
 }
 
+/** @param {unknown} state */
 function discardGoogleState(state) {
   pendingStates.delete(String(state));
 }
 
+/**
+ * Lève toujours une GoogleAuthError.
+ * @param {{ state: unknown, clientId?: string, clientSecret?: string, providerError?: string }} input
+ * @returns {never}
+ */
 function rejectGoogleAuthorization({ state, clientId, clientSecret, providerError = "access_denied" }) {
   let pending;
   try {
     pending = consumeGoogleState(state);
   } catch {
+    /** @type {GoogleAuthError} */
     const error = new Error("Callback OAuth Google inattendu ou expiré.");
     error.code = "GOOGLE_OAUTH_STATE_INVALID";
     error.reasonCode = "AUTH_FAILED";
     error.oauthDiagnostic = oauthDiagnostic({ clientId, clientSecret, stateMatched: false });
     throw error;
   }
+  /** @type {GoogleAuthError} */
   const error = new Error("Autorisation Google refusée.");
   error.code = "GOOGLE_OAUTH_AUTH_DENIED";
   error.reasonCode = "AUTH_DENIED";
@@ -217,16 +309,19 @@ function rejectGoogleAuthorization({ state, clientId, clientSecret, providerErro
   throw error;
 }
 
+/** @param {GoogleClientConfig & { code?: string, state: unknown }} input */
 async function exchangeGoogleCode({ code, state, clientId, clientSecret, oauthClientFactory = null }) {
   let pending;
   try {
     pending = consumeGoogleState(state);
   } catch {
+    /** @type {GoogleAuthError} */
     const error = new Error("Callback OAuth Google inattendu ou expiré.");
     error.code = "GOOGLE_OAUTH_STATE_INVALID";
     error.oauthDiagnostic = oauthDiagnostic({ clientId, clientSecret, stateMatched: false });
     throw error;
   }
+  /** @param {OAuthFailure} [failure] */
   const diagnostic = (failure = {}) => oauthDiagnostic({
     pending,
     clientId,
@@ -236,12 +331,14 @@ async function exchangeGoogleCode({ code, state, clientId, clientSecret, oauthCl
     exchangeCount: 1,
   });
   if (!code) {
+    /** @type {GoogleAuthError} */
     const error = new Error("Code OAuth Google absent.");
     error.code = "GOOGLE_OAUTH_CODE_MISSING";
     error.oauthDiagnostic = diagnostic();
     throw error;
   }
   if (!clientId || !clientSecret) {
+    /** @type {GoogleAuthError} */
     const error = new Error("Secret OAuth Google non configuré localement.");
     error.code = "GOOGLE_OAUTH_CLIENT_CONFIG_MISSING";
     error.oauthDiagnostic = diagnostic();
@@ -256,6 +353,7 @@ async function exchangeGoogleCode({ code, state, clientId, clientSecret, oauthCl
       redirect_uri: pending.redirectUri,
     });
     if (!result?.tokens?.access_token) {
+      /** @type {GoogleAuthError} */
       const error = new Error("Réponse OAuth Google incomplète.");
       error.code = "GOOGLE_OAUTH_TOKEN_MISSING";
       error.oauthDiagnostic = diagnostic({ status: result?.res?.status || 200 });
@@ -265,6 +363,7 @@ async function exchangeGoogleCode({ code, state, clientId, clientSecret, oauthCl
   } catch (cause) {
     if (cause?.oauthDiagnostic) throw cause;
     const failure = providerFailure(cause);
+    /** @type {GoogleAuthError} */
     const error = new Error(failure.status ? "Échange OAuth Google refusé." : "Échange OAuth Google indisponible.");
     error.code = failure.status ? "GOOGLE_OAUTH_TOKEN_EXCHANGE_FAILED" : "GOOGLE_OAUTH_TOKEN_ENDPOINT_UNREACHABLE";
     error.reasonCode = failure.error === "invalid_grant" ? "AUTH_FAILED" : failure.status ? "AUTH_FAILED" : "UNAVAILABLE";

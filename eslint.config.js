@@ -7,7 +7,8 @@
 const js = require("@eslint/js");
 const globals = require("globals");
 const tseslint = require("typescript-eslint");
-const typedBoundaryFiles = require("./tsconfig.check.json").files;
+// Fichiers JavaScript seulement : les déclarations .d.ts de la liste ne sont pas lintées.
+const typedBoundaryFiles = require("./tsconfig.check.json").files.filter((file) => file.endsWith(".js"));
 
 // Paramètres non utilisés tolérés : les options déstructurées font partie des signatures
 // publiques des services (l'appelant peut les passer). Variables et imports : stricts.

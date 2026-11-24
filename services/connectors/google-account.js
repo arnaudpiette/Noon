@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 // V3-L7 — compte Google de Noon : OAuth en lecture seule (boucle locale éphémère, échange du code,
@@ -7,6 +8,10 @@
 
 const DEPENDENCIES = Object.freeze(["GOOGLE_ACCOUNT_EMAIL","GOOGLE_AUTH_LIBRARY_VERSION","assertGoogleProfileResponse","calendarConnector","createGoogleAuthorization","discardGoogleState","exchangeGoogleCode","gmailConnector","http","inspectGoogleApiFailure","integrationTokenStore","localIntelligenceRuntime","normalizeGoogleTokenForPersistence","rejectGoogleAuthorization","toolAuditLog"]);
 
+/**
+ * Dépendances fournies par server.js, contrôlées à l’exécution par DEPENDENCIES.
+ * @param {Record<string, any>} deps
+ */
 function createGoogleAccount(deps) {
   for (const name of DEPENDENCIES) if (!(name in deps)) throw new TypeError(`Dépendance manquante : ${name}`);
   const {
@@ -32,8 +37,13 @@ function createGoogleAccount(deps) {
     if (result.status !== "AVAILABLE") throw Object.assign(new Error("Source Google bloquée par la politique locale ou le réseau."), { code: "REMOTE_CONNECTOR_BLOCKED" });
   }
 
+  /** @type {Promise<string> | null} */
   let googleRefreshInFlight = null;
 
+  /**
+   * @param {Record<string, any> | null | undefined} savedToken
+   * @returns {Promise<string>}
+   */
   async function refreshGoogleAccessToken(savedToken) {
     assertGoogleRemoteAvailable();
     if (!savedToken?.refresh_token) {
@@ -50,13 +60,14 @@ function createGoogleAccount(deps) {
       }),
       signal: AbortSignal.timeout(10_000),
     });
-    const refreshed = await response.json();
+    const refreshed = /** @type {Record<string, any>} */ (await response.json());
     if (!response.ok || !refreshed.access_token) {
       // Code d'erreur OAuth de Google seulement (ex. invalid_grant), jamais de jeton ni de secret.
       const providerError = typeof refreshed?.error === "string" ? refreshed.error.replace(/[^a-z_]/gi, "").slice(0, 40) : null;
       toolAuditLog.append("google-oauth.refresh-failed", { status: response.status, providerError });
       throw Object.assign(new Error("Reconnectez Google pour renouveler l’autorisation."), { status: response.status === 400 ? 401 : response.status, providerError });
     }
+    /** @type {Record<string, any>} */
     const token = {
       ...savedToken,
       ...refreshed,
@@ -79,6 +90,10 @@ function createGoogleAccount(deps) {
     return googleRefreshInFlight;
   }
 
+  /**
+   * @param {import("node:http").ServerResponse} res
+   * @param {{ statusCode: number, title: string, message: string }} page
+   */
   function sendGoogleCallbackPage(res, { statusCode, title, message }) {
     res.writeHead(statusCode, {
       "Content-Type": "text/html; charset=utf-8",
@@ -87,6 +102,7 @@ function createGoogleAccount(deps) {
     return res.end(`<!doctype html><html lang="fr"><meta charset="utf-8"><title>${title}</title><body style="font-family:system-ui;padding:40px"><h1>${title}</h1><p>${message}</p><p>Vous pouvez fermer cette fenêtre.</p></body></html>`);
   }
 
+  /** @param {URL} callbackUrl */
   async function completeGoogleOAuthCallback(callbackUrl) {
     let completionStage = "CALLBACK";
     try {
@@ -119,7 +135,7 @@ function createGoogleAccount(deps) {
         headers: { Authorization: `Bearer ${token.access_token}` },
         signal: AbortSignal.timeout(10_000),
       });
-      const profile = await profileResponse.json();
+      const profile = /** @type {Record<string, any>} */ (await profileResponse.json());
       const profileDiagnostic = assertGoogleProfileResponse({
         status: profileResponse.status,
         ok: profileResponse.ok,
@@ -157,11 +173,14 @@ function createGoogleAccount(deps) {
   }
 
   async function createGoogleLoopbackReceiver() {
+    /** @type {string | null} */
     let expectedState = null;
+    /** @type {string | null} */
     let redirectUri = null;
+    /** @type {ReturnType<typeof setTimeout> | null} */
     let timeout = null;
-    const receiver = http.createServer(async (req, res) => {
-      const callbackUrl = new URL(req.url, redirectUri || "http://127.0.0.1");
+    const receiver = http.createServer(async (/** @type {import("node:http").IncomingMessage} */ req, /** @type {import("node:http").ServerResponse} */ res) => {
+      const callbackUrl = new URL(/** @type {string} */ (req.url), redirectUri || "http://127.0.0.1");
       if (req.method !== "GET" || callbackUrl.pathname !== GOOGLE_OAUTH_CALLBACK_PATH) {
         res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
         return res.end("Not found");
@@ -190,6 +209,7 @@ function createGoogleAccount(deps) {
     timeout.unref?.();
     return {
       redirectUri,
+      /** @param {string} state */
       setExpectedState(state) { expectedState = state; },
       close() { if (timeout) clearTimeout(timeout); receiver.close(); },
     };
@@ -229,6 +249,7 @@ function createGoogleAccount(deps) {
     return authorization;
   }
 
+  /** @param {unknown} value */
   function decodeGmailBase64(value) {
     if (typeof value !== "string" || !value) return "";
     try {
@@ -239,6 +260,10 @@ function createGoogleAccount(deps) {
     }
   }
 
+  /**
+   * @param {any} part
+   * @returns {string}
+   */
   function extractGmailText(part) {
     if (!part || typeof part !== "object") return "";
     const children = Array.isArray(part.parts)
@@ -256,9 +281,10 @@ function createGoogleAccount(deps) {
       : decoded.trim();
   }
 
+  /** @param {any} message */
   function normalizeGmailMessage(message) {
     const headers = Object.fromEntries(
-      (message?.payload?.headers || []).map((header) => [
+      (message?.payload?.headers || []).map((/** @type {{ name?: string, value?: string }} */ header) => [
         String(header.name || "").toLowerCase(),
         String(header.value || ""),
       ])
@@ -277,6 +303,10 @@ function createGoogleAccount(deps) {
     };
   }
 
+  /**
+   * @param {string} query
+   * @param {number} [maxResults]
+   */
   async function searchAuthorizedGmail(query, maxResults = 8) {
     const boundedMax = Math.max(1, Math.min(10, Number(maxResults) || 8));
     const search = await deps.gmailConnector.searchGmailMessages(query, {
@@ -284,7 +314,7 @@ function createGoogleAccount(deps) {
     });
     const messages = await Promise.all(
       (search.messages || []).slice(0, boundedMax)
-        .map(({ id }) => deps.gmailConnector.getGmailMessage(id))
+        .map((/** @type {{ id: string }} */ { id }) => deps.gmailConnector.getGmailMessage(id))
     );
     deps.gmailConnector.markSuccess();
     return {
