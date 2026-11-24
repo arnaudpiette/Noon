@@ -19,7 +19,7 @@ const uiValidationRequested = Boolean(uiValidationProfile) && isUiValidationMode
 // uiValidationRequested implique un profil appliqué.
 if (uiValidationRequested) app.setPath("userData", /** @type {NonNullable<typeof uiValidationProfile>} */ (uiValidationProfile).profile);
 const sharp = require("sharp");
-const { isSafeExternalUrl, isSafeGoogleAuthorizationUrl, isValidAccelerator, parseNoonDeepLink } = require("./app-core");
+const { describeWindowLoadFailure, isSafeExternalUrl, isSafeGoogleAuthorizationUrl, isValidAccelerator, parseNoonDeepLink } = require("./app-core");
 const {
   createTrustedIpcRegistrar,
   readPreviousStartupState,
@@ -525,6 +525,14 @@ async function syncWakeWordState() {
   }
   rebuildTrayMenu();
 }
+/**
+ * Échec de chargement d'une fenêtre (serveur local injoignable, navigation interrompue) :
+ * journalisé avec le seul code d'erreur. La fenêtre reste ouverte, comme avant.
+ * @param {"main" | "capture"} windowKind
+ */
+function logWindowLoadFailure(windowKind) {
+  return (/** @type {unknown} */ error) => logNoonEvent("error", "window-load-failed", describeWindowLoadFailure(windowKind, error));
+}
 /** @returns {import("electron").BrowserWindow | undefined} */
 function createWindow() {
   if (mainWindow) return showMainWindow();
@@ -570,7 +578,7 @@ function createWindow() {
     devPreviewController = null;
     mainWindow = null;
   });
-  void mainWindow.loadURL(`${NOON_ORIGIN}/app`);
+  mainWindow.loadURL(`${NOON_ORIGIN}/app`).catch(logWindowLoadFailure("main"));
   mainWindow.once("ready-to-show", () => {
     logNoonEvent("info", "startup-window-ready", JSON.stringify({
       elapsedMs: Date.now() - PROCESS_STARTED_AT,
@@ -646,7 +654,7 @@ function showCaptureWindow() {
   captureWindow.on("blur", () => { if (captureWindow && !captureWindow.isDestroyed()) captureWindow.close(); });
   captureWindow.on("closed", () => { captureWindow = null; });
   captureWindow.once("ready-to-show", () => { captureWindow?.center(); if (process.platform === "darwin") app.focus({ steal: true }); captureWindow?.show(); captureWindow?.focus(); });
-  void captureWindow.loadURL(`${NOON_ORIGIN}/capture`);
+  captureWindow.loadURL(`${NOON_ORIGIN}/capture`).catch(logWindowLoadFailure("capture"));
 }
 function createTray() {
   const iconPath = path.join(__dirname, "..", "assets", "icons", "noonTemplate.png");

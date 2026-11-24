@@ -49,3 +49,22 @@ test("valide les raccourcis configurables", () => {
   assert.equal(isValidAccelerator("N"), false);
   assert.equal(isValidAccelerator(""), false);
 });
+
+test("échec de chargement d'une fenêtre : type et code seulement, jamais l'URL ni le message", () => {
+  const { describeWindowLoadFailure } = require("../electron/app-core");
+  const error = Object.assign(new Error("ERR_CONNECTION_REFUSED (-102) loading 'http://127.0.0.1:3000/app?token=secret'"), { code: "ERR_CONNECTION_REFUSED" });
+  assert.equal(describeWindowLoadFailure("main", error), JSON.stringify({ window: "main", code: "ERR_CONNECTION_REFUSED" }));
+  assert.equal(describeWindowLoadFailure("capture", { name: "AbortError" }), JSON.stringify({ window: "capture", code: "AbortError" }));
+  assert.equal(describeWindowLoadFailure("autre", null), JSON.stringify({ window: "main", code: "ERROR" }));
+  assert.doesNotMatch(describeWindowLoadFailure("main", error), /127\.0\.0\.1|token|secret/);
+});
+
+test("electron/main.js journalise l'échec de chaque loadURL au lieu de l'ignorer", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const source = fs.readFileSync(path.join(__dirname, "..", "electron", "main.js"), "utf8");
+  const calls = source.match(/\.loadURL\([^\n]*/g) || [];
+  assert.equal(calls.length, 2);
+  for (const call of calls) assert.match(call, /\.catch\(logWindowLoadFailure\("(?:main|capture)"\)\);$/);
+  assert.match(source, /logNoonEvent\("error", "window-load-failed", describeWindowLoadFailure\(windowKind, error\)\)/);
+});

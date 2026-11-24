@@ -1373,8 +1373,7 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   - `app.whenReady().then(...)`, dans la branche « commande benchmark invalide ».
   - `app.dock.show()`.
   - `mainWindow.loadURL` et `captureWindow.loadURL` : un échec de chargement n'est toujours
-    pas journalisé. Point ouvert : le traiter, par un journal ou un état visible, demanderait
-    un changement de comportement.
+    pas journalisé. Point traité depuis : voir « Échecs de chargement des fenêtres journalisés ».
 - Contrôle : jetons identiques à HEAD pour les 8 fichiers touchés, à trois ajouts près
   (24 paires de parenthèses d'assertion de type, les 6 `void`, des commentaires).
 - Non couvert par le smoke Electron, qui s'arrête après `/health` : la création de la fenêtre,
@@ -1578,6 +1577,31 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
 - Non vérifié :
   - le vrai trousseau macOS, verrouillé ou avec une application re-signée ;
   - l'application packagée.
+
+## 24/11/2026 — Échecs de chargement des fenêtres journalisés
+
+- Point ouvert pendant A.4, tranche 2. `mainWindow.loadURL` et `captureWindow.loadURL` étaient
+  marqués `void` : un échec de chargement n'était ni attendu ni journalisé. Cela arrive par
+  exemple quand le serveur local est injoignable ou qu'une navigation est interrompue.
+- Correction demandée par Arnaud :
+  - chaque appel se termine par `.catch(logWindowLoadFailure("main" | "capture"))` ;
+  - l'événement `window-load-failed` est écrit dans le journal local
+    (`logs/noon.log`, avec masquage existant) ;
+  - le détail contient seulement le type de fenêtre et le code d'erreur, sans URL ni message ;
+  - le formatage est fait par `describeWindowLoadFailure` (`electron/app-core.js`, module
+    pur, testé).
+- Comportement inchangé par ailleurs : la fenêtre reste ouverte. Aucun message n'est affiché,
+  et il n'y a ni nouvelle tentative ni fermeture. La rejection est désormais traitée au lieu
+  d'être ignorée.
+- Tests : deux cas ajoutés à `test/electron-app-core.test.js` :
+  - le contenu du détail, et l'absence d'URL ou de jeton ;
+  - le fait que chaque `loadURL` de `main.js` est suivi de ce journal.
+- Validation :
+  - tests : 2 987/2 987 ;
+  - évaluations : `eval:critical` 54/54, `eval:smoke` 99/99, `eval:privacy` 3/3 ;
+  - smoke Electron OK.
+- Non vérifié : un échec réel de chargement dans Electron. Le smoke s'arrête avant la création
+  des fenêtres.
 
 ## À trancher
 

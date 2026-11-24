@@ -58,4 +58,13 @@ function isValidAccelerator(value) {
     /^(?=.*(?:Command|Cmd|Control|Ctrl|Alt|Option|Shift))[-+A-Za-z0-9]+(?:\+[-+A-Za-z0-9]+)+$/.test(value);
 }
 
-module.exports = { isSafeExternalUrl, isSafeGoogleAuthorizationUrl, isValidAccelerator, parseNoonDeepLink };
+// Détail journalisé quand une fenêtre ne charge pas : type de fenêtre et code d'erreur seulement,
+// jamais l'URL ni le message (qui peut contenir un chemin ou une requête).
+function describeWindowLoadFailure(windowKind, error) {
+  return JSON.stringify({
+    window: windowKind === "capture" ? "capture" : "main",
+    code: String(error?.code || error?.name || "ERROR").slice(0, 80),
+  });
+}
+
+module.exports = { describeWindowLoadFailure, isSafeExternalUrl, isSafeGoogleAuthorizationUrl, isValidAccelerator, parseNoonDeepLink };
