@@ -81,7 +81,7 @@ function createNoonHttpServer(deps) {
     "/integrations/google/callback",
   ]);
 
-  const server = http.createServer(async (req, res) => {
+  async function handleNoonRequest(req, res) {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
 
     const requestPath = new URL(req.url, "http://127.0.0.1").pathname;
@@ -250,6 +250,32 @@ function createNoonHttpServer(deps) {
         2
       )
     );
+  }
+
+  // Une exception non rattrapée par une route (ex. disque plein) donne une réponse 500
+  // explicite au lieu d'une requête laissée sans réponse (interface bloquée en chargement).
+  // Le journal ne contient que la méthode, le chemin et le code d'erreur.
+  function respondInternalError(req, res, error) {
+    const code = String(error?.code || error?.name || "ERROR").slice(0, 80);
+    let requestPath = "?";
+    try { requestPath = new URL(req.url, "http://127.0.0.1").pathname.slice(0, 200); } catch {}
+    try { console.error(`[http] erreur interne ${req.method} ${requestPath} (${code})`); } catch {}
+    try {
+      if (!res.headersSent) {
+        res.writeHead(500, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ status: "error", code: "INTERNAL_ERROR", message: "Erreur interne de Noon." }));
+      } else if (!res.writableEnded) {
+        res.end();
+      }
+    } catch {}
+  }
+
+  const server = http.createServer(async (req, res) => {
+    try {
+      return await handleNoonRequest(req, res);
+    } catch (error) {
+      respondInternalError(req, res, error);
+    }
   });
 
   async function startNoonServer({

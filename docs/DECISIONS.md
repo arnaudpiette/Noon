@@ -738,6 +738,28 @@ structurante, est notée ici avec sa date et sa raison.
   et au-delà de 10 Mo (413), budget temps réel. Réponses, requêtes au modèle et journal
   d'audit identiques une fois normalisés.
 
+## 24/11/2026 — Incident disque plein : requêtes bloquées et traces vidées
+
+- Constat : Noon démarré disque plein. Le journal d'audit levait `ENOSPC` dans les routes, et
+  le serveur HTTP laissait ces requêtes sans réponse : Control Center, Brief, mémoire et reprise
+  de conversation restaient en chargement. Les données (SQLite, mémoires, conversations,
+  budget) étaient intactes. La purge des traces au démarrage réécrivait
+  `noon-observability.jsonl` en place, et le fichier a été vidé.
+- Corrections, défauts antérieurs à la découpe :
+  - `services/http/noon-http-server.js` : une exception non rattrapée par une route donne une
+    réponse 500 `INTERNAL_ERROR` (`Cache-Control: no-store`). Une réponse déjà commencée est
+    terminée. Le journal ne contient que la méthode, le chemin et le code d'erreur.
+  - `services/security/audit-log.js` : l'audit devient « au mieux », comme dans ApprovalEngine
+    (« une panne d'audit ne rend pas l'action moins sûre »). Un échec d'écriture ne lève plus
+    d'exception : `append` renvoie `false`, l'échec est compté, signalé une fois par code
+    d'erreur et exposé par `health()`. Les écritures de persistance qui protègent une action
+    (approbations, mémoire) restent bloquantes.
+  - `services/observability/noon-observability.js` : la purge de démarrage écrit un fichier
+    temporaire puis le renomme. Un échec laisse l'ancien fichier intact.
+- Tests : `test/disk-full-resilience.test.js` (6 tests). Quatre d'entre eux échouent sur le
+  code d'avant : 500 au lieu d'une requête bloquée, audit sans exception, traces intactes.
+- Reste ouvert : `health()` n'est pas encore affiché dans le Control Center.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

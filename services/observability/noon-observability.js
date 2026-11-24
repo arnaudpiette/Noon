@@ -94,11 +94,18 @@ function createNoonObservability({
         .filter((trace) => Date.parse(trace.startedAt) >= cutoff)
         .slice(-maxInMemory);
       for (const trace of retained) traces.set(trace.executionId, trace);
+      // Réécriture atomique (fichier temporaire puis renommage) : un disque plein laisse
+      // l'ancien fichier intact au lieu de le tronquer.
+      const temporary = `${filePath}.tmp`;
       writeQueue = fs.promises.writeFile(
-        filePath,
+        temporary,
         retained.map((trace) => JSON.stringify(trace)).join("\n") + (retained.length ? "\n" : ""),
         "utf8"
-      ).catch(() => { persistenceErrors += 1; });
+      ).then(() => fs.promises.rename(temporary, filePath))
+        .catch(() => {
+          persistenceErrors += 1;
+          return fs.promises.rm(temporary, { force: true }).catch(() => {});
+        });
     } catch {
       persistenceErrors += 1;
     }
