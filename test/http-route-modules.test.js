@@ -4,10 +4,9 @@
 // serveur, requête étrangère rendue au serveur (NOT_HANDLED), aucun accès aux dépendances
 // tant qu'aucune route ne correspond.
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
 const test = require("node:test");
 const { NOT_HANDLED } = require("../services/http/route-result");
+const { readServerSource } = require("./helpers/server-source");
 
 const MODULES = [
   ["../services/personal-intelligence/personal-intelligence-http-routes", "createPersonalIntelligenceHttpRoutes", "personalIntelligenceHttpRoutes"],
@@ -20,7 +19,7 @@ const MODULES = [
   ["../services/voice/transcription-http-routes", "createTranscriptionHttpRoutes", "transcriptionHttpRoutes"],
   ["../services/planning/day-http-routes", "createDayHttpRoutes", "dayHttpRoutes"],
 ];
-const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
+const server = readServerSource();
 
 for (const [file, factory, instance] of MODULES) {
   const loaded = require(file);

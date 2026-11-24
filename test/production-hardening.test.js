@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const { readServerSource } = require("./helpers/server-source");
 const {
   assertBoundedIpcArguments,
   createTrustedIpcRegistrar,
@@ -65,7 +66,7 @@ test("le marqueur de cycle détecte un arrêt non propre puis s'écrit atomiquem
 test("la configuration Electron et le serveur conservent les frontières production", () => {
   const main = fs.readFileSync(path.join(__dirname, "..", "electron", "main.js"), "utf8");
   const preload = fs.readFileSync(path.join(__dirname, "..", "electron", "preload.js"), "utf8");
-  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
+  const server = readServerSource();
   assert.match(main, /contextIsolation:\s*true/);
   assert.match(main, /nodeIntegration:\s*false/);
   assert.match(main, /sandbox:\s*true/);

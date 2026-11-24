@@ -8,6 +8,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const { APP_PARTS, appPartsDirectory, readAppBundle } = require("../services/http/app-bundle");
+const { readServerSource } = require("./helpers/server-source");
 
 const PUBLIC = path.join(__dirname, "..", "public");
 
@@ -28,6 +29,6 @@ test("recollage : un seul script, ordre préservé, servi en /app.js", () => {
   assert.ok(bundle.startsWith(fs.readFileSync(path.join(appPartsDirectory(PUBLIC), APP_PARTS[0]), "utf8")));
   assert.ok(bundle.indexOf("// DEV_PREVIEW_UI_START") < bundle.indexOf("// DEV_WORKSPACE_AGENT_UI_START"));
   assert.equal(require("../services/http/static-assets").STATIC_ASSETS["/app.js"].bundle, true);
-  assert.match(fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8"), /staticAssets\.matches\(req\)/);
+  assert.match(readServerSource(), /staticAssets\.matches\(req\)/);
   assert.ok(fs.readFileSync(path.join(PUBLIC, "index.html"), "utf8").includes('<script src="app.js"></script>'));
 });

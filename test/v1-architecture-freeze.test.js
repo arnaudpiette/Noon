@@ -68,7 +68,7 @@ test("le renderer packagé reste isolé de Node et du système", () => {
 });
 
 test("l'API Noon refuse toute écoute autre que la boucle locale", () => {
-  const server = source("server.js");
+  const server = readServerSource();
   assert.match(server, /const DEFAULT_HOST = "127\.0\.0\.1"/);
   assert.match(server, /Noon doit écouter uniquement sur 127\.0\.0\.1/);
   assert.doesNotMatch(server, /const DEFAULT_HOST = "0\.0\.0\.0"/);

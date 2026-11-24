@@ -692,6 +692,35 @@ structurante, est notée ici avec sa date et sa raison.
   smoke 99/99, privacy 3/3 et delegation 10/10. La suite complète conserve uniquement les trois
   échecs Linux déjà connus (SelfDev SD-2 et deux fixtures macOS `/private/tmp`).
 
+## 24/11/2026 — Découpe de `server.js`, treizième tranche : serveur HTTP, démarrage et arrêt (V3-L7)
+
+- Intégrée après les tranches 15 à 19 (faites en parallèle à partir de la douzième). Ce qui
+  sort dans `services/http/noon-http-server.js` (`createNoonHttpServer`) :
+  - le serveur HTTP local : authentification locale, routes publiques, blocage des accès
+    externes en validation UI, aiguillage vers les modules de routes dans le même ordre, 404 ;
+  - `startNoonServer` et `stopNoonServer`.
+
+  `server.js` exporte les mêmes objets et `electron/main.js` ne change pas. `server.js` passe
+  de 2 496 à 2 255 lignes.
+- Deux retouches de `server.js` avant l'extraction, sans effet sur le comportement :
+  - les trois drapeaux de démarrage, `localAuthSecret` et `PUBLIC_ROUTES` sont déclarés juste
+    avant le serveur (littéraux ou `process.env`, lus seulement au démarrage et par requête) ;
+  - les affectations des chargeurs de clés OpenAI/Gemini passent par `setProviderKeyLoaders`,
+    une petite fonction de `server.js`, car `getOpenAIClient` et `getGeminiClient` les lisent
+    hors du domaine.
+
+  Le module est ainsi construit après tous les modules de routes, et toutes ses dépendances
+  sont lues une fois. Contrôle : 1 416 jetons identiques.
+- Cinq tests de câblage lisaient `server.js` seul ; ils lisent maintenant `server.js` suivi des
+  modules extraits, avec des assertions inchangées : `app-bundle`, `figma-bridge`,
+  `http-route-modules`, `production-hardening`, `v1-architecture-freeze`.
+- Démarrage vérifié par le mode smoke d'Electron (profil jetable, port isolé, `/health` avec le
+  secret local, sortie propre). Avant/après dans des copies isolées (faux serveur Responses,
+  faux `osascript`, `fetch` limité à `127.0.0.1`) : 33 requêtes en mode normal, 10 avec secret
+  local (serveur démarré comme Electron via `startNoonServer({ authSecret })`), 33 en
+  validation UI. Réponses, requêtes au modèle et journaux d'audit identiques une fois
+  normalisés.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

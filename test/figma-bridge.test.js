@@ -10,6 +10,7 @@ const test = require("node:test");
 const vm = require("node:vm");
 const { createFigmaBridge, READ_COMMANDS } = require("../services/figma-bridge/figma-bridge");
 const { createFigmaBridgeHttpRoutes } = require("../services/figma-bridge/figma-bridge-http-routes");
+const { readServerSource } = require("./helpers/server-source");
 
 const ROOT = path.join(__dirname, "..");
 
@@ -154,7 +155,7 @@ test("câblage : flag OFF par défaut, routes branchées, plugin exclu de Noon.a
   const list = Array.isArray(FEATURE_FLAGS) ? FEATURE_FLAGS : Object.values(require("../services/config/feature-flag-registry")).find(Array.isArray);
   const flag = list.find((entry) => entry.flagId === "figma.bridge");
   assert.equal(flag.defaultMode, "OFF");
-  const server = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+  const server = readServerSource();
   assert.match(server, /figmaBridgeHttpRoutes\.matches\(requestPath\)/);
   assert.match(server, /featureFlags\.evaluate\("figma\.bridge", \{\}\)\.enabled/);
   assert.match(fs.readFileSync(path.join(ROOT, "forge.config.js"), "utf8"), /figma-plugin/);
