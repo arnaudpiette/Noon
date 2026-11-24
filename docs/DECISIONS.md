@@ -856,6 +856,37 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   sont identiques une fois normalisées, sauf une latence mesurée et le chemin du dossier
   personnel factice propre à chaque copie.
 
+## 24/11/2026 — Découpe de `server.js`, vingt-deuxième tranche : composants surveillés par Reliability (V3-L7)
+
+- Ce qui sort dans `services/reliability/core-reliability-components.js`
+  (`registerCoreReliabilityComponents`) : les 24 enregistrements `reliabilityEngine.register`
+  du milieu de `server.js`, déplacés tels quels (1 530 jetons identiques). Ils couvrent :
+  - stockage : SQLite, mémoire privée, fichiers ;
+  - moteurs : cache de contexte, capacité, artefacts ;
+  - connecteurs : Notes, Rappels, Gmail, Agenda ;
+  - modèles : OpenAI, Gemini, profils ;
+  - voix (Live, wake word), planificateur, multimodal.
+- `server.js` l'appelle au même endroit : après les connecteurs, avant la politique de
+  sécurité. L'ordre des composants est donc inchangé.
+  - Les 12 dépendances sont des constantes déjà initialisées à l'appel, lues une fois.
+  - `fs` et `SCHEMA_VERSION` sont importés par le module.
+  - Les autres enregistrements (recherche web, runtime local, jobs, exécution
+    transactionnelle, spécialistes) restent à leur place, pour la même raison d'ordre.
+- `server.js` passe de 1 971 à 1 888 lignes.
+- Tests :
+  - `test/core-reliability-components.test.js` vérifie :
+    - le refus d'une dépendance manquante ;
+    - les 24 composants dans l'ordre ;
+    - les contrôles de santé : schéma SQLite, repli JSON, clé de mémoire privée, frontière
+      d'autorité de capacité, Google non connecté ;
+    - la position de l'appel.
+  - `connector-validation` lisait `server.js` seul ; il lit maintenant `server.js` suivi des
+    modules extraits, avec des assertions inchangées.
+- Avant/après dans des copies isolées : 96 routes en GET, réponses identiques une fois
+  normalisées. Seul l'ordre des règles permanentes du profil a varié une fois : elles sont
+  triées par `updated_at` à la milliseconde et écrites en quelques millisecondes au
+  démarrage. Le contenu est identique, et l'écart vient de l'horloge, pas du déplacement.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

@@ -155,7 +155,8 @@ test('Daily Brief composition honors local-only before any remote model call', (
  assert.match(compose,/REMOTE_REASONING/);
 });
 test('packaged SQLite health compares the database against the canonical schema version', () => {
- const fs=require('node:fs');const source=fs.readFileSync(require.resolve('../server'),'utf8');
+ // V3-L7 : ce bloc vit dans services/reliability/core-reliability-components.js ; server.js suivi des modules extraits.
+ const source=require('./helpers/server-source').readServerSource();
  const start=source.indexOf('componentId: "sqlite"');const health=source.slice(start,source.indexOf('componentId: "private-memory"',start));
  assert.match(health,/Number\(version\) !== SCHEMA_VERSION/);
  assert.doesNotMatch(health,/Number\(version\) !== 10/);
