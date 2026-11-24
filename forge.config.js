@@ -55,6 +55,19 @@ module.exports = {
       /^\/\.env(?:\.|$)/,
       /^\/\.git(?:\/|$)/,
       /^\/\.github(?:\/|$)/,
+      // Fichiers de développement locaux non suivis par Git (roadmap D.2) : jamais dans Noon.app.
+      /^\/\.claude(?:\/|$)/,
+      /^\/benchmark-workspaces(?:\/|$)/,
+      /^\/dev-task-journal(?:\/|$)/,
+      /^\/dev-cost-ledger\.json$/,
+      // État d'une exécution depuis le dépôt ; l'application lit le sien dans userData.
+      /^\/runtime-config\.json(?:\.lkg|\..*\.tmp)?$/,
+      /^\/voice-identity\.json$/,
+      /^\/\.noon-data(?:\/|$)/,
+      /^\/artifact-previews(?:\/|$)/,
+      // Outillage de vérification de types (A.4), inutile à l'exécution.
+      /^\/types(?:\/|$)/,
+      /^\/tsconfig\.check\.json$/,
       // Résultats et cas d'évaluation locaux (eval:character, eval:life : demandes réelles d'Arnaud).
       /^\/\.noon-evals(?:\/|$)/,
       // Plugin Figma : importé par l'utilisateur dans Figma Desktop, pas embarqué dans Noon.app.

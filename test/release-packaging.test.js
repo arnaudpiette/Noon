@@ -11,6 +11,22 @@ test("le packaging exclut les journaux et données runtime privées", () => {
   }
 });
 
+test("le packaging exclut les fichiers de dev locaux et l'état runtime du dépôt, pas le code", () => {
+  const { ignore } = require("../forge.config").packagerConfig;
+  const excluded = (file) => ignore.some((rule) => rule.test(file));
+  for (const file of [
+    "/.claude/launch.json", "/benchmark-workspaces/abc/package.json", "/dev-task-journal/abc-1.json",
+    "/dev-cost-ledger.json", "/runtime-config.json", "/runtime-config.json.lkg", "/runtime-config.json.123.tmp",
+    "/voice-identity.json", "/.noon-data/state.json", "/artifact-previews/preview.png",
+    "/types/noon-error.d.ts", "/tsconfig.check.json",
+  ]) assert.ok(excluded(file), `${file} doit être exclu`);
+  for (const file of [
+    "/server.js", "/package.json", "/electron/main.js", "/services/dev/dev-benchmark-service.js",
+    "/services/voice/voice-identity.js", "/services/config/runtime-config-service.js", "/Workspace/Briefs",
+    "/node_modules/typescript-like/index.js",
+  ]) assert.ok(!excluded(file), `${file} doit rester embarqué`);
+});
+
 test("le bundle déclare pourquoi Noon envoie des Apple Events", () => {
   const forge = require("../forge.config");
   assert.equal(typeof forge.packagerConfig.extendInfo.NSAppleEventsUsageDescription, "string");

@@ -1631,6 +1631,42 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   (`copySnapshot`) crée aussi des copies `noon-benchmark-*` dans `os.tmpdir()` en
   fonctionnement normal. Il faudrait vérifier qu'elles sont supprimées après chaque benchmark.
 
+## 24/11/2026 — Build packagé validé ; fichiers locaux exclus de Noon.app
+
+- Le disque libéré a permis de reconstruire `out/Noon-darwin-x64/Noon.app` avec
+  `npm run package:mac:x64`. `/Applications/Noon.app` n'a pas été touché.
+- Constat à l'inventaire de l'ASAR, que `verify:mac` ne signalait pas : `forge.config.js`
+  n'excluait pas plusieurs fichiers locaux non suivis par Git, qui étaient donc embarqués.
+  Le problème existait avant ce jour.
+  - Fichiers de développement que la roadmap D.2 classe « interdits » :
+    `benchmark-workspaces/` (48 entrées), `dev-task-journal/` (4 journaux),
+    `dev-cost-ledger.json`, `.claude/launch.json` ;
+  - état d'une exécution depuis le dépôt : `runtime-config.json` et `.lkg` (les réglages de
+    flags locaux), `voice-identity.json`. L'application lit les siens dans `DATA_DIRECTORY`,
+    c'est-à-dire dans userData ;
+  - dossiers vides `.noon-data/` et `artifact-previews/` ;
+  - outillage de typage d'A.4 : `types/`, `tsconfig.check.json`.
+- Correctif : ces chemins ont été ajoutés à `packagerConfig.ignore`. `Workspace/` reste
+  embarqué, puisque seul `Workspace/Temp` était déjà exclu volontairement.
+  - Nouveau test dans `test/release-packaging.test.js` : il passe de vrais chemins aux règles.
+    Les fichiers locaux doivent être exclus ; `server.js`, les services homonymes
+    (`voice-identity.js`, `runtime-config-service.js`), `electron/` et `Workspace/` doivent
+    rester embarqués.
+- Validation du build reconstruit :
+  - inventaire de l'ASAR : aucun chemin exclu présent ; les modules extraits pendant V3-L7,
+    `crypto.js` corrigé et la journalisation des `loadURL` sont bien là ;
+  - `npm run verify:mac` : PASS. Aucun bloquant, seul l'avertissement de signature
+    attendu (build local non signé) ;
+  - `npm run release:smoke` : PASS. Vrai binaire, profil `release`, userData isolé, serveur
+    prêt en 1,07 s, `/health` en 2,05 s, sortie propre ;
+  - `npm run lint` OK ; `npm test` 2 989/2 989.
+- Ce que le smoke packagé ne couvre pas : il s'arrête après `/health`, sans fenêtre, sans
+  modèle et avec le profil isolé. Restent à faire à la main :
+  - installer ce build dans `/Applications` ;
+  - ouvrir l'interface avec le vrai profil et obtenir une réponse à « Bonjour » (A.1).
+- Note : lancé depuis le dépôt, le smoke charge le `.env` du dossier courant (4 variables
+  injectées). Une application lancée depuis `/Applications` n'a pas ce dossier courant.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
