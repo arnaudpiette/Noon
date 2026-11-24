@@ -53,6 +53,7 @@ const ROUTE_MODULES = Object.freeze([
   "services/lifecycle/lifecycle-composition.js",
   "services/personal-intelligence/personal-intelligence-composition.js",
   "services/extensions/extensions-composition.js",
+  "services/observability/progress-composition.js",
 ]);
 
 function readServerSource() {

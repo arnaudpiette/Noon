@@ -137,14 +137,9 @@ const { createDevWorkspaceAgentExecutionLoop } = require("./services/dev/workspa
 const { createDevCostBudgetService } = require("./services/dev/dev-cost-budget-service");
 const { createBenchmarkComposition, createDevDelegationComposition, createSelfDevComposition } = require("./services/dev/dev-auxiliary-composition");
 const { createTransactionalExecutionEngine } = require("./services/execution/transactional-execution-engine");
-const { AsyncLocalStorage } = require("node:async_hooks");
 const { createNoonObservability } = require("./services/observability/noon-observability");
 const { createNoonHealthReport } = require("./services/observability/noon-health-report");
 const { smallFirstDecision } = require("./services/models/small-first-policy");
-const { toChatProgressEvent } = require("./services/observability/chat-progress-event");
-const { createUserProgressEngine } = require("./services/observability/user-progress-engine");
-const { createUserProgressAdapter } = require("./services/observability/user-progress-adapter");
-const { createOrchestratorProgressObservability } = require("./services/observability/orchestrator-progress-observability");
 const { createConfigRegistry } = require("./services/config/config-registry");
 const { createRuntimeConfigService } = require("./services/config/runtime-config-service");
 const { createFeatureFlagRegistry } = require("./services/config/feature-flag-registry");
@@ -194,6 +189,7 @@ const { createPersonalSearchComposition } = require("./services/search/personal-
 const { createLifecycleComposition } = require("./services/lifecycle/lifecycle-composition");
 const { createPersonalIntelligenceComposition } = require("./services/personal-intelligence/personal-intelligence-composition");
 const { createExtensionsComposition } = require("./services/extensions/extensions-composition");
+const { createProgressComposition } = require("./services/observability/progress-composition");
 
 // Tous les chemins manipulés par les outils sont contrôlés par config.js.
 
@@ -433,75 +429,7 @@ const modelPerformanceEngine = createModelPerformanceEngine({
 });
 noonObservability.attachModelPerformanceEngine(modelPerformanceEngine);
 
-const chatProgressRequestContext =
-  new AsyncLocalStorage();
-
-const userProgressEngine =
-  createUserProgressEngine({
-    onEvent(event) {
-      const scope =
-        chatProgressRequestContext
-          .getStore();
-
-      if (
-        !scope ||
-        typeof scope.writeProgress !==
-          "function"
-      ) {
-        return;
-      }
-
-      try {
-        scope.writeProgress(event);
-      } catch {
-        /*
-         * L'affichage Progress ne doit jamais
-         * casser l'exécution métier.
-         */
-      }
-    },
-  });
-
-const userProgressAdapter =
-  createUserProgressAdapter({
-    progressEngine:
-      userProgressEngine,
-  });
-
-function publicDevProgress(
-  executionId
-) {
-  const id =
-    String(
-      executionId || ""
-    ).trim();
-
-  if (!id) {
-    return null;
-  }
-
-  try {
-    return toChatProgressEvent(
-      userProgressEngine.latest(
-        id
-      )
-    );
-  } catch {
-    /*
-     * La projection de progression
-     * ne doit jamais casser l'API DEV.
-     */
-    return null;
-  }
-}
-
-const orchestratorObservability =
-  createOrchestratorProgressObservability({
-    observability:
-      noonObservability,
-    progressAdapter:
-      userProgressAdapter,
-  });
+const { chatProgressRequestContext, userProgressAdapter, publicDevProgress, orchestratorObservability } = createProgressComposition({ noonObservability });
 const adaptiveRoutingService = createAdaptiveRoutingService({
   performanceEngine: modelPerformanceEngine,
   selectModelRoute,

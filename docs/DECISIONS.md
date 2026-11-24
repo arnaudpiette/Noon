@@ -1000,6 +1000,27 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   - `mcp-client` lisait `server.js` seul ; il lit maintenant `server.js` suivi des modules
     extraits, et vérifie que le bloc est trouvé.
 
+## 24/11/2026 — Découpe de `server.js`, vingt-septième tranche : progression utilisateur (V3-L7)
+
+- Ce qui sort dans `services/observability/progress-composition.js`
+  (`createProgressComposition`) :
+  - le contexte de requête du chat (`AsyncLocalStorage`) ;
+  - le moteur et l'adaptateur de progression ;
+  - `publicDevProgress`, la projection publique pour l'API DEV ;
+  - l'observabilité de l'orchestrateur.
+- Le bloc est déplacé tel quel (143 jetons identiques). `publicDevProgress` était une
+  déclaration de fonction, donc hissée en tête du fichier ; elle devient une constante. Toutes
+  ses références dans `server.js` se trouvent après l'appel, ce qui rend le changement sans
+  effet.
+- Seule dépendance : `noonObservability`. Les 5 imports concernés quittent `server.js`.
+- `server.js` passe de 1 654 à 1 582 lignes.
+- Tests : `test/progress-composition.test.js` vérifie :
+  - le refus d'une dépendance manquante ;
+  - la progression transmise au flux du chat seulement dans le contexte d'une requête ;
+  - qu'un affichage en échec ou absent ne casse pas l'exécution ;
+  - la projection DEV tolérante (identifiant vide, nul ou inconnu) ;
+  - la position de l'appel.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
