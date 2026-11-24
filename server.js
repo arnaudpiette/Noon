@@ -168,11 +168,8 @@ const { createJobStore } = require("./services/jobs/job-store");
 const { createBackgroundJobEngine } = require("./services/jobs/background-job-engine");
 const { createNotificationAttentionEngine, createNotificationStore } = require("./services/notifications");
 const { createCapabilityRegistry, createLocalIntelligenceRuntime, createLocalModelAdapter } = require("./services/runtime");
-const { createExtensionRegistry, createExtensionRuntime } = require("./services/extensions");
-const { createMcpService } = require("./services/mcp");
 const { createRemoteLanService } = require("./services/remote/remote-lan-service");
 const { createRemoteLanHttpRoutes } = require("./services/remote/remote-lan-http-routes");
-const noonExampleSearchExtension = require("./services/extensions/sample/noon-example-search");
 const { createArtifactEngine } = require("./services/artifacts/artifact-engine");
 const { createAuditLog } = require("./services/security/audit-log");
 const { createSkillRegistry } = require("./skills/registry");
@@ -196,6 +193,7 @@ const { registerCoreReliabilityComponents } = require("./services/reliability/co
 const { createPersonalSearchComposition } = require("./services/search/personal-search-composition");
 const { createLifecycleComposition } = require("./services/lifecycle/lifecycle-composition");
 const { createPersonalIntelligenceComposition } = require("./services/personal-intelligence/personal-intelligence-composition");
+const { createExtensionsComposition } = require("./services/extensions/extensions-composition");
 
 // Tous les chemins manipulés par les outils sont contrôlés par config.js.
 
@@ -1045,60 +1043,21 @@ const nativeDevUiExecutionService = createNativeDevUiComposition({
   workspaceEngine,
 });
 
-// Les extensions enrichissent les registries existants ; elles ne reçoivent jamais les services internes bruts.
-const extensionRuntime = createExtensionRuntime({
-  securityPolicy: operationalSecurityPolicy,
-  allowedRoots: getAllowedDirectories(),
-  observability: (event, metadata) => toolAuditLog.append(`extensions.${event}`, metadata),
-  transactionalExecutor: async ({ skill, input, actionRequest, decision, operation, execution }) => {
-    const result = await transactionalExecutionEngine.executeSingleStep({
-      executionId: execution.executionId,
-      actionRequest,
-      policyDecision: decision,
-      approvalRequired: decision.requiredApproval === true,
-      approvalRef: execution.approval || null,
-      workspaceId: execution.workspaceId || null,
-      profileScope: execution.profileScope || "arnaud",
-      step: { skillId: skill.id, operation: skill.id, args: input, actionClass: skill.permissionLevel, verificationLevel: "BASIC" },
-      executeStep: operation,
-      revalidate: () => operationalSecurityPolicy.evaluate({ actionRequest, skillPolicy: { level: skill.permissionLevel.toLowerCase() }, pendingApproval: execution.approval || null }),
-      verifyStep: async () => ({ verified: true, reasonCode: "EXTENSION_SCHEMA_VALIDATED" }),
-    });
-    if (result.status !== "SUCCEEDED") throw Object.assign(new Error("Exécution transactionnelle incomplète."), { code: `EXTENSION_TRANSACTION_${result.status}` });
-    return result.result;
-  },
-});
-const extensionRegistry = createExtensionRegistry({
-  noonVersion: require("./package.json").version,
+// Les extensions enrichissent les registries existants ; elles ne reçoivent jamais les services
+// internes bruts. Client MCP : flag connectors.mcp, OFF par défaut (services/extensions/extensions-composition.js).
+const { extensionRegistry, mcpService } = createExtensionsComposition({
+  DATA_DIRECTORY,
+  UI_VALIDATION_MODE,
+  featureFlags,
+  getAllowedDirectories,
+  integrationTokenStore,
+  localIntelligenceRuntime,
+  operationalSecurityPolicy,
+  reliabilityEngine,
   skillRegistry,
-  runtime: extensionRuntime,
-  reliability: reliabilityEngine,
-  enabled: featureFlags.evaluate("extensions.sdk").enabled,
-  developerMode: process.env.NOON_EXTENSION_DEV_MODE === "true",
-  observability: (event, metadata) => toolAuditLog.append(`extensions.${event}`, metadata),
+  toolAuditLog,
+  transactionalExecutionEngine,
 });
-extensionRuntime.bindRegistry(extensionRegistry);
-// Client MCP (flag connectors.mcp, OFF par défaut) : outils en lecture seule
-// validés par l'utilisateur, jetons dans le coffre safeStorage existant.
-const mcpService = createMcpService({
-  enabled: featureFlags.evaluate("connectors.mcp").enabled && !UI_VALIDATION_MODE && process.env.NOON_SMOKE_TEST !== "1",
-  dataDirectory: DATA_DIRECTORY,
-  tokenStore: integrationTokenStore,
-  skillRegistry,
-  clientVersion: require("./package.json").version,
-  // Mode local uniquement / hors ligne : aucun serveur MCP distant (Figma = REMOTE_FIGMA).
-  isRemoteAllowed: (capabilityId) => localIntelligenceRuntime.preflight({ requiredCapabilities: [capabilityId] }).status === "AVAILABLE",
-  observability: (event, metadata) => toolAuditLog.append(event, metadata),
-});
-// L'extension de démonstration reste disponible pour les tests de développement,
-// mais ne doit jamais concurrencer la vraie recherche publique en production.
-if (process.env.NOON_ENABLE_EXAMPLE_SEARCH_EXTENSION === "true") {
-  extensionRegistry.discover({ manifest: noonExampleSearchExtension.manifest, module: noonExampleSearchExtension, provenance: "BUNDLED", trust: "TRUSTED", signed: true });
-  extensionRegistry.install(noonExampleSearchExtension.manifest.id, { approvedPermissions: noonExampleSearchExtension.manifest.permissions });
-  void extensionRegistry.enable(noonExampleSearchExtension.manifest.id).catch((error) => {
-    toolAuditLog.append("extensions.extension_failed", { extensionId: noonExampleSearchExtension.manifest.id, errorCode: String(error.code || "ACTIVATION_FAILED") });
-  });
-}
 
 const specialistRegistry = createSpecialistRegistry();
 const contextCapsuleBuilder = createContextCapsuleBuilder();

@@ -973,6 +973,33 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   - `resume-briefing` accepte le préfixe `deps.` devant `resolveFocusCatalogSelection`.
   - Les autres assertions de ces tests sont inchangées.
 
+## 24/11/2026 — Découpe de `server.js`, vingt-sixième tranche : extensions et client MCP (V3-L7)
+
+- Ce qui sort dans `services/extensions/extensions-composition.js`
+  (`createExtensionsComposition`) :
+  - le runtime des extensions et son exécuteur transactionnel ;
+  - le registre des extensions et son branchement au runtime ;
+  - le client MCP ;
+  - l'extension de démonstration, chargée seulement si `NOON_ENABLE_EXAMPLE_SEARCH_EXTENSION`
+    vaut `true`.
+- Le bloc est déplacé tel quel (516 jetons). Seul le chemin de `package.json` est réécrit
+  depuis le nouveau dossier.
+- `server.js` l'appelle au même endroit qu'avant.
+  - Ses 11 dépendances sont déjà initialisées et lues une fois.
+  - Les fabriques et l'extension de démonstration sont importées par le module, qui n'a
+    aucun effet de bord au chargement.
+  - Seuls `extensionRegistry` et `mcpService` sont renvoyés. Le bloc Figma reste après la
+    délégation DEV, pour garder l'ordre de construction.
+- `server.js` passe de 1 695 à 1 654 lignes.
+- Tests :
+  - `test/extensions-composition.test.js` vérifie :
+    - le refus d'une dépendance manquante ;
+    - le client MCP actif seulement avec le flag, hors validation UI et hors smoke ;
+    - l'extension de démonstration absente par défaut ;
+    - la position de l'appel.
+  - `mcp-client` lisait `server.js` seul ; il lit maintenant `server.js` suivi des modules
+    extraits, et vérifie que le bloc est trouvé.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

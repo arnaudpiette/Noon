@@ -362,7 +362,10 @@ test("le catalogue rattache Figma distant à REMOTE_FIGMA et le serveur de burea
 });
 
 test("server.js branche la politique locale sur le client MCP", () => {
-  const source = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
-  const block = source.slice(source.indexOf("const mcpService = createMcpService({"), source.indexOf("});", source.indexOf("const mcpService = createMcpService({")));
+  // V3-L7 : ce câblage vit dans services/extensions/extensions-composition.js.
+  const source = require("./helpers/server-source").readServerSource();
+  const start = source.indexOf("const mcpService = createMcpService({");
+  assert.notEqual(start, -1);
+  const block = source.slice(start, source.indexOf("});", start));
   assert.match(block, /isRemoteAllowed: \(capabilityId\) => localIntelligenceRuntime\.preflight\(\{ requiredCapabilities: \[capabilityId\] \}\)\.status === "AVAILABLE"/);
 });
