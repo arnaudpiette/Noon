@@ -1533,15 +1533,48 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   connecteurs et mémoire, soit 26 fichiers JavaScript vérifiés par `npm run typecheck`. La règle
   `no-floating-promises`, reportée par A.3, est active sur ces mêmes fichiers.
 
+## 24/11/2026 — Clé maîtresse de la mémoire privée : plus jamais régénérée par-dessus une clé existante
+
+- Correction demandée par Arnaud.
+- Le défaut, relevé pendant A.4 dans `loadOrCreateProtectedMasterKey`
+  (`services/personal-memory/crypto.js`) : tout échec de lecture ou de déchiffrement générait
+  une nouvelle clé et écrasait l'ancienne. Un trousseau verrouillé, une application re-signée ou
+  un fichier corrompu rendaient donc définitivement illisibles les souvenirs privés déjà
+  chiffrés.
+- Nouveau comportement :
+  - clé absente (`ENOENT`) : création comme avant, mais par écriture atomique (fichier
+    temporaire `wx` en 0600, puis lien). Un arrêt brutal ne laisse plus de clé tronquée, et une
+    clé apparue entre-temps n'est pas écrasée ;
+  - clé présente mais illisible ou indéchiffrable, vide comprise : erreur
+    `PRIVATE_MEMORY_KEY_UNREADABLE` (`stage` : `read` ou `decrypt`). Le fichier n'est jamais
+    modifié.
+  - La composition (`personal-memory-composition.js`) intercepte déjà cette erreur. La mémoire
+    privée reste alors indisponible, comme lorsque le coffre macOS manque. L'audit
+    `private-memory.unavailable` enregistre désormais `PRIVATE_MEMORY_KEY_UNREADABLE` et
+    l'étape en cause, au lieu du seul `KEYSTORE_UNAVAILABLE`.
+- Conséquence assumée : si la clé redevient lisible (trousseau déverrouillé, bonne signature),
+  la mémoire privée revient au lancement suivant avec toutes ses données. Sinon, elle reste
+  indisponible. Supprimer la clé, et perdre les souvenirs chiffrés, est une décision qui revient
+  à Arnaud, jamais à Noon.
+- L'interface affiche toujours « Le coffre macOS est indisponible. » : le service reçoit
+  `cipher = null` dans les deux cas. Un message plus précis serait une évolution séparée.
+- Tests : nouveau `test/private-memory-master-key.test.js`, 6 cas :
+  - création, relecture et droits 0600 ;
+  - clé indéchiffrable ;
+  - clé corrompue ou vide ;
+  - erreur de lecture ;
+  - coffre indisponible ;
+  - composition de bout en bout.
+  - Lancés sur l'ancien code, 4 cas sur 6 échouent : l'ancien code écrasait bien la clé.
+- Validation :
+  - tests : 2 984/2 984 ;
+  - évaluations : `eval:critical` 54/54, `eval:privacy` 3/3, `eval:smoke` 99/99,
+    `eval:recovery` et `eval:migration` 1/1 ;
+  - smoke Electron OK, sans clé créée dans le profil jetable.
+- Non vérifié :
+  - le vrai trousseau macOS, verrouillé ou avec une application re-signée ;
+  - l'application packagée.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
-- Clé maîtresse de la mémoire privée (`services/personal-memory/crypto.js`,
-  `loadOrCreateProtectedMasterKey`), relevé pendant A.4 et laissé tel quel.
-  - Le problème : si `safeStorage.decryptString` échoue sur un fichier de clé existant, le
-    `catch` génère une nouvelle clé et écrase le fichier. Cela arrive par exemple avec un
-    trousseau verrouillé, une app re-signée ou un fichier corrompu.
-  - La conséquence : les souvenirs privés déjà chiffrés deviendraient illisibles.
-  - La correction possible : distinguer « fichier absent », qui crée la clé, de « échec de
-    déchiffrement », qui déclare la mémoire privée indisponible sans rien écraser. Ce serait
-    un changement de comportement, à décider.

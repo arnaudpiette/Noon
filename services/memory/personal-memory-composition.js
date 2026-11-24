@@ -27,8 +27,11 @@ function createPersonalMemoryComposition(dependencies) {
     // Le service sait déjà fonctionner indisponible lorsque safeStorage manque.
     const protectedKey = loadOrCreateProtectedMasterKey(DATA_DIRECTORY, runtimeSafeStorage);
     if (protectedKey) privateMemoryCipher = createMemoryCipher(protectedKey);
-  } catch {
-    toolAuditLog.append("private-memory.unavailable", { code: "KEYSTORE_UNAVAILABLE" });
+  } catch (error) {
+    // Clé existante illisible : la mémoire privée reste indisponible, la clé n'est pas remplacée.
+    toolAuditLog.append("private-memory.unavailable", error?.code === "PRIVATE_MEMORY_KEY_UNREADABLE"
+      ? { code: error.code, stage: error.stage || null }
+      : { code: "KEYSTORE_UNAVAILABLE" });
   }
   const privateMemoryService = createPrivateMemoryService({
     databaseWrapper: personalDatabase,
