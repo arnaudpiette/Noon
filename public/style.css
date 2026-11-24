@@ -2630,3 +2630,127 @@ body.dev-preview-resizing *{
 .first-step-actions button { border: 1px solid var(--border); background: #fff; color: var(--ink); border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 600; }
 .first-step-actions button:hover:not(:disabled) { border-color: var(--ink); }
 .first-step-actions button:disabled { color: var(--muted); cursor: default; }
+
+/* ==========================================================================
+   Interface V3 — étape 1 : système visuel commun, barre de titre, Control Center
+   Échelles uniques réutilisées par les étapes suivantes (colonne, mode DEV).
+   ========================================================================== */
+:root{
+  --ui-ink:#141413;--ui-text:#2b2b29;--ui-text-2:#6c6b66;--ui-text-3:#a19f98;
+  --ui-line:rgba(20,20,19,.085);--ui-line-strong:rgba(20,20,19,.15);
+  --ui-hover:rgba(20,20,19,.045);--ui-press:rgba(20,20,19,.075);
+  --ui-canvas:#fafaf8;--ui-surface:#fff;
+  --ui-lime:#b8f900;--ui-lime-soft:rgba(184,249,0,.24);--ui-lime-ink:#3a4d00;--ui-orange:#ff650a;
+  --ui-s1:4px;--ui-s2:8px;--ui-s3:12px;--ui-s4:16px;--ui-s5:24px;--ui-s6:32px;--ui-s7:48px;
+  --ui-fs-xs:11.5px;--ui-fs-sm:12.5px;--ui-fs:13.5px;--ui-fs-md:15px;--ui-fs-lg:22px;
+  --ui-radius:8px;--ui-radius-lg:14px;--ui-icon:18px;--ui-control:32px;
+  --ui-ease:cubic-bezier(.2,.8,.2,1);--ui-focus:0 0 0 2px #fff,0 0 0 4px rgba(20,20,19,.32);
+}
+
+/* Pictos : un seul jeu, trait 1,6, bouts arrondis, grille 24. */
+.noon-icon-sprite{position:absolute;width:0;height:0;overflow:hidden}
+.noon-icon{display:block;flex:0 0 auto;width:var(--ui-icon);height:var(--ui-icon);fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+
+/* Barre de titre : 52 px, verre dépoli léger, un filet. */
+.top-tools{height:52px;padding-top:0;padding-bottom:0;align-items:center;border-bottom:1px solid var(--ui-line);background:rgba(255,255,255,.82);-webkit-backdrop-filter:saturate(1.6) blur(16px);backdrop-filter:saturate(1.6) blur(16px)}
+.view-switch{height:auto;gap:2px}
+.view-btn{min-height:30px;padding:0 12px;border-radius:var(--ui-radius);color:var(--ui-text-2);font-size:var(--ui-fs);font-weight:500;letter-spacing:-.005em;transition:background-color .16s var(--ui-ease),color .16s var(--ui-ease)}
+.view-btn:hover{color:var(--ui-ink);background:var(--ui-hover)}
+.view-btn.active{color:var(--ui-ink);background:var(--ui-lime-soft);box-shadow:inset 0 0 0 1px rgba(122,170,0,.22)}
+.view-btn:focus-visible{outline:none;box-shadow:var(--ui-focus)}
+.tool-actions{gap:2px;align-items:center}
+.top-tools .icon-btn,.top-tools .audio-btn,.top-tools #settingsButton,.top-tools #shareConversationButton{position:relative;display:grid;width:var(--ui-control);height:var(--ui-control);place-items:center;padding:0;border:0;border-radius:var(--ui-radius);background:transparent;box-shadow:none;color:var(--ui-text-2);transform:none;transition:background-color .16s var(--ui-ease),color .16s var(--ui-ease)}
+.top-tools .icon-btn:hover,.top-tools .icon-btn[aria-expanded="true"]{background:var(--ui-hover);color:var(--ui-ink);transform:none}
+.top-tools .icon-btn:active{background:var(--ui-press)}
+.top-tools .icon-btn:focus-visible{outline:none;box-shadow:var(--ui-focus)}
+.top-tools .audio-btn .audio-bars{gap:2.5px;height:16px;transform:none}
+.top-tools .audio-btn .audio-bars i{width:1.6px;height:6px;border-radius:2px}
+.top-tools .audio-btn .audio-bars i:nth-child(2){height:13px}.top-tools .audio-btn .audio-bars i:nth-child(3){height:9px}
+.control-center-button__status{position:absolute;top:7px;right:7px;width:6px;height:6px;border-radius:50%;background:var(--ui-text-3);box-shadow:0 0 0 2px #fff;transition:background-color .2s var(--ui-ease)}
+#settingsButton[data-state="online"] .control-center-button__status{background:#7fc400}
+#settingsButton[data-state="offline"] .control-center-button__status{background:#f5a524}
+#settingsButton[data-state="server-error"] .control-center-button__status{background:var(--ui-orange)}
+.sidebar-toggle{width:var(--ui-control);height:var(--ui-control);border:0;border-radius:var(--ui-radius);background:transparent;box-shadow:none;color:var(--ui-text-2)}
+.sidebar-toggle:hover{background:var(--ui-hover);color:var(--ui-ink);transform:none}
+.sidebar-toggle:focus-visible{outline:none;box-shadow:var(--ui-focus)}
+.share-conversation-menu{min-width:220px;padding:var(--ui-s1);border-radius:12px}
+.share-conversation-menu button{min-height:34px;padding:0 var(--ui-s3);border-radius:var(--ui-radius);font-size:var(--ui-fs);font-weight:500}
+
+/* Champ de saisie : mêmes pictos, envoi aux couleurs de Noon. */
+.composer-plus-button{color:var(--ui-text-2)}
+.composer-plus-button .noon-icon{width:20px;height:20px}
+.composer-menu-symbol{display:grid;place-items:center;color:var(--ui-text-2)}
+.composer > .microphone-btn,.input-shell > .microphone-btn,.input-shell .mic-button{color:var(--ui-text-2)}
+.microphone-glyph.noon-icon{width:20px;height:20px}
+.input-shell > .send-btn{display:grid;place-items:center;background:var(--ui-ink);color:var(--ui-lime);box-shadow:none;transition:transform .16s var(--ui-ease),background-color .16s var(--ui-ease)}
+.input-shell > .send-btn:hover{background:#000;transform:translateY(-1px)}
+.input-shell > .send-btn .noon-icon{width:18px;height:18px;stroke-width:2}
+
+/* Control Center : vue plein écran, comme les réglages de Claude. */
+.control-center{width:100vw;height:100vh;max-width:100vw;max-height:100vh;margin:0;border:0;border-radius:0;background:var(--ui-canvas);box-shadow:none}
+.control-center[open]{animation:noonSheetIn .22s var(--ui-ease)}
+.control-center::backdrop{background:transparent;-webkit-backdrop-filter:none;backdrop-filter:none}
+.control-center__header{height:60px;padding:0 var(--ui-s4) 0 var(--ui-s5);border-bottom:1px solid var(--ui-line);background:rgba(255,255,255,.86)}
+.control-center__eyebrow{display:none}
+.control-center__header h1{margin:0;color:var(--ui-ink);font-size:var(--ui-fs-md);font-weight:600;letter-spacing:-.01em}
+.control-center__header-actions{gap:2px}
+.control-center__header-actions select{height:var(--ui-control);min-height:0;margin-right:var(--ui-s2);padding:0 28px 0 10px;border:1px solid var(--ui-line-strong);border-radius:var(--ui-radius);font-size:var(--ui-fs-sm)}
+.control-center__view-label{color:var(--ui-text-3);font-size:var(--ui-fs-sm)}
+.control-center__header-actions .icon-btn{display:grid;width:var(--ui-control);height:var(--ui-control);min-height:0;place-items:center;padding:0;border:0;border-radius:var(--ui-radius);background:transparent;color:var(--ui-text-2)}
+.control-center__header-actions .icon-btn:hover{background:var(--ui-hover);color:var(--ui-ink)}
+.control-center__header-actions .icon-btn:focus-visible{outline:none;box-shadow:var(--ui-focus)}
+.control-center__body{grid-template-columns:248px minmax(0,1fr)}
+.control-center__navigation{gap:2px;padding:var(--ui-s4) var(--ui-s3);border-right:1px solid var(--ui-line);background:var(--ui-canvas)}
+.control-center__navigation button{min-height:34px;padding:0 var(--ui-s3);border-radius:var(--ui-radius);color:var(--ui-text-2);font-size:var(--ui-fs);font-weight:500;letter-spacing:-.005em}
+.control-center__navigation button:hover{background:var(--ui-hover);color:var(--ui-ink)}
+.control-center__navigation button.active{background:var(--ui-press);color:var(--ui-ink)}
+.control-center__navigation button.active::after{width:6px;height:6px;background:var(--ui-lime);box-shadow:0 0 0 2px rgba(184,249,0,.25)}
+.control-center__navigation button:focus-visible{outline:none;box-shadow:var(--ui-focus)}
+.control-center__content{padding:var(--ui-s6) var(--ui-s7) var(--ui-s7);background:var(--ui-surface)}
+
+/* Onglet Réglages : sections en cartes, une ligne par réglage, interrupteurs. */
+.control-center .settings-page.quick-settings{position:static;z-index:auto;width:auto;max-width:720px;max-height:none;margin:0;padding:0;overflow:visible;border:0;border-radius:0;background:transparent;box-shadow:none;color:var(--ui-text)}
+.settings-page__header{margin:0 0 var(--ui-s5)}
+.settings-page__header h2{margin:0 0 var(--ui-s1);color:var(--ui-ink);font-size:var(--ui-fs-lg);font-weight:600;letter-spacing:-.02em}
+.settings-page__header p{margin:0;color:var(--ui-text-2);font-size:var(--ui-fs);line-height:1.55}
+.control-center .settings-page fieldset{display:block;margin:0 0 var(--ui-s5);padding:0 var(--ui-s4);border:1px solid var(--ui-line);border-radius:var(--ui-radius-lg);background:var(--ui-surface)}
+.control-center .settings-page fieldset[hidden]{display:none}
+.control-center .settings-page fieldset legend{float:left;width:100%;margin:0;padding:var(--ui-s4) 0 var(--ui-s2);color:var(--ui-ink);font-size:var(--ui-fs-md);font-weight:600;letter-spacing:-.01em}
+.control-center .settings-page fieldset>*:not(legend){clear:both}
+.control-center .settings-page .setting-line,.control-center .settings-page .setting-field{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:var(--ui-s2) var(--ui-s4);min-height:52px;margin:0;padding:var(--ui-s3) 0;border-top:1px solid var(--ui-line);border-radius:0;background:transparent;color:var(--ui-text);font-size:var(--ui-fs);font-weight:400}
+.control-center .settings-page legend+.setting-line,.control-center .settings-page legend+.setting-field{border-top:0}
+.control-center .settings-page .setting-line{flex-direction:row-reverse;cursor:pointer}
+.control-center .settings-page .setting-line:hover{background:transparent}
+.control-center .settings-page .setting-field>span:first-child{flex:1 1 auto;color:var(--ui-text);font-size:var(--ui-fs)}
+.control-center .settings-page .setting-help,.control-center .settings-page small{flex:1 1 100%;margin:0;color:var(--ui-text-3);font-size:var(--ui-fs-sm);line-height:1.5}
+.control-center .settings-page fieldset>.setting-help,.control-center .settings-page fieldset>p,.control-center .settings-page fieldset>strong,.control-center .settings-page fieldset>div{display:block;margin:0;padding:var(--ui-s3) 0;border-top:1px solid var(--ui-line)}
+.control-center .settings-page fieldset>strong{color:var(--ui-ink);font-size:var(--ui-fs);font-weight:600}
+.control-center .settings-page input[type="text"],.control-center .settings-page input[type="password"],.control-center .settings-page input[type="time"],.control-center .settings-page input[type="number"],.control-center .settings-page select{min-width:220px;height:var(--ui-control);min-height:0;padding:0 10px;border:1px solid var(--ui-line-strong);border-radius:var(--ui-radius);background:#fff;color:var(--ui-ink);font:inherit;font-size:var(--ui-fs-sm)}
+.control-center .settings-page input:focus-visible,.control-center .settings-page select:focus-visible{outline:none;border-color:rgba(20,20,19,.4);box-shadow:0 0 0 3px rgba(20,20,19,.08)}
+.control-center .settings-page button:not(.control-center-entry){height:var(--ui-control);min-height:0;padding:0 var(--ui-s3);border:1px solid var(--ui-line-strong);border-radius:var(--ui-radius);background:#fff;color:var(--ui-ink);font:inherit;font-size:var(--ui-fs-sm);font-weight:500;transition:background-color .16s var(--ui-ease),border-color .16s var(--ui-ease)}
+.control-center .settings-page button:not(.control-center-entry):hover{border-color:rgba(20,20,19,.28);background:var(--ui-hover)}
+.control-center .settings-page button:focus-visible{outline:none;box-shadow:var(--ui-focus)}
+.control-center .settings-page input[type="checkbox"]{position:relative;flex:0 0 auto;width:36px;height:20px;margin:0;border-radius:999px;background:#dddcd7;-webkit-appearance:none;appearance:none;cursor:pointer;transition:background-color .18s var(--ui-ease)}
+.control-center .settings-page input[type="checkbox"]::before{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.18);content:"";transition:transform .18s var(--ui-ease)}
+.control-center .settings-page input[type="checkbox"]:checked{background:var(--ui-lime)}
+.control-center .settings-page input[type="checkbox"]:checked::before{transform:translateX(16px)}
+.control-center .settings-page input[type="checkbox"]:focus-visible{outline:none;box-shadow:var(--ui-focus)}
+.control-center .settings-page input[type="range"]{flex:0 0 220px;accent-color:var(--ui-ink)}
+.control-center .settings-page .planning-time-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 var(--ui-s5)}
+.control-center .settings-page .planning-time-grid .setting-field input{min-width:0;width:120px}
+.control-center .settings-page .memory-add{display:flex;gap:var(--ui-s2)}
+.control-center .settings-page .memory-add input{flex:1}
+.control-center .settings-page .wake-word-imports{display:flex;gap:var(--ui-s2)}
+@keyframes noonSheetIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){.control-center[open]{animation:none}}
+@media(max-width:760px){.control-center__body{grid-template-columns:1fr}.control-center__content{padding:var(--ui-s5) var(--ui-s4)}.control-center .settings-page .planning-time-grid{grid-template-columns:1fr}}
+/* Étape 1 — retouches après revue visuelle. */
+.top-tools .icon-btn[hidden],.top-tools button[hidden]{display:none}
+.composer-voice-quality select{height:28px;padding:0 24px 0 10px;border:1px solid var(--ui-line);border-radius:var(--ui-radius);background-color:transparent;color:var(--ui-text-2);font-size:var(--ui-fs-xs);font-weight:500}
+.composer-voice-quality select:hover{background-color:var(--ui-hover);color:var(--ui-ink)}
+.control-center select,.composer-voice-quality select{-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236c6b66' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 10l5 5 5-5'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 8px center;background-size:14px}
+.control-center .settings-page select,.control-center__header-actions select{padding-right:30px}
+.control-center .settings-page fieldset>.planning-time-grid{padding:0;border-top:0}
+.control-center .settings-page fieldset>button{margin:var(--ui-s3) var(--ui-s2) var(--ui-s3) 0}
+.control-center .settings-page fieldset>.wake-word-imports{padding:var(--ui-s3) 0}
+.control-center .settings-page .memory-list{color:var(--ui-text-3);font-size:var(--ui-fs-sm)}

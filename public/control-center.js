@@ -30,6 +30,9 @@
   const DEV_MISSIONS_SECTION = "dev-missions";
   const HEALTH_SECTION = "noon-health";
   const FIGMA_SECTION = "figma-bridge";
+  // Étape 1 UI : les réglages (ancien menu déroulant de la barre du haut) sont un onglet du
+  // Control Center, toujours disponible, ouvert directement par le picto de la barre.
+  const SETTINGS_SECTION = "settings";
   const clientPanels = {
     [MCP_SECTION]: { container: document.getElementById("controlCenterMcp"), available: false, refresh: () => window.NoonMcpConnectors?.refresh?.() },
     [SELFDEV_SECTION]: { container: document.getElementById("controlCenterSelfDev"), available: false, refresh: () => window.NoonSelfDev?.refresh?.() },
@@ -37,6 +40,7 @@
     [DEV_MISSIONS_SECTION]: { container: document.getElementById("controlCenterDevMissions"), available: false, refresh: () => window.NoonDevMissions?.refresh?.() },
     [HEALTH_SECTION]: { container: document.getElementById("controlCenterHealth"), available: false, refresh: () => window.NoonHealth?.refresh?.() },
     [FIGMA_SECTION]: { container: document.getElementById("controlCenterFigma"), available: false, refresh: () => window.NoonFigmaBridge?.refresh?.() },
+    [SETTINGS_SECTION]: { container: document.getElementById("controlCenterSettings"), available: true, refresh: () => Promise.resolve() },
   };
   const isClientPanel = (id) => Object.prototype.hasOwnProperty.call(clientPanels, id);
   const hideClientPanels = (except = null) => { for (const [id, panel] of Object.entries(clientPanels)) if (id !== except && panel.container) panel.container.hidden = true; };
@@ -55,6 +59,7 @@
     [DEV_MISSIONS_SECTION]: "Missions DEV",
     [HEALTH_SECTION]: "Santé de Noon",
     [FIGMA_SECTION]: "Figma",
+    [SETTINGS_SECTION]: "Réglages",
   });
   const actionLabels = Object.freeze({
     RUN_QUICK_DIAGNOSTIC: "Vérifier", CHECK_CONNECTION: "Tester", CHECK_EXTENSION: "Tester",
@@ -170,8 +175,9 @@
     lastSectionIds = sectionIds;
     navigation.replaceChildren();
     const goalModeDev = goalModeDevAvailable && goalModeDevContainer ? [GOAL_MODE_DEV_SECTION] : [];
-    const panels = Object.entries(clientPanels).filter(([, panel]) => panel.available && panel.container).map(([id]) => id);
-    for (const id of ["overview", ...sectionIds.filter((item) => item !== GOAL_MODE_DEV_SECTION && !isClientPanel(item)), ...goalModeDev, ...panels]) {
+    const panels = Object.entries(clientPanels).filter(([id, panel]) => id !== SETTINGS_SECTION && panel.available && panel.container).map(([id]) => id);
+    const settings = clientPanels[SETTINGS_SECTION].container ? [SETTINGS_SECTION] : [];
+    for (const id of ["overview", ...settings, ...sectionIds.filter((item) => item !== GOAL_MODE_DEV_SECTION && !isClientPanel(item)), ...goalModeDev, ...panels]) {
       const button = element("button", id === activeSection ? "active" : "", labels[id] || id);
       button.type = "button";
       button.dataset.section = id;
@@ -269,9 +275,26 @@
     }
   }
 
-  async function open() {
+  // Navigation seule, sans afficher la vue d'ensemble (ouverture directe sur un onglet).
+  async function loadNavigation() {
+    try {
+      const response = await fetch(`/api/control-center/overview?${new URLSearchParams({ view: viewSelect.value })}`, { cache: "no-store" });
+      const data = await response.json();
+      if (response.ok) renderNavigation(data.snapshot?.availableSections || []);
+    } catch {}
+  }
+
+  async function open(sectionId = "overview") {
     if (!dialog.open) dialog.showModal();
-    await load("overview");
+    if (isClientPanel(sectionId) && clientPanels[sectionId].available && clientPanels[sectionId].container) {
+      renderNavigation(lastSectionIds);
+      await showClientPanel(sectionId);
+      await loadNavigation();
+      markActive(sectionId);
+      return;
+    }
+    await load(sectionId);
+    if (sectionId !== "overview") { await loadNavigation(); markActive(sectionId); }
   }
 
   openButton?.addEventListener("click", () => { document.getElementById("quickSettings").hidden = true; void open(); });

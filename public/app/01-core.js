@@ -320,7 +320,6 @@ const sidebarBackdrop = document.getElementById("sidebarBackdrop");
 const collapsedSidebarRail = document.getElementById("collapsedSidebarRail");
 const settingsButton = document.getElementById("settingsButton");
 const systemStatusButton = document.getElementById("systemStatusButton");
-const quickSettings = document.getElementById("quickSettings");
 const wakeWordEnabledInput = document.getElementById("wakeWordEnabled");
 const wakeWordStatus = document.getElementById("wakeWordStatus");
 const picovoiceAccessKey = document.getElementById("picovoiceAccessKey");

@@ -90,13 +90,10 @@ collapsedSidebarRail.addEventListener("click", (event) => {
   }
 });
 
+// Étape 1 UI : le picto de la barre du haut ouvre directement le Control Center, onglet Réglages.
 settingsButton.addEventListener("click", (event) => {
   event.stopPropagation();
-  quickSettings.hidden = !quickSettings.hidden;
-  settingsButton.setAttribute(
-    "aria-expanded",
-    String(!quickSettings.hidden)
-  );
+  void window.NoonControlCenter?.open?.("settings");
 });
 
 systemStatusButton.addEventListener("click", async () => {
@@ -399,13 +396,6 @@ resetWakeWordButton.addEventListener("click", async () => {
 });
 
 document.addEventListener("click", (event) => {
-  if (
-    !quickSettings.contains(event.target) &&
-    event.target !== settingsButton
-  ) {
-    quickSettings.hidden = true;
-    settingsButton.setAttribute("aria-expanded", "false");
-  }
   if (
     !shareConversationMenu.contains(event.target) &&
     event.target !== shareConversationButton
@@ -1082,6 +1072,10 @@ function setConnectionStatus(state, text) {
   systemStatusButton.dataset.state = state;
   systemStatusButton.title = text;
   systemStatusButton.setAttribute("aria-label", `État de Noon : ${text}. Ouvrir le Control Center.`);
+  // La pastille d'état est portée par le picto du Control Center.
+  settingsButton.dataset.state = state;
+  settingsButton.title = `Control Center · ${text}`;
+  settingsButton.setAttribute("aria-label", `Ouvrir le Control Center. État de Noon : ${text}.`);
 }
 
 // Contrôle uniquement le serveur local ; cette requête ne contacte pas OpenAI.

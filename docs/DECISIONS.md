@@ -1684,6 +1684,68 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   - tests : 2 991/2 991 ;
   - évaluations : `eval:critical` 54/54, `eval:smoke` 99/99, `eval:delegation` 10/10.
 
+## 24/11/2026 — Interface V3, étape 1 : barre de titre, pictos unifiés, Control Center plein écran
+
+- Décisions d'Arnaud (24/11) :
+  - interface simple et fonctionnelle, inspirée de Claude, en gardant l'esprit Noon ;
+  - le mode DA/DEV suit le projet ;
+  - l'accueil reste l'Assistant vocal ;
+  - le Control Center s'ouvre en plein écran.
+  - Découpage en 4 étapes : barre de titre et Réglages, regroupement du Control Center,
+    colonne de gauche, mode DEV en panneaux.
+- Système visuel commun (bloc « Interface V3 » à la fin de `public/style.css`) :
+  - variables : encres, filets, survols, vert citron Noon ;
+  - échelle d'espacements de 4 à 48 px ;
+  - échelle typographique (11,5 · 12,5 · 13,5 · 15 · 22 px) et graisses d'interface 500 et 600,
+    Montserrat conservée ;
+  - pictos de 18 px dans des boutons de 32 px ; rayons de 8 px (contrôles) et 14 px (cartes) ;
+  - focus visible homogène.
+- Pictos : un seul jeu SVG (`<symbol>` en tête de `index.html`), au trait de 1,6 avec bouts
+  arrondis, sur une grille de 24.
+  - Ils remplacent l'engrenage pointillé, la flèche « ↥ », le « ＋ », le « ↑ », les symboles
+    « ◎ » et « ☷ » du menu du champ de saisie, l'image de la pièce jointe et le chevron de la
+    barre latérale.
+  - Les barres audio animées sont gardées, affinées au même trait.
+- Barre de titre : 52 px, fond légèrement dépoli, un filet.
+  - Onglet actif en vert citron doux.
+  - À droite, trois pictos : activité audio, partager, Control Center.
+  - L'ancien bouton d'état (pastille) est masqué. Son état s'affiche désormais en pastille sur
+    le picto du Control Center : vert prêt, ambre dégradé, orange arrêté.
+- Le picto ouvre **directement** le Control Center sur l'onglet « Réglages ». Plus de menu
+  déroulant.
+  - Le contenu de l'ancien menu (`#quickSettings`, identifiants inchangés) a été déplacé dans
+    l'onglet, avec deux nouvelles sections : « Voix et audio » et « Réponses ».
+  - Mise en forme : sections en cartes, une ligne par réglage, interrupteurs, listes et
+    champs homogènes.
+  - `NoonControlCenter.open(section)` ouvre une section donnée. L'entrée « Réglages » du
+    champ de saisie et le lien `noon://settings` y mènent ; `noon://diagnostic` mène à la
+    section Diagnostics.
+  - La fermeture au clic extérieur de l'ancien menu est supprimée. Échap est géré par la
+    fenêtre du Control Center.
+- Control Center plein écran, comme les réglages de Claude : en-tête de 60 px, navigation de
+  248 px, contenu sur fond blanc.
+- Champ de saisie : envoi noir à flèche vert citron, sélecteur de qualité neutre.
+- Tests :
+  - `test/top-menu-ui.test.js` adapté : il supposait que les réglages étaient un menu
+    déroulant, ce qui n'est plus le cas ;
+  - deux tests ajoutés : le picto ouvre l'onglet Réglages ; un seul jeu de pictos au trait ;
+  - les tests qui figent l'ancien CSS (bleu du bouton d'envoi) restent : les nouvelles règles
+    sont des surcharges placées après, comme dans le reste du fichier.
+- Vérification visuelle :
+  - aperçu local servant `public/` et le vrai `/app.js` ;
+  - captures Electron 1440×900 de l'accueil et des Réglages (haut, milieu, bas) ;
+  - comportements testés dans le navigateur intégré : ouverture directe, navigation,
+    interrupteur, menu du champ de saisie, menu de partage ;
+  - aucune erreur JavaScript.
+- Validation :
+  - lint OK ; tests 2 993/2 993 ;
+  - évaluations : `eval:critical` 54/54, `eval:smoke` 99/99.
+- Non vérifié : l'application réelle avec ses données (préférences chargées, vue d'ensemble
+  du serveur) et l'application packagée.
+- Relevé, non traité : deux réglages se recoupent. « Créer automatiquement les brouillons
+  Gmail » (`gmailAutoDrafts`, section Réponses) et « Création automatique de brouillons
+  Gmail » (`autoDraftsEnabled`, section Organisation). À trancher à l'étape 2.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

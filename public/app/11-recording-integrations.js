@@ -408,12 +408,8 @@ document.addEventListener("keydown", (event) => {
       return;
     }
 
-    if (!quickSettings.hidden) {
-      quickSettings.hidden = true;
-      settingsButton.setAttribute("aria-expanded", "false");
-      updateActivity("Réglages fermés.");
-      return;
-    }
+    // Le Control Center (réglages compris) se ferme lui-même avec Échap.
+    if (document.getElementById("controlCenter")?.open) return;
 
     closeFocusMenu();
     switchView("core");
@@ -693,8 +689,7 @@ window.noon?.onDeepLink((link) => {
     return;
   }
   if (link.action === "settings" || link.action === "diagnostic") {
-    quickSettings.hidden = false;
-    settingsButton.setAttribute("aria-expanded", "true");
+    void window.NoonControlCenter?.open?.(link.action === "settings" ? "settings" : "diagnostics");
     return;
   }
   if (link.action === "brief") {

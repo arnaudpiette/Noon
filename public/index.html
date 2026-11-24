@@ -12,6 +12,18 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <svg class="noon-icon-sprite" aria-hidden="true" focusable="false" width="0" height="0">
+    <symbol id="noon-i-sliders" viewBox="0 0 24 24"><path d="M4 7h8M16 7h4M4 17h4M12 17h8"/><circle cx="14" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
+    <symbol id="noon-i-share" viewBox="0 0 24 24"><path d="M12 14.5V4M8 8l4-4 4 4"/><path d="M6 12.5v5.5a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-5.5"/></symbol>
+    <symbol id="noon-i-panel" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/></symbol>
+    <symbol id="noon-i-close" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
+    <symbol id="noon-i-refresh" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 0 1-13.1 5"/><path d="M4.5 12a7.5 7.5 0 0 1 13.1-5"/><path d="M17.6 3.5V7h-3.5M6.4 20.5V17h3.5"/></symbol>
+    <symbol id="noon-i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="noon-i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V5.5M6.5 11 12 5.5l5.5 5.5"/></symbol>
+    <symbol id="noon-i-mic" viewBox="0 0 24 24"><rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M6 11.5v.5a6 6 0 0 0 12 0v-.5M12 18v2.5"/></symbol>
+    <symbol id="noon-i-paperclip" viewBox="0 0 24 24"><path d="M19.5 11.5 12 19a4.6 4.6 0 0 1-6.5-6.5l7.9-7.9a3.1 3.1 0 0 1 4.4 4.4l-7.9 7.9a1.5 1.5 0 0 1-2.2-2.2l7.3-7.3"/></symbol>
+    <symbol id="noon-i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.3 2.4 3.4 5.2 3.4 8.5s-1.1 6.1-3.4 8.5c-2.3-2.4-3.4-5.2-3.4-8.5s1.1-6.1 3.4-8.5z"/></symbol>
+  </svg>
   <main class="app">
     <!-- Navigation latérale : conversations, projets et état local de Noon. -->
     <aside class="sidebar">
@@ -192,7 +204,7 @@
     </nav>
 
     <button id="sidebarToggle" class="sidebar-toggle sidebar-tooltip" type="button" data-tooltip="Fermer la barre latérale" aria-label="Fermer la barre latérale" aria-expanded="true">
-      <span aria-hidden="true"></span>
+      <svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-panel"></use></svg>
     </button>
     <button id="sidebarBackdrop" class="sidebar-backdrop" type="button" aria-label="Fermer le menu latéral" tabindex="-1"></button>
 
@@ -220,156 +232,20 @@
           <button class="icon-btn audio-btn" type="button" aria-label="Activité audio">
             <span class="audio-bars"><i></i><i></i><i></i><i></i></span>
           </button>
-          <button id="settingsButton" class="icon-btn" type="button" aria-label="Ouvrir les réglages" aria-expanded="false" aria-controls="quickSettings">
-            <span class="gear-icon" aria-hidden="true"></span>
-          </button>
-          <div id="quickSettings" class="quick-settings noon-menu-panel" aria-label="Réglages rapides" hidden>
-            <button id="openControlCenterButton" class="control-center-entry" type="button">
-              <span aria-hidden="true">◎</span>
-              Ouvrir le Control Center
-            </button>
-            <label class="setting-line">
-              <input id="voiceEnabled" type="checkbox">
-              <span>Réponse vocale</span>
-            </label>
 
-            <label class="setting-line">
-              <input id="notificationsEnabled" type="checkbox">
-              <span>Notification quand la réponse est prête</span>
-            </label>
-
-            <label class="setting-line">
-              <input id="gmailAutoDrafts" type="checkbox">
-              <span>Créer automatiquement les brouillons Gmail</span>
-            </label>
-
-            <label class="setting-field">
-              <span>Vitesse de la voix</span>
-              <select id="voiceRate">
-                <option value="0.85">Lente</option>
-                <option value="1">Normale</option>
-                <option value="1.15">Rapide</option>
-              </select>
-            </label>
-            <label class="setting-field">
-              <span>Voix Noon</span>
-              <small id="liveVoicePreferenceStatus" class="setting-help">Cedar est la voix canonique actuelle. Arbor reste la voix future préférée lorsqu’elle sera réellement disponible via l’API. Aucun fallback automatique.</small>
-            </label>
-
-            <label class="setting-field">
-              <span>Microphone</span>
-              <select id="audioInputDevice">
-                <option value="">Microphone système par défaut</option>
-              </select>
-              <button id="openMicrophoneSettings" type="button">Autorisation microphone macOS</button>
-            </label>
-
-            <label class="setting-field">
-              <span>Sortie audio</span>
-              <select id="audioOutputDevice">
-                <option value="">Sortie système par défaut</option>
-              </select>
-              <small class="setting-help">Les micros et casques connectés sont actualisés automatiquement.</small>
-            </label>
-
-            <label class="setting-field">
-              <span>Analyse des images et PDF</span>
-              <select id="visualDetail">
-                <option value="low">Économique</option>
-                <option value="high">Détaillée</option>
-              </select>
-              <small class="setting-help">
-                Utilise « Détaillée » pour le petit texte, les schémas ou les maquettes complexes.
-              </small>
-            </label>
-            <label class="setting-field">
-              <span>Intelligence de Noon</span>
-              <select id="intelligenceProfile">
-                <option value="economical">Économique</option>
-                <option value="balanced">Équilibré</option>
-                <option value="maximum">Qualité maximale</option>
-              </select>
-              <small class="setting-help">Luna privilégie la rapidité, Terra l’équilibre et Sol les demandes complexes.</small>
-            </label>
-            <fieldset id="characterSettings" class="character-settings" hidden></fieldset>
-            <fieldset class="brief-settings">
-              <legend>Brief créatif</legend>
-              <label class="setting-line"><input id="creativeBriefEnabled" type="checkbox"><span>Génération automatique</span></label>
-              <label class="setting-field"><span>Heure de génération</span><input id="creativeBriefTime" type="time" value="07:00"></label>
-              <small class="setting-help">Fuseau : Europe/Paris</small>
-              <label class="setting-line"><input id="creativeBriefNotifications" type="checkbox"><span>Notification macOS</span></label>
-              <label class="setting-line"><input id="launchAtLogin" type="checkbox"><span>Lancer Noon à l’ouverture de session</span></label>
-              <button id="testCreativeBrief" type="button">Génération de test</button>
-            </fieldset>
-            <fieldset class="planning-settings">
-              <legend>Organisation personnelle</legend>
-              <label class="setting-line"><input id="autoPlanningEnabled" type="checkbox"><span>Proposer automatiquement des créneaux</span></label>
-              <label class="setting-line"><input id="autoDraftsEnabled" type="checkbox"><span>Création automatique de brouillons Gmail</span></label>
-              <label class="setting-line"><input id="planningLearningEnabled" type="checkbox"><span>Apprendre mes préférences d’organisation</span></label>
-              <div class="planning-time-grid">
-                <label class="setting-field"><span>Début de journée</span><input id="workdayStart" type="time" value="09:00"></label>
-                <label class="setting-field"><span>Fin de journée</span><input id="workdayEnd" type="time" value="18:30"></label>
-                <label class="setting-field"><span>Créneau minimum (min)</span><input id="minimumSlotMinutes" type="number" min="15" max="120" value="25"></label>
-                <label class="setting-field"><span>Bloc Focus maximum (min)</span><input id="maximumFocusMinutes" type="number" min="25" max="240" value="90"></label>
-                <label class="setting-field"><span>Tampon rendez-vous (min)</span><input id="planningBufferMinutes" type="number" min="0" max="60" value="10"></label>
-                <label class="setting-field"><span>Jours travaillés</span><input id="planningWorkingDays" type="text" value="1,2,3,4,5" aria-label="Jours ISO, lundi vaut 1"></label>
-                <label class="setting-field"><span>Agendas occupés</span><input id="busyCalendarIds" type="text" value="primary"></label>
-                <label class="setting-field"><span>Agenda cible</span><input id="targetCalendarId" type="text" value="primary"></label>
-              </div>
-              <small class="setting-help">Fuseau : Europe/Paris · Pause protégée : 12:30–13:30 · Couleur : Myrtille · Calendar exige toujours un ordre explicite · Envoi automatique d’e-mails : toujours désactivé.</small>
-              <strong>Ce que Noon sait de mon organisation</strong>
-              <div id="planningPreferenceList" class="memory-list"></div>
-            </fieldset>
-            <fieldset class="memory-settings">
-              <legend>Mémoire durable</legend>
-              <label class="setting-line"><input id="longTermMemoryEnabled" type="checkbox"><span>Utiliser les souvenirs pertinents</span></label>
-              <div class="memory-add"><input id="newMemoryText" type="text" maxlength="1000" placeholder="Ajouter un souvenir utile"><button id="addMemoryButton" type="button">Ajouter</button></div>
-              <div id="memoryList" class="memory-list"></div>
-              <button id="clearMemoriesButton" type="button">Vider toute la mémoire</button>
-            </fieldset>
-
-            <fieldset class="local-folder-settings">
-              <legend>Dossiers locaux autorisés</legend>
-              <label class="setting-field"><span>Nouvelle autorisation</span><select id="localFolderMode"><option value="read-only">Lecture seule</option><option value="read-write">Lecture et création</option></select></label>
-              <button id="addLocalFolderButton" type="button">Ajouter un dossier…</button>
-              <div id="localFolderPermissions" class="memory-list" aria-live="polite"></div>
-            </fieldset>
-
-            <fieldset class="openai-key-settings">
-              <legend>Connexion OpenAI</legend>
-              <p id="openAIKeyStatus" class="setting-help" role="status">Vérification…</p>
-              <label class="setting-field">
-                <span>Clé API OpenAI</span>
-                <input id="openAIKeyInput" type="password" autocomplete="off" placeholder="Enregistrée dans le coffre macOS">
-              </label>
-              <button id="saveOpenAIKey" type="button">Enregistrer la clé</button>
-              <small class="setting-help">La clé reste chiffrée dans le processus principal et n’est jamais affichée dans l’interface.</small>
-            </fieldset>
-
-            <fieldset class="wake-word-settings">
-              <legend>Réveil vocal — Salut Noon</legend>
-              <label class="setting-line"><input id="wakeWordEnabled" type="checkbox"><span>Activer l’écoute locale</span></label>
-              <p id="wakeWordStatus" class="setting-help" role="status">Non configuré.</p>
-              <label class="setting-field"><span>AccessKey Picovoice</span><input id="picovoiceAccessKey" type="password" autocomplete="off" placeholder="Enregistrée dans le coffre macOS"></label>
-              <button id="savePicovoiceKey" type="button">Enregistrer la clé</button>
-              <div class="wake-word-imports"><button id="importWakeKeyword" type="button">Importer .ppn</button><button id="importWakeModel" type="button">Importer français .pv</button></div>
-              <label class="setting-field"><span>Microphone</span><select id="wakeWordDevice"><option value="-1">Microphone par défaut</option></select></label>
-              <label class="setting-field"><span>Sensibilité <output id="wakeWordSensitivityValue">0,50</output></span><input id="wakeWordSensitivity" type="range" min="0" max="1" step="0.05" value="0.5"></label>
-              <label class="setting-line"><input id="resumeWakeAfterUnlock" type="checkbox"><span>Réactiver après déverrouillage</span></label>
-              <button id="testWakeWord" type="button">Tester le mot-clé</button>
-              <button id="resetWakeWord" type="button">Réinitialiser</button>
-              <small class="setting-help wake-privacy">L’écoute de “Salut Noon” est effectuée localement. Aucun son n’est enregistré ou envoyé à OpenAI avant le réveil de Noon.</small>
-            </fieldset>
-          </div>
             <button id="shareConversationButton" class="icon-btn share-button" type="button" aria-label="Partager la conversation" aria-expanded="false" aria-controls="shareConversationMenu" aria-haspopup="menu" title="Partager la conversation">
-              <span class="share-icon" aria-hidden="true">↥</span>
+              <svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-share"></use></svg>
             </button>
             <div id="shareConversationMenu" class="share-conversation-menu noon-menu-panel" role="menu" aria-label="Partager la conversation" hidden>
               <button type="button" role="menuitem" data-share-target="mail">Partager par e-mail</button>
               <button type="button" role="menuitem" data-share-target="whatsapp">Partager par WhatsApp</button>
               <button type="button" role="menuitem" data-share-target="save">Enregistrer dans un dossier</button>
             </div>
-            <button id="systemStatusButton" class="icon-btn" type="button" aria-label="Ouvrir le Control Center" aria-controls="controlCenter" aria-haspopup="dialog" title="Ouvrir le Control Center">
+            <button id="settingsButton" class="icon-btn control-center-button" type="button" aria-label="Ouvrir le Control Center" aria-haspopup="dialog" aria-controls="quickSettings" title="Control Center">
+              <svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-sliders"></use></svg>
+              <span class="control-center-button__status" aria-hidden="true"></span>
+            </button>
+            <button id="systemStatusButton" class="icon-btn" type="button" hidden aria-label="Ouvrir le Control Center" aria-controls="controlCenter" aria-haspopup="dialog" title="Ouvrir le Control Center">
               <span class="orange-dot"></span>
             </button>
           </div>
@@ -1049,19 +925,19 @@
           </button>
           <div class="composer-menu-wrap">
             <button id="composerMenuButton" class="composer-plus-button" type="button" aria-label="Ouvrir le menu du champ" aria-expanded="false" aria-controls="composerMenu">
-              <span aria-hidden="true">＋</span>
+              <svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-plus"></use></svg>
             </button>
             <div id="composerMenu" class="composer-menu" hidden>
               <button id="attachButton" class="composer-menu-item" type="button">
-                <img class="attachment-glyph" src="assets/noon-icon-attachment.svg" alt="" aria-hidden="true">
+                <span class="composer-menu-symbol"><svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-paperclip"></use></svg></span>
                 <span><strong>Ajouter des fichiers</strong><small>Images, documents et code</small></span>
               </button>
               <button id="web-search-button" class="composer-menu-item web-search-button" type="button" aria-pressed="false" title="Rechercher sur Internet">
-                <span class="composer-menu-symbol" aria-hidden="true">◎</span>
+                <span class="composer-menu-symbol"><svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-globe"></use></svg></span>
                 <span><strong>Recherche sur le Web</strong><small>Informations récentes · <span id="web-search-counter" class="web-search-counter">0/10</span></small></span>
               </button>
               <button id="composerSettingsButton" class="composer-menu-item" type="button">
-                <span class="composer-menu-symbol" aria-hidden="true">☷</span>
+                <span class="composer-menu-symbol"><svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-sliders"></use></svg></span>
                 <span><strong>Réglages</strong><small>Voix et qualité d’analyse</small></span>
               </button>
             </div>
@@ -1074,12 +950,9 @@
             </select>
           </label>
           <button id="micButton" class="mic-button microphone-btn" type="button" aria-label="Activer le microphone" aria-pressed="false">
-            <svg class="microphone-glyph" viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
-              <path d="M6.5 11.5v.5a5.5 5.5 0 0 0 11 0v-.5M12 17.5V21M9.5 21h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
-            </svg>
+            <svg class="microphone-glyph noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-mic"></use></svg>
           </button>
-          <button id="sendButton" type="submit" class="send-btn" aria-label="Envoyer"><span aria-hidden="true">↑</span></button>
+          <button id="sendButton" type="submit" class="send-btn" aria-label="Envoyer"><svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-arrow-up"></use></svg></button>
           <div
             id="web-search-suggestion"
             class="web-search-suggestion"
@@ -1141,8 +1014,8 @@
             <option value="USER">Utilisateur</option>
             <option value="ADVANCED">Avancée</option>
           </select>
-          <button id="refreshControlCenter" type="button" aria-label="Actualiser le Control Center">↻</button>
-          <button id="closeControlCenter" type="button" aria-label="Fermer le Control Center">×</button>
+          <button id="refreshControlCenter" class="icon-btn" type="button" aria-label="Actualiser le Control Center" title="Actualiser"><svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-refresh"></use></svg></button>
+          <button id="closeControlCenter" class="icon-btn" type="button" aria-label="Fermer le Control Center" title="Fermer (Échap)"><svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-close"></use></svg></button>
         </div>
       </header>
       <div class="control-center__body">
@@ -1159,6 +1032,146 @@
           <div id="controlCenterFigma" class="control-center__figma" hidden><section id="figmaBridgePanel" class="figma-bridge" hidden aria-label="Figma"></section></div>
           <div id="controlCenterDevMissions" class="control-center__dev-missions" hidden><section id="devMissionsPanel" class="dev-missions" hidden aria-label="Missions DEV"></section></div>
           <div id="controlCenterHealth" class="control-center__health" hidden><section id="noonHealthPanel" class="noon-health" hidden aria-label="Santé de Noon"></section></div>
+          <div id="controlCenterSettings" class="control-center__settings" hidden>
+          <div id="quickSettings" class="quick-settings settings-page" aria-label="Réglages">
+            <header class="settings-page__header">
+              <h2>Réglages</h2>
+              <p>Voix, réponses, brief, organisation, mémoire et accès locaux. Les changements s'appliquent immédiatement.</p>
+            </header>
+            <fieldset class="voice-settings">
+              <legend>Voix et audio</legend>
+              <label class="setting-line">
+              <input id="voiceEnabled" type="checkbox">
+              <span>Réponse vocale</span>
+            </label>
+              <label class="setting-field">
+              <span>Vitesse de la voix</span>
+              <select id="voiceRate">
+                <option value="0.85">Lente</option>
+                <option value="1">Normale</option>
+                <option value="1.15">Rapide</option>
+              </select>
+            </label>
+              <label class="setting-field">
+              <span>Voix Noon</span>
+              <small id="liveVoicePreferenceStatus" class="setting-help">Cedar est la voix canonique actuelle. Arbor reste la voix future préférée lorsqu’elle sera réellement disponible via l’API. Aucun fallback automatique.</small>
+            </label>
+              <label class="setting-field">
+              <span>Microphone</span>
+              <select id="audioInputDevice">
+                <option value="">Microphone système par défaut</option>
+              </select>
+              <button id="openMicrophoneSettings" type="button">Autorisation microphone macOS</button>
+            </label>
+              <label class="setting-field">
+              <span>Sortie audio</span>
+              <select id="audioOutputDevice">
+                <option value="">Sortie système par défaut</option>
+              </select>
+              <small class="setting-help">Les micros et casques connectés sont actualisés automatiquement.</small>
+            </label>
+            </fieldset>
+            <fieldset class="answer-settings">
+              <legend>Réponses</legend>
+              <label class="setting-line">
+              <input id="notificationsEnabled" type="checkbox">
+              <span>Notification quand la réponse est prête</span>
+            </label>
+              <label class="setting-line">
+              <input id="gmailAutoDrafts" type="checkbox">
+              <span>Créer automatiquement les brouillons Gmail</span>
+            </label>
+              <label class="setting-field">
+              <span>Analyse des images et PDF</span>
+              <select id="visualDetail">
+                <option value="low">Économique</option>
+                <option value="high">Détaillée</option>
+              </select>
+              <small class="setting-help">
+                Utilise « Détaillée » pour le petit texte, les schémas ou les maquettes complexes.
+              </small>
+            </label>
+              <label class="setting-field">
+              <span>Intelligence de Noon</span>
+              <select id="intelligenceProfile">
+                <option value="economical">Économique</option>
+                <option value="balanced">Équilibré</option>
+                <option value="maximum">Qualité maximale</option>
+              </select>
+              <small class="setting-help">Luna privilégie la rapidité, Terra l’équilibre et Sol les demandes complexes.</small>
+            </label>
+            </fieldset>
+            <fieldset id="characterSettings" class="character-settings" hidden></fieldset>
+            <fieldset class="brief-settings">
+              <legend>Brief créatif</legend>
+              <label class="setting-line"><input id="creativeBriefEnabled" type="checkbox"><span>Génération automatique</span></label>
+              <label class="setting-field"><span>Heure de génération</span><input id="creativeBriefTime" type="time" value="07:00"></label>
+              <small class="setting-help">Fuseau : Europe/Paris</small>
+              <label class="setting-line"><input id="creativeBriefNotifications" type="checkbox"><span>Notification macOS</span></label>
+              <label class="setting-line"><input id="launchAtLogin" type="checkbox"><span>Lancer Noon à l’ouverture de session</span></label>
+              <button id="testCreativeBrief" type="button">Génération de test</button>
+            </fieldset>
+            <fieldset class="planning-settings">
+              <legend>Organisation personnelle</legend>
+              <label class="setting-line"><input id="autoPlanningEnabled" type="checkbox"><span>Proposer automatiquement des créneaux</span></label>
+              <label class="setting-line"><input id="autoDraftsEnabled" type="checkbox"><span>Création automatique de brouillons Gmail</span></label>
+              <label class="setting-line"><input id="planningLearningEnabled" type="checkbox"><span>Apprendre mes préférences d’organisation</span></label>
+              <div class="planning-time-grid">
+                <label class="setting-field"><span>Début de journée</span><input id="workdayStart" type="time" value="09:00"></label>
+                <label class="setting-field"><span>Fin de journée</span><input id="workdayEnd" type="time" value="18:30"></label>
+                <label class="setting-field"><span>Créneau minimum (min)</span><input id="minimumSlotMinutes" type="number" min="15" max="120" value="25"></label>
+                <label class="setting-field"><span>Bloc Focus maximum (min)</span><input id="maximumFocusMinutes" type="number" min="25" max="240" value="90"></label>
+                <label class="setting-field"><span>Tampon rendez-vous (min)</span><input id="planningBufferMinutes" type="number" min="0" max="60" value="10"></label>
+                <label class="setting-field"><span>Jours travaillés</span><input id="planningWorkingDays" type="text" value="1,2,3,4,5" aria-label="Jours ISO, lundi vaut 1"></label>
+                <label class="setting-field"><span>Agendas occupés</span><input id="busyCalendarIds" type="text" value="primary"></label>
+                <label class="setting-field"><span>Agenda cible</span><input id="targetCalendarId" type="text" value="primary"></label>
+              </div>
+              <small class="setting-help">Fuseau : Europe/Paris · Pause protégée : 12:30–13:30 · Couleur : Myrtille · Calendar exige toujours un ordre explicite · Envoi automatique d’e-mails : toujours désactivé.</small>
+              <strong>Ce que Noon sait de mon organisation</strong>
+              <div id="planningPreferenceList" class="memory-list"></div>
+            </fieldset>
+            <fieldset class="memory-settings">
+              <legend>Mémoire durable</legend>
+              <label class="setting-line"><input id="longTermMemoryEnabled" type="checkbox"><span>Utiliser les souvenirs pertinents</span></label>
+              <div class="memory-add"><input id="newMemoryText" type="text" maxlength="1000" placeholder="Ajouter un souvenir utile"><button id="addMemoryButton" type="button">Ajouter</button></div>
+              <div id="memoryList" class="memory-list"></div>
+              <button id="clearMemoriesButton" type="button">Vider toute la mémoire</button>
+            </fieldset>
+
+            <fieldset class="local-folder-settings">
+              <legend>Dossiers locaux autorisés</legend>
+              <label class="setting-field"><span>Nouvelle autorisation</span><select id="localFolderMode"><option value="read-only">Lecture seule</option><option value="read-write">Lecture et création</option></select></label>
+              <button id="addLocalFolderButton" type="button">Ajouter un dossier…</button>
+              <div id="localFolderPermissions" class="memory-list" aria-live="polite"></div>
+            </fieldset>
+
+            <fieldset class="openai-key-settings">
+              <legend>Connexion OpenAI</legend>
+              <p id="openAIKeyStatus" class="setting-help" role="status">Vérification…</p>
+              <label class="setting-field">
+                <span>Clé API OpenAI</span>
+                <input id="openAIKeyInput" type="password" autocomplete="off" placeholder="Enregistrée dans le coffre macOS">
+              </label>
+              <button id="saveOpenAIKey" type="button">Enregistrer la clé</button>
+              <small class="setting-help">La clé reste chiffrée dans le processus principal et n’est jamais affichée dans l’interface.</small>
+            </fieldset>
+
+            <fieldset class="wake-word-settings">
+              <legend>Réveil vocal — Salut Noon</legend>
+              <label class="setting-line"><input id="wakeWordEnabled" type="checkbox"><span>Activer l’écoute locale</span></label>
+              <p id="wakeWordStatus" class="setting-help" role="status">Non configuré.</p>
+              <label class="setting-field"><span>AccessKey Picovoice</span><input id="picovoiceAccessKey" type="password" autocomplete="off" placeholder="Enregistrée dans le coffre macOS"></label>
+              <button id="savePicovoiceKey" type="button">Enregistrer la clé</button>
+              <div class="wake-word-imports"><button id="importWakeKeyword" type="button">Importer .ppn</button><button id="importWakeModel" type="button">Importer français .pv</button></div>
+              <label class="setting-field"><span>Microphone</span><select id="wakeWordDevice"><option value="-1">Microphone par défaut</option></select></label>
+              <label class="setting-field"><span>Sensibilité <output id="wakeWordSensitivityValue">0,50</output></span><input id="wakeWordSensitivity" type="range" min="0" max="1" step="0.05" value="0.5"></label>
+              <label class="setting-line"><input id="resumeWakeAfterUnlock" type="checkbox"><span>Réactiver après déverrouillage</span></label>
+              <button id="testWakeWord" type="button">Tester le mot-clé</button>
+              <button id="resetWakeWord" type="button">Réinitialiser</button>
+              <small class="setting-help wake-privacy">L’écoute de “Salut Noon” est effectuée localement. Aucun son n’est enregistré ou envoyé à OpenAI avant le réveil de Noon.</small>
+            </fieldset>
+          </div>
+          </div>
         </main>
       </div>
     </div>
