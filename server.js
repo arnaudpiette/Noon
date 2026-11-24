@@ -114,6 +114,7 @@ const { createQuickCaptureService } = require("./services/capture/quick-capture-
 const { createResumeBriefingService, renderResumeBriefing } = require("./services/resume/resume-briefing-service");
 const { createFirstStepService, renderFirstStep } = require("./services/first-step/first-step-service");
 const { createStaticAssets } = require("./services/http/static-assets");
+const { createSessionActivityAndTranscription } = require("./services/voice/session-activity-and-transcription");
 const { createNoonHttpServer } = require("./services/http/noon-http-server");
 const { createControlCenterComposition } = require("./services/control-center/control-center-composition");
 const { createDailyBriefComposition } = require("./services/daily-brief/daily-brief-composition");
@@ -1788,57 +1789,10 @@ multiSourceSynthesisEngine = createMultiSourceSynthesisEngine({
   },
 });
 
-const sessionActivities = new Map();
-
-function setSessionActivity(sessionId, state, text) {
-  sessionActivities.set(sessionId, {
-    state,
-    text,
-    updatedAt: new Date().toISOString(),
-  });
-}
-
-function getSessionActivity(sessionId) {
-  return (
-    sessionActivities.get(sessionId) || {
-      state: "idle",
-      text: "En attente.",
-      updatedAt: null,
-    }
-  );
-}
-
-const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
-
-async function transcribeAudioBuffer(
-  audioBuffer,
-  contentType
-) {
-  const mediaType = (
-    contentType || "audio/webm"
-  ).split(";")[0];
-
-  const extension = mediaType.includes("mp4")
-    ? "m4a"
-    : "webm";
-
-  const audioFile = await toFile(
-    audioBuffer,
-    `noon-voice.${extension}`,
-    {
-      type: mediaType,
-    }
-  );
-
-  const transcription =
-    await getOpenAIClient().audio.transcriptions.create({
-      file: audioFile,
-      model: "gpt-4o-mini-transcribe",
-      language: "fr",
-    });
-
-  return transcription.text?.trim() || "";
-}
+const { sessionActivities, setSessionActivity, getSessionActivity, MAX_AUDIO_BYTES, transcribeAudioBuffer } = createSessionActivityAndTranscription({
+  getOpenAIClient,
+  toFile,
+});
 
 const personalIntelligenceHttpRoutes = createPersonalIntelligenceHttpRoutes({
   get DEFAULT_HOST() { return DEFAULT_HOST; },

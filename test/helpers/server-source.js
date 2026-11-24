@@ -46,6 +46,7 @@ const ROUTE_MODULES = Object.freeze([
   "services/dev/dev-runtime-composition.js",
   "services/dev/dev-auxiliary-composition.js",
   "services/http/noon-http-server.js",
+  "services/voice/session-activity-and-transcription.js",
 ]);
 
 function readServerSource() {

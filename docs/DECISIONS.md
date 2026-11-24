@@ -721,6 +721,23 @@ structurante, est notée ici avec sa date et sa raison.
   validation UI. Réponses, requêtes au modèle et journaux d'audit identiques une fois
   normalisés.
 
+## 24/11/2026 — Découpe de `server.js`, quatorzième tranche : activité de session et transcription (V3-L7)
+
+- Ce qui sort dans `services/voice/session-activity-and-transcription.js`
+  (`createSessionActivityAndTranscription`) :
+  - l'activité de session : `sessionActivities`, `setSessionActivity`, `getSessionActivity` ;
+  - la transcription audio : `transcribeAudioBuffer` et la limite `MAX_AUDIO_BYTES`.
+
+  `server.js` passe de 2 255 à 2 209 lignes. Le gain est faible (47 lignes) : la construction
+  de `voiceHttpRoutes` reste dans `server.js`, car la déplacer remplacerait ses accesseurs par
+  une liste de dépendances de même taille.
+- Aucun ajout de code, deux dépendances (`getOpenAIClient`, `toFile`). Contrôle : 187 jetons
+  identiques. Aucun test ne lisait ce code dans `server.js`.
+- Avant/après dans des copies isolées : activité avant et après `/ai` et `/ai/stream`, remise à
+  zéro par `/conversation/reset`, `/transcribe` en `audio/webm` et `audio/mp4` (faux serveur)
+  et au-delà de 10 Mo (413), budget temps réel. Réponses, requêtes au modèle et journal
+  d'audit identiques une fois normalisés.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
