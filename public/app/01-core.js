@@ -459,7 +459,6 @@ const projectJournalBlockers = document.getElementById("projectJournalBlockers")
 const projectJournalDetailContent = document.getElementById("projectJournalDetailContent");
 const controlProjectButton = document.getElementById("controlProjectButton");
 const endProjectSessionButton = document.getElementById("endProjectSessionButton");
-const gmailAutoDraftsInput = document.getElementById("gmailAutoDrafts");
 const integrationsList = document.getElementById("integrationsList");
 const integrationsSecurityStatus = document.getElementById("integrationsSecurityStatus");
 const approvalsList = document.getElementById("approvalsList");
@@ -576,15 +575,6 @@ notificationsEnabledInput.checked = notificationsEnabled;
 voiceRateSelect.value = String(voiceRate);
 visualDetailSelect.value = visualDetail;
 intelligenceProfileSelect.value = intelligenceProfile;
-gmailAutoDraftsInput.checked = localStorage.getItem("noonGmailAutoDrafts") !== "false";
-
-gmailAutoDraftsInput.addEventListener("change", () => {
-  localStorage.setItem("noonGmailAutoDrafts", String(gmailAutoDraftsInput.checked));
-  updateActivity(gmailAutoDraftsInput.checked
-    ? "Création automatique des brouillons Gmail activée. Aucun envoi automatique."
-    : "Création automatique des brouillons Gmail désactivée.");
-});
-
 let currentSpeech = null;
 let speechSessionId = 0;
 let speechAnimationTimer = null;

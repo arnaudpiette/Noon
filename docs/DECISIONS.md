@@ -1742,9 +1742,49 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   - évaluations : `eval:critical` 54/54, `eval:smoke` 99/99.
 - Non vérifié : l'application réelle avec ses données (préférences chargées, vue d'ensemble
   du serveur) et l'application packagée.
-- Relevé, non traité : deux réglages se recoupent. « Créer automatiquement les brouillons
-  Gmail » (`gmailAutoDrafts`, section Réponses) et « Création automatique de brouillons
-  Gmail » (`autoDraftsEnabled`, section Organisation). À trancher à l'étape 2.
+- Relevé : deux réglages de brouillons Gmail se recoupaient. Traité à l'étape 2 : voir ci-dessous.
+
+## 24/11/2026 — Interface V3, étape 2 : Control Center en groupes
+
+- Navigation : « Réglages » en tête, puis cinq groupes titrés (`NAVIGATION_GROUPS` dans
+  `public/control-center.js`) :
+  - Aujourd'hui : vue d'ensemble, validations, travaux, objectifs, notifications ;
+  - Intégrations : connexions, MCP, Figma, iPhone, appareils, synchronisation, extensions ;
+  - Mémoire et confidentialité : mémoire, règles, permissions, confidentialité ;
+  - DEV : Goal Mode DEV, missions, SelfDev, espaces de travail ;
+  - Système : santé, fiabilité, capacité, hors ligne, configuration, sauvegardes, évaluations,
+    diagnostics.
+  - Une section non listée tombe dans « Système » : aucune n'est perdue.
+  - Les sections restent celles que le serveur déclare disponibles. La vue « Avancée » garde
+    son rôle.
+- Vue d'ensemble : cartes rangées par les mêmes groupes, avec un titre par groupe.
+  - Cartes, en-tête, pastilles et sections aux échelles de l'étape 1.
+  - Les états sont affichés en français (Opérationnel, Dégradé, Indisponible, À configurer,
+    Non autorisé, Connexion requise, Réussi…). L'état technique reste dans `data-state` et
+    dans l'infobulle.
+- Réglage mort retiré : « Créer automatiquement les brouillons Gmail » (`gmailAutoDrafts`).
+  - Il n'était écrit que dans `localStorage` (`noonGmailAutoDrafts`) et relu nulle part :
+    il ne commandait rien.
+  - Le seul réglage effectif reste « Création automatique de brouillons Gmail »
+    (`autoDraftsEnabled`, section Organisation). Il alimente `createGmailDrafts` du brief
+    matinal.
+  - La valeur existante dans `localStorage` n'est pas effacée.
+- Tests :
+  - les harnais de `goal-mode-dev-panel-visibility`, `mcp-connectors-ui` et `selfdev-sd4`
+    ne lisent plus que les boutons de navigation, les titres de groupe étant intercalés ;
+  - l'ordre attendu dans `mcp-connectors-ui` est adapté : MCP (Intégrations) précède désormais
+    Goal Mode DEV (DEV) ;
+  - nouveau `test/control-center-navigation-groups.test.js` (3 cas) : groupes et ordre,
+    section inconnue rangée dans Système, picto ouvrant l'onglet Réglages actif.
+- Vérification :
+  - captures Electron de la vue d'ensemble (haut et bas), avec un instantané fictif servi par
+    l'aperçu local uniquement ;
+  - comportements testés dans le navigateur intégré.
+- Validation :
+  - lint OK ; tests 2 996/2 996 ;
+  - évaluations : `eval:critical` 54/54, `eval:smoke` 99/99.
+- Non vérifié : l'application réelle avec les vraies sections du serveur, et l'application
+  packagée.
 
 ## À trancher
 

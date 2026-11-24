@@ -255,13 +255,15 @@ test("Control Center : entrée SelfDev à côté de MCP, jamais vidée ; câblag
   const api = window.NoonControlCenter;
   await api.open();
   api.setMcpAvailable(true); api.setSelfDevAvailable(true);
-  const labels = () => nodes.controlCenterNavigation.children.map((button) => button.textContent);
+  // Interface V3, étape 2 : la navigation intercale des titres de groupe ; seuls les boutons comptent.
+  const navEntries = () => nodes.controlCenterNavigation.children.filter((node) => node.tagName === "BUTTON");
+  const labels = () => navEntries().map((button) => button.textContent);
   assert.deepEqual(labels(), ["Vue d’ensemble", "Objectifs", "Connecteurs MCP", "SelfDev"]);
-  nodes.controlCenterNavigation.children.find((button) => button.textContent === "SelfDev").click(); await settle();
+  navEntries().find((button) => button.textContent === "SelfDev").click(); await settle();
   assert.equal(nodes.controlCenterSelfDev.hidden, false);
   assert.equal(nodes.controlCenterMcp.hidden, true);
   assert.equal(refreshes, 1);
-  nodes.controlCenterNavigation.children.find((button) => button.textContent === "Connecteurs MCP").click(); await settle();
+  navEntries().find((button) => button.textContent === "Connecteurs MCP").click(); await settle();
   assert.equal(nodes.controlCenterSelfDev.hidden, true);
   assert.deepEqual(nodes.controlCenterSelfDev.children, [sentinel]);
   api.setSelfDevAvailable(false);

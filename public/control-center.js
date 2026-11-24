@@ -65,6 +65,27 @@
     RUN_QUICK_DIAGNOSTIC: "Vérifier", CHECK_CONNECTION: "Tester", CHECK_EXTENSION: "Tester",
   });
   let activeSection = "overview";
+  // Interface V3, étape 2 : les sections sont rangées en groupes (navigation et vue d'ensemble).
+  // « Réglages » reste en tête, sans titre ; une section non listée tombe dans « Système ».
+  const NAVIGATION_GROUPS = Object.freeze([
+    { id: "settings", label: null, sections: [SETTINGS_SECTION] },
+    { id: "today", label: "Aujourd’hui", sections: ["overview", "approvals", "jobs", "goals", "notifications"] },
+    { id: "connections", label: "Intégrations", sections: ["connections", MCP_SECTION, FIGMA_SECTION, IPHONE_SECTION, "devices", "sync", "extensions"] },
+    { id: "memory", label: "Mémoire et confidentialité", sections: ["memory", "rules", "permissions", "privacy"] },
+    { id: "dev", label: "DEV", sections: [GOAL_MODE_DEV_SECTION, DEV_MISSIONS_SECTION, SELFDEV_SECTION, "workspaces"] },
+    { id: "system", label: "Système", sections: [HEALTH_SECTION, "reliability", "portfolio", "offline", "configuration", "backups", "evaluations", "diagnostics"] },
+  ]);
+  const groupOf = (id) => NAVIGATION_GROUPS.find((group) => group.sections.includes(id)) || NAVIGATION_GROUPS[NAVIGATION_GROUPS.length - 1];
+  function groupSections(ids) {
+    return NAVIGATION_GROUPS.map((group) => ({
+      ...group,
+      items: ids.filter((id) => groupOf(id) === group).sort((left, right) => {
+        const order = (id) => { const index = group.sections.indexOf(id); return index < 0 ? group.sections.length : index; };
+        return order(left) - order(right);
+      }),
+    })).filter((group) => group.items.length);
+  }
+
 
   function element(tag, className = "", text = null) {
     const node = document.createElement(tag);
@@ -73,8 +94,15 @@
     return node;
   }
 
+  // Libellés français des états ; l'état technique reste dans data-state.
+  const stateLabels = Object.freeze({
+    HEALTHY: "Opérationnel", DEGRADED: "Dégradé", UNAVAILABLE: "Indisponible", MISCONFIGURED: "À configurer",
+    UNAUTHORIZED: "Non autorisé", UNKNOWN: "Inconnu", DISABLED: "Désactivé", NOT_CONFIGURED: "Non configuré",
+    SUCCEEDED: "Réussi", AUTH_REQUIRED: "Connexion requise",
+  });
   function statusPill(state) {
-    const pill = element("span", "control-status-pill", state || "UNKNOWN");
+    const pill = element("span", "control-status-pill", stateLabels[state || "UNKNOWN"] || state);
+    pill.title = state || "UNKNOWN";
     pill.dataset.state = state || "UNKNOWN";
     return pill;
   }
@@ -159,16 +187,22 @@
     copy.append(element("h2", "", "État de Noon"), element("p", "", snapshot.needsAttention.length ? `${snapshot.needsAttention.length} élément(s) nécessitent votre attention.` : "Noon fonctionne et aucune action prioritaire n’est requise."));
     hero.append(copy, statusPill(snapshot.overallStatus));
     overview.append(hero);
-    const grid = element("div", "control-center__grid");
-    for (const model of Object.values(snapshot.sections || {})) {
-      const card = renderCard({ id: model.sectionId, label: labels[model.sectionId] || model.sectionId, state: model.status, summary: model.summary, meta: model.counts });
-      card.tabIndex = 0;
-      card.setAttribute("role", "button");
-      card.addEventListener("click", () => load(model.sectionId));
-      card.addEventListener("keydown", (event) => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); load(model.sectionId); } });
-      grid.append(card);
+    const models = Object.values(snapshot.sections || {});
+    const byId = new Map(models.map((model) => [model.sectionId, model]));
+    for (const group of groupSections(models.map((model) => model.sectionId))) {
+      if (group.label) overview.append(element("h3", "control-overview__group", group.label));
+      const grid = element("div", "control-center__grid");
+      for (const id of group.items) {
+        const model = byId.get(id);
+        const card = renderCard({ id: model.sectionId, label: labels[model.sectionId] || model.sectionId, state: model.status, summary: model.summary, meta: model.counts });
+        card.tabIndex = 0;
+        card.setAttribute("role", "button");
+        card.addEventListener("click", () => load(model.sectionId));
+        card.addEventListener("keydown", (event) => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); load(model.sectionId); } });
+        grid.append(card);
+      }
+      overview.append(grid);
     }
-    overview.append(grid);
   }
 
   function renderNavigation(sectionIds) {
@@ -177,12 +211,16 @@
     const goalModeDev = goalModeDevAvailable && goalModeDevContainer ? [GOAL_MODE_DEV_SECTION] : [];
     const panels = Object.entries(clientPanels).filter(([id, panel]) => id !== SETTINGS_SECTION && panel.available && panel.container).map(([id]) => id);
     const settings = clientPanels[SETTINGS_SECTION].container ? [SETTINGS_SECTION] : [];
-    for (const id of ["overview", ...settings, ...sectionIds.filter((item) => item !== GOAL_MODE_DEV_SECTION && !isClientPanel(item)), ...goalModeDev, ...panels]) {
-      const button = element("button", id === activeSection ? "active" : "", labels[id] || id);
-      button.type = "button";
-      button.dataset.section = id;
-      button.addEventListener("click", () => (id === GOAL_MODE_DEV_SECTION ? showGoalModeDev() : isClientPanel(id) ? showClientPanel(id) : load(id)));
-      navigation.append(button);
+    const ids = ["overview", ...settings, ...sectionIds.filter((item) => item !== GOAL_MODE_DEV_SECTION && !isClientPanel(item)), ...goalModeDev, ...panels];
+    for (const group of groupSections(ids)) {
+      if (group.label) navigation.append(element("p", "control-center__group-label", group.label));
+      for (const id of group.items) {
+        const button = element("button", id === activeSection ? "active" : "", labels[id] || id);
+        button.type = "button";
+        button.dataset.section = id;
+        button.addEventListener("click", () => (id === GOAL_MODE_DEV_SECTION ? showGoalModeDev() : isClientPanel(id) ? showClientPanel(id) : load(id)));
+        navigation.append(button);
+      }
     }
   }
 

@@ -267,8 +267,10 @@ function loadControlCenter() {
   const window = { NoonMcpConnectors: { refresh: async () => { refreshes += 1; } } };
   const document = { getElementById: (id) => nodes[id] || null, createElement: (tag) => new FakeElement(tag) };
   vm.runInNewContext(fs.readFileSync(path.join(PUBLIC, "control-center.js"), "utf8"), { window, document, fetch, URLSearchParams, encodeURIComponent, Promise, Object, String, Array });
-  const navLabels = () => nodes.controlCenterNavigation.children.map((button) => button.textContent);
-  const navButton = (label) => nodes.controlCenterNavigation.children.find((button) => button.textContent === label);
+  // Interface V3, étape 2 : la navigation intercale des titres de groupe ; seuls les boutons comptent.
+  const navEntries = () => nodes.controlCenterNavigation.children.filter((node) => node.tagName === "BUTTON");
+  const navLabels = () => navEntries().map((button) => button.textContent);
+  const navButton = (label) => navEntries().find((button) => button.textContent === label);
   return { api: window.NoonControlCenter, nodes, sentinel, urls, navLabels, navButton, refreshes: () => refreshes };
 }
 
@@ -278,7 +280,8 @@ test("Control Center : entrée MCP seulement si disponible, panneau jamais vidé
   assert.deepEqual(h.navLabels(), ["Vue d’ensemble", "Validations", "Objectifs"]);
   h.api.setMcpAvailable(true);
   h.api.setGoalModeDevAvailable(true);
-  assert.deepEqual(h.navLabels(), ["Vue d’ensemble", "Validations", "Objectifs", "Goal Mode DEV", "Connecteurs MCP"]);
+  // Étape 2 UI : MCP est rangé dans « Intégrations », avant le groupe « DEV ».
+  assert.deepEqual(h.navLabels(), ["Vue d’ensemble", "Validations", "Objectifs", "Connecteurs MCP", "Goal Mode DEV"]);
   h.navButton("Connecteurs MCP").click();
   await settle();
   assert.equal(h.nodes.controlCenterMcp.hidden, false);

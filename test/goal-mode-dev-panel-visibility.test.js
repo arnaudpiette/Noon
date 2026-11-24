@@ -261,8 +261,10 @@ function loadControlCenter() {
   const document = { getElementById: (id) => nodes[id] || null, createElement: (tag) => new FakeElement(tag) };
   const source = fs.readFileSync(path.join(PUBLIC, "control-center.js"), "utf8");
   vm.runInNewContext(source, { window, document, fetch, URLSearchParams, encodeURIComponent, Promise, Object, String, Array });
-  const navLabels = () => nodes.controlCenterNavigation.children.map((button) => button.textContent);
-  const navButton = (label) => nodes.controlCenterNavigation.children.find((button) => button.textContent === label);
+  // Interface V3, étape 2 : la navigation intercale des titres de groupe ; seuls les boutons comptent.
+  const navEntries = () => nodes.controlCenterNavigation.children.filter((node) => node.tagName === "BUTTON");
+  const navLabels = () => navEntries().map((button) => button.textContent);
+  const navButton = (label) => navEntries().find((button) => button.textContent === label);
   return { api: window.NoonControlCenter, nodes, sentinel, urls, navLabels, navButton };
 }
 

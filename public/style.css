@@ -2754,3 +2754,27 @@ body.dev-preview-resizing *{
 .control-center .settings-page fieldset>button{margin:var(--ui-s3) var(--ui-s2) var(--ui-s3) 0}
 .control-center .settings-page fieldset>.wake-word-imports{padding:var(--ui-s3) 0}
 .control-center .settings-page .memory-list{color:var(--ui-text-3);font-size:var(--ui-fs-sm)}
+
+/* Interface V3 — étape 2 : Control Center en groupes. */
+.control-center__group-label{margin:var(--ui-s5) var(--ui-s3) var(--ui-s1);color:var(--ui-text-3);font-size:var(--ui-fs-xs);font-weight:500;letter-spacing:0}
+.control-center__navigation>.control-center__group-label:first-child{margin-top:var(--ui-s1)}
+.control-overview__hero{align-items:center;margin:0 0 var(--ui-s2);padding:var(--ui-s5);border:1px solid var(--ui-line);border-radius:var(--ui-radius-lg);background:var(--ui-surface)}
+.control-overview__hero h2,.control-section__header h2{margin:0 0 var(--ui-s1);color:var(--ui-ink);font-size:var(--ui-fs-lg);font-weight:600;letter-spacing:-.02em}
+.control-overview__hero p,.control-section__header p{margin:0;color:var(--ui-text-2);font-size:var(--ui-fs);line-height:1.55}
+.control-overview__group{margin:var(--ui-s6) 0 var(--ui-s3);color:var(--ui-ink);font-size:var(--ui-fs-md);font-weight:600;letter-spacing:-.01em}
+.control-center__grid{margin-top:0;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:var(--ui-s3)}
+.control-card{gap:var(--ui-s2);padding:var(--ui-s4);border:1px solid var(--ui-line);border-radius:var(--ui-radius-lg);background:var(--ui-surface);transition:border-color .16s var(--ui-ease),box-shadow .16s var(--ui-ease)}
+.control-card[role="button"]{cursor:pointer}
+.control-card[role="button"]:hover{border-color:var(--ui-line-strong);box-shadow:0 1px 2px rgba(20,20,19,.04),0 4px 14px rgba(20,20,19,.05)}
+.control-card[role="button"]:focus-visible{outline:none;box-shadow:var(--ui-focus)}
+.control-card h3{color:var(--ui-ink);font-size:var(--ui-fs);font-weight:600;letter-spacing:-.005em}
+.control-card p{color:var(--ui-text-2);font-size:var(--ui-fs-sm);line-height:1.5}
+.control-card__meta{gap:var(--ui-s2);color:var(--ui-text-3);font-size:var(--ui-fs-xs)}
+.control-card__actions button{height:28px;padding:0 var(--ui-s3);border:1px solid var(--ui-line-strong);border-radius:var(--ui-radius);background:#fff;color:var(--ui-ink);font-size:var(--ui-fs-xs);font-weight:500}
+.control-card__actions button:hover{border-color:rgba(20,20,19,.28);background:var(--ui-hover)}
+.control-status-pill{padding:3px 8px;border-radius:999px;font-size:var(--ui-fs-xs);font-weight:500;letter-spacing:0}
+.control-status-pill[data-state="HEALTHY"]{background:var(--ui-lime-soft);color:var(--ui-lime-ink)}
+.control-section__header{margin-bottom:var(--ui-s5)}
+.control-center__notice{margin:0 0 var(--ui-s4);padding:var(--ui-s3) var(--ui-s4);border-radius:var(--ui-radius);font-size:var(--ui-fs-sm)}
+.control-empty{padding:var(--ui-s6);border-color:var(--ui-line-strong);border-radius:var(--ui-radius-lg);color:var(--ui-text-3);font-size:var(--ui-fs)}
+#noonVoicePolicy{margin:0 0 var(--ui-s4);padding:var(--ui-s3) var(--ui-s4);border-radius:var(--ui-radius);background:var(--ui-canvas);color:var(--ui-text-2);font-size:var(--ui-fs-sm)}
