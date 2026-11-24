@@ -1163,6 +1163,34 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   - `test/goal-mode-run-state-modules.test.js` vérifie les mêmes constantes réexportées, des
     constantes figées et une empreinte de réservation stable.
 
+## 24/11/2026 — V3-L7, fichiers > 1 500 lignes : `orchestration/ask-ai.js` (1 728 → 1 358)
+
+- `askAI` est une seule fonction de 1 650 lignes, faite de branches successives à retour
+  anticipé. Deux branches en sortent vers `services/orchestration/ask-ai-deterministic-reads.js` :
+  - la lecture déterministe de l'agenda (218 lignes) ;
+  - la lecture des emails récents (155 lignes).
+- Conditions vérifiées avant le déplacement :
+  - chaque branche se termine par un `return` sur tous ses chemins (analyse du flot de
+    contrôle) ;
+  - aucune n'écrit dans une variable de `askAI` ;
+  - aucune n'utilise `this` ni `arguments`.
+- Chaque branche devient une fonction asynchrone. `askAI` l'appelle à la même place par
+  `return handle…({ … })`, en lui passant exactement ses captures :
+  - Agenda : `calendarConnector`, `calendarNormalized`, `sessionId`, `setSessionActivity` ;
+  - Email : `gmailConnector`, `sessionId`, `setSessionActivity`.
+- Contrôle des jetons : les deux corps sont identiques, et le reste de `ask-ai.js` aussi, à ces
+  deux appels et à un import près.
+- `skillContext` (214 lignes, 33 captures) et l'appel à l'orchestrateur restent dans `askAI`.
+  Les déplacer aurait demandé de longues listes d'arguments pour un faible gain.
+- Tests :
+  - le nouveau module est ajouté aux sources lues par les tests de câblage ;
+  - suites du chat, de l'agenda et de Gmail : 815/815 ;
+  - `test/ask-ai-deterministic-reads.test.js` vérifie :
+    - qu'un connecteur en échec donne une réponse, sans exception ;
+    - la boîte vide ;
+    - l'activité attribuée à la bonne session ;
+    - l'appel à la même place.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
