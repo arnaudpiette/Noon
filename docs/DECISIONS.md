@@ -1021,6 +1021,31 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   - la projection DEV tolérante (identifiant vide, nul ou inconnu) ;
   - la position de l'appel.
 
+## 24/11/2026 — Découpe de `server.js`, vingt-huitième tranche : runtime local, notifications et travaux de fond (V3-L7)
+
+- Ce qui sort dans `services/runtime/local-runtime-and-jobs-composition.js`
+  (`createLocalRuntimeAndJobsComposition`) :
+  - le modèle local et le runtime d'intelligence locale ;
+  - l'attention des notifications et son stockage ;
+  - le registre, le stockage et le moteur des travaux de fond, avec leur notification de fin ;
+  - leurs composants Reliability : runtime local, attention, `job-store`, `job-queue`,
+    `job-worker`, `job-scheduler`.
+- Le bloc est déplacé tel quel (691 jetons), avec une seule substitution :
+  `deps.setSessionActivity`. Cette fonction est déclarée plus loin dans `server.js` et
+  utilisée seulement dans la notification de fin de job ; elle est donc relue par accesseur.
+- `server.js` l'appelle au même endroit qu'avant, donc l'ordre des composants Reliability est
+  inchangé.
+  - Les 7 autres dépendances sont déjà initialisées et lues une fois.
+  - Les 7 imports concernés quittent `server.js`. Ces modules n'ont aucun effet de bord au
+    chargement.
+- `server.js` passe de 1 582 à 1 512 lignes.
+- Tests : `test/local-runtime-and-jobs-composition.test.js` vérifie :
+  - le refus d'une dépendance manquante ;
+  - avec SQLite, la création du moteur de jobs et les composants Reliability dans l'ordre ;
+  - avec le repli JSON, l'absence de moteur et de composant de jobs ;
+  - que `setSessionActivity` n'est jamais lue à la construction ;
+  - la position de l'appel.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

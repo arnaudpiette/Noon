@@ -158,11 +158,7 @@ const { readJsonBody } = require("./services/http/request-utils");
 const { createDailyPlanStore } = require("./services/planning/daily-plan-store");
 const { createModelPerformanceEngine } = require("./services/learning/model-performance-engine");
 const { createAdaptiveRoutingService } = require("./services/learning/adaptive-routing-service");
-const { createJobRegistry } = require("./services/jobs/job-registry");
-const { createJobStore } = require("./services/jobs/job-store");
-const { createBackgroundJobEngine } = require("./services/jobs/background-job-engine");
-const { createNotificationAttentionEngine, createNotificationStore } = require("./services/notifications");
-const { createCapabilityRegistry, createLocalIntelligenceRuntime, createLocalModelAdapter } = require("./services/runtime");
+const { createCapabilityRegistry } = require("./services/runtime");
 const { createRemoteLanService } = require("./services/remote/remote-lan-service");
 const { createRemoteLanHttpRoutes } = require("./services/remote/remote-lan-http-routes");
 const { createArtifactEngine } = require("./services/artifacts/artifact-engine");
@@ -190,6 +186,7 @@ const { createLifecycleComposition } = require("./services/lifecycle/lifecycle-c
 const { createPersonalIntelligenceComposition } = require("./services/personal-intelligence/personal-intelligence-composition");
 const { createExtensionsComposition } = require("./services/extensions/extensions-composition");
 const { createProgressComposition } = require("./services/observability/progress-composition");
+const { createLocalRuntimeAndJobsComposition } = require("./services/runtime/local-runtime-and-jobs-composition");
 
 // Tous les chemins manipulés par les outils sont contrôlés par config.js.
 
@@ -459,83 +456,16 @@ const runtimeCapabilityRegistry = createCapabilityRegistry([
   { capabilityId: "REMOTE_VISION", provider: "OpenAIVision", executionLocation: "REMOTE_MODEL", availability: "AVAILABLE", qualityClass: "FULL", requiresNetwork: true, supportsLocalOnly: false },
   { capabilityId: "REMOTE_TRANSCRIPTION", provider: "OpenAITranscription", executionLocation: "REMOTE_SERVICE", availability: "AVAILABLE", qualityClass: "FULL", requiresNetwork: true, supportsLocalOnly: false },
 ]);
-const localModelAdapter = createLocalModelAdapter();
-const localIntelligenceRuntime = createLocalIntelligenceRuntime({
-  registry: runtimeCapabilityRegistry, localModel: localModelAdapter, reliability: reliabilityEngine, config: runtimeConfig,
-  observability: (event, metadata) => toolAuditLog.append(`runtime.${event}`, metadata),
+const { localIntelligenceRuntime, notificationAttentionEngine, jobRegistry, backgroundJobEngine } = createLocalRuntimeAndJobsComposition({
+  featureFlags,
+  personalDatabase,
+  reliabilityEngine,
+  runtimeCapabilityRegistry,
+  runtimeConfig,
+  get setSessionActivity() { return setSessionActivity; },
+  toolAuditLog,
+  userProgressAdapter,
 });
-const notificationsFlag = featureFlags.evaluate("notifications.engine");
-const notificationAttentionEngine = createNotificationAttentionEngine({
-  store: createNotificationStore({ database: personalDatabase }),
-  featureMode: notificationsFlag.mode,
-  observability: (event, metadata) => toolAuditLog.append(`notifications.${event}`, metadata),
-});
-const jobRegistry = createJobRegistry();
-const jobStore = personalDatabase.kind === "sqlite" ? createJobStore(personalDatabase) : null;
-const jobsFlag = featureFlags.evaluate("jobs.engine");
-const backgroundJobEngine = jobStore ? createBackgroundJobEngine({
-  store: jobStore,
-  registry: jobRegistry,
-  mode: jobsFlag.mode,
-  maxQueuedJobs: runtimeConfig.get("jobs.maxQueued").value,
-  maxRunningJobs: runtimeConfig.get("jobs.maxRunning").value,
-  leaseMs: runtimeConfig.get("jobs.leaseMs").value,
-  observability: (event, metadata) => {
-    toolAuditLog.append(
-      `jobs.${event}`,
-      metadata,
-    );
-
-    userProgressAdapter.backgroundJob(
-      event,
-      metadata,
-    );
-  },
-  notify: async ({ jobId, type, state, sessionId }) => {
-    toolAuditLog.append("jobs.notification", { jobId, type, state });
-    await notificationAttentionEngine.submit({
-      source: "BACKGROUND_JOB", type: state === "SUCCEEDED" ? "COMPLETION" : state === "FAILED" ? "FAILURE" : "STATUS_CHANGE",
-      subjectRef: jobId, conversationId: sessionId || null, importance: state === "FAILED" ? "HIGH" : "NORMAL",
-      interruptionLevel: state === "FAILED" ? "IMPORTANT" : "NORMAL", userActionRequired: state === "FAILED",
-      preferredChannels: ["IN_APP", "MACOS_NOTIFICATION", "BADGE"], allowedChannels: ["IN_APP", "MACOS_NOTIFICATION", "BADGE"],
-      dedupeKey: `background-job:${jobId}:${state}`, replaceKey: `background-job:${jobId}`, payloadRef: `job:${jobId}`,
-      title: state === "SUCCEEDED" ? "Travail Noon terminé" : "État du travail Noon",
-      summary: state === "SUCCEEDED" ? "Le résultat demandé est prêt dans Noon." : `Le travail est maintenant ${state}.`,
-      genericSummary: "Un travail Noon a changé d’état.",
-    }, { appFocused: false, preferences: { soundEnabled: false, voiceEnabled: false }, quietHours: {
-      enabled: runtimeConfig.get("notifications.quietHoursEnabled").value,
-      startTime: runtimeConfig.get("notifications.quietHoursStart").value,
-      endTime: runtimeConfig.get("notifications.quietHoursEnd").value,
-      timezone: "Europe/Paris",
-    } });
-    if (sessionId) setSessionActivity(sessionId, state === "SUCCEEDED" ? "done" : "idle", state === "SUCCEEDED" ? "Travail en arrière-plan prêt." : `Travail en arrière-plan : ${state}.`);
-  },
-}) : null;
-reliabilityEngine.register({
-  componentId: "local-intelligence-runtime", type: "local_service", criticality: "important",
-  capabilities: ["capability_resolution", "offline_policy", "local_only"], ttlMs: 30_000,
-  healthCheck: async () => ({ ok: localIntelligenceRuntime.health().status === "ok" }),
-  impact: "Le cœur local reste disponible, mais le routage dégradé peut nécessiter une explication manuelle.",
-});
-reliabilityEngine.register({
-  componentId: "notification-attention", type: "local_service", criticality: "important",
-  capabilities: ["attention_policy", "notification_dedupe", "delivery_state"], ttlMs: 30_000,
-  healthCheck: async () => ({ ok: notificationAttentionEngine.health().status === "ok" }),
-  impact: "Les informations restent consultables dans Noon, mais les interruptions externes peuvent être différées.",
-});
-if (backgroundJobEngine) {
-  for (const component of ["job-store", "job-queue", "job-worker", "job-scheduler"]) {
-    reliabilityEngine.register({
-      componentId: component,
-      type: "local_service",
-      criticality: component === "job-store" ? "important" : "optional",
-      capabilities: ["background_jobs", "recovery"],
-      ttlMs: 30_000,
-      healthCheck: async () => ({ ok: Boolean(backgroundJobEngine.stats()) }),
-      impact: "Les travaux longs restent disponibles en mode direct, sans reprise persistante.",
-    });
-  }
-}
 const personalRepository = createPersonalIntelligenceRepository(personalDatabase);
 const goalStrategyRepository = createGoalStrategyRepository(personalDatabase);
 const approvalRepository = createApprovalRepository(personalDatabase);
