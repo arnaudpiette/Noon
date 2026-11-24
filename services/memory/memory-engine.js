@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 // Façade commune aux mémoires existantes. Elle ne possède aucun stockage et ne
@@ -29,11 +30,18 @@ const RESOLVABLE_CONTEXT_SOURCES = new Set([
   "conversation_memory",
 ]);
 
+/** @typedef {import("./memory-writes").MemoryRecord} MemoryRecord */
+
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
 function textValue(value) {
   if (typeof value === "string") return value;
   try { return JSON.stringify(value ?? ""); } catch { return ""; }
 }
 
+/** @param {unknown} value */
 function normalizeForDeduplication(value) {
   return textValue(value)
     .toLocaleLowerCase("fr")
@@ -43,6 +51,11 @@ function normalizeForDeduplication(value) {
     .trim();
 }
 
+/**
+ * @param {unknown} value
+ * @param {string[]} [output]
+ * @returns {string[]}
+ */
 function scalarValues(value, output = []) {
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
     output.push(String(value));
@@ -54,6 +67,7 @@ function scalarValues(value, output = []) {
   return output;
 }
 
+/** @param {MemoryRecord | null | undefined} item */
 function deduplicationKey(item) {
   const scalar = scalarValues(item?.value)
     .map(normalizeForDeduplication)
@@ -62,10 +76,16 @@ function deduplicationKey(item) {
   return scalar || normalizeForDeduplication(item?.label || item?.value);
 }
 
+/** @param {unknown} value */
 function tokens(value) {
   return new Set(normalizeForDeduplication(value).match(/[a-z0-9]{3,}/g) || []);
 }
 
+/**
+ * @param {Iterable<string>} queryTokens
+ * @param {unknown} value
+ * @param {number} [fallback]
+ */
 function relevanceScore(queryTokens, value, fallback = 0) {
   const itemTokens = tokens(value);
   let score = 0;
@@ -73,10 +93,35 @@ function relevanceScore(queryTokens, value, fallback = 0) {
   return score || fallback;
 }
 
+/**
+ * @param {MemoryRecord | null | undefined} item
+ * @param {Date} now
+ */
 function isExpired(item, now) {
   return Boolean(item?.expiresAt && new Date(item.expiresAt) <= now);
 }
 
+/**
+ * Les dépendances sont injectées par la composition (personal-memory-composition.js).
+ * @param {{
+ *   privateMemoryService?: import("./memory-writes").PrivateMemoryServiceLike | null,
+ *   privateContextBuilder?: { build: (input: object) => { memoryIds?: string[] } | null | undefined } | null,
+ *   structuredRepository?: import("./memory-writes").StructuredRepositoryLike | null,
+ *   legacyStore?: { load: () => any, relevant: (query: string, limit: number) => MemoryRecord[] } | null,
+ *   conversationProvider?: ((options: any) => MemoryRecord[]) | null,
+ *   projectProvider?: ((options: any) => MemoryRecord[]) | null,
+ *   hardRulesRegistry?: {
+ *     canUseMemoryRemotely: (item: MemoryRecord, confirmedIds?: string[]) => { allowed: boolean },
+ *     getRulesForContext: (context: object) => MemoryRecord[],
+ *     inferIntent: (query: unknown, projectId?: unknown) => string,
+ *     matchesLegacyMemory: (item: MemoryRecord) => boolean,
+ *   } | null,
+ *   operationalProfile?: import("./memory-writes").OperationalProfileLike,
+ *   onChange?: import("./memory-writes").MemoryChangeListener,
+ *   debug?: ((event: string, payload: unknown) => void) | null,
+ *   now?: () => Date,
+ * }} [options]
+ */
 function createMemoryEngine({
   privateMemoryService = null,
   privateContextBuilder = null,
@@ -91,6 +136,37 @@ function createMemoryEngine({
   now = () => new Date(),
 } = {}) {
   const writes = createMemoryWrites({ privateMemoryService, structuredRepository, operationalProfile, onChange });
+  /**
+   * @typedef {{
+   *   queried: string[],
+   *   errors: Array<{ source: string, code: string }>,
+   *   excludedPrivacy: number,
+   *   excludedIrrelevant: number,
+   *   deduplicated: number,
+   *   truncated: number,
+   * }} ReadCounts
+   */
+  /**
+   * Options normalisées par getRelevantContext.
+   * @typedef {{
+   *   query: string,
+   *   intent: string,
+   *   projectId: string | null,
+   *   peopleIds: string[],
+   *   conversationId: string | null,
+   *   confirmedMemoryIds: string[],
+   *   includePrivate: boolean,
+   *   includeConversation: boolean,
+   *   includeHardRules: boolean,
+   *   purpose: string,
+   *   channel: string,
+   *   maxItems: number,
+   *   maxCharacters: number,
+   *   sourceLimit: number,
+   *   conversationLimit: number,
+   * }} ContextOptions
+   */
+  /** @type {Record<string, any>} */
   let lastUsage = {
     sourcesUsed: [], memoryIds: [], truncated: false, durationMs: 0,
     counts: {},
@@ -98,6 +174,20 @@ function createMemoryEngine({
 
   // Les apprentissages statistiques entrent uniquement comme hypothèses
   // inactives. Ils ne deviennent utilisables qu'après validation explicite.
+  /**
+   * @param {{
+   *   scope?: string,
+   *   type?: string,
+   *   statement?: unknown,
+   *   sourceReference?: string | null,
+   *   confidence?: number,
+   *   expiresAt?: string | null,
+   *   evidenceSummary?: string,
+   *   sampleCount?: number,
+   *   observedFrom?: unknown,
+   *   proposedAt?: string,
+   * }} [input]
+   */
   function proposeCandidate(input = {}) {
     if (!structuredRepository?.upsertMemory || !structuredRepository?.getMemory) {
       return { status: "unavailable" };
@@ -136,6 +226,7 @@ function createMemoryEngine({
 
   // L'ancien import SQLite a dupliqué le JSON sous un statut confirmé. Une fois la migration
   // privée terminée, ce doublon ne doit plus alimenter le contexte ni resurgir après un oubli.
+  /** @param {MemoryRecord} item */
   function isRetiredLegacyJsonMirror(item) {
     return item.sourceType === "legacy-long-term-memory" &&
       item.metadata?.migratedFrom === "long-term-memory.json" &&
@@ -144,6 +235,9 @@ function createMemoryEngine({
 
   // Recherche locale dédiée : elle expose aussi les états non actifs avec leur
   // statut explicite, sans les présenter comme des vérités confirmées.
+  /**
+   * @param {{ query?: string, profileScope?: string, includeHistorical?: boolean, limit?: number, includePrivate?: boolean }} [input]
+   */
   function search(input = {}) {
     const query = String(input.query || "").trim();
     const profileScope = String(input.profileScope || "arnaud");
@@ -192,11 +286,21 @@ function createMemoryEngine({
     return output.slice(0, Math.max(1, Math.min(50, Number(input.limit) || 20)));
   }
 
+  /**
+   * @param {ReadCounts} counts
+   * @param {{ memoryIds: unknown[] }} metadata
+   */
   function report(counts, metadata) {
     const payload = { ...counts, returned: metadata.memoryIds.length };
     if (typeof debug === "function") debug("memory-engine.summary", payload);
   }
 
+  /**
+   * @param {string} source
+   * @param {() => unknown} operation
+   * @param {ReadCounts} counts
+   * @returns {MemoryRecord[]}
+   */
   function safeRead(source, operation, counts) {
     try {
       const value = operation();
@@ -208,6 +312,11 @@ function createMemoryEngine({
     }
   }
 
+  /**
+   * @param {ContextOptions} options
+   * @param {Set<string>} queryTokens
+   * @param {ReadCounts} counts
+   */
   function privateItems(options, queryTokens, counts) {
     if (!options.includePrivate || !privateMemoryService?.available) return [];
     let settings;
@@ -275,6 +384,11 @@ function createMemoryEngine({
       });
   }
 
+  /**
+   * @param {ContextOptions} options
+   * @param {Set<string>} queryTokens
+   * @param {ReadCounts} counts
+   */
   function structuredItems(options, queryTokens, counts) {
     if (!structuredRepository) return [];
     return safeRead("structured_memory", () => structuredRepository.searchMemories(options.query, { limit: options.sourceLimit }), counts)
@@ -311,6 +425,11 @@ function createMemoryEngine({
       }));
   }
 
+  /**
+   * @param {ContextOptions} options
+   * @param {Set<string>} queryTokens
+   * @param {ReadCounts} counts
+   */
   function legacyItems(options, queryTokens, counts) {
     if (!legacyStore) return [];
     return safeRead("legacy_memory", () => legacyStore.relevant(options.query, options.sourceLimit), counts)
@@ -336,6 +455,11 @@ function createMemoryEngine({
       }));
   }
 
+  /**
+   * @param {ContextOptions} options
+   * @param {Set<string>} queryTokens
+   * @param {ReadCounts} counts
+   */
   function projectItems(options, queryTokens, counts) {
     if (!projectProvider || (!options.projectId && options.intent !== "project")) return [];
     return safeRead("project_memory", () => projectProvider(options), counts)
@@ -360,6 +484,10 @@ function createMemoryEngine({
       }));
   }
 
+  /**
+   * @param {ContextOptions} options
+   * @param {ReadCounts} counts
+   */
   function conversationItems(options, counts) {
     if (!conversationProvider || !options.includeConversation || !options.conversationId) return [];
     return safeRead("conversation_memory", () => conversationProvider(options), counts)
@@ -383,6 +511,10 @@ function createMemoryEngine({
       }));
   }
 
+  /**
+   * @param {MemoryRecord[]} items
+   * @param {ReadCounts} counts
+   */
   function deduplicate(items, counts) {
     const kept = new Map();
     for (const item of items.sort((left, right) =>
@@ -396,6 +528,11 @@ function createMemoryEngine({
     return [...kept.values()];
   }
 
+  /**
+   * @param {MemoryRecord[]} items
+   * @param {ContextOptions} options
+   * @param {ReadCounts} counts
+   */
   function applyBudget(items, options, counts) {
     const kept = [];
     let characters = 0;
@@ -411,6 +548,25 @@ function createMemoryEngine({
     return kept;
   }
 
+  /**
+   * @param {{
+   *   query?: string,
+   *   intent?: string,
+   *   projectId?: string | null,
+   *   peopleIds?: unknown[],
+   *   conversationId?: string | null,
+   *   confirmedMemoryIds?: unknown[],
+   *   includePrivate?: boolean,
+   *   includeConversation?: boolean,
+   *   includeHardRules?: boolean,
+   *   purpose?: string,
+   *   channel?: string,
+   *   maxItems?: number,
+   *   maxCharacters?: number,
+   *   sourceLimit?: number,
+   *   conversationLimit?: number,
+   * }} [input]
+   */
   function getRelevantContext(input = {}) {
     const startedAt = Date.now();
     const options = {
@@ -431,6 +587,7 @@ function createMemoryEngine({
       conversationLimit: Math.max(1, Math.min(60, Number(input.conversationLimit) || 12)),
     };
     const queryTokens = tokens(`${options.query} ${options.projectId || ""}`);
+    /** @type {ReadCounts} */
     const counts = {
       queried: [], errors: [], excludedPrivacy: 0, excludedIrrelevant: 0,
       deduplicated: 0, truncated: 0,
@@ -494,6 +651,7 @@ function createMemoryEngine({
   // Relecture étroite destinée aux références locales du Context Offloader.
   // Cette API consulte l'autorité existante par identifiant et ne maintient
   // aucune copie parallèle du contenu.
+  /** @param {unknown} sourceType */
   function canResolveContextSource(sourceType) {
     switch (String(sourceType || "")) {
       case "private_memory": return privateMemoryService?.available === true && typeof privateMemoryService.getMemory === "function";
@@ -505,6 +663,10 @@ function createMemoryEngine({
     }
   }
 
+  /**
+   * @param {{ sourceType?: string, sourceId?: string, subjectScope?: string | null, profileScope?: string | null, conversationId?: string | null }} [ref]
+   * @param {{ authorizationContext?: Record<string, any>, access?: string }} [resolution]
+   */
   function resolveContextSource(ref = {}, resolution = {}) {
     const sourceType = String(ref.sourceType || "");
     const sourceId = String(ref.sourceId || "");
@@ -585,7 +747,7 @@ function createMemoryEngine({
     }
 
     if (sourceType === "legacy_memory") {
-      const item = legacyStore?.load?.().memories?.find((candidate) => candidate.id === sourceId) || null;
+      const item = legacyStore?.load?.().memories?.find((/** @type {MemoryRecord} */ candidate) => candidate.id === sourceId) || null;
       return item ? {
         content: item.text,
         authorized: true,

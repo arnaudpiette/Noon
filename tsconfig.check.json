@@ -39,6 +39,10 @@
     "services/connectors/google-auth.js",
     "services/connectors/google-account.js",
     "services/connectors/apple-notes.js",
-    "services/connectors/apple-reminders.js"
+    "services/connectors/apple-reminders.js",
+    "services/memory/memory-writes.js",
+    "services/personal-memory/crypto.js",
+    "services/memory/memory-engine.js",
+    "services/personal-memory/private-memory-service.js"
   ]
 }

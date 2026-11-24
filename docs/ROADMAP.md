@@ -103,8 +103,8 @@ Fusionne P0 et P1 de la V2.1, avec une **limite de temps**.
 
 - ☐ A.1 Audit en une semaine maximum : HEAD, état Git, campagne de tests, smoke de `/Applications/Noon.app` (interface visible + réponse à « Bonjour »). → `CURRENT_STATE.md`.
 - ☐ A.2 Finir 4C-2 et B3 (déjà commités le 20/11 : à vérifier), puis **geler les raffinements du lifecycle de réservation**. On n'y revient que si un vrai usage révèle une faille.
-- ☐ A.3 Vrai lint : ESLint avec règles strictes (no-undef, no-unused-vars, eqeqeq, no-floating-promises via plugin).
-- ☐ A.4 `// @ts-check` + JSDoc sur les frontières : IPC, connecteurs, sécurité, mémoire.
+- ☑ A.3 Vrai lint : ESLint avec règles strictes (no-undef, no-unused-vars, eqeqeq, no-floating-promises via plugin).
+- ☑ A.4 `// @ts-check` + JSDoc sur les frontières : IPC, connecteurs, sécurité, mémoire.
 - ☑ A.5 Découper `public/app.js` par écran (chat, DEV, Goal Mode, réglages, brief…). Objectif : aucun fichier au-delà de 1 500 lignes.
 - ☑ A.6 Fusionner `memory`, `personal-memory` et `personal-intelligence` derrière une seule interface `MemoryEngine`.
 - ☐ A.7 Inventaire des services : pour chacun, *utilisé / branché / mort*. Les services morts sortent du build.

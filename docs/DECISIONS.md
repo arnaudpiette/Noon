@@ -1494,6 +1494,54 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
     `eval:remote` 8/8, `eval:offline` 7/7.
 - Reste à faire pour A.4 : la mémoire.
 
+## 24/11/2026 — V3-L0, A.4 (tranche 6) : `// @ts-check` sur la frontière mémoire — A.4 terminé
+
+- Quatre fichiers, ceux de la frontière d'accès à la mémoire, sont vérifiés en mode strict puis
+  par `no-floating-promises` : 261 erreurs au départ, 0 à l'arrivée.
+  - `services/memory/memory-engine.js` : la façade `MemoryEngine` (A.6) ;
+  - `services/memory/memory-writes.js` : le point d'écriture unique ;
+  - `services/personal-memory/private-memory-service.js` : la mémoire privée chiffrée ;
+  - `services/personal-memory/crypto.js` : AES-256-GCM et la clé maîtresse `safeStorage`.
+- Contrats désormais écrits en JSDoc :
+  - `PrivateMemoryServiceLike` et `StructuredRepositoryLike` : les méthodes utilisées, les
+    enregistrements restant `Record<string, any>` ;
+  - `OperationalProfileLike`, `MemoryChangeListener` ;
+  - les dépendances de `createMemoryEngine` ;
+  - les entrées de `search`, `getRelevantContext`, `proposeCandidate` et
+    `resolveContextSource` ;
+  - `ContextOptions`, les options normalisées, et `ReadCounts` ;
+  - `SqliteDatabaseLike`, `PrivateMemoryInput` (revalidé par `validate()`) et
+    `MemoryCipher`.
+- `privateStatus()` renvoie une union discriminée (`available: true | false`). La raison
+  d'indisponibilité est ainsi connue sans assertion.
+- Assertions ciblées, toutes commentées :
+  - service privé disponible après `privateStatus()` ;
+  - `cipher` présent dans les fonctions internes, car le service s'est sinon déclaré
+    indisponible (9 sites) ;
+  - lignes SQLite décodées non nulles dans `listMemories`.
+- Aucune règle de confidentialité n'a changé, pas plus que le filtrage des profils familiaux,
+  la politique d'envoi distant, le chiffrement, l'audit, l'oubli ou la purge. Les jetons sont
+  identiques à HEAD, à 11 paires de parenthèses près. Aucun risque de point-virgule implicite.
+- Hors périmètre, non typés : le pipeline autonome, l'extracteur de candidats, les commandes
+  conversationnelles, l'import de documents, la migration legacy, les routes HTTP mémoire et
+  la composition.
+- Validation :
+  - tests : 2 978/2 978 ;
+  - évaluations : `eval:critical` 54/54, `eval:privacy` 3/3, `eval:smoke` 99/99,
+    `eval:migration`, `eval:recovery` et `eval:search` 1/1.
+- **Bilan A.4** : `// @ts-check` est actif sur les quatre frontières, IPC, sécurité,
+  connecteurs et mémoire, soit 26 fichiers JavaScript vérifiés par `npm run typecheck`. La règle
+  `no-floating-promises`, reportée par A.3, est active sur ces mêmes fichiers.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
+- Clé maîtresse de la mémoire privée (`services/personal-memory/crypto.js`,
+  `loadOrCreateProtectedMasterKey`), relevé pendant A.4 et laissé tel quel.
+  - Le problème : si `safeStorage.decryptString` échoue sur un fichier de clé existant, le
+    `catch` génère une nouvelle clé et écrase le fichier. Cela arrive par exemple avec un
+    trousseau verrouillé, une app re-signée ou un fichier corrompu.
+  - La conséquence : les souvenirs privés déjà chiffrés deviendraient illisibles.
+  - La correction possible : distinguer « fichier absent », qui crée la clé, de « échec de
+    déchiffrement », qui déclare la mémoire privée indisponible sans rien écraser. Ce serait
+    un changement de comportement, à décider.

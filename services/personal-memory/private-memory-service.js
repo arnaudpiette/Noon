@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 const { negationChanged, tokenSimilarity } = require("./document-memory-importer");
@@ -23,9 +24,35 @@ const DEFAULT_PROFILES = [
 // définitions proviennent désormais du registre central.
 const DEFAULT_HARD_RULES = createHardRulesRegistry().legacyPrivateRules();
 
+/**
+ * Accès SQLite utilisé par le service (lignes brutes, non typées).
+ * @typedef {{
+ *   prepare: (sql: string) => { run: (...args: any[]) => any, get: (...args: any[]) => any, all: (...args: any[]) => any[] },
+ *   exec: (sql: string) => void,
+ *   isTransaction?: boolean,
+ * }} SqliteDatabaseLike
+ */
+/** @typedef {Record<string, any>} PrivateMemoryInput Souvenir proposé, revalidé par validate(). */
+/** @typedef {ReturnType<typeof import("./crypto").createMemoryCipher>} MemoryCipher */
+
 function now() { return new Date().toISOString(); }
+/**
+ * @param {unknown} value
+ * @param {number} [max]
+ */
 function clean(value, max = 2000) { return String(value || "").replace(/[\0\r]/g, " ").trim().slice(0, max); }
+/**
+ * @param {any} value
+ * @param {any} fallback
+ * @returns {any}
+ */
 function parseJson(value, fallback) { try { return JSON.parse(value); } catch { return fallback; } }
+/**
+ * @param {string} subjectId
+ * @param {string} category
+ * @param {any} requested
+ * @returns {string}
+ */
 function requiredSensitivity(subjectId, category, requested) {
   const sensitivity = SENSITIVITIES.has(requested) ? requested : "medium";
 
@@ -35,6 +62,13 @@ function requiredSensitivity(subjectId, category, requested) {
   return sensitivity;
 }
 
+/**
+ * @param {string} subjectId
+ * @param {string} category
+ * @param {string} sensitivity
+ * @param {any} requested
+ * @returns {string}
+ */
 function requiredPolicy(subjectId, category, sensitivity, requested) {
   if (requested === "local_only") return requested;
   if (CHILDREN.has(subjectId) || PROTECTED_CATEGORIES.has(category) || ["high", "restricted"].includes(sensitivity)) return "confirm_each_use";
@@ -42,26 +76,53 @@ function requiredPolicy(subjectId, category, sensitivity, requested) {
   return API_POLICIES.has(requested) ? requested : "contextual";
 }
 
+/**
+ * @param {{
+ *   databaseWrapper: { kind: string, database: SqliteDatabaseLike },
+ *   cipher: ReturnType<typeof import("./crypto").createMemoryCipher> | null | undefined,
+ *   audit?: (event: string, details: object) => void,
+ * }} options
+ */
 function createPrivateMemoryService({ databaseWrapper, cipher, audit = () => {} }) {
   if (!cipher) return { available: false, reason: "Le coffre macOS est indisponible." };
   if (databaseWrapper.kind !== "sqlite") return { available: false, reason: "SQLite local est requis pour la mémoire privée." };
   const db = databaseWrapper.database;
+  // Plus bas, `cipher` est présent : le service s'est déclaré indisponible sinon.
 
+  /**
+   * @param {string} eventType
+   * @param {unknown} recordId
+   * @param {unknown} subjectId
+   * @param {string} [status]
+   */
   function auditEntry(eventType, recordId, subjectId, status = "ok") {
     return { id: crypto.randomUUID(), eventType, recordId: recordId || null, subjectId: subjectId || null, status, createdAt: now() };
   }
+  /** @param {ReturnType<typeof auditEntry>} entry */
   function insertAudit(entry) {
     db.prepare("INSERT INTO private_memory_audit(id,event_type,record_id,subject_id,status,created_at) VALUES(?,?,?,?,?,?)")
       .run(entry.id, entry.eventType, entry.recordId, entry.subjectId, entry.status, entry.createdAt);
   }
+  /** @param {ReturnType<typeof auditEntry>} entry */
   function notifyAudit(entry) {
     audit("private-memory", { eventType: entry.eventType, recordId: entry.recordId, subjectId: entry.subjectId, status: entry.status });
   }
+  /**
+   * @param {string} eventType
+   * @param {unknown} recordId
+   * @param {unknown} subjectId
+   * @param {string} [status]
+   */
   function recordAudit(eventType, recordId, subjectId, status = "ok") {
     const entry = auditEntry(eventType, recordId, subjectId, status);
     insertAudit(entry);
     notifyAudit(entry);
   }
+  /**
+   * @template T
+   * @param {() => T} operation
+   * @returns {{ result: T, committed: boolean }}
+   */
   function transaction(operation) {
     const ownsTransaction = db.isTransaction !== true;
     const savepoint = ownsTransaction ? null : `private_memory_operation_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -84,18 +145,24 @@ function createPrivateMemoryService({ databaseWrapper, cipher, audit = () => {} 
     const stamp = now();
     for (const [id, displayName, isMinor, defaultApiPolicy] of DEFAULT_PROFILES) {
       db.prepare("INSERT OR IGNORE INTO private_profiles(id,payload_encrypted,enabled,updated_at) VALUES(?,?,1,?)")
-        .run(id, cipher.encrypt({ displayName, relationshipToOwner: id === "arnaud" ? "self" : id, isMinor, defaultApiPolicy, consentStatus: id === "arnaud" || id === "noon" ? "granted" : "pending" }), stamp);
+        .run(id, /** @type {MemoryCipher} */ (cipher).encrypt({ displayName, relationshipToOwner: id === "arnaud" ? "self" : id, isMinor, defaultApiPolicy, consentStatus: id === "arnaud" || id === "noon" ? "granted" : "pending" }), stamp);
     }
     for (const [key, statement, requiresOptIn = false] of DEFAULT_HARD_RULES) {
       db.prepare("INSERT OR IGNORE INTO private_hard_rules(id,rule_key,statement,enabled,requires_opt_in,updated_at) VALUES(?,?,?,?,?,?)")
         .run(crypto.randomUUID(), key, statement, requiresOptIn ? 0 : 1, requiresOptIn ? 1 : 0, stamp);
     }
   }
-  function profile(row) { return row ? { id: row.id, ...cipher.decrypt(row.payload_encrypted), enabled: Boolean(row.enabled), updatedAt: row.updated_at } : null; }
+  /** @param {any} row */
+  function profile(row) { return row ? { id: row.id, .../** @type {MemoryCipher} */ (cipher).decrypt(row.payload_encrypted), enabled: Boolean(row.enabled), updatedAt: row.updated_at } : null; }
+  /**
+   * @param {any} row
+   * @returns {Record<string, any> | null}
+   */
   function memory(row) {
     if (!row) return null;
-    return { id: row.id, subjectId: row.subject_id, category: row.category, sensitivity: row.sensitivity, status: row.status, confidence: row.confidence, sourceType: row.source_type, sourceReference: row.source_encrypted ? cipher.decrypt(row.source_encrypted) : null, observedAt: row.observed_at, validFrom: row.valid_from, validUntil: row.valid_until, expiresAt: row.expires_at, apiPolicy: row.api_policy, consentRequired: Boolean(row.consent_required), consentStatus: row.consent_status, tags: parseJson(row.tags_json, []), supersedesId: row.supersedes_id, ...cipher.decrypt(row.payload_encrypted), createdAt: row.created_at, updatedAt: row.updated_at, deletedAt: row.deleted_at };
+    return { id: row.id, subjectId: row.subject_id, category: row.category, sensitivity: row.sensitivity, status: row.status, confidence: row.confidence, sourceType: row.source_type, sourceReference: row.source_encrypted ? /** @type {MemoryCipher} */ (cipher).decrypt(row.source_encrypted) : null, observedAt: row.observed_at, validFrom: row.valid_from, validUntil: row.valid_until, expiresAt: row.expires_at, apiPolicy: row.api_policy, consentRequired: Boolean(row.consent_required), consentStatus: row.consent_status, tags: parseJson(row.tags_json, []), supersedesId: row.supersedes_id, .../** @type {MemoryCipher} */ (cipher).decrypt(row.payload_encrypted), createdAt: row.created_at, updatedAt: row.updated_at, deletedAt: row.deleted_at };
   }
+  /** @param {PrivateMemoryInput} input */
   function validate(input) {
     const subjectId = clean(input.subjectId, 60);
     if (!SUBJECTS.has(subjectId) && !subjectId.startsWith("project:")) throw new Error("Profil mémoire invalide.");
@@ -106,6 +173,7 @@ function createPrivateMemoryService({ databaseWrapper, cipher, audit = () => {} 
     if (consentRequired && status === "confirmed" && input.consentStatus !== "granted") status = "pending_review";
     return { subjectId, category, sensitivity, status, consentRequired, apiPolicy: requiredPolicy(subjectId, category, sensitivity, input.apiPolicy), consentStatus: input.consentStatus === "granted" ? "granted" : "pending" };
   }
+  /** @param {PrivateMemoryInput} input */
   function createMemory(input) {
     const checked = validate(input); const id = input.id || crypto.randomUUID(); const stamp = now();
     const statement = clean(input.statement, 12000); if (!statement) throw new Error("Le souvenir est vide.");
@@ -123,10 +191,15 @@ function createPrivateMemoryService({ databaseWrapper, cipher, audit = () => {} 
     ));
     if (conflict && checked.status === "confirmed") checked.status = "pending_review";
     db.prepare(`INSERT INTO private_memories(id,subject_id,category,sensitivity,status,confidence,source_type,observed_at,valid_from,valid_until,expires_at,api_policy,consent_required,consent_status,tags_json,supersedes_id,payload_encrypted,source_encrypted,created_at,updated_at,deleted_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)`)
-      .run(id, checked.subjectId, checked.category, checked.sensitivity, checked.status, Math.max(0, Math.min(1, Number(input.confidence) || 0.5)), clean(input.sourceType || "explicit-user", 80), input.observedAt || stamp, input.validFrom || null, input.validUntil || null, input.expiresAt || null, checked.apiPolicy, checked.consentRequired ? 1 : 0, checked.consentStatus, JSON.stringify((input.tags || []).map((tag) => clean(tag, 60)).slice(0, 20)), input.supersedesId || null, cipher.encrypt({ statement, payload: { ...(input.payload || {}), conflictWithId: conflict?.id || null } }), input.sourceReference ? cipher.encrypt(clean(input.sourceReference, 1000)) : null, stamp, stamp);
+      .run(id, checked.subjectId, checked.category, checked.sensitivity, checked.status, Math.max(0, Math.min(1, Number(input.confidence) || 0.5)), clean(input.sourceType || "explicit-user", 80), input.observedAt || stamp, input.validFrom || null, input.validUntil || null, input.expiresAt || null, checked.apiPolicy, checked.consentRequired ? 1 : 0, checked.consentStatus, JSON.stringify((input.tags || []).map((/** @type {unknown} */ tag) => clean(tag, 60)).slice(0, 20)), input.supersedesId || null, /** @type {MemoryCipher} */ (cipher).encrypt({ statement, payload: { ...(input.payload || {}), conflictWithId: conflict?.id || null } }), input.sourceReference ? /** @type {MemoryCipher} */ (cipher).encrypt(clean(input.sourceReference, 1000)) : null, stamp, stamp);
     recordAudit("memory.created", id, checked.subjectId); return getMemory(id);
   }
+  /** @param {string} id */
   function getMemory(id) { return memory(db.prepare("SELECT * FROM private_memories WHERE id=?").get(id)); }
+  /**
+   * @param {{ subjectId?: string, status?: string, sensitivity?: string, includeDeleted?: boolean, query?: string }} [filters]
+   * @returns {Array<Record<string, any>>}
+   */
   function listMemories(filters = {}) {
     db.prepare("UPDATE private_memories SET status='historical',updated_at=? WHERE expires_at IS NOT NULL AND expires_at<=? AND status NOT IN ('deleted','historical')").run(now(), now());
     const clauses = [], values = [];
@@ -134,21 +207,27 @@ function createPrivateMemoryService({ databaseWrapper, cipher, audit = () => {} 
     if (filters.status) { clauses.push("status=?"); values.push(filters.status); }
     if (filters.sensitivity) { clauses.push("sensitivity=?"); values.push(filters.sensitivity); }
     if (!filters.includeDeleted) clauses.push("status<>'deleted'");
-    let items = db.prepare(`SELECT * FROM private_memories ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""} ORDER BY updated_at DESC LIMIT 500`).all(...values).map(memory);
+    let items = /** @type {Array<Record<string, any>>} */ (db.prepare(`SELECT * FROM private_memories ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""} ORDER BY updated_at DESC LIMIT 500`).all(...values).map(memory));
     const query = clean(filters.query, 200).toLocaleLowerCase("fr");
     if (query) items = items.filter((item) => `${item.statement} ${(item.tags || []).join(" ")}`.toLocaleLowerCase("fr").includes(query));
     return items;
   }
+  /**
+   * @param {string} id
+   * @param {PrivateMemoryInput} changes
+   * @param {string} [reason]
+   */
   function updateMemory(id, changes, reason = "correction") {
     const current = getMemory(id); if (!current) throw new Error("Souvenir introuvable.");
+    /** @type {Record<string, any>} */
     const next = { ...current, ...changes, id };
     const checked = validate(next);
-    const version = { id: crypto.randomUUID(), memoryId: id, payloadEncrypted: cipher.encrypt(current), changedAt: now(), reason: clean(reason, 120) };
+    const version = { id: crypto.randomUUID(), memoryId: id, payloadEncrypted: /** @type {MemoryCipher} */ (cipher).encrypt(current), changedAt: now(), reason: clean(reason, 120) };
     const update = { category: checked.category, sensitivity: checked.sensitivity, status: checked.status,
       confidence: Math.max(0, Math.min(1, Number(next.confidence) || 0)), expiresAt: next.expiresAt || null,
       apiPolicy: checked.apiPolicy, consentRequired: checked.consentRequired ? 1 : 0,
       consentStatus: checked.consentStatus, tags: JSON.stringify(next.tags || []),
-      payloadEncrypted: cipher.encrypt({ statement: clean(next.statement, 12000), payload: next.payload || null }), updatedAt: now() };
+      payloadEncrypted: /** @type {MemoryCipher} */ (cipher).encrypt({ statement: clean(next.statement, 12000), payload: next.payload || null }), updatedAt: now() };
     const entry = auditEntry("memory.updated", id, checked.subjectId);
     const outcome = transaction(() => {
       db.prepare("INSERT INTO private_memory_versions(id,memory_id,payload_encrypted,changed_at,reason) VALUES(?,?,?,?,?)")
@@ -164,10 +243,11 @@ function createPrivateMemoryService({ databaseWrapper, cipher, audit = () => {} 
     if (outcome.committed) notifyAudit(entry);
     return getMemory(id);
   }
+  /** @param {string} id */
   function forgetMemory(id) {
     const current = getMemory(id); if (!current) throw new Error("Souvenir introuvable.");
     const entry = auditEntry("memory.deleted", id, current.subjectId);
-    const deletion = { payloadEncrypted: cipher.encrypt({ statement: "", payload: null }), deletedAt: now(), updatedAt: now() };
+    const deletion = { payloadEncrypted: /** @type {MemoryCipher} */ (cipher).encrypt({ statement: "", payload: null }), deletedAt: now(), updatedAt: now() };
     const outcome = transaction(() => {
       db.prepare("UPDATE private_memories SET status='deleted',payload_encrypted=?,source_encrypted=NULL,deleted_at=?,updated_at=? WHERE id=?")
         .run(deletion.payloadEncrypted, deletion.deletedAt, deletion.updatedAt, id);
@@ -176,6 +256,7 @@ function createPrivateMemoryService({ databaseWrapper, cipher, audit = () => {} 
     if (outcome.committed) notifyAudit(entry);
     return true;
   }
+  /** @param {string} subjectId */
   function purgeSubject(subjectId) {
     const entry = auditEntry("profile.purged", null, subjectId);
     const outcome = transaction(() => {
@@ -191,41 +272,75 @@ function createPrivateMemoryService({ databaseWrapper, cipher, audit = () => {} 
     if (outcome.committed) notifyAudit(entry);
     return outcome.result;
   }
+  /** @param {string} subjectId */
   function exportSubject(subjectId) { return { version: 1, exportedAt: now(), profile: profile(db.prepare("SELECT * FROM private_profiles WHERE id=?").get(subjectId)), memories: listMemories({ subjectId, includeDeleted: true }) }; }
+  /** @param {{ enabled?: boolean, sensitiveApiAllowed?: boolean }} input */
   function setSettings({ enabled, sensitiveApiAllowed }) { db.prepare("INSERT OR REPLACE INTO private_consents(id,subject_id,purpose,status,granted_at,revoked_at,updated_at) VALUES('global-memory','noon','memory-enabled',?,?,?,?)").run(enabled ? "granted" : "revoked", enabled ? now() : null, enabled ? null : now(), now()); db.prepare("INSERT OR REPLACE INTO private_consents(id,subject_id,purpose,status,granted_at,revoked_at,updated_at) VALUES('sensitive-api','noon','sensitive-api',?,?,?,?)").run(sensitiveApiAllowed ? "granted" : "revoked", sensitiveApiAllowed ? now() : null, sensitiveApiAllowed ? null : now(), now()); return settings(); }
+  /**
+   * @param {string} id
+   * @param {boolean} [fallback]
+   */
   function consentStatus(id, fallback = false) { const row = db.prepare("SELECT status FROM private_consents WHERE id=?").get(id); return row ? row.status === "granted" : fallback; }
   function settings() { return { enabled: consentStatus("global-memory", true), sensitiveApiAllowed: consentStatus("sensitive-api", false) }; }
   function listProfiles() { return db.prepare("SELECT * FROM private_profiles ORDER BY rowid").all().map(profile); }
+  /**
+   * @param {string} subjectId
+   * @param {boolean} enabled
+   */
   function setProfileEnabled(subjectId, enabled) { if (!SUBJECTS.has(subjectId)) throw new Error("Profil mémoire invalide."); db.prepare("UPDATE private_profiles SET enabled=?,updated_at=? WHERE id=?").run(enabled ? 1 : 0, now(), subjectId); recordAudit("profile.settings", null, subjectId); return profile(db.prepare("SELECT * FROM private_profiles WHERE id=?").get(subjectId)); }
+  /** @param {string} subjectId */
   function isProfileEnabled(subjectId) { const row = db.prepare("SELECT enabled FROM private_profiles WHERE id=?").get(subjectId); return Boolean(row?.enabled); }
   function hardRules() { return db.prepare("SELECT id,rule_key key,statement,enabled,requires_opt_in requiresOptIn FROM private_hard_rules WHERE enabled=1 ORDER BY rowid").all().map((row) => ({ ...row, enabled: Boolean(row.enabled), requiresOptIn: Boolean(row.requiresOptIn) })); }
   // API technique de migration : les tables ne contiennent que des empreintes,
   // identifiants et compteurs. Aucun contenu personnel déchiffré n'y est écrit.
+  /** @param {{ id: string, backupPath?: string | null, report?: object }} input */
   function beginMigration({ id, backupPath = null, report = {} }) {
     db.prepare("INSERT OR IGNORE INTO private_memory_migrations(id,status,backup_path,report_json,started_at) VALUES(?,?,?,?,?)")
       .run(id, "running", backupPath, JSON.stringify(report), now());
   }
+  /**
+   * @param {string} sourceType
+   * @param {string} sourceIdHash
+   */
   function migrationRecord(sourceType, sourceIdHash) {
     return db.prepare("SELECT * FROM private_memory_migration_records WHERE source_type=? AND source_id_hash=? AND disposition NOT IN ('rolled_back','failed')")
       .get(sourceType, sourceIdHash) || null;
   }
+  /**
+   * @param {{
+   *   migrationId: string,
+   *   sourceType: string,
+   *   sourceIdHash: string,
+   *   fingerprint: string,
+   *   targetId?: string | null,
+   *   disposition: string,
+   *   errorCode?: string | null,
+   * }} entry
+   */
   function recordMigration(entry) {
     db.prepare(`INSERT OR REPLACE INTO private_memory_migration_records
       (migration_id,source_type,source_id_hash,fingerprint,target_id,disposition,error_code,created_at)
       VALUES(?,?,?,?,?,?,?,?)`).run(entry.migrationId, entry.sourceType, entry.sourceIdHash,
       entry.fingerprint, entry.targetId || null, entry.disposition, entry.errorCode || null, now());
   }
+  /**
+   * @param {string} id
+   * @param {string} status
+   * @param {object} [report]
+   */
   function completeMigration(id, status, report = {}) {
     db.prepare("UPDATE private_memory_migrations SET status=?,report_json=?,completed_at=? WHERE id=?")
       .run(status, JSON.stringify(report), now(), id);
     recordAudit("migration.completed", id, "noon", status);
   }
+  /** @param {string} id */
   function migrationStatus(id) {
     const row = db.prepare("SELECT * FROM private_memory_migrations WHERE id=?").get(id);
     if (!row) return null;
     return { id: row.id, status: row.status, backupPath: row.backup_path,
       report: parseJson(row.report_json, {}), startedAt: row.started_at, completedAt: row.completed_at };
   }
+  /** @param {string} id */
   function rollbackMigration(id) {
     const entry = auditEntry("migration.rolled_back", id, "noon");
     const outcome = transaction(() => {
