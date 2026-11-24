@@ -1083,6 +1083,34 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
 
   Plusieurs fichiers de tests dépassent aussi ce seuil.
 
+## 24/11/2026 — V3-L7, fichiers > 1 500 lignes : `workspace-terminal-service.js` (2 294 → 1 397)
+
+- Méthode, reprise pour les sept autres fichiers :
+  - des fonctions internes de la fabrique sont déplacées telles quelles, avec leurs commentaires ;
+  - les fonctions qui ne lisent aucun état de la fabrique deviennent des fonctions de module ;
+  - les autres passent dans une petite fabrique qui reçoit exactement les noms qu'elles
+    utilisaient ;
+  - une analyse de portée (eslint-scope) liste ces dépendances avant le déplacement ;
+  - une comparaison des jetons vérifie le résultat : 17 déclarations déplacées identiques, et
+    les 14 fonctions restées dans le service inchangées.
+- Nouveaux modules dans `services/dev/` :
+  - `workspace-terminal-shared.js` : `DevWorkspaceError` et `clean`. Le service réexporte la
+    même classe.
+  - `workspace-terminal-projections.js` : projections publiques (problèmes, diff git,
+    terminal, session), `refreshExecutionState`, `terminalFor`, `assertTerminalOrigin`.
+  - `workspace-terminal-completions.js` : complétions du terminal (entrées autorisées, chemins
+    réels dans le dépôt, scripts `package.json`).
+  - `workspace-terminal-git-diff.js` : `inspectGitDiff` et `readGitDiff`, construits avec les
+    `emit`, `gitDiffService` et `requireSession` du service.
+- Les fonctions internes étaient hissées dans la fabrique. Les imports sont disponibles dès le
+  chargement, et les opérations de diff sont construites juste après `iso`, avant tout usage
+  (uniquement dans l'objet renvoyé).
+- L'API publique du service et ses exports sont inchangés.
+- Tests :
+  - suites existantes du terminal et du diff git inchangées : 50/50 ;
+  - `test/workspace-terminal-modules.test.js` vérifie la même classe d'erreur, des projections
+    sans état partagé et l'absence d'inspection si la session est refusée.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
