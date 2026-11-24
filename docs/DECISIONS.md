@@ -629,6 +629,52 @@ structurante, est notée ici avec sa date et sa raison.
   appel au faux `osascript` de chaque côté. Tests à assertions d'absence rejoués contre la
   source complète : 208/208.
 
+## 23/11/2026 — Découpe de `server.js`, quinzième tranche : orchestration du chat (V3-L7)
+
+Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex (`56fa566`) à partir
+de la douzième, en parallèle des tranches 13 et 14.
+
+- Modules créés :
+  - `services/models/model-response.js` : fonctions pures de lecture des réponses du modèle
+    (sources web citées, appels de recherche, nettoyage d'une sortie, erreur de compatibilité
+    `tool_search`) ;
+  - `services/intents/intent-context.js` : `buildIntentContext`. Les dépendances déclarées plus
+    loin (`workspaceEngine`, historique et clés de conversation) sont lues par accesseur ;
+  - `services/delegation/chat-delegation-composition.js` : délégation à des spécialistes bornés ;
+  - `services/orchestration/chat-orchestration-composition.js` : orchestrateur et moteur
+    d'évaluation des agents.
+- `server.js` passe de 3 291 à 3 071 lignes. Le test `responses-api-options` lit désormais
+  `server.js` suivi des modules extraits.
+- Les modules sont écrits à la main, sans `scripts/extract-server-domain.js`. Contrôle a
+  posteriori : les déclarations retirées de `server.js` se retrouvent telles quelles dans les
+  modules (seuls les `require` changent de place). Rejeu avant/après (faux serveur Responses,
+  copies isolées) : réponses, requêtes au modèle et audit identiques. Une copie de l'autre
+  version de cette tranche (Claude) est gardée hors du dépôt ; elle n'a pas été retenue.
+
+## 23/11/2026 — Découpe de `server.js`, seizième tranche : contexte personnel et mémoire (V3-L7)
+
+Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex (`d9ccd6f`,
+`7fb7e51`).
+
+- `services/context/personal-context-composition.js` assemble le contexte personnel et la
+  continuité de session ; `services/memory/personal-memory-composition.js` assemble le service
+  de mémoire privée chiffrée, la migration historique et les invalidations après écriture.
+  `docs/CONTEXT_BUILDER.md` décrit ce découpage. `server.js` passe de 3 071 à 2 871 lignes.
+- Correctif d'un défaut antérieur (`7fb7e51`). L'ancien import SQLite avait recopié
+  `long-term-memory.json` dans `memory_items` avec un statut confirmé. Après la migration
+  privée, qui recopie ces souvenirs en « à revoir » et local-only, la copie SQLite continuait à
+  alimenter la recherche et le contexte distant. Elle contournait ainsi la revue et pouvait
+  faire réapparaître un souvenir oublié. Ces copies sont maintenant exclues de la recherche, du
+  contexte et des références une fois la migration terminée ; elles restent visibles dans la
+  gestion locale (`docs/MEMORY_MIGRATION.md`).
+  - Effet visible : un ancien souvenir n'est plus envoyé au modèle tant que sa version migrée
+    n'a pas été revue.
+  - Si la mémoire privée est indisponible, rien n'est exclu et rien ne plante.
+- Contrôle a posteriori : déclarations retrouvées telles quelles dans les modules ; nouveau test
+  `memory-engine` ; rejeu avant/après avec des commandes mémoire (retenir, consulter, oublier)
+  identique. La mémoire privée n'est pas couverte par ce rejeu, faute de coffre macOS hors
+  Electron.
+
 ## 23/11/2026 — Découpe de `server.js`, dix-septième tranche : composition Native DEV et Goal Mode DEV (V3-L7)
 
 - L'assemblage sort dans `services/dev/dev-runtime-composition.js`, en trois frontières explicites :
@@ -759,6 +805,26 @@ structurante, est notée ici avec sa date et sa raison.
 - Tests : `test/disk-full-resilience.test.js` (6 tests). Quatre d'entre eux échouent sur le
   code d'avant : 500 au lieu d'une requête bloquée, audit sans exception, traces intactes.
 - Reste ouvert : `health()` n'est pas encore affiché dans le Control Center.
+
+## 24/11/2026 — Découpe de `server.js`, vingtième tranche : construction groupée des modules de routes (V3-L7)
+
+- Les 20 constructions `createXHttpRoutes({ get … })`, éparpillées dans `server.js`, sont
+  remplacées par une seule table dans `services/http/route-modules-composition.js`. La table
+  associe le nom d'instance, la fabrique et ses `DEPENDENCIES`, dans le même ordre qu'avant.
+  - `createHttpRouteModules(source)` construit chaque module avec
+    `pickDependencies(source, DEPENDENCIES)` (`services/http/route-dependencies.js`). Chaque
+    module reçoit seulement les noms qu'il déclare, par accesseur relu à chaque accès.
+  - Une dépendance absente est refusée à la construction, comme avant.
+  - Dans `server.js`, un seul objet d'accesseurs, `httpRouteDependencies` (174 noms), est
+    placé juste avant le serveur HTTP.
+- `remoteLanHttpRoutes`, `figmaBridgeHttpRoutes` et `memoryHttpRoutes` gardent leur
+  construction : leur interface est différente (`matches` / `handle`).
+- Les fabriques ne lisent leurs dépendances qu'à l'arrivée d'une requête qui correspond, jamais
+  à la construction. Construire plus tard ne change donc aucune valeur lue.
+- `server.js` passe de 2 209 à 2 078 lignes.
+- Tests : le test de câblage vérifie, pour chaque module, que la table utilise la même
+  fabrique et les mêmes `DEPENDENCIES`, que chaque nom a son accesseur et que l'aiguillage est
+  inchangé. Deux tests nouveaux couvrent `pickDependencies` et la construction groupée.
 
 ## À trancher
 

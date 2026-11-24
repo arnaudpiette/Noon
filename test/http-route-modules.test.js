@@ -7,6 +7,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const { NOT_HANDLED } = require("../services/http/route-result");
 const { readServerSource } = require("./helpers/server-source");
+const ROUTE_COMPOSITION = require("../services/http/route-modules-composition");
 
 const MODULES = [
   ["../services/personal-intelligence/personal-intelligence-http-routes", "createPersonalIntelligenceHttpRoutes", "personalIntelligenceHttpRoutes"],
@@ -41,10 +42,40 @@ for (const [file, factory, instance] of MODULES) {
   });
 
   test(`${factory} : le serveur fournit chaque dépendance par un accesseur`, () => {
-    const start = server.indexOf(`const ${instance} = ${factory}({`);
+    // Construction groupée : le module est enregistré avec sa propre fabrique et ses propres
+    // DEPENDENCIES, et l'objet d'accesseurs de server.js expose chacune d'elles.
+    const entry = ROUTE_COMPOSITION.ROUTE_MODULES.find(([name]) => name === instance);
+    assert.ok(entry, instance);
+    assert.equal(entry[1], loaded[factory]);
+    assert.equal(entry[2], loaded.DEPENDENCIES);
+    const start = server.indexOf("const httpRouteDependencies = {");
     assert.notEqual(start, -1);
-    const construction = server.slice(start, server.indexOf("});", start));
-    for (const name of loaded.DEPENDENCIES) assert.ok(construction.includes(`get ${name}() { return ${name}; },`), name);
+    const accessors = server.slice(start, server.indexOf("\n};", start));
+    for (const name of loaded.DEPENDENCIES) assert.ok(accessors.includes(`get ${name}() { return ${name}; },`), name);
+    assert.match(server, new RegExp(`\\n  ${instance},\\n[\\s\\S]*?\\} = createHttpRouteModules\\(httpRouteDependencies\\);`));
     assert.match(server, new RegExp(`await ${instance}\\(req, res, requestPath\\);\\n\\s*if \\(routed !== NOT_HANDLED\\) return routed;`));
   });
 }
+
+test("pickDependencies : seulement les noms déclarés, relus à chaque accès, dépendance manquante refusée", () => {
+  const { pickDependencies } = require("../services/http/route-dependencies");
+  let late;
+  const source = { get late() { return late; }, other: "non déclaré" };
+  const picked = pickDependencies(source, ["late"]);
+  assert.deepEqual(Object.keys(picked), ["late"]);
+  assert.equal(picked.late, undefined);
+  late = "initialisé plus tard";
+  assert.equal(picked.late, "initialisé plus tard");
+  assert.equal("other" in picked, false);
+  assert.throws(() => pickDependencies(source, ["absente"]), /Dépendance manquante : absente/);
+});
+
+test("construction groupée : chaque module de routes reçoit exactement ses DEPENDENCIES", () => {
+  const { pickDependencies } = require("../services/http/route-dependencies");
+  const source = new Proxy({}, { has: () => true, get: (target, key) => `valeur:${String(key)}` });
+  for (const [name, , dependencies] of ROUTE_COMPOSITION.ROUTE_MODULES) {
+    assert.deepEqual(Object.keys(pickDependencies(source, dependencies)), [...dependencies], name);
+  }
+  assert.equal(new Set(ROUTE_COMPOSITION.ROUTE_MODULES.map(([name]) => name)).size, ROUTE_COMPOSITION.ROUTE_MODULES.length);
+  assert.deepEqual(ROUTE_COMPOSITION.HTTP_ROUTE_DEPENDENCIES, [...new Set(ROUTE_COMPOSITION.ROUTE_MODULES.flatMap(([, , dependencies]) => dependencies))].sort());
+});
