@@ -50,6 +50,7 @@ const ROUTE_MODULES = Object.freeze([
   "services/http/route-modules-composition.js",
   "services/reliability/core-reliability-components.js",
   "services/search/personal-search-composition.js",
+  "services/lifecycle/lifecycle-composition.js",
 ]);
 
 function readServerSource() {

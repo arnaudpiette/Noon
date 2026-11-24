@@ -74,7 +74,7 @@ const { createAppleNotesConnector } = require("./services/connectors/apple-notes
 const { createVoiceIdentity } = require("./services/voice/voice-identity");
 const { createRealtimeVoiceConfig } = require("./services/voice/realtime-config");
 const { createPlanningPreferenceStore } = require("./lib/planning-preferences");
-const { SCHEMA_VERSION, createPersonalDatabase, loadSqlite } = require("./services/persistence/database");
+const { createPersonalDatabase } = require("./services/persistence/database");
 const { createPersonalIntelligenceRepository } = require("./services/persistence/repositories/personal-intelligence-repository");
 const { createGoalStrategyRepository } = require("./services/persistence/repositories/goal-strategy-repository");
 const { createApprovalRepository } = require("./services/persistence/repositories/approval-repository");
@@ -161,11 +161,6 @@ const { createRuntimeConfigService } = require("./services/config/runtime-config
 const { createFeatureFlagRegistry } = require("./services/config/feature-flag-registry");
 const { createFeatureFlagService } = require("./services/config/feature-flag-service");
 const { createShadowComparator } = require("./services/config/shadow-comparator");
-const { createDurableStoreRegistry } = require("./services/lifecycle/durable-store-registry");
-const { createBackupService } = require("./services/lifecycle/backup-service");
-const { createUpdateJournal } = require("./services/lifecycle/update-journal");
-const { createMigrationManager } = require("./services/lifecycle/migration-manager");
-const { createUpdateRecoveryEngine } = require("./services/lifecycle/update-recovery-engine");
 const {
   IMAGE_GENERATION_ESTIMATED_COST_USD,
   MODEL_PRICING,
@@ -216,6 +211,7 @@ const {
 const { createHttpRouteModules } = require("./services/http/route-modules-composition");
 const { registerCoreReliabilityComponents } = require("./services/reliability/core-reliability-components");
 const { createPersonalSearchComposition } = require("./services/search/personal-search-composition");
+const { createLifecycleComposition } = require("./services/lifecycle/lifecycle-composition");
 
 // Tous les chemins manipulés par les outils sont contrôlés par config.js.
 
@@ -1493,51 +1489,23 @@ const CONVERSATION_INDEX_FILE = path.join(
 );
 
 // Le lifecycle est initialement branché en diagnostic/dry-run : le bootstrap
-// existant reste autoritaire et aucune migration utilisateur n'est rejouée.
-const durableStoreRegistry = createDurableStoreRegistry([
-  { storeId: "personal-database", path: personalDatabase.filePath, kind: personalDatabase.kind === "sqlite" ? "sqlite" : "json", criticality: "CRITICAL", sensitive: true, encrypted: false, validateBackup(backupPath) { if (personalDatabase.kind !== "sqlite") { JSON.parse(fs.readFileSync(backupPath, "utf8")); return true; } const sqlite = loadSqlite(); const candidate = new sqlite.DatabaseSync(backupPath, { readOnly: true }); try { return candidate.prepare("PRAGMA integrity_check").get()?.integrity_check === "ok" && Boolean(candidate.prepare("SELECT 1 FROM schema_migrations LIMIT 1").get()); } finally { candidate.close(); } } },
-  { storeId: "conversations", path: CONVERSATION_MEMORY_FILE, kind: "json", criticality: "CRITICAL", sensitive: true, encrypted: false },
-  { storeId: "conversation-index", path: CONVERSATION_INDEX_FILE, kind: "json", criticality: "CRITICAL", sensitive: true, encrypted: false },
-  { storeId: "conversation-summaries", path: CONVERSATION_SUMMARIES_FILE, kind: "json", criticality: "IMPORTANT", sensitive: true, encrypted: false },
-  { storeId: "runtime-config", path: path.join(DATA_DIRECTORY, "runtime-config.json"), kind: "json", criticality: "CRITICAL", sensitive: false, encrypted: false },
-  { storeId: "projects-registry", path: PROJECTS_REGISTRY_FILE, kind: "json", criticality: "IMPORTANT", sensitive: true, encrypted: false },
-  { storeId: "artifact-previews", path: ARTIFACT_PREVIEW_DIRECTORY, kind: "directory", criticality: "EPHEMERAL", rebuildable: true, backup: false },
-]);
-const lifecycleBackupService = createBackupService({
-  backupRoot: path.join(DATA_DIRECTORY, "recovery-backups"),
-  storeRegistry: durableStoreRegistry,
-  appVersion: require("./package.json").version,
-  schemaVersion: SCHEMA_VERSION,
-  configSchemaVersion: configRegistry.schemaVersion,
-  sqliteBackup: async (_store, destination) => {
-    const escaped = String(destination).replace(/'/g, "''");
-    personalDatabase.database.exec(`VACUUM INTO '${escaped}'`);
-  },
-  observability: (event, metadata) => toolAuditLog.append(`lifecycle.${event}`, metadata),
-});
-const lifecycleJournal = createUpdateJournal(path.join(DATA_DIRECTORY, "update-journal.json"));
-const lifecycleMigrationManager = createMigrationManager({
-  migrations: [], expectedSchemaVersion: SCHEMA_VERSION,
-  minimumSupportedSchemaVersion: SCHEMA_VERSION,
-  readSchemaVersion: () => Number(personalDatabase.kind === "sqlite"
-    ? personalDatabase.database.prepare(
-      "SELECT version FROM schema_migrations WHERE name = 'personal-intelligence-base' ORDER BY version DESC LIMIT 1"
-    ).get()?.version
-    : personalDatabase.load().version) || 0,
-  writeSchemaVersion: () => { throw new Error("Aucune migration lifecycle active n'est enregistrée."); },
-  observability: (event, metadata) => toolAuditLog.append(`lifecycle.${event}`, metadata),
-});
-const updateRecoveryEngine = createUpdateRecoveryEngine({
-  appVersion: require("./package.json").version,
-  migrationManager: lifecycleMigrationManager,
-  backupService: lifecycleBackupService,
-  journal: lifecycleJournal,
-  runtimeConfig,
+// existant reste autoritaire et aucune migration utilisateur n'est rejouée
+// (services/lifecycle/lifecycle-composition.js).
+const { updateRecoveryEngine } = createLifecycleComposition({
+  ARTIFACT_PREVIEW_DIRECTORY,
+  CONVERSATION_INDEX_FILE,
+  CONVERSATION_MEMORY_FILE,
+  CONVERSATION_SUMMARIES_FILE,
+  DATA_DIRECTORY,
+  PROJECTS_REGISTRY_FILE,
+  configRegistry,
   featureFlags,
-  reliability: reliabilityEngine,
-  activeExecutions: () => transactionalExecutionRepository.listRecoverable(),
-  secureStorageAvailable: () => privateMemoryService.available,
-  observability: (event, metadata) => toolAuditLog.append(`lifecycle.${event}`, metadata),
+  personalDatabase,
+  privateMemoryService,
+  reliabilityEngine,
+  runtimeConfig,
+  toolAuditLog,
+  transactionalExecutionRepository,
 });
 
 const { controlCenterService } = createControlCenterComposition({

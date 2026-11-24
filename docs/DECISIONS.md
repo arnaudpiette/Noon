@@ -918,6 +918,27 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   Les réponses sont identiques une fois normalisées, sauf `resultId` : c'est une empreinte qui
   inclut l'horodatage de la règle trouvée, réécrite à chaque démarrage.
 
+## 24/11/2026 — Découpe de `server.js`, vingt-quatrième tranche : assemblage du cycle de vie (V3-L7)
+
+- Ce qui sort dans `services/lifecycle/lifecycle-composition.js`
+  (`createLifecycleComposition`) : la construction du registre des stockages durables, des
+  sauvegardes, du journal de mise à jour, du gestionnaire de migrations et du moteur de reprise
+  après mise à jour.
+- Le bloc est déplacé tel quel (595 jetons). Seul le chemin de `package.json` est réécrit
+  depuis le nouveau dossier : même module, même cache.
+- Le mode reste diagnostic : aucune migration active, l'écriture de schéma est refusée.
+- Seul `updateRecoveryEngine` sert ailleurs ; c'est le seul objet renvoyé.
+- `server.js` l'appelle au même endroit qu'avant. Ses 14 dépendances sont des constantes déjà
+  initialisées, lues une fois.
+- Les 5 fabriques du cycle de vie, `SCHEMA_VERSION` et `loadSqlite` sont importés par le
+  module. Ces modules n'ont aucun effet de bord au chargement.
+- `server.js` passe de 1 833 à 1 801 lignes.
+- Tests : `test/lifecycle-composition.test.js` vérifie :
+  - le refus d'une dépendance manquante ;
+  - le plan et le diagnostic de démarrage : version de l'application, schéma courant, état
+    `CLEAN`, aucune sauvegarde ni écriture ;
+  - la position et les arguments de l'appel.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
