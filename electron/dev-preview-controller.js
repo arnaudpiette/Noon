@@ -110,6 +110,10 @@ function isNoonServerEndpoint(
   );
 }
 
+/**
+ * @param {unknown} rawUrl
+ * @param {{ noonOrigin?: string | null }} [options]
+ */
 function normalizeDevPreviewUrl(
   rawUrl,
   { noonOrigin = null } = {}
@@ -346,6 +350,17 @@ function sanitizeDevPreviewBounds(
   };
 }
 
+/**
+ * Les options sont revalidées à l’exécution (TypeError si absentes).
+ * @param {{
+ *   WebContentsView?: typeof import("electron").WebContentsView,
+ *   session?: typeof import("electron").session,
+ *   getMainWindow?: () => import("electron").BrowserWindow | null,
+ *   noonOrigin?: string,
+ *   openExternalUrl?: (url: string) => Promise<boolean>,
+ *   devTools?: boolean,
+ * }} [options]
+ */
 function createDevPreviewController({
   WebContentsView,
   session,

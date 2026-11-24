@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "allowJs": true,
-    "checkJs": true,
+    "checkJs": false,
     "noEmit": true,
     "module": "nodenext",
     "moduleResolution": "nodenext",
@@ -9,10 +9,12 @@
     "lib": ["es2023"],
     "types": ["node"],
     "strict": true,
+    "useUnknownInCatchVariables": false,
     "skipLibCheck": true
   },
   "files": [
     "electron/preload.js",
-    "electron/production-hardening.js"
+    "electron/production-hardening.js",
+    "electron/main.js"
   ]
 }

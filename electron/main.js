@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 const {
@@ -15,7 +16,8 @@ const uiValidationProfile = applyUiValidationProfile({
   normalUserData: app.getPath("userData"), homeDirectory: app.getPath("home"), fsImpl: fs,
 });
 const uiValidationRequested = Boolean(uiValidationProfile) && isUiValidationMode();
-if (uiValidationRequested) app.setPath("userData", uiValidationProfile.profile);
+// uiValidationRequested implique un profil appliqué.
+if (uiValidationRequested) app.setPath("userData", /** @type {NonNullable<typeof uiValidationProfile>} */ (uiValidationProfile).profile);
 const sharp = require("sharp");
 const { isSafeExternalUrl, isSafeGoogleAuthorizationUrl, isValidAccelerator, parseNoonDeepLink } = require("./app-core");
 const {
@@ -37,6 +39,33 @@ const {
 } = require("./dev-preview-controller");
 const { createDeferredOptionalLoader, createStartupDiagnostics, startOptionalStartupPhase } = require("./startup-diagnostics");
 
+/**
+ * Surface de server.js utilisée par le processus principal (frontière main → serveur local).
+ * Les méthodes *FromTrustedMain ne sont appelées qu’après validation des charges IPC.
+ * @typedef {{
+ *   server?: import("node:http").Server,
+ *   startNoonServer: (options: {
+ *     authSecret: string | null,
+ *     port: number,
+ *     loadOpenAIKey: () => unknown,
+ *     loadGeminiKey: () => unknown,
+ *   }) => unknown,
+ *   stopNoonServer: () => unknown,
+ *   listDevProjectRulesFromTrustedMain?: (workspaceId: string) => unknown,
+ *   mutateDevProjectRuleFromTrustedMain?: (input: {
+ *     action: string,
+ *     workspaceId: string,
+ *     expectedProjectId: string,
+ *     ruleId?: string,
+ *     expectedVersion?: number,
+ *     text?: string,
+ *   }) => unknown,
+ *   listUiValidationProjectContextsFromTrustedMain?: () => unknown[],
+ * }} NoonServerController
+ */
+/** @typedef {import("electron").BrowserWindow} BrowserWindowInstance */
+
+/** @param {string} name */
 const smokeArgument = (name) => process.argv.find((value) => value.startsWith(`--${name}=`))?.split("=").slice(1).join("=");
 const smokeModeFromArguments = process.argv.includes("--noon-smoke-test");
 const NOON_PORT = process.env.NOON_SMOKE_TEST === "1" || smokeModeFromArguments
@@ -60,30 +89,54 @@ if (smokeTestRequested && smokeUserData) {
 }
 // Le smoke test utilise un profil et un port isolés ; il ne doit pas réveiller l'instance quotidienne.
 const hasSingleInstanceLock = benchmarkControlCommand || benchmarkControlCommandError ? true : smokeTestRequested || app.requestSingleInstanceLock();
+/** @type {import("electron").BrowserWindow | null} */
 let mainWindow = null;
+/** @type {ReturnType<typeof createDevPreviewController> | null} */
 let devPreviewController = null;
+/** @type {import("electron").Tray | null} */
 let tray = null;
+/** @type {NoonServerController | null} */
 let serverController = null;
+/** @type {string | null} */
 let localAuthSecret = null;
+/** @type {ReturnType<typeof parseNoonDeepLink> | null} */
 let pendingDeepLink = null;
 let isQuitting = false;
 let liveVoiceActive = false;
+/** @type {(level: string, event: string, details?: string) => void} */
 let logNoonEvent = () => {};
+/** @type {InstanceType<typeof WakeWordService> | null} */
 let wakeWordService = null;
+// Minuteries Node (Timeout) ou null : clearTimeout(null) est sans effet, mais @types/node refuse null.
+/** @type {any} */
 let resumeWakeTimer = null;
+/** @type {any} */
 let creativeBriefTimer = null;
+/** @type {any} */
 let briefRetryTimer = null;
 let creativeBriefRunning = false;
 let microphonePermission = "unknown";
 let privateMemoryAuthFailures = 0;
 let privateMemoryAuthLockedUntil = 0;
+/** @type {number | null} */
 let serverStartedLatencyMs = null;
 let startupTimingLoggerReady = false;
+/** @type {Array<{ phase: string, durationMs: number, status: string, errorCode?: string }>} */
 const startupPhaseTimings = [];
-let startupDiagnostics = null;
-let deferredOpenAISecret = null;
-let deferredGeminiSecret = null;
+// Assignés une fois, au chargement du module (voir plus bas), avant tout usage.
+/** @type {ReturnType<typeof createStartupDiagnostics>} */
+let startupDiagnostics = /** @type {any} */ (null);
+/** @type {ReturnType<typeof createDeferredOptionalLoader>} */
+let deferredOpenAISecret = /** @type {any} */ (null);
+/** @type {ReturnType<typeof createDeferredOptionalLoader>} */
+let deferredGeminiSecret = /** @type {any} */ (null);
 
+/**
+ * @template T
+ * @param {string} phase
+ * @param {() => Promise<T> | T} operation
+ * @returns {Promise<T>}
+ */
 async function measureStartupPhase(phase, operation) {
   return startupDiagnostics.measure(phase, async () => {
     const startedAt = process.hrtime.bigint();
@@ -115,22 +168,33 @@ function flushStartupPhaseTimings() {
   }
 }
 
+/** @param {string} phase */
 function recordSkippedStartupPhase(phase) {
   startupPhaseTimings.push({ phase, durationMs: 0, status: "skipped" });
 }
 
 if (!hasSingleInstanceLock) app.quit();
 
+/** @param {string} name */
 const dataPath = (name) => path.join(app.getPath("userData"), name);
 startupDiagnostics = createStartupDiagnostics({ filePath: dataPath("startup-diagnostics.jsonl") });
 deferredOpenAISecret = createDeferredOptionalLoader({ operation: () => loadEncryptedOpenAIKey() });
 deferredGeminiSecret = createDeferredOptionalLoader({ operation: () => loadEncryptedGeminiKey() });
 startupDiagnostics.record("main-module", "ready", { elapsedMs: Date.now() - PROCESS_STARTED_AT });
 const localPermissionStore = createLocalPermissionStore(dataPath("local-permissions.json"));
+/**
+ * @param {string} name
+ * @param {unknown} fallback
+ * @returns {any}
+ */
 function readJson(name, fallback) {
   try { return JSON.parse(fs.readFileSync(dataPath(name), "utf8")); }
   catch { return fallback; }
 }
+/**
+ * @param {string} name
+ * @param {unknown} value
+ */
 function writeJson(name, value) {
   const destination = dataPath(name);
   const temporary = `${destination}.tmp`;
@@ -160,13 +224,19 @@ function loadPreferences() {
     ? { ...preferences, wakeWordEnabled: false, creativeBriefEnabled: false }
     : preferences;
 }
+/** @param {string} name */
 function encryptedSecretPath(name) { return dataPath(`${name}.bin`); }
+/**
+ * @param {string} name
+ * @param {unknown} value
+ */
 function saveEncryptedSecret(name, value) {
   if (!safeStorage.isEncryptionAvailable()) throw new Error("Le coffre macOS est indisponible.");
   const destination = encryptedSecretPath(name);
   if (!value) { try { fs.unlinkSync(destination); } catch {} return; }
   fs.writeFileSync(destination, safeStorage.encryptString(String(value)), { mode: 0o600 });
 }
+/** @param {string} name */
 function loadEncryptedSecret(name) {
   if (!safeStorage.isEncryptionAvailable()) return null;
   try { return safeStorage.decryptString(fs.readFileSync(encryptedSecretPath(name))); }
@@ -284,6 +354,7 @@ function loadLocalIntegrationEnvironment() {
     }
   }
 }
+/** @param {string} rawUrl */
 function isTrustedNoonOrigin(rawUrl) {
   try { return new URL(rawUrl).origin === NOON_ORIGIN; }
   catch { return false; }
@@ -291,7 +362,8 @@ function isTrustedNoonOrigin(rawUrl) {
 function configureSessionSecurity() {
   const noonSession = session.defaultSession;
   noonSession.webRequest.onBeforeSendHeaders({ urls: [`${NOON_ORIGIN}/*`] }, (details, callback) => {
-    callback({ requestHeaders: { ...details.requestHeaders, "X-Noon-Local-Auth": localAuthSecret } });
+    // configureSessionSecurity() est appelé par startNoon() après l’attribution du secret local.
+    callback({ requestHeaders: { ...details.requestHeaders, "X-Noon-Local-Auth": /** @type {string} */ (localAuthSecret) } });
   });
   noonSession.setPermissionCheckHandler((webContents, permission, origin, details) => {
     const requestingUrl = details?.requestingUrl || details?.securityOrigin || origin || webContents?.getURL() || "";
@@ -299,7 +371,7 @@ function configureSessionSecurity() {
     if (permission === "notifications") return true;
     return permission === "media" && details?.mediaType !== "video";
   });
-  noonSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+  noonSession.setPermissionRequestHandler((webContents, permission, callback, /** @type {Partial<import("electron").MediaAccessPermissionRequest>} */ details) => {
     const requestingUrl = details?.requestingUrl || details?.securityOrigin || webContents?.getURL() || "";
     const types = Array.isArray(details?.mediaTypes) ? details.mediaTypes : [];
     const audioOnly = types.length === 0 || types.every((type) => type === "audio");
@@ -323,6 +395,7 @@ async function requestMicrophoneAccess() {
   }
   return microphonePermission === "granted";
 }
+/** @param {Record<string, any>} preferences */
 async function initializeWakeWordConfiguration(preferences) {
   const configured = Boolean(
     loadEncryptedSecret("picovoice-access-key") &&
@@ -342,6 +415,7 @@ async function initializeWakeWordConfiguration(preferences) {
   }
   return configured;
 }
+/** @param {string} rawUrl */
 async function openExternalUrl(rawUrl) {
   if (uiValidationRequested) return false;
   if (!isSafeExternalUrl(rawUrl)) return false;
@@ -366,7 +440,7 @@ function ensureDevPreviewController() {
     });
 
   devPreviewController.onState(
-    (state) => {
+    (/** @type {unknown} */ state) => {
       if (
         !mainWindow ||
         mainWindow.isDestroyed()
@@ -384,17 +458,20 @@ function ensureDevPreviewController() {
   return devPreviewController;
 }
 
+/** @param {{ x: number, y: number, width: number, height: number }} bounds */
 function boundsAreVisible(bounds) {
   return screen.getAllDisplays().some(({ workArea }) =>
     bounds.x < workArea.x + workArea.width && bounds.x + bounds.width > workArea.x &&
     bounds.y < workArea.y + workArea.height && bounds.y + bounds.height > workArea.y);
 }
+/** @returns {import("electron").BrowserWindow | undefined} */
 function showMainWindow() {
   if (!mainWindow) return createWindow();
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
 }
+/** @param {string} rawUrl */
 function dispatchDeepLink(rawUrl) {
   const parsed = parseNoonDeepLink(rawUrl);
   if (!parsed) return false;
@@ -406,6 +483,10 @@ function dispatchDeepLink(rawUrl) {
   }
   return true;
 }
+/**
+ * @param {string} state
+ * @param {Record<string, unknown> | null} [payload]
+ */
 function sendSystemState(state, payload = null) {
   if (!mainWindow || mainWindow.webContents.isDestroyed()) return;
   mainWindow.webContents.send("noon:system-state", payload ? { state, ...payload } : state);
@@ -444,6 +525,7 @@ async function syncWakeWordState() {
   }
   rebuildTrayMenu();
 }
+/** @returns {import("electron").BrowserWindow | undefined} */
 function createWindow() {
   if (mainWindow) return showMainWindow();
   const saved = readJson("window-state.json", null);
@@ -470,33 +552,34 @@ function createWindow() {
     if (isQuitting) return;
     event.preventDefault();
     if (liveVoiceActive) {
-      const choice = dialog.showMessageBoxSync(mainWindow, {
+      // Les écouteurs de createWindow() ne s’exécutent que tant que mainWindow existe.
+      const choice = dialog.showMessageBoxSync(/** @type {BrowserWindowInstance} */ (mainWindow), {
         type: "warning", buttons: ["Annuler", "Terminer et masquer"], defaultId: 0,
         message: "Une Conversation Live est active.",
         detail: "Le microphone sera arrêté avant de masquer Noon.",
       });
       if (choice === 0) return;
-      mainWindow.webContents.send("noon:system-state", "stop-live");
+      /** @type {BrowserWindowInstance} */ (mainWindow).webContents.send("noon:system-state", "stop-live");
       liveVoiceActive = false;
     }
-    writeJson("window-state.json", mainWindow.getBounds());
-    mainWindow.hide();
+    writeJson("window-state.json", /** @type {BrowserWindowInstance} */ (mainWindow).getBounds());
+    /** @type {BrowserWindowInstance} */ (mainWindow).hide();
   });
   mainWindow.on("closed", () => {
     devPreviewController?.close();
     devPreviewController = null;
     mainWindow = null;
   });
-  mainWindow.loadURL(`${NOON_ORIGIN}/app`);
+  void mainWindow.loadURL(`${NOON_ORIGIN}/app`);
   mainWindow.once("ready-to-show", () => {
     logNoonEvent("info", "startup-window-ready", JSON.stringify({
       elapsedMs: Date.now() - PROCESS_STARTED_AT,
       profile: buildProfile,
       safeMode: safeModeRequested,
     }));
-    if (!app.getLoginItemSettings().wasOpenedAtLogin) mainWindow.show();
+    if (!app.getLoginItemSettings().wasOpenedAtLogin) /** @type {BrowserWindowInstance} */ (mainWindow).show();
     if (pendingDeepLink) {
-      mainWindow.webContents.send("noon:deep-link", pendingDeepLink);
+      /** @type {BrowserWindowInstance} */ (mainWindow).webContents.send("noon:deep-link", pendingDeepLink);
       pendingDeepLink = null;
     }
   });
@@ -547,6 +630,7 @@ function rebuildTrayMenu() {
 // V3-L2a : petite fenêtre flottante de capture (raccourci global ou barre de menus).
 // Même session que la fenêtre principale (en-tête d'authentification locale), sans preload,
 // sans navigation possible ; elle se ferme après l'enregistrement, sur Échap ou en perdant le focus.
+/** @type {import("electron").BrowserWindow | null} */
 let captureWindow = null;
 function showCaptureWindow() {
   if (!localAuthSecret) return;
@@ -562,7 +646,7 @@ function showCaptureWindow() {
   captureWindow.on("blur", () => { if (captureWindow && !captureWindow.isDestroyed()) captureWindow.close(); });
   captureWindow.on("closed", () => { captureWindow = null; });
   captureWindow.once("ready-to-show", () => { captureWindow?.center(); if (process.platform === "darwin") app.focus({ steal: true }); captureWindow?.show(); captureWindow?.focus(); });
-  captureWindow.loadURL(`${NOON_ORIGIN}/capture`);
+  void captureWindow.loadURL(`${NOON_ORIGIN}/capture`);
 }
 function createTray() {
   const iconPath = path.join(__dirname, "..", "assets", "icons", "noonTemplate.png");
@@ -575,6 +659,10 @@ function createTray() {
 function registerShortcuts() {
   globalShortcut.unregisterAll();
   const preferences = loadPreferences();
+  /**
+   * @param {string} accelerator
+   * @param {() => void} callback
+   */
   const register = (accelerator, callback) => isValidAccelerator(accelerator) &&
     globalShortcut.register(accelerator, callback);
   return {
@@ -583,6 +671,10 @@ function registerShortcuts() {
     capture: register(preferences.captureShortcut, showCaptureWindow),
   };
 }
+/**
+ * @param {string} key
+ * @param {unknown} value
+ */
 async function setPreference(key, value) {
   const allowed = new Set(["launchAtLogin", "shortcut", "liveShortcut", "captureShortcut", "wakeWordEnabled", "wakeWordSensitivity", "wakeWordDeviceIndex", "resumeWakeAfterUnlock", "showInDock", "creativeBriefEnabled", "creativeBriefTime", "creativeBriefNotifications"]);
   if (!allowed.has(key)) throw new Error("Préférence refusée.");
@@ -592,7 +684,7 @@ async function setPreference(key, value) {
   const preferences = { ...loadPreferences(), [key]: value };
   writeJson("preferences.json", preferences);
   if (key === "launchAtLogin") app.setLoginItemSettings({ openAtLogin: Boolean(value), openAsHidden: true });
-  if (key === "showInDock" && app.dock) value ? app.dock.show() : app.dock.hide();
+  if (key === "showInDock" && app.dock) void (value ? app.dock.show() : app.dock.hide());
   if (["shortcut", "liveShortcut", "captureShortcut"].includes(key)) registerShortcuts();
   if (["wakeWordEnabled", "wakeWordSensitivity", "wakeWordDeviceIndex"].includes(key)) {
     scheduleWakeWordResume(50);
@@ -608,10 +700,10 @@ async function runCreativeBrief({ force = false, notify = true } = {}) {
   try {
     const dailyResponse = await fetch(`${NOON_ORIGIN}/daily-brief/generate`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Noon-Local-Auth": localAuthSecret },
+      headers: { "Content-Type": "application/json", "X-Noon-Local-Auth": /** @type {string} */ (localAuthSecret) },
       body: JSON.stringify({ force, trigger: "scheduled" }),
     });
-    const dailyData = await dailyResponse.json();
+    const dailyData = /** @type {{ message?: string, brief?: unknown }} */ (await dailyResponse.json());
     if (!dailyResponse.ok) {
       throw new Error(dailyData.message || "Échec du Daily Brief.");
     }
@@ -633,8 +725,8 @@ async function runCreativeBrief({ force = false, notify = true } = {}) {
 async function checkCreativeBriefDue() {
   const preferences = loadPreferences();
   if (!preferences.creativeBriefEnabled) return scheduleCreativeBrief();
-  const response = await fetch(`${NOON_ORIGIN}/daily-brief/current?catchUp=false`, { headers: { "X-Noon-Local-Auth": localAuthSecret } }).catch(() => null);
-  const state = response?.ok ? await response.json() : {};
+  const response = await fetch(`${NOON_ORIGIN}/daily-brief/current?catchUp=false`, { headers: { "X-Noon-Local-Auth": /** @type {string} */ (localAuthSecret) } }).catch(() => null);
+  const state = /** @type {{ catchUpAllowed?: boolean }} */ (response?.ok ? await response.json() : {});
   const dailyIsDue = state.catchUpAllowed === true;
   if (dailyIsDue) await runCreativeBrief();
   else scheduleCreativeBrief();
@@ -646,11 +738,12 @@ function scheduleCreativeBrief() {
   const next = nextRunAt({ time: preferences.creativeBriefTime });
   void fetch(`${NOON_ORIGIN}/daily-brief/schedule`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Noon-Local-Auth": localAuthSecret },
+    headers: { "Content-Type": "application/json", "X-Noon-Local-Auth": /** @type {string} */ (localAuthSecret) },
     body: JSON.stringify({ nextScheduledAt: next.toISOString() }),
   }).catch(() => {});
   creativeBriefTimer = setTimeout(() => { void checkCreativeBriefDue(); }, Math.min(next.getTime() - Date.now(), 2_147_000_000));
 }
+// Les handlers IPC sont appelés depuis le renderer de mainWindow : la fenêtre existe alors.
 function registerIpc() {
   const registerTrustedHandler = createTrustedIpcRegistrar({
     ipcMain,
@@ -707,6 +800,7 @@ function registerIpc() {
   registerTrustedHandler("noon:open-google-authorization", async (_event, rawUrl) => {
     if (uiValidationRequested) throw Object.assign(new Error("L'autorisation Google est désactivée pendant la validation UI isolée."), { code: "UI_VALIDATION_EXTERNAL_DISABLED" });
     if (!isSafeGoogleAuthorizationUrl(rawUrl)) {
+      /** @type {Error & { code?: string }} */
       const error = new Error("URL d’autorisation Google invalide.");
       error.code = "GOOGLE_OAUTH_AUTHORIZATION_URL_INVALID";
       throw error;
@@ -718,6 +812,7 @@ function registerIpc() {
   registerTrustedHandler("noon:open-external", async (_event, rawUrl) => {
     if (uiValidationRequested) throw Object.assign(new Error("L'ouverture d'URL externe est désactivée pendant la validation UI isolée."), { code: "UI_VALIDATION_EXTERNAL_DISABLED" });
     if (!isSafeExternalUrl(rawUrl)) {
+      /** @type {Error & { code?: string }} */
       const error = new Error("URL externe invalide ou non autorisée.");
       error.code = "EXTERNAL_URL_INVALID";
       throw error;
@@ -849,7 +944,7 @@ function registerIpc() {
   registerTrustedHandler("noon:import-wake-model", async (_event, kind) => {
     const extension = kind === "keyword" ? ".ppn" : kind === "model" ? ".pv" : null;
     if (!extension) throw new Error("Type de modèle refusé.");
-    const result = await dialog.showOpenDialog(mainWindow, { properties: ["openFile"], filters: [{ name: extension, extensions: [extension.slice(1)] }] });
+    const result = await dialog.showOpenDialog(/** @type {BrowserWindowInstance} */ (mainWindow), { properties: ["openFile"], filters: [{ name: extension, extensions: [extension.slice(1)] }] });
     if (result.canceled || !result.filePaths[0]) return null;
     const sourcePath = result.filePaths[0];
     if (path.extname(sourcePath).toLowerCase() !== extension) throw new Error("Extension de modèle incorrecte.");
@@ -882,7 +977,7 @@ function registerIpc() {
     if (!markdown || markdown.length > 240000) throw new Error("Conversation vide ou trop volumineuse.");
 
     if (target === "save") {
-      const result = await dialog.showSaveDialog(mainWindow, {
+      const result = await dialog.showSaveDialog(/** @type {BrowserWindowInstance} */ (mainWindow), {
         title: "Enregistrer la conversation Noon",
         defaultPath: path.join(app.getPath("documents"), suggestedName),
         filters: [{ name: "Markdown", extensions: ["md"] }],
@@ -905,6 +1000,7 @@ function registerIpc() {
   });
   registerTrustedHandler("noon:open-system-settings", async (_event, section) => {
     if (uiValidationRequested) return false;
+    /** @type {Record<string, string>} */
     const allowed = {
       microphone: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
       notifications: "x-apple.systempreferences:com.apple.preference.notifications",
@@ -915,7 +1011,7 @@ function registerIpc() {
   registerTrustedHandler("noon:list-local-permissions", () => localPermissionStore.load());
   registerTrustedHandler("noon:add-local-permission", async (_event, payload) => {
     const mode = payload?.mode === "read-write" ? "read-write" : "read-only";
-    const result = await dialog.showOpenDialog(mainWindow, { title: "Autoriser un dossier pour Noon", properties: ["openDirectory", "createDirectory"] });
+    const result = await dialog.showOpenDialog(/** @type {BrowserWindowInstance} */ (mainWindow), { title: "Autoriser un dossier pour Noon", properties: ["openDirectory", "createDirectory"] });
     if (result.canceled || !result.filePaths[0]) return { canceled: true };
     return { canceled: false, permission: localPermissionStore.add({ path: result.filePaths[0], mode, output: payload?.output === true }) };
   });
@@ -950,7 +1046,7 @@ function registerIpc() {
     const previewRoot = fs.realpathSync(dataPath("creative-image-previews"));
     if (realPath !== previewRoot && !realPath.startsWith(`${previewRoot}${path.sep}`)) throw new Error("Aperçu temporaire non autorisé.");
     if ((await sharp(realPath).metadata()).format !== "png") throw new Error("Image temporaire invalide.");
-    const selection = await dialog.showSaveDialog(mainWindow, {
+    const selection = await dialog.showSaveDialog(/** @type {BrowserWindowInstance} */ (mainWindow), {
       title: "Enregistrer l’image générée",
       defaultPath: path.join(app.getPath("downloads"), path.basename(realPath)),
       filters: [{ name: "Image PNG", extensions: ["png"] }],
@@ -1044,7 +1140,7 @@ async function startNoon() {
   ));
   try {
     await measureStartupPhase("server-start", async () => (
-      serverController.startNoonServer({ authSecret: localAuthSecret, port: NOON_PORT, loadOpenAIKey: () => deferredOpenAISecret.ensureSync(), loadGeminiKey: () => deferredGeminiSecret.ensureSync() })
+      /** @type {NoonServerController} */ (serverController).startNoonServer({ authSecret: localAuthSecret, port: NOON_PORT, loadOpenAIKey: () => deferredOpenAISecret.ensureSync(), loadGeminiKey: () => deferredGeminiSecret.ensureSync() })
     ));
     serverStartedLatencyMs = Date.now() - PROCESS_STARTED_AT;
     logNoonEvent("info", "server-started", `127.0.0.1:${NOON_PORT}`);
@@ -1052,13 +1148,14 @@ async function startNoon() {
   catch (error) {
     if (error.code !== "EADDRINUSE") throw error;
     const response = await fetch(`${NOON_ORIGIN}/health`).catch(() => null);
-    if (!response?.ok || (await response.json()).service !== "Noon") {
+    if (!response?.ok || /** @type {{ service?: string }} */ (await response.json()).service !== "Noon") {
       logNoonEvent("error", "port-conflict", "Port local 3000 indisponible");
       throw new Error("Le port 3000 est occupé par une autre application.", { cause: error });
     }
   }
   if (!safeModeRequested && !uiValidationRequested) {
-    startOptionalStartupPhase({
+    // Les rejets sont traités par onRejected dans startOptionalStartupPhase.
+    void startOptionalStartupPhase({
       operation: () => measureStartupPhase(
         "wake-word-config",
         async () => initializeWakeWordConfiguration(migratedPreferences)
@@ -1072,7 +1169,7 @@ async function startNoon() {
     });
   }
   microphonePermission = smokeTestRequested ? "skipped-smoke-test" : "waiting-permission";
-  startOptionalStartupPhase({
+  void startOptionalStartupPhase({
     operation: () => measureStartupPhase("microphone-access", async () => requestMicrophoneAccess()),
     onResolved: () => { void syncWakeWordState(); },
     onRejected: (error) => {
@@ -1095,7 +1192,7 @@ app.on("second-instance", (_event, argv) => {
 
 startupDiagnostics.record("app-when-ready", "start");
 if (benchmarkControlCommandError) {
-  app.whenReady().then(() => {
+  void app.whenReady().then(() => {
     console.log(JSON.stringify(publicCommandError(benchmarkControlCommandError)));
     app.exit(2);
   });
@@ -1116,9 +1213,9 @@ if (benchmarkControlCommandError) {
     await startNoon();
     if (smokeTestRequested) {
       const response = await fetch(`${NOON_ORIGIN}/health`, {
-        headers: { "X-Noon-Local-Auth": localAuthSecret },
+        headers: { "X-Noon-Local-Auth": /** @type {string} */ (localAuthSecret) },
       });
-      if (!response.ok || (await response.json()).service !== "Noon") {
+      if (!response.ok || /** @type {{ service?: string }} */ (await response.json()).service !== "Noon") {
         throw new Error("Le smoke test packagé n'a pas atteint /health.");
       }
       writeJson("smoke-result.json", {
@@ -1143,7 +1240,8 @@ if (benchmarkControlCommandError) {
     if (!loadPreferences().showInDock) app.dock?.hide();
     await syncWakeWordState();
     for (const eventName of ["lock-screen", "suspend"]) {
-      powerMonitor.on(eventName, () => {
+      // Les deux événements partagent la même signature d’écouteur.
+      powerMonitor.on(/** @type {"suspend"} */ (eventName), () => {
         liveVoiceActive = false;
         void wakeWordService?.stop();
         sendSystemState("suspend"); rebuildTrayMenu();

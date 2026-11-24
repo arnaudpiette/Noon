@@ -38,6 +38,13 @@ function createStartupDiagnostics({ filePath, now = () => new Date(), monotonicN
   return { measure, record };
 }
 
+/**
+ * @param {{
+ *   operation: () => unknown,
+ *   onResolved?: (value: unknown) => void,
+ *   onRejected?: (error: any) => void,
+ * }} options
+ */
 function startOptionalStartupPhase({ operation, onResolved = () => {}, onRejected = () => {} }) {
   const promise = Promise.resolve().then(operation);
   void promise.then(onResolved, onRejected);

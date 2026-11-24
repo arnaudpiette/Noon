@@ -8,6 +8,13 @@ const fs = require("fs");
 const DEFAULT_ANTI_REPEAT_MS = 2500;
 
 class WakeWordService extends EventEmitter {
+  /**
+   * @param {{
+   *   getAccessKey?: () => string | null,
+   *   logger?: (level: string, event: string, details?: string) => void,
+   *   antiRepeatMs?: number,
+   * }} [options]
+   */
   constructor({ getAccessKey, logger = () => {}, antiRepeatMs = DEFAULT_ANTI_REPEAT_MS } = {}) {
     super();
     this.getAccessKey = getAccessKey;

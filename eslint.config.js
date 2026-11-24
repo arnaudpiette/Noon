@@ -46,7 +46,8 @@ module.exports = [
     files: typedBoundaryFiles,
     languageOptions: {
       parser: tseslint.parser,
-      parserOptions: { project: "./tsconfig.check.json", tsconfigRootDir: __dirname },
+      // globalReturn : portée de module CommonJS, comme avec le parseur par défaut.
+      parserOptions: { project: "./tsconfig.check.json", tsconfigRootDir: __dirname, ecmaFeatures: { globalReturn: true } },
     },
     plugins: { "@typescript-eslint": tseslint.plugin },
     rules: { "@typescript-eslint/no-floating-promises": "error" },

@@ -1345,6 +1345,43 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   - `electron/main.js`, avec ses handlers IPC (221 erreurs en mode strict) ;
   - les connecteurs, la sécurité, la mémoire.
 
+## 24/11/2026 — V3-L0, A.4 (tranche 2) : `// @ts-check` sur `electron/main.js`
+
+- Configuration (`tsconfig.check.json`) :
+  - `checkJs: false` : seuls les fichiers portant `// @ts-check` sont vérifiés. Avec
+    `checkJs: true`, `main.js` aurait entraîné `server.js` et tous les services ;
+  - `useUnknownInCatchVariables: false` : convention JS du dépôt, où `catch (error)` lit
+    `error.code`.
+- Configuration ESLint : `ecmaFeatures.globalReturn` pour le parseur typé. Sinon, le premier
+  niveau du fichier était lu comme une portée globale (`no-redeclare` sur `crypto`).
+- `main.js` : de 153 erreurs en mode strict à 0.
+  - Variables de module typées : fenêtres, contrôleurs, minuteries, secret local, journal.
+  - Nouveau type `NoonServerController` : la surface de `server.js` utilisée par le main.
+  - Paramètres des fonctions utilitaires typés.
+  - Assertions ciblées, chacune avec sa justification :
+    - fenêtre présente dans les écouteurs de `createWindow()` et dans les handlers IPC ;
+    - secret local attribué avant toute requête locale ;
+    - profil UI présent quand le mode UI est actif.
+- JSDoc des signatures appelées par `main.js`, sans activer `@ts-check` sur ces fichiers :
+  - `applyUiValidationProfile`, `createDevPreviewController`, `normalizeDevPreviewUrl` ;
+  - `executeBenchmarkControlCommand`, `startOptionalStartupPhase` ;
+  - constructeur de `WakeWordService`, `localPermissionStore.roots` ;
+  - tuples de `FOCUS_CATALOG`.
+- `no-floating-promises` a trouvé 6 promesses non attendues dans `main.js`. Elles sont
+  désormais marquées `void` : le comportement est inchangé, ces promesses étaient déjà ignorées.
+  - `startOptionalStartupPhase` (×2) : rejets déjà traités par `onRejected`.
+  - `app.whenReady().then(...)`, dans la branche « commande benchmark invalide ».
+  - `app.dock.show()`.
+  - `mainWindow.loadURL` et `captureWindow.loadURL` : un échec de chargement n'est toujours
+    pas journalisé. Point ouvert : le traiter, par un journal ou un état visible, demanderait
+    un changement de comportement.
+- Contrôle : jetons identiques à HEAD pour les 8 fichiers touchés, à trois ajouts près
+  (24 paires de parenthèses d'assertion de type, les 6 `void`, des commentaires).
+- Non couvert par le smoke Electron, qui s'arrête après `/health` : la création de la fenêtre,
+  de la fenêtre de capture et de la barre de menus. Ces chemins reposent sur l'équivalence
+  des jetons.
+- Reste à faire pour A.4 : connecteurs, sécurité, mémoire.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

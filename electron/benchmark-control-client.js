@@ -54,6 +54,10 @@ function redact(value, secret) {
   return value;
 }
 
+/**
+ * @param {any} command
+ * @param {{ loadAuthSecret?: () => unknown, fetchImpl?: typeof fetch }} [options]
+ */
 async function executeBenchmarkControlCommand(command, { loadAuthSecret, fetchImpl = fetch } = {}) {
   if (!command || !Object.hasOwn(OPERATIONS, command.operation)) throw commandError("BENCHMARK_COMMAND_INVALID");
   let secret;

@@ -141,6 +141,17 @@ function validateProfileMarker(profile, fsImpl, pathImpl) {
   fsImpl.writeFileSync(markerPath, `${JSON.stringify({ kind: "NOON_UI_VALIDATION_PROFILE", schemaVersion: 1 })}\n`, { encoding: "utf8", mode: 0o600 });
 }
 
+/**
+ * @param {{
+ *   argv?: string[],
+ *   env?: NodeJS.ProcessEnv,
+ *   normalUserData?: string,
+ *   homeDirectory?: string | null,
+ *   fsImpl?: typeof import("fs"),
+ *   pathImpl?: typeof path,
+ * }} [options]
+ * @returns {{ profile: string, mode: "UI_VALIDATION" } | null}
+ */
 function applyUiValidationProfile({ argv = process.argv, env = process.env, normalUserData, homeDirectory = null, fsImpl, pathImpl = path } = {}) {
   const suppliedValues = argumentValues(argv, PROFILE_ARGUMENT);
   if (suppliedValues.length > 1) throw Object.assign(new Error("Le profil de validation UI ne peut être fourni qu'une seule fois."), { code: "UI_VALIDATION_PROFILE_INVALID" });
