@@ -826,6 +826,36 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   fabrique et les mêmes `DEPENDENCIES`, que chaque nom a son accesseur et que l'aiguillage est
   inchangé. Deux tests nouveaux couvrent `pickDependencies` et la construction groupée.
 
+## 24/11/2026 — Découpe de `server.js`, vingt et unième tranche : imports statiques des routes (V3-L7)
+
+- 42 des 174 dépendances des modules de routes sont de simples imports : des fonctions et des
+  constantes issues de `require`, ainsi que `fs`, `path` et `crypto`. La composition des
+  routes les importe elle-même (`STATIC_ROUTE_DEPENDENCIES`). Ce sont les mêmes modules, donc
+  les mêmes objets grâce au cache de `require`.
+  - `server.js` n'expose plus que les 132 dépendances vivantes
+    (`HTTP_ROUTE_LIVE_DEPENDENCIES`), par accesseur comme avant.
+  - Un nom fourni à la fois en import statique et par `server.js` est refusé à la construction.
+- 34 imports de `server.js` ne servaient plus qu'à ces accesseurs ; ils sont supprimés.
+  - Les modules concernés n'ont aucun effet de bord au chargement : les charger un peu plus
+    tard ne change rien.
+  - Le `require` de la composition est placé après tous les imports de `server.js`.
+- Le serveur HTTP reçoit les 20 modules par `...httpRouteModules`, au lieu d'une
+  déstructuration suivie de 20 noms répétés.
+- `server.js` passe de 2 078 à 1 971 lignes.
+- Tests : le test de câblage vérifie désormais :
+  - que l'objet d'accesseurs expose exactement les dépendances vivantes ;
+  - que chaque import statique est le même objet que dans son module d'origine ;
+  - que les 20 modules sont construits et passés au serveur HTTP ;
+  - qu'une dépendance absente ou fournie deux fois est refusée.
+- Deux tests de garde (`dev-task-id-namespace`, `goal-mode-dev-approval-guard`) exigeaient
+  l'import écrit `./services/…` dans `server.js`. Ils acceptent désormais aussi `../…` (import
+  fait par la composition). Leurs autres assertions sont inchangées : garde appliquée avant
+  `runTask` et avant `resume`.
+- Avant/après dans des copies isolées (données vierges, faux `osascript`, réseau limité à
+  `127.0.0.1`, sans clé) : les 96 routes littérales des modules appelées en GET. Les réponses
+  sont identiques une fois normalisées, sauf une latence mesurée et le chemin du dossier
+  personnel factice propre à chaque copie.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

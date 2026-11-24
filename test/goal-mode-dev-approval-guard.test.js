@@ -44,7 +44,8 @@ test("garde : liste générique sans Goal Mode DEV, reprise générique refusée
 
 test("garde : server.js l'applique à GET /approvals et à POST /approvals/:id/* avant resume", () => {
   const source = readServerSource();
-  assert.match(source, /require\("\.\/services\/approvals\/goal-mode-dev-approval-guard"\)/);
+  // Importé par server.js ou, depuis la tranche 21 de V3-L7, par la composition des routes.
+  assert.match(source, /require\("(\.\/services|\.\.)\/approvals\/goal-mode-dev-approval-guard"\)/);
   const list = source.slice(source.indexOf('req.url === "/approvals"'));
   assert.match(list.slice(0, 600), /approvals: genericApprovals\(approvalManager\.listPending\(\)\)/);
   const post = source.slice(source.indexOf('requestPath.startsWith("/approvals/")'));

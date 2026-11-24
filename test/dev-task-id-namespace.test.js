@@ -105,7 +105,8 @@ test("câblage : la route Native DEV refuse l'espace réservé avant runTask", (
   assert.notEqual(start, -1);
   const block = source.slice(start, source.indexOf("nativeDevB3Facade.runTask(", start));
   assert.match(block, /assertDevTaskIdNotReserved\(body\.taskId\)/);
-  assert.match(source, /require\("\.\/services\/dev\/dev-task-id-namespace"\)/);
+  // Importé par server.js ou, depuis la tranche 21 de V3-L7, par la composition des routes.
+  assert.match(source, /require\("(\.\/services|\.\.)\/dev\/dev-task-id-namespace"\)/);
 });
 
 test("4C-1D inventaire : tout appel cancelTask / getTaskStatus / projectDecisionEvidence est audité", () => {

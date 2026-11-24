@@ -48,37 +48,23 @@ function setProviderKeyLoaders(loadOpenAIKey, loadGeminiKey) {
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const crypto = require("crypto");
 
 const {
   ALLOWED_DIRECTORIES,
   PRIORITY_DIRECTORIES,
 } = require("./config");
 const {
-  modelForQuality,
-  normalizeAccent,
-  normalizeLanguage,
-  normalizeVoiceQuality,
-} = require("./lib/voice-utils");
-const {
   buildFocusCatalog,
 } = require("./lib/focus-catalog");
-const {
-  resolveProject,
-} = require("./lib/projects-registry");
-const { findCodexExecutable } = require("./lib/codex-bridge");
 const { modelFallbacks, normalizeIntelligenceProfile, selectLegacyModelRoute, selectModelRoute } = require("./lib/noon-intelligence");
 const { buildNoonSystemPrompt, noonPersonality } = require("./lib/noon-system-prompt");
-const { DIALS: CHARACTER_DIALS } = require("./services/character/character-charter");
 const { createCreativeBriefStore } = require("./lib/creative-brief");
 const { redactSecrets } = require("./services/security/redaction");
 const { createOperationalSecurityPolicy } = require("./services/security/operational-security-policy");
 const { createLongTermMemoryStore } = require("./lib/long-term-memory");
 const { createLocalPermissionStore } = require("./lib/local-permissions");
 const {
-  GENERAL_FOLDER_ID, MAX_FOLDERS, MAX_CONVERSATIONS_PER_FOLDER,
-  normalizeConversationStore, createFolder,
-  renameFolder, updateConversation, deleteFolder,
+  normalizeConversationStore,
 } = require("./lib/conversation-index");
 const { createTokenStore } = require("./services/security/token-store");
 const { createGmailConnector } = require("./services/connectors/gmail");
@@ -86,8 +72,7 @@ const { createCalendarConnector, localDayRange } = require("./services/connector
 const { createAppleConnector } = require("./services/connectors/apple-reminders");
 const { createAppleNotesConnector } = require("./services/connectors/apple-notes");
 const { createVoiceIdentity } = require("./services/voice/voice-identity");
-const { REALTIME_MODELS } = require("./services/voice/openai-voice-provider");
-const { assertRemoteVoiceAvailable, createRealtimeVoiceConfig } = require("./services/voice/realtime-config");
+const { createRealtimeVoiceConfig } = require("./services/voice/realtime-config");
 const { createPlanningPreferenceStore } = require("./lib/planning-preferences");
 const { SCHEMA_VERSION, createPersonalDatabase, loadSqlite } = require("./services/persistence/database");
 const { createPersonalIntelligenceRepository } = require("./services/persistence/repositories/personal-intelligence-repository");
@@ -111,10 +96,9 @@ const { createOperationalProfileService } = require("./services/personal-intelli
 const { createProjectIntelligenceService } = require("./services/personal-intelligence/project-intelligence");
 const { createInboxService } = require("./services/personal-intelligence/inbox-service");
 const { createQuickCaptureService } = require("./services/capture/quick-capture-service");
-const { createResumeBriefingService, renderResumeBriefing } = require("./services/resume/resume-briefing-service");
-const { createFirstStepService, renderFirstStep } = require("./services/first-step/first-step-service");
+const { createResumeBriefingService } = require("./services/resume/resume-briefing-service");
+const { createFirstStepService } = require("./services/first-step/first-step-service");
 const { createStaticAssets } = require("./services/http/static-assets");
-const { createHttpRouteModules } = require("./services/http/route-modules-composition");
 const { createSessionActivityAndTranscription } = require("./services/voice/session-activity-and-transcription");
 const { createNoonHttpServer } = require("./services/http/noon-http-server");
 const { createControlCenterComposition } = require("./services/control-center/control-center-composition");
@@ -126,7 +110,7 @@ const { createLocalProjects } = require("./services/context/local-projects");
 const { createUsageTracking } = require("./services/models/usage-tracking");
 const { createAskAI } = require("./services/orchestration/ask-ai");
 const { NOT_HANDLED } = require("./services/http/route-result");
-const { DEFAULT_WEIGHTS, createPriorityEngine } = require("./services/personal-intelligence/priority-engine");
+const { createPriorityEngine } = require("./services/personal-intelligence/priority-engine");
 const { createDeduplicationService } = require("./services/personal-intelligence/deduplication-service");
 const { createFollowUpService } = require("./services/personal-intelligence/follow-up-service");
 const { createMetricsService } = require("./services/personal-intelligence/metrics-service");
@@ -138,17 +122,8 @@ const { createAmbientContextEngine } = require("./services/context/ambient-conte
 const { createDecisionSupportEngine } = require("./services/decision/decision-support-engine");
 const { createDevDecisionConsumer } = require("./services/decision/dev-decision-consumer");
 const { createGoalStrategyEngine } = require("./services/goals/goal-strategy-engine");
-const { GOAL_MODE_DEV_HTTP_PREFIX } = require("./services/goals/goal-mode-dev-http-routes");
 const { reportInterruptedNativeDevTasks } = require("./services/dev/native-dev-interrupted-report");
 const { createDataDirectoryLock } = require("./services/runtime/data-directory-lock");
-const { assertGenericApprovalAllowed, genericApprovals } = require("./services/approvals/goal-mode-dev-approval-guard");
-const {
-  goalDevRetryHttpStatus,
-  normalizeGoalDevRetryPrepareRequest,
-  normalizeGoalDevRetryResumeRequest,
-  projectGoalDevRetryPermitResponse,
-  projectGoalDevRetryResumeResponse,
-} = require("./services/goals/goal-dev-retry-http-contract");
 const { createGoalRegistry } = require("./services/goals/goal-registry");
 const { createCapacityService, createPortfolioCapacityEngine } = require("./services/portfolio");
 const { createChatOrchestration } = require("./services/orchestration/chat-orchestration-composition");
@@ -167,7 +142,6 @@ const { createFigmaBridge } = require("./services/figma-bridge/figma-bridge");
 const { createFigmaBridgeHttpRoutes } = require("./services/figma-bridge/figma-bridge-http-routes");
 const { registerFigmaSkills } = require("./services/figma-bridge/figma-skills");
 const { createGoalModeDevComposition, createNativeDevComposition, createNativeDevUiComposition } = require("./services/dev/dev-runtime-composition");
-const { assertDevTaskIdNotReserved, isReservedGoalModeDevTaskId } = require("./services/dev/dev-task-id-namespace");
 const { createSandboxDevValidationExecutor } = require("./services/security/dev-validation-runner");
 const { createDevWorkspaceTerminalService } = require("./services/dev/workspace-terminal-service");
 const { createDevWorkspaceAgentExecutionLoop } = require("./services/dev/workspace-agent-execution-loop");
@@ -201,7 +175,7 @@ const {
 } = require("./services/observability/model-pricing");
 const { ApprovalManager } = require("./services/approvals/approval-manager");
 const { createPrivateSeedImporter, validateSeed } = require("./services/personal-memory/seed-importer");
-const { getErrorHeader, readJsonBody, readTextBody, validateAttachment } = require("./services/http/request-utils");
+const { readJsonBody } = require("./services/http/request-utils");
 const { createTimeSlotService } = require("./services/scheduling/time-slot-service");
 const { createProactiveEngine } = require("./services/proactive/proactive-engine");
 const { createDailyPlanStore } = require("./services/planning/daily-plan-store");
@@ -230,7 +204,6 @@ const { createFileSearchAdapter } = require("./services/search/file-search-adapt
 const { createOpenAIWebSearchAdapter } = require("./services/research/web-search-adapter");
 const { createPublicResearchEngine } = require("./services/research/public-research-engine");
 const { createInternetDecisionRouter } = require("./services/research/internet-decision-router");
-const { resolveChatResearchPlan } = require("./services/research/chat-research-gate");
 const { createMultimodalEngine, createNativePdfAnalyzer } = require("./services/multimodal/multimodal-engine");
 const { createOpenAIMediaAnalyzer } = require("./services/multimodal/openai-media-analyzer");
 const {
@@ -251,6 +224,7 @@ const {
   inspectGoogleApiFailure,
   assertGoogleProfileResponse,
 } = require("./services/connectors/google-auth");
+const { createHttpRouteModules } = require("./services/http/route-modules-composition");
 
 // Tous les chemins manipulés par les outils sont contrôlés par config.js.
 
@@ -1789,33 +1763,22 @@ function requireTrustedDevUi(req) {
 }
 
 // V3-L7 : les modules de routes sont construits ensemble (services/http/route-modules-composition.js) ;
-// chacun ne reçoit que ses DEPENDENCIES, lues à chaque accès dans cet objet.
+// chacun ne reçoit que ses DEPENDENCIES, lues à chaque accès dans cet objet. Les imports
+// statiques (STATIC_ROUTE_DEPENDENCIES) sont fournis par la composition, pas ici.
 const httpRouteDependencies = {
-  get CHARACTER_DIALS() { return CHARACTER_DIALS; },
   get DATA_DIRECTORY() { return DATA_DIRECTORY; },
   get DEFAULT_HOST() { return DEFAULT_HOST; },
-  get DEFAULT_WEIGHTS() { return DEFAULT_WEIGHTS; },
   get FIRST_STEP_MODEL() { return FIRST_STEP_MODEL; },
-  get GENERAL_FOLDER_ID() { return GENERAL_FOLDER_ID; },
-  get GOAL_MODE_DEV_HTTP_PREFIX() { return GOAL_MODE_DEV_HTTP_PREFIX; },
   get GOOGLE_ACCOUNT_EMAIL() { return GOOGLE_ACCOUNT_EMAIL; },
   get MAX_AUDIO_BYTES() { return MAX_AUDIO_BYTES; },
-  get MAX_CONVERSATIONS_PER_FOLDER() { return MAX_CONVERSATIONS_PER_FOLDER; },
-  get MAX_FOLDERS() { return MAX_FOLDERS; },
-  get PRIORITY_DIRECTORIES() { return PRIORITY_DIRECTORIES; },
   get PUBLIC_DIRECTORY() { return PUBLIC_DIRECTORY; },
   get REALTIME_IDLE_TIMEOUT_MS() { return REALTIME_IDLE_TIMEOUT_MS; },
   get REALTIME_MAX_SESSION_MS() { return REALTIME_MAX_SESSION_MS; },
-  get REALTIME_MODELS() { return REALTIME_MODELS; },
   get WEB_SEARCH_DAILY_LIMIT() { return WEB_SEARCH_DAILY_LIMIT; },
   get WEB_SEARCH_MAX_PER_REQUEST() { return WEB_SEARCH_MAX_PER_REQUEST; },
-  get WEB_SEARCH_PRICE_PER_CALL() { return WEB_SEARCH_PRICE_PER_CALL; },
   get ambientContextEngine() { return ambientContextEngine; },
   get approvalManager() { return approvalManager; },
   get askAI() { return askAI; },
-  get assertDevTaskIdNotReserved() { return assertDevTaskIdNotReserved; },
-  get assertGenericApprovalAllowed() { return assertGenericApprovalAllowed; },
-  get assertRemoteVoiceAvailable() { return assertRemoteVoiceAvailable; },
   get attachmentResolver() { return attachmentResolver; },
   get autonomousMemoryPipeline() { return autonomousMemoryPipeline; },
   get backgroundAnalysisService() { return backgroundAnalysisService; },
@@ -1823,7 +1786,6 @@ const httpRouteDependencies = {
   get benchmarkControlPlane() { return benchmarkControlPlane; },
   get briefScheduledTime() { return briefScheduledTime; },
   get briefUsageLog() { return briefUsageLog; },
-  get buildFocusCatalog() { return buildFocusCatalog; },
   get buildIntentContext() { return buildIntentContext; },
   get calculateTranscriptionCostUSD() { return calculateTranscriptionCostUSD; },
   get calendarConnector() { return calendarConnector; },
@@ -1834,15 +1796,12 @@ const httpRouteDependencies = {
   get contextBuilder() { return contextBuilder; },
   get controlCenterService() { return controlCenterService; },
   get createConversationKey() { return createConversationKey; },
-  get createFolder() { return createFolder; },
   get createGoogleReadAuthorization() { return createGoogleReadAuthorization; },
-  get crypto() { return crypto; },
   get dailyBriefEngine() { return dailyBriefEngine; },
   get dailyPlanStore() { return dailyPlanStore; },
   get dailyPlanningEngine() { return dailyPlanningEngine; },
   get decisionSupportEngine() { return decisionSupportEngine; },
   get deleteConversation() { return deleteConversation; },
-  get deleteFolder() { return deleteFolder; },
   get devCostBudgetService() { return devCostBudgetService; },
   get devDecisionConsumer() { return devDecisionConsumer; },
   get devMissionHttpRoutes() { return devMissionHttpRoutes; },
@@ -1854,25 +1813,20 @@ const httpRouteDependencies = {
   get executionTrackingRepository() { return executionTrackingRepository; },
   get extensionRegistry() { return extensionRegistry; },
   get featureFlags() { return featureFlags; },
-  get findCodexExecutable() { return findCodexExecutable; },
   get firstStepService() { return firstStepService; },
   get followUpService() { return followUpService; },
-  get fs() { return fs; },
   get generateDailyBrief() { return generateDailyBrief; },
-  get genericApprovals() { return genericApprovals; },
   get getAllowedDirectories() { return getAllowedDirectories; },
   get getBudgetStatus() { return getBudgetStatus; },
   get getConversationHistory() { return getConversationHistory; },
   get getConversationIndex() { return getConversationIndex; },
   get getConversationTranscript() { return getConversationTranscript; },
-  get getErrorHeader() { return getErrorHeader; },
   get getGoogleAccessToken() { return getGoogleAccessToken; },
   get getSessionActivity() { return getSessionActivity; },
   get getValidRegisteredProjects() { return getValidRegisteredProjects; },
   get getVoiceBudgetStatus() { return getVoiceBudgetStatus; },
   get gmailConnector() { return gmailConnector; },
   get goalDevExecutionService() { return goalDevExecutionService; },
-  get goalDevRetryHttpStatus() { return goalDevRetryHttpStatus; },
   get goalDevRetryRuntime() { return goalDevRetryRuntime; },
   get goalModeDevHttp() { return goalModeDevHttp; },
   get goalStrategyEngine() { return goalStrategyEngine; },
@@ -1880,7 +1834,6 @@ const httpRouteDependencies = {
   get intentCommandEngine() { return intentCommandEngine; },
   get internetDecisionRouter() { return internetDecisionRouter; },
   get isPathAllowed() { return isPathAllowed; },
-  get isReservedGoalModeDevTaskId() { return isReservedGoalModeDevTaskId; },
   get listDirectory() { return listDirectory; },
   get listLocalProjects() { return listLocalProjects; },
   get localIntelligenceRuntime() { return localIntelligenceRuntime; },
@@ -1888,26 +1841,18 @@ const httpRouteDependencies = {
   get mcpService() { return mcpService; },
   get memoryEngine() { return memoryEngine; },
   get metricsService() { return metricsService; },
-  get modelForQuality() { return modelForQuality; },
   get multiSourceSynthesisEngine() { return multiSourceSynthesisEngine; },
   get nativeDevB3Facade() { return nativeDevB3Facade; },
   get nativeDevUiExecutionService() { return nativeDevUiExecutionService; },
   get noonHealthReport() { return noonHealthReport; },
   get noonObservability() { return noonObservability; },
   get noonOrchestrator() { return noonOrchestrator; },
-  get normalizeAccent() { return normalizeAccent; },
   get normalizeFocusName() { return normalizeFocusName; },
   get normalizeFocusPath() { return normalizeFocusPath; },
-  get normalizeGoalDevRetryPrepareRequest() { return normalizeGoalDevRetryPrepareRequest; },
-  get normalizeGoalDevRetryResumeRequest() { return normalizeGoalDevRetryResumeRequest; },
-  get normalizeIntelligenceProfile() { return normalizeIntelligenceProfile; },
-  get normalizeLanguage() { return normalizeLanguage; },
   get normalizeNoonMode() { return normalizeNoonMode; },
   get normalizeSessionId() { return normalizeSessionId; },
-  get normalizeVoiceQuality() { return normalizeVoiceQuality; },
   get notesConnector() { return notesConnector; },
   get operationalProfileService() { return operationalProfileService; },
-  get path() { return path; },
   get personalBriefStore() { return personalBriefStore; },
   get personalDatabase() { return personalDatabase; },
   get personalInboxService() { return personalInboxService; },
@@ -1916,14 +1861,10 @@ const httpRouteDependencies = {
   get personalSearchEngine() { return personalSearchEngine; },
   get planningPreferenceStore() { return planningPreferenceStore; },
   get proactiveEngine() { return proactiveEngine; },
-  get projectGoalDevRetryPermitResponse() { return projectGoalDevRetryPermitResponse; },
-  get projectGoalDevRetryResumeResponse() { return projectGoalDevRetryResumeResponse; },
   get projectIntelligenceService() { return projectIntelligenceService; },
   get publicDevProgress() { return publicDevProgress; },
   get quickCaptureService() { return quickCaptureService; },
   get readAllowedFile() { return readAllowedFile; },
-  get readJsonBody() { return readJsonBody; },
-  get readTextBody() { return readTextBody; },
   get realtimeVoiceConfig() { return realtimeVoiceConfig; },
   get recentAutomaticMemoryIds() { return recentAutomaticMemoryIds; },
   get recentAutomaticMemoryReports() { return recentAutomaticMemoryReports; },
@@ -1934,15 +1875,10 @@ const httpRouteDependencies = {
   get rememberedRealtimeTurns() { return rememberedRealtimeTurns; },
   get remindersConnector() { return remindersConnector; },
   get remoteLanHttpRoutes() { return remoteLanHttpRoutes; },
-  get renameFolder() { return renameFolder; },
-  get renderFirstStep() { return renderFirstStep; },
-  get renderResumeBriefing() { return renderResumeBriefing; },
   get replaceConversationIndex() { return replaceConversationIndex; },
   get requireTrustedDevUi() { return requireTrustedDevUi; },
-  get resolveChatResearchPlan() { return resolveChatResearchPlan; },
   get resolveFocusCatalogSelection() { return resolveFocusCatalogSelection; },
   get resolveFocusProject() { return resolveFocusProject; },
-  get resolveProject() { return resolveProject; },
   get resumeBriefingService() { return resumeBriefingService; },
   get reviewLearningEngine() { return reviewLearningEngine; },
   get runtimeConfig() { return runtimeConfig; },
@@ -1955,87 +1891,44 @@ const httpRouteDependencies = {
   get sessionActivities() { return sessionActivities; },
   get sessionContinuityEngine() { return sessionContinuityEngine; },
   get timeSlotService() { return timeSlotService; },
-  get toChatProgressEvent() { return toChatProgressEvent; },
   get toolAuditLog() { return toolAuditLog; },
   get touchConversation() { return touchConversation; },
   get trackTranscriptionUsage() { return trackTranscriptionUsage; },
   get transcribeAudioBuffer() { return transcribeAudioBuffer; },
-  get updateConversation() { return updateConversation; },
   get updateRecoveryEngine() { return updateRecoveryEngine; },
-  get validateAttachment() { return validateAttachment; },
   get voiceIdentity() { return voiceIdentity; },
   get workspaceEngine() { return workspaceEngine; },
 };
-const {
-  personalIntelligenceHttpRoutes,
-  devHttpRoutes,
-  projectsHttpRoutes,
-  conversationHttpRoutes,
-  voiceHttpRoutes,
-  systemHttpRoutes,
-  goalsHttpRoutes,
-  transcriptionHttpRoutes,
-  dayHttpRoutes,
-  workspaceHttpRoutes,
-  localFilesHttpRoutes,
-  budgetHttpRoutes,
-  captureHttpRoutes,
-  jobsHttpRoutes,
-  legacyMemoryHttpRoutes,
-  briefHttpRoutes,
-  approvalsHttpRoutes,
-  aiHttpRoutes,
-  configStatusHttpRoutes,
-  runtimeStatusHttpRoutes,
-} = createHttpRouteModules(httpRouteDependencies);
+const httpRouteModules = createHttpRouteModules(httpRouteDependencies);
 
 // Crée le serveur HTTP et renvoie toutes les réponses au format JSON.
 
 const { server, startNoonServer, stopNoonServer } = createNoonHttpServer({
+  ...httpRouteModules,
   DEFAULT_HOST,
   DEFAULT_PORT,
   NOT_HANDLED,
   UI_VALIDATION_MODE,
-  aiHttpRoutes,
-  approvalsHttpRoutes,
   backgroundJobEngine,
-  briefHttpRoutes,
-  budgetHttpRoutes,
-  captureHttpRoutes,
-  configStatusHttpRoutes,
-  conversationHttpRoutes,
   dataDirectoryLock,
-  dayHttpRoutes,
-  devHttpRoutes,
   figmaBridge,
   figmaBridgeEnabled,
   figmaBridgeHttpRoutes,
   goalModeDevLockMaintenance,
-  goalsHttpRoutes,
   http,
   isUiValidationExternalRequest,
-  jobsHttpRoutes,
-  legacyMemoryHttpRoutes,
-  localFilesHttpRoutes,
   mcpService,
   memoryHttpRoutes,
   nativeDevB3Facade,
   nativeDevCoordinator,
-  personalIntelligenceHttpRoutes,
-  projectsHttpRoutes,
   readJsonBody,
   reliabilityEngine,
   reportInterruptedNativeDevTasks,
   runLegacyMemoryMigrationOnce,
-  runtimeStatusHttpRoutes,
   sessionContinuityEngine,
   setProviderKeyLoaders,
   staticAssets,
-  systemHttpRoutes,
   toolAuditLog,
-  transcriptionHttpRoutes,
-  voiceHttpRoutes,
-  workspaceHttpRoutes,
 });
 
 // server.js est composé dans le processus main Electron (voir electron/main.js).
