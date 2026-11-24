@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 // V3-L7 — primitives du bac à sable des processus DEV (niveaux, statuts, capacités OS, limites
@@ -82,6 +83,10 @@ const BUILD_INPUT_KEYS = new Set([
 ]);
 
 class DevProcessRunnerError extends Error {
+  /**
+   * @param {string} code
+   * @param {string} message
+   */
   constructor(code, message) {
     super(message);
     this.name = "DevProcessRunnerError";
@@ -89,6 +94,12 @@ class DevProcessRunnerError extends Error {
   }
 }
 
+/**
+ * Lève toujours une DevProcessRunnerError.
+ * @param {string} code
+ * @param {string} message
+ * @returns {never}
+ */
 function fail(code, message) {
   throw new DevProcessRunnerError(
     code,
@@ -96,6 +107,10 @@ function fail(code, message) {
   );
 }
 
+/**
+ * @param {unknown} value
+ * @param {number} [max]
+ */
 function clean(value, max = 180) {
   return String(value ?? "")
     .replace(/[\0\r\n]+/g, " ")
@@ -103,6 +118,11 @@ function clean(value, max = 180) {
     .slice(0, max);
 }
 
+/**
+ * @param {unknown} value
+ * @param {Set<string>} allowed
+ * @param {string} code
+ */
 function assertKnownKeys(
   value,
   allowed,
@@ -134,6 +154,7 @@ function assertKnownKeys(
   }
 }
 
+/** @param {unknown} value */
 function sha256(value) {
   return crypto
     .createHash("sha256")
@@ -141,6 +162,10 @@ function sha256(value) {
     .digest("hex");
 }
 
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
 function canonicalExistingRoot(
   value
 ) {
@@ -189,6 +214,11 @@ function canonicalExistingRoot(
   return real;
 }
 
+/**
+ * @param {unknown} executable
+ * @param {NodeJS.ProcessEnv} [environment]
+ * @returns {string}
+ */
 function resolveExecutableFromPath(
   executable,
   environment = process.env
@@ -241,9 +271,14 @@ function resolveExecutableFromPath(
   );
 }
 
+/**
+ * @param {NodeJS.ProcessEnv} [source]
+ * @returns {Record<string, string>}
+ */
 function minimalEnvironment(
   source = process.env
 ) {
+  /** @type {Record<string, string>} */
   const environment = {
     CI: "1",
     NO_COLOR: "1",
@@ -272,9 +307,14 @@ function minimalEnvironment(
   return environment;
 }
 
+/**
+ * @param {Record<string, unknown>} [input]
+ * @returns {Record<string, number>}
+ */
 function normalizedLimits(
   input = {}
 ) {
+  /** @type {Record<string, number>} */
   const result = {};
 
   for (
@@ -283,14 +323,14 @@ function normalizedLimits(
   ) {
     const value =
       input[key] == null
-        ? DEFAULT_LIMITS[key]
+        ? /** @type {Record<string, number>} */ (DEFAULT_LIMITS)[key]
         : Number(input[key]);
 
     if (
       !Number.isInteger(value) ||
       value <= 0 ||
       value >
-        MAX_LIMITS[key]
+        /** @type {Record<string, number>} */ (MAX_LIMITS)[key]
     ) {
       fail(
         "SANDBOX_LIMIT_INVALID",
@@ -322,6 +362,10 @@ function normalizedLimits(
   return result;
 }
 
+/**
+ * @param {Record<string, unknown>} [input]
+ * @returns {Record<string, boolean>}
+ */
 function normalizedCapabilities(
   input = {}
 ) {
@@ -350,6 +394,9 @@ function normalizedCapabilities(
   );
 }
 
+/**
+ * @param {Record<string, unknown>} [value]
+ */
 function normalizedAuthority(
   value = {}
 ) {
@@ -397,6 +444,11 @@ function normalizedAuthority(
   };
 }
 
+/**
+ * @template T
+ * @param {T} value
+ * @returns {T}
+ */
 function deepFreeze(value) {
   if (
     !value ||

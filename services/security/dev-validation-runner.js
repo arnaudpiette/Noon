@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 const crypto =
@@ -16,12 +17,17 @@ const {
   "./dev-process-runner"
 );
 
+/** @type {Set<string | undefined>} */
 const ALLOWED_OUTCOMES =
   new Set([
     "ALLOW",
     "ALLOW_WITH_CONSTRAINTS",
   ]);
 
+/**
+ * @param {unknown} value
+ * @param {number} [max]
+ */
 function clean(
   value,
   max = 180
@@ -32,6 +38,10 @@ function clean(
     .slice(0, max);
 }
 
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
 function canonicalDirectory(
   value
 ) {
@@ -61,6 +71,10 @@ function canonicalDirectory(
   return resolved;
 }
 
+/**
+ * @param {{ relevantRoots?: Array<{ mode?: string, path?: string }>, roots?: Array<{ mode?: string, path?: string }> } | null | undefined} workspace
+ * @returns {Array<string | null>}
+ */
 function writableWorkspaceRoots(
   workspace
 ) {
@@ -86,6 +100,9 @@ function writableWorkspaceRoots(
     .filter(Boolean);
 }
 
+/**
+ * @param {{ command: string, workspaceId: string, root: string, permissions: string[] }} input
+ */
 function policyRequest({
   command,
   workspaceId,
@@ -139,6 +156,21 @@ function policyRequest({
   };
 }
 
+/**
+ * Résultat d'exécution renvoyé par DevProcessRunner.run (champs lus ici).
+ * @typedef {{
+ *   status?: string,
+ *   reasonCode?: string | null,
+ *   exitCode?: number | null,
+ *   signal?: string | null,
+ *   durationMs?: number,
+ *   outputTail?: string,
+ *   outputTruncated?: boolean,
+ *   cleanupConfirmed?: boolean,
+ *   isolation?: unknown,
+ * }} DevProcessOutcome
+ */
+/** @param {DevProcessOutcome | null | undefined} result */
 function failureCategoryFor(
   result
 ) {
@@ -155,10 +187,10 @@ function failureCategoryFor(
       return "CLEANUP_UNCONFIRMED";
 
     case "FAIL":
-      return [
+      return /** @type {ReadonlyArray<string | null | undefined>} */ ([
         "PROCESS_EXIT_NON_ZERO",
         "SPAWN_FAILED",
-      ].includes(
+      ]).includes(
         result.reasonCode
       )
         ? "TEST_FAILURE"
@@ -173,6 +205,10 @@ function failureCategoryFor(
   }
 }
 
+/**
+ * @param {string} command
+ * @param {DevProcessOutcome} result
+ */
 function validationResult(
   command,
   result
@@ -255,6 +291,11 @@ function validationResult(
   };
 }
 
+/**
+ * @param {string} command
+ * @param {string} code
+ * @param {number} [durationMs]
+ */
 function deniedResult(
   command,
   code,
@@ -291,6 +332,41 @@ function deniedResult(
   };
 }
 
+/**
+ * @typedef {{
+ *   workspaceId?: string,
+ *   taskId?: string,
+ *   sessionId?: string,
+ *   permissions?: string[],
+ *   budgetDecisionId?: string,
+ * }} ValidationContext
+ */
+/**
+ * @typedef {(
+ *   command: string,
+ *   cwd: string,
+ *   timeout?: number,
+ *   signal?: AbortSignal | null,
+ *   context?: ValidationContext,
+ * ) => Promise<ReturnType<typeof deniedResult> | ReturnType<typeof validationResult>>} ValidationExecutor
+ */
+/**
+ * workspaceEngine et operationalSecurityPolicy sont vérifiés à la construction (TypeError).
+ * @param {{
+ *   workspaceEngine?: { context: (workspaceId: string) => any },
+ *   operationalSecurityPolicy?: {
+ *     evaluate: (input: object) => { outcome?: string, decisionId?: string, policyVersion?: string, actionFingerprint?: string } | null | undefined,
+ *   },
+ *   observability?: ((event: string, metadata: unknown) => void) | null,
+ *   now?: () => number,
+ *   environment?: NodeJS.ProcessEnv,
+ *   createContract?: typeof createSandboxExecutionContractV1,
+ *   createRunner?: typeof createDevProcessRunner,
+ *   createExecutionId?: () => string,
+ *   isolatedWorkspaceResolver?: ((candidate: string) => string | null | undefined) | null,
+ * }} [options]
+ * @returns {ValidationExecutor}
+ */
 function createSandboxDevValidationExecutor({
   workspaceEngine,
   operationalSecurityPolicy,
@@ -309,6 +385,7 @@ function createSandboxDevValidationExecutor({
   // dans le worktree. Un chemin inconnu du résolveur n'obtient rien de plus.
   isolatedWorkspaceResolver = null,
 } = {}) {
+  /** @param {string} candidate */
   const authorityRootFor = (candidate) => {
     try {
       const source = isolatedWorkspaceResolver?.(candidate);

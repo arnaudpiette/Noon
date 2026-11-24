@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 const { spawn } = require("node:child_process");
@@ -32,6 +33,29 @@ const {
   deepFreeze,
 } = require("./dev-process-sandbox-primitives");
 
+/**
+ * Entrée de construction d'un contrat (BUILD_INPUT_KEYS). Chaque champ est revalidé.
+ * @typedef {{
+ *   executionId?: string,
+ *   workspaceId?: string,
+ *   workspaceSessionId?: string,
+ *   canonicalWorkspaceRoot?: string,
+ *   command?: string,
+ *   limits?: Record<string, unknown>,
+ *   requiredCapabilities?: Record<string, unknown>,
+ *   authority?: Record<string, unknown>,
+ *   createdAt?: string | number | Date,
+ *   expiresAt?: string | number | Date,
+ * }} SandboxContractInput
+ */
+/**
+ * @param {SandboxContractInput} [input]
+ * @param {{
+ *   now?: () => number,
+ *   resolveExecutable?: (executable: string, environment: NodeJS.ProcessEnv) => string,
+ *   environment?: NodeJS.ProcessEnv,
+ * }} [options]
+ */
 function createSandboxExecutionContractV1(
   input = {},
   {
@@ -267,6 +291,15 @@ function createSandboxExecutionContractV1(
   );
 }
 
+/** @typedef {ReturnType<typeof createSandboxExecutionContractV1>} SandboxExecutionContract */
+/** @typedef {{ buffer: Buffer, truncated: boolean }} BoundedStream */
+
+/**
+ * @param {BoundedStream} current
+ * @param {unknown} chunk
+ * @param {number} limit
+ * @returns {BoundedStream}
+ */
 function appendBounded(
   current,
   chunk,
@@ -306,6 +339,7 @@ function appendBounded(
   };
 }
 
+/** @param {SandboxExecutionContract} contract */
 function publicIsolation(
   contract
 ) {
@@ -324,6 +358,10 @@ function publicIsolation(
   };
 }
 
+/**
+ * @param {any} value
+ * @returns {value is PromiseLike<any>}
+ */
 function isThenable(
   value
 ) {
@@ -337,6 +375,26 @@ function isThenable(
   );
 }
 
+/**
+ * @typedef {{
+ *   workspaceId?: string,
+ *   workspaceSessionId?: string,
+ *   canonicalWorkspaceRoot?: string,
+ * } | null | undefined} WorkspaceContextSnapshot
+ */
+/**
+ * @param {{
+ *   spawnProcess?: typeof spawn,
+ *   now?: () => number,
+ *   environment?: NodeJS.ProcessEnv,
+ *   resolveExecutable?: (executable: string, environment: NodeJS.ProcessEnv) => string,
+ *   resolveContext?: (input: { workspaceId: string, workspaceSessionId: string, canonicalWorkspaceRoot: string })
+ *     => WorkspaceContextSnapshot | Promise<WorkspaceContextSnapshot>,
+ *   revalidate?: (input: { contract: SandboxExecutionContract, context: WorkspaceContextSnapshot, commandDecision: unknown })
+ *     => { allowed?: boolean } | null | undefined | Promise<{ allowed?: boolean } | null | undefined>,
+ *   observability?: ((event: string, metadata: unknown) => void) | null,
+ * }} [options]
+ */
 function createDevProcessRunner({
   spawnProcess = spawn,
   now = () => Date.now(),
@@ -374,6 +432,10 @@ function createDevProcessRunner({
     );
   }
 
+  /**
+   * @param {string} event
+   * @param {unknown} metadata
+   */
   const emit = (
     event,
     metadata
@@ -386,6 +448,7 @@ function createDevProcessRunner({
     } catch {}
   };
 
+  /** @param {SandboxExecutionContract} contract */
   function validateContract(
     contract
   ) {
@@ -462,6 +525,19 @@ function createDevProcessRunner({
     }
   }
 
+  /**
+   * @param {{
+   *   contract: SandboxExecutionContract,
+   *   status: string,
+   *   reasonCode?: string | null,
+   *   exitCode?: number | null,
+   *   signal?: string | null,
+   *   startedAt: number,
+   *   stdout: BoundedStream,
+   *   stderr: BoundedStream,
+   *   cleanupConfirmed: boolean,
+   * }} input
+   */
   function normalizedResult({
     contract,
     status,
@@ -546,6 +622,14 @@ function createDevProcessRunner({
     };
   }
 
+  /**
+   * @param {SandboxExecutionContract} contract
+   * @param {{
+   *   signal?: AbortSignal | null,
+   *   onOutput?: (event: { type: string, text: string }) => void,
+   *   onSpawn?: (event: { pid: number | null }) => void,
+   * }} [options]
+   */
   async function run(
     contract,
     options = {}
@@ -615,8 +699,9 @@ function createDevProcessRunner({
     let context;
 
     try {
+      // resolveContext et revalidate sont vérifiés à la construction du runner.
       const resolvedContext =
-        resolveContext({
+        /** @type {NonNullable<typeof resolveContext>} */ (resolveContext)({
           workspaceId:
             contract.workspaceId,
 
@@ -683,7 +768,7 @@ function createDevProcessRunner({
 
     try {
       const resolvedRevalidation =
-        revalidate({
+        /** @type {NonNullable<typeof revalidate>} */ (revalidate)({
           contract,
           context,
           commandDecision:
@@ -717,6 +802,7 @@ function createDevProcessRunner({
     const startedAt =
       now();
 
+    /** @returns {BoundedStream} */
     const emptyStream =
       () => ({
         buffer:
@@ -839,7 +925,7 @@ function createDevProcessRunner({
           Number.isInteger(
             child?.pid
           )
-            ? child.pid
+            ? /** @type {number} */ (child.pid)
             : null,
       });
     } catch {}
@@ -855,12 +941,17 @@ function createDevProcessRunner({
     );
 
     return await new Promise(
-      (resolve) => {
+      (/** @type {(result: ReturnType<typeof normalizedResult>) => void} */ resolve) => {
         let finalized = false;
+        /** @type {string | null} */
         let stopKind = null;
+        /** @type {string | null} */
         let stopReason = null;
+        /** @type {ReturnType<typeof setTimeout> | null} */
         let wallTimer = null;
+        /** @type {ReturnType<typeof setTimeout> | null} */
         let graceTimer = null;
+        /** @type {ReturnType<typeof setTimeout> | null} */
         let hardTimer = null;
 
         const signal =
@@ -892,6 +983,10 @@ function createDevProcessRunner({
             );
           };
 
+        /**
+         * @param {string} status
+         * @param {{ reasonCode?: string | null, exitCode?: number | null, processSignal?: string | null, cleanupConfirmed?: boolean }} [details]
+         */
         const finish = (
           status,
           {
@@ -948,6 +1043,10 @@ function createDevProcessRunner({
           resolve(result);
         };
 
+        /**
+         * @param {string} kind
+         * @param {string} reasonCode
+         */
         const requestStop = (
           kind,
           reasonCode
@@ -1025,8 +1124,8 @@ function createDevProcessRunner({
 
         const onOutput =
           (
-            type,
-            chunk
+            /** @type {string} */ type,
+            /** @type {unknown} */ chunk
           ) => {
             const safe =
               redactSecrets(
@@ -1100,7 +1199,7 @@ function createDevProcessRunner({
 
         child.once?.(
           "error",
-          (error) => {
+          (/** @type {NodeJS.ErrnoException} */ error) => {
             if (finalized) {
               return;
             }

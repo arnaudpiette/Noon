@@ -26,6 +26,9 @@
     "services/security/token-store.js",
     "services/security/provider-privacy-policy.js",
     "services/security/intervention-permission-engine.js",
-    "services/security/operational-security-policy.js"
+    "services/security/operational-security-policy.js",
+    "services/security/dev-process-sandbox-primitives.js",
+    "services/security/dev-process-runner.js",
+    "services/security/dev-validation-runner.js"
   ]
 }

@@ -1421,6 +1421,41 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   - connecteurs ;
   - mémoire.
 
+## 24/11/2026 — V3-L0, A.4 (tranche 4) : `// @ts-check` sur les exécuteurs de processus DEV
+
+- Trois fichiers vérifiés en mode strict, puis par `no-floating-promises` : 131 erreurs au
+  départ, 0 à l'arrivée.
+  - `dev-process-sandbox-primitives` ;
+  - `dev-process-runner` ;
+  - `dev-validation-runner`.
+- `fail()` est annoté `@returns {never}`. TypeScript sait ainsi qu'il interrompt le flux,
+  sans aucun changement de code. Les contrôles d'erreur restent ceux d'avant.
+- Contrats désormais écrits en JSDoc :
+  - `SandboxContractInput` : l'entrée de construction, revalidée ;
+  - `SandboxExecutionContract`, déduit de `createSandboxExecutionContractV1` ;
+  - `BoundedStream`, `WorkspaceContextSnapshot` ;
+  - les dépendances du runner (`spawnProcess`, `resolveContext`, `revalidate`) ;
+  - les options de `run` (`signal`, `onOutput`, `onSpawn`) ;
+  - `DevProcessOutcome`, `ValidationContext`, `ValidationExecutor`, et les dépendances de
+    l'exécuteur de validation.
+- `isThenable` devient une garde de type (`value is PromiseLike<any>`), sans changement de code.
+- Assertions ciblées, toutes commentées :
+  - `resolveContext` et `revalidate` sont vérifiés à la construction ;
+  - `pid` est entier quand `Number.isInteger` le confirme ;
+  - index sur les limites figées ;
+  - `includes` sur une liste de codes.
+- Aucune règle du bac à sable n'a changé, pas plus que les limites, les codes d'erreur ou
+  l'environnement minimal. Les jetons sont identiques à HEAD, à 6 paires de parenthèses près.
+- Nouveau contrôle, appliqué à tous les fichiers typés depuis le début de A.4 : aucun
+  commentaire multi-ligne placé juste après `return`, `throw` ou `yield`. Un tel commentaire
+  déclencherait l'insertion automatique d'un point-virgule, que la comparaison des jetons ne
+  voit pas.
+- Validation :
+  - tests : 2 978/2 978 ;
+  - évaluations : `eval:critical` 54/54, `eval:privacy` 3/3, `eval:smoke` 99/99,
+    `eval:delegation` 10/10.
+- Reste à faire pour A.4 : connecteurs, mémoire.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
