@@ -200,7 +200,7 @@ Sortie : dix missions DEV réelles (Kasa, portfolio, Noon) menées de bout en bo
 ### Pilier E — Recorder V1 [REPRIS DE P7, RESSERRÉ]
 
 - ☑ E.1 Enregistrement local, pause/reprise, sauvegarde progressive, voyant visible. *(25/11, flag `recorder.v1` : à vérifier dans l'app réelle.)*
-- ☐ E.2 Transcription whisper.cpp locale (vérifier les performances sur Mac Intel) ; fournisseur cloud seulement avec consentement par session.
+- ◐ E.2 Transcription whisper.cpp locale (vérifier les performances sur Mac Intel) ; fournisseur cloud seulement avec consentement par session. *(25/11 : choix d'Arnaud, cloud OpenAI avec accord par enregistrement en premier ; whisper.cpp local reporté.)*
 - ☐ E.3 Résumé, décisions, actions, chacun relié à un horodatage.
 - ☐ E.4 Un seul export d'abord : DOCX. Puis XLSX des actions. PPTX en dernier.
 - ☑ E.5 Consentement des participants : rappel affiché avant chaque enregistrement à plusieurs. *(25/11 : case obligatoire, refusée côté serveur sans elle.)*

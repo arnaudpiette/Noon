@@ -11,12 +11,16 @@
 // - Une session restée « en cours » au démarrage (plantage, Mac éteint) devient « interrompue » :
 //   l'audio est conservé jusqu'au dernier morceau reçu.
 // - À plusieurs, l'enregistrement exige d'avoir informé les participants (E.5).
+// - E.2 : transcription par OpenAI seulement sur accord explicite pour CET enregistrement
+//   (`consent: true`, horodaté dans meta.json), refusée en mode local uniquement ou budget atteint.
+//   Le texte et ses passages horodatés restent sur le Mac (`transcript.json`, 0600).
 
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { MAX_TRANSCRIPTION_BYTES, estimateTranscriptionCostUsd } = require("./recorder-transcriber");
 
-const ROUTE = /^\/api\/recorder\/sessions(?:\/(rec-\d{8}-[0-9a-f]{8})(?:\/(chunks|pause|resume|stop|audio))?)?$/;
+const ROUTE = /^\/api\/recorder\/sessions(?:\/(rec-\d{8}-[0-9a-f]{8})(?:\/(chunks|pause|resume|stop|audio|transcribe|transcript))?)?$/;
 const MIME_TYPES = Object.freeze({ "audio/webm;codecs=opus": "webm", "audio/webm": "webm", "audio/mp4": "m4a" });
 const MAX_CHUNK_BYTES = 2 * 1024 * 1024;
 const MAX_SESSION_BYTES = 500 * 1024 * 1024;
@@ -68,7 +72,9 @@ function createRecorderStore({ rootDirectory, now = () => new Date(), randomId =
   function publicView(meta) {
     return { id: meta.id, title: meta.title, status: meta.status, mimeType: meta.mimeType, createdAt: meta.createdAt, stoppedAt: meta.stoppedAt || null,
       bytes: meta.bytes, chunks: meta.nextSeq, durationMs: activeDurationMs(meta.events, ACTIVE.has(meta.status) ? now().getTime() : undefined),
-      multiParticipant: meta.consent.multiParticipant, participantsInformedAt: meta.consent.participantsInformedAt, events: meta.events.map((event) => ({ ...event })) };
+      multiParticipant: meta.consent.multiParticipant, participantsInformedAt: meta.consent.participantsInformedAt, events: meta.events.map((event) => ({ ...event })),
+      transcription: meta.transcription ? { ...meta.transcription } : null,
+      transcriptionCostEstimateUsd: estimateTranscriptionCostUsd(activeDurationMs(meta.events)), transcribable: meta.bytes > 0 && meta.bytes <= MAX_TRANSCRIPTION_BYTES };
   }
   function list() {
     return fs.readdirSync(rootDirectory).filter((name) => ROUTE.test(`/api/recorder/sessions/${name}`))
@@ -141,10 +147,54 @@ function createRecorderStore({ rootDirectory, now = () => new Date(), randomId =
     return { deleted: id };
   }
 
-  return { list, create, appendChunk, transition, remove, recoverInterrupted, audioFile: (id) => { const meta = requireMeta(id); return { path: audioPath(meta), mimeType: meta.mimeType }; } };
+  const transcriptPath = (id) => path.join(sessionDir(id), "transcript.json");
+
+  // E.2 : l'appelant a vérifié l'accord ; ici, état et limites, puis écriture locale du texte.
+  async function transcribe(id, { consent, transcriber }) {
+    const meta = requireMeta(id);
+    if (consent !== true) throw recorderError("RECORDER_TRANSCRIPTION_CONSENT_REQUIRED", "Confirme d'abord l'envoi de cet enregistrement à OpenAI.");
+    if (!transcriber) throw recorderError("RECORDER_TRANSCRIPTION_UNAVAILABLE", "Transcription indisponible.", 503);
+    if (ACTIVE.has(meta.status)) throw recorderError("RECORDER_STILL_ACTIVE", "Arrête d'abord l'enregistrement.", 409);
+    if (meta.transcription?.status === "running") throw recorderError("RECORDER_TRANSCRIPTION_RUNNING", "Transcription déjà en cours.", 409);
+    if (!meta.bytes) throw recorderError("RECORDER_CHUNK_EMPTY", "Cet enregistrement est vide.");
+    if (meta.bytes > MAX_TRANSCRIPTION_BYTES) throw recorderError("RECORDER_TRANSCRIPTION_TOO_LARGE", "Enregistrement trop long pour une transcription en un seul envoi (24 Mo au plus, environ 1 h 40).", 413);
+    if (!transcriber.isRemoteAllowed()) throw recorderError("RECORDER_REMOTE_BLOCKED", "Noon est en mode local uniquement ou hors ligne : la transcription par OpenAI est bloquée.", 409);
+    if (transcriber.budgetBlocked()) throw recorderError("RECORDER_BUDGET_BLOCKED", "Budget mensuel Noon atteint.", 403);
+    const durationMs = activeDurationMs(meta.events);
+    meta.transcription = { status: "running", consentAt: now().toISOString(), model: transcriber.model, startedAt: now().toISOString(), completedAt: null, errorCode: null, segments: 0, costEstimateUsd: estimateTranscriptionCostUsd(durationMs) };
+    writeMeta(meta);
+    try {
+      const result = await transcriber.transcribe({ buffer: fs.readFileSync(audioPath(meta)), mimeType: meta.mimeType, durationMs });
+      fs.writeFileSync(transcriptPath(id), JSON.stringify({ model: result.model, language: result.language, text: result.text, segments: result.segments }, null, 2), { mode: 0o600 });
+      Object.assign(meta.transcription, { status: "done", completedAt: now().toISOString(), segments: result.segments.length, language: result.language });
+      return publicView(writeMeta(meta));
+    } catch (error) {
+      Object.assign(meta.transcription, { status: "failed", completedAt: now().toISOString(), errorCode: String(error?.status || error?.code || error?.name || "ERROR").slice(0, 60) });
+      writeMeta(meta);
+      throw recorderError("RECORDER_TRANSCRIPTION_FAILED", "La transcription a échoué. L'enregistrement est intact : tu peux réessayer.", 502);
+    }
+  }
+
+  function transcript(id) {
+    requireMeta(id);
+    try { return JSON.parse(fs.readFileSync(transcriptPath(id), "utf8")); }
+    catch { throw recorderError("RECORDER_TRANSCRIPT_MISSING", "Pas encore de transcription pour cet enregistrement.", 404); }
+  }
+
+  // Une transcription restée « en cours » au démarrage (Noon quitté pendant l'envoi) est marquée en échec.
+  function recoverTranscriptions() {
+    for (const session of list()) {
+      if (session.transcription?.status !== "running") continue;
+      const meta = readMeta(session.id);
+      Object.assign(meta.transcription, { status: "failed", errorCode: "INTERRUPTED", completedAt: now().toISOString() });
+      writeMeta(meta);
+    }
+  }
+
+  return { list, create, appendChunk, transition, remove, recoverInterrupted, recoverTranscriptions, transcribe, transcript, audioFile: (id) => { const meta = requireMeta(id); return { path: audioPath(meta), mimeType: meta.mimeType }; } };
 }
 
-function createRecorderService({ enabled = false, dataDirectory = null, observability = () => {}, storeOptions = {} } = {}) {
+function createRecorderService({ enabled = false, dataDirectory = null, observability = () => {}, storeOptions = {}, transcriber = null } = {}) {
   const matches = (requestPath) => ROUTE.test(requestPath);
   if (!enabled || !dataDirectory) {
     return { enabled: false, matches,
@@ -154,6 +204,7 @@ function createRecorderService({ enabled = false, dataDirectory = null, observab
   const emit = (event, metadata) => { try { observability(event, metadata); } catch {} };
   const recovered = store.recoverInterrupted();
   if (recovered) emit("recorder.sessions_interrupted", { count: recovered });
+  store.recoverTranscriptions();
 
   async function handle(req, res, { requestPath, readJsonBody }) {
     const send = (status, payload) => { res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" }); res.end(JSON.stringify(payload)); };
@@ -166,7 +217,14 @@ function createRecorderService({ enabled = false, dataDirectory = null, observab
         res.writeHead(200, { "Content-Type": file.mimeType.split(";")[0], "Content-Length": stat.size, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
         return fs.createReadStream(file.path).pipe(res);
       }
+      if (req.method === "GET" && id && action === "transcript") return send(200, { status: "ok", transcript: store.transcript(id) });
       if (req.headers["x-noon-request"] !== "1") return send(403, { status: "error", code: "RECORDER_REQUEST_REFUSED", message: "Requête Noon refusée." });
+      if (req.method === "POST" && id && action === "transcribe") {
+        const body = await readJsonBody(req, 1024);
+        const session = await store.transcribe(id, { consent: body?.consent, transcriber });
+        emit("recorder.transcribed", { sessionId: id, segments: session.transcription.segments, durationMs: session.durationMs });
+        return send(200, { status: "ok", session });
+      }
       if (req.method === "POST" && !id) {
         const body = await readJsonBody(req, 4 * 1024);
         const session = store.create(body || {});
@@ -199,4 +257,4 @@ function createRecorderService({ enabled = false, dataDirectory = null, observab
   return { enabled: true, matches, handle, store };
 }
 
-module.exports = { MAX_CHUNK_BYTES, MAX_SESSION_BYTES, MIME_TYPES, activeDurationMs, createRecorderService, createRecorderStore };
+module.exports = { MAX_TRANSCRIPTION_BYTES, MAX_CHUNK_BYTES, MAX_SESSION_BYTES, MIME_TYPES, activeDurationMs, createRecorderService, createRecorderStore };

@@ -153,6 +153,7 @@ const { createLifecycleComposition } = require("./services/lifecycle/lifecycle-c
 const { createPersonalIntelligenceComposition } = require("./services/personal-intelligence/personal-intelligence-composition");
 const { createExtensionsComposition } = require("./services/extensions/extensions-composition");
 const { createRecorderService } = require("./services/recorder/recorder-service");
+const { createOpenAiRecorderTranscriber, RECORDER_TRANSCRIPTION_PRICE_PER_MINUTE } = require("./services/recorder/recorder-transcriber");
 const { createProgressComposition } = require("./services/observability/progress-composition");
 const { createLocalRuntimeAndJobsComposition } = require("./services/runtime/local-runtime-and-jobs-composition");
 
@@ -892,6 +893,14 @@ const recorderService = createRecorderService({
   enabled: featureFlags.evaluate("recorder.v1").enabled && !UI_VALIDATION_MODE && process.env.NOON_SMOKE_TEST !== "1",
   dataDirectory: DATA_DIRECTORY,
   observability: (event, metadata) => toolAuditLog.append(event, metadata),
+  // E.2 : transcription OpenAI, seulement sur accord explicite par enregistrement (vérifié par le service).
+  transcriber: createOpenAiRecorderTranscriber({
+    getOpenAIClient,
+    toFile,
+    isRemoteAllowed: () => localIntelligenceRuntime.preflight({ requiredCapabilities: ["REMOTE_TRANSCRIPTION"], privacy: "STANDARD" }).status !== "UNAVAILABLE",
+    budgetBlocked: () => getBudgetStatus().mode === "BLOCKED",
+    trackUsage: (durationMs) => trackTranscriptionUsage(durationMs, { pricePerMinute: RECORDER_TRANSCRIPTION_PRICE_PER_MINUTE }),
+  }),
 });
 
 const specialistRegistry = createSpecialistRegistry();

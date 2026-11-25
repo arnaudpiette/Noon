@@ -17,6 +17,11 @@
     RECORDER_SEQ_GAP: "Sauvegarde interrompue : un morceau audio manque.",
     RECORDER_TOO_LARGE: "Enregistrement trop long : arrête-le et lance-en un nouveau.",
     RECORDER_STILL_ACTIVE: "Arrête d'abord l'enregistrement.",
+    RECORDER_TRANSCRIPTION_TOO_LARGE: "Enregistrement trop long pour une transcription en un seul envoi (environ 1 h 40 au plus).",
+    RECORDER_REMOTE_BLOCKED: "Noon est en mode local uniquement ou hors ligne : la transcription par OpenAI est bloquée.",
+    RECORDER_BUDGET_BLOCKED: "Budget mensuel Noon atteint : transcription impossible.",
+    RECORDER_TRANSCRIPTION_FAILED: "La transcription a échoué. L'enregistrement est intact : tu peux réessayer.",
+    RECORDER_TRANSCRIPTION_RUNNING: "Transcription déjà en cours.",
     MIC_PERMISSION_DENIED: "Autorisation du micro refusée : autorise Noon dans Réglages Système → Confidentialité → Micro.",
     MIC_DEVICE_UNAVAILABLE: "Micro sélectionné indisponible. Noon n'en choisit pas un autre à ta place.",
   });
@@ -58,6 +63,8 @@
       stop: (id) => request("POST", at(id, "stop")),
       remove: (id) => request("DELETE", at(id)),
       audioUrl: (id) => at(id, "audio"),
+      transcribe: (id) => request("POST", at(id, "transcribe"), { json: { consent: true } }),
+      transcript: (id) => request("GET", at(id, "transcript")),
     });
   }
 
@@ -67,6 +74,8 @@
     const doc = root.ownerDocument || global.document;
     const ask = typeof confirmImpl === "function" ? confirmImpl : (text) => (typeof global.confirm === "function" ? global.confirm(text) : false);
     let available = false; let busy = false; let notice = null; let sessions = [];
+    let pendingConsentId = null; // enregistrement dont l'accord d'envoi à OpenAI est affiché
+    const transcripts = new Map(); // id → transcription chargée
     const draft = { title: "", multiParticipant: false, informed: false };
     // Enregistrement en cours dans cette fenêtre.
     let live = null; // { id, recorder, stream, seq, queue, status, startedAt, pausedMs, pauseAt, timer, failed }
@@ -117,7 +126,8 @@
         try { stream = await media.getUserMedia({ audio: getAudioConstraints(), video: false }); }
         catch (error) { throw Object.assign(new Error("micro"), { code: error?.name === "NotAllowedError" ? "MIC_PERMISSION_DENIED" : "MIC_DEVICE_UNAVAILABLE" }); }
         const { session } = await api.create({ title: draft.title.trim(), mimeType, multiParticipant: draft.multiParticipant, participantsInformed: draft.informed });
-        const recorder = new MediaRecorderImpl(stream, { mimeType });
+        // 32 kbit/s : suffisant pour la voix, et une réunion d'environ 1 h 40 reste sous la limite d'envoi de la transcription.
+        const recorder = new MediaRecorderImpl(stream, { mimeType, audioBitsPerSecond: 32000 });
         live = { id: session.id, title: session.title, recorder, stream, mimeType, seq: 0, queue: Promise.resolve(), status: "recording", startedAt: now(), pausedMs: 0, pauseAt: 0, timer: null, failed: null };
         recorder.addEventListener("dataavailable", (event) => enqueueChunk(event.data));
         recorder.start(CHUNK_MS);
@@ -197,6 +207,64 @@
       return card;
     }
 
+    async function transcribe(session) {
+      pendingConsentId = null; busy = true;
+      setNotice(`Transcription de « ${session.title} » en cours : l'audio est envoyé à OpenAI…`);
+      render();
+      try { await api.transcribe(session.id); transcripts.delete(session.id); setNotice(`« ${session.title} » transcrit. Le texte est enregistré sur ce Mac.`); }
+      catch (error) { setNotice(messageFor(error), "error"); }
+      finally { busy = false; }
+      await refresh().catch(() => render());
+    }
+
+    async function loadTranscript(session, box) {
+      try {
+        if (!transcripts.has(session.id)) transcripts.set(session.id, (await api.transcript(session.id)).transcript);
+        const transcript = transcripts.get(session.id);
+        const list = el("ol", "recorder__segments");
+        for (const segment of transcript.segments || []) {
+          const item = el("li");
+          item.append(el("span", "recorder__time", formatDuration(segment.start * 1000)), el("span", "", segment.text));
+          list.append(item);
+        }
+        const copy = button("Copier le texte", async () => {
+          try { await global.navigator.clipboard.writeText(transcript.text || ""); setNotice("Texte copié."); } catch { setNotice("Copie impossible : sélectionne le texte à la main.", "error"); }
+          render();
+        });
+        box.replaceChildren(transcript.segments?.length ? list : el("p", "", transcript.text || "(transcription vide)"), copy);
+      } catch (error) { box.replaceChildren(el("p", "recorder__hint", messageFor(error))); }
+    }
+
+    function renderTranscription(session) {
+      const t = session.transcription;
+      const wrap = el("div", "recorder__transcription");
+      if (t?.status === "running") { wrap.append(el("p", "recorder__hint", "Transcription en cours…")); return wrap; }
+      if (t?.status === "done") {
+        const details = el("details", "recorder__transcript");
+        const summary = el("summary", "", `Transcription · ${t.segments} passage(s)`);
+        const box = el("div", "recorder__transcript-body");
+        details.append(summary, box);
+        details.addEventListener("toggle", () => { if (details.open) void loadTranscript(session, box); });
+        wrap.append(details);
+        return wrap;
+      }
+      if (!session.transcribable) { wrap.append(el("p", "recorder__hint", ERROR_MESSAGES.RECORDER_TRANSCRIPTION_TOO_LARGE)); return wrap; }
+      if (t?.status === "failed") wrap.append(el("p", "recorder__hint", ERROR_MESSAGES.RECORDER_TRANSCRIPTION_FAILED));
+      const cost = Number(session.transcriptionCostEstimateUsd || 0);
+      const costText = cost < 0.01 ? "moins de 0,01 $" : `≈ ${cost.toFixed(2).replace(".", ",")} $`;
+      if (pendingConsentId === session.id) {
+        const consent = el("div", "recorder__consent");
+        consent.append(el("p", "", `L'audio de « ${session.title} » (${formatDuration(session.durationMs)}, ${formatBytes(session.bytes)}) sera envoyé à OpenAI pour être transcrit. Le texte restera sur ce Mac. Coût estimé : ${costText}.`));
+        const actions = el("div", "control-card__actions");
+        actions.append(button("Envoyer à OpenAI et transcrire", () => transcribe(session)), button("Annuler", () => { pendingConsentId = null; render(); return Promise.resolve(); }));
+        consent.append(actions);
+        wrap.append(consent);
+      } else {
+        wrap.append(button(`Transcrire avec OpenAI · ${costText}`, () => { pendingConsentId = session.id; render(); return Promise.resolve(); }));
+      }
+      return wrap;
+    }
+
     function renderSession(session) {
       const card = el("article", "control-card recorder__session");
       const head = el("div", "control-card__head");
@@ -211,7 +279,7 @@
       if (session.status === "interrupted") card.append(el("p", "recorder__hint", "Noon s'est arrêté pendant l'enregistrement : l'audio est conservé jusqu'au dernier morceau sauvegardé."));
       if (!["recording", "paused"].includes(session.status) && session.bytes > 0) {
         const audio = el("audio", "recorder__audio"); audio.controls = true; audio.preload = "none"; audio.src = api.audioUrl(session.id);
-        card.append(audio);
+        card.append(audio, renderTranscription(session));
       }
       if (!["recording", "paused"].includes(session.status)) {
         const actions = el("div", "control-card__actions"); actions.append(button("Supprimer", () => remove(session)));
@@ -225,7 +293,7 @@
       if (!available) { root.hidden = true; return; }
       root.hidden = false;
       const header = el("header", "control-section__header"); const title = el("div");
-      title.append(el("h2", "", "Enregistreur"), el("p", "", "Enregistre une réunion sur ce Mac, avec pause et reprise. Rien n'est envoyé : la transcription viendra dans une prochaine étape."));
+      title.append(el("h2", "", "Enregistreur"), el("p", "", "Enregistre une réunion sur ce Mac, avec pause et reprise. L'audio reste ici ; il n'est envoyé à OpenAI que si tu demandes sa transcription, enregistrement par enregistrement."));
       header.append(title);
       const nodes = [header];
       if (notice) { const box = el("p", "control-center__notice", notice.text); box.setAttribute("role", notice.kind === "error" ? "alert" : "status"); box.dataset.kind = notice.kind; nodes.push(box); }

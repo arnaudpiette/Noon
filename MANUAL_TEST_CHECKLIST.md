@@ -72,3 +72,7 @@
       case de consentement n'est pas cochée.
 - [ ] Quitter Noon pendant un enregistrement, relancer : la session est « interrompue » et se
       réécoute jusqu'au dernier morceau sauvegardé.
+- [ ] Sur un enregistrement terminé, « Transcrire avec OpenAI » ouvre l'encadré d'accord ;
+      « Annuler » n'envoie rien. « Envoyer à OpenAI et transcrire » donne des passages horodatés
+      (environ 0,006 $ par minute).
+- [ ] En mode local uniquement, la transcription est refusée avec un message clair.

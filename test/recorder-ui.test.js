@@ -159,3 +159,29 @@ test("câblage : script servi et chargé avant app.js, entrée « Enregistreur �
   assert.match(cc, /sections: \["overview", "approvals", RECORDER_SECTION,/);
   assert.doesNotMatch(SOURCE, /innerHTML|localStorage|fetch\(\s*["']https?:/);
 });
+
+test("E.2 : « Transcrire » ouvre un accord détaillé ; rien ne part avant « Envoyer à OpenAI »", async () => {
+  const document = { createElement: (tag) => new FakeElement(tag) };
+  const context = { document, Promise, Object, String, Array, Number, Math, Date, JSON, Error, TypeError, setInterval: () => 1, clearInterval: () => {} };
+  context.window = context;
+  vm.runInNewContext(SOURCE, context);
+  const calls = [];
+  let session = { id: "rec-20261125-0a1b2c3d", title: "Point client", status: "stopped", bytes: 2_400_000, durationMs: 30 * 60_000, createdAt: "2026-11-25T10:00:00Z", transcribable: true, transcriptionCostEstimateUsd: 0.18, transcription: null };
+  const api = { list: async () => ({ sessions: [session] }), audioUrl: () => "/a", transcribe: async (id) => { calls.push(id); session = { ...session, transcription: { status: "done", segments: 12 } }; return {}; } };
+  const root = new FakeElement("section"); root.ownerDocument = document;
+  const controller = context.window.NoonRecorderUi.createRecorderController({ elements: { root }, api, media: {}, MediaRecorderImpl: null });
+  await controller.init();
+  const ask = buttonByText(root, "Transcrire avec OpenAI · ≈ 0,18 $");
+  assert.ok(ask);
+  ask.click();
+  assert.match(root.textContent, /sera envoyé à OpenAI pour être transcrit\. Le texte restera sur ce Mac\. Coût estimé : ≈ 0,18 \$/);
+  assert.match(root.textContent, /30:00, 2,3 Mo/);
+  assert.equal(calls.length, 0, "rien n'est envoyé à l'ouverture de l'accord");
+  buttonByText(root, "Annuler").click();
+  assert.equal(buttonByText(root, "Envoyer à OpenAI et transcrire"), undefined);
+  buttonByText(root, "Transcrire avec OpenAI · ≈ 0,18 $").click();
+  buttonByText(root, "Envoyer à OpenAI et transcrire").click();
+  await settle();
+  assert.deepEqual(calls, ["rec-20261125-0a1b2c3d"]);
+  assert.match(root.textContent, /Transcription · 12 passage\(s\)/);
+});

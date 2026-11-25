@@ -424,7 +424,9 @@ function createUsageTracking(deps) {
     deps.metricsService.record("api_cost_usd", requestCostUSD, { model: usedModel });
   }
 
-  function trackTranscriptionUsage(durationMs) {
+  // pricePerMinute (facultatif) : modèle plus cher que le tarif de base (ex. whisper-1 pour le
+  // Recorder, 0,006 $/min) ; l'écart s'ajoute au coût du mois pour que le budget reste exact.
+  function trackTranscriptionUsage(durationMs, { pricePerMinute = null } = {}) {
     let usage = loadUsage();
     const currentMonth = new Date().toISOString().slice(0, 7);
 
@@ -457,6 +459,11 @@ function createUsageTracking(deps) {
 
     usage.transcriptionRequests =
       (usage.transcriptionRequests || 0) + 1;
+
+    const extraPerMinute = Number(pricePerMinute) - TRANSCRIPTION_PRICE_PER_MINUTE;
+    if (Number.isFinite(extraPerMinute) && extraPerMinute > 0) {
+      usage.modelPremiumCostUSD = (usage.modelPremiumCostUSD || 0) + (safeDurationMs / 60000) * extraPerMinute;
+    }
 
     usage.requests = (usage.requests || 0) + 1;
 

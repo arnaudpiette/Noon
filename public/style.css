@@ -2987,3 +2987,10 @@ body.dev-preview-resizing *{
 .recorder__consent p{margin:0 0 6px}
 .recorder__hint{margin:6px 0 0;color:var(--ui-text-3,#888);font-size:12px}
 .recorder__audio{width:100%;margin-top:8px}
+.recorder__transcription{margin-top:8px}
+.recorder__transcript summary{cursor:pointer;font-size:13px;font-weight:600}
+.recorder__transcript-body{display:grid;gap:8px;margin-top:8px}
+.recorder__segments{display:grid;gap:6px;max-height:320px;margin:0;padding:0;overflow:auto;list-style:none;font-size:13px}
+.recorder__segments li{display:grid;grid-template-columns:52px minmax(0,1fr);gap:8px}
+.recorder__time{color:var(--ui-text-3,#888);font-variant-numeric:tabular-nums}
+.recorder .control-center__grid{align-items:start}

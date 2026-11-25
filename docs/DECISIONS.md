@@ -2179,6 +2179,39 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   - E.3 (résumé horodaté) et E.4 (export DOCX, dépendance `docx` déjà présente) ;
   - critère de sortie : une réunion réelle donne un DOCX fidèle.
 
+## 25/11/2026 — Recorder V1, E.2 : transcription par OpenAI avec accord par enregistrement
+
+- Choix d'Arnaud : la transcription passe par OpenAI, avec son accord pour chaque
+  enregistrement (rapide, environ 0,006 $ par minute ; l'audio sort du Mac). whisper.cpp en
+  local est reporté : il demanderait un binaire natif, un modèle à télécharger, et serait lent
+  sur Mac Intel.
+- Modèle `whisper-1` en `verbose_json` avec passages horodatés, nécessaires au résumé (E.3).
+  `gpt-4o-mini-transcribe`, utilisé pour les courtes dictées, ne donne pas d'horodatages.
+- Accord : le bouton « Transcrire avec OpenAI · coût estimé » ouvre un encadré qui précise quel
+  audio part (titre, durée, taille), où il va, que le texte reste sur le Mac, et le coût. Rien
+  ne part avant « Envoyer à OpenAI et transcrire ». Le serveur exige `consent: true` et horodate
+  l'accord (`transcription.consentAt`).
+- Refus sans appel : mode local uniquement ou hors ligne (capacité `REMOTE_TRANSCRIPTION`),
+  budget mensuel atteint, enregistrement en cours, fichier au-delà de 24 Mo (limite d'envoi
+  d'OpenAI).
+  - Les nouveaux enregistrements passent à 32 kbit/s, assez pour la voix : environ 1 h 40 tient
+    sous cette limite. Le découpage des réunions plus longues viendra plus tard.
+- Le texte et les passages restent sur le Mac (`transcript.json`, 0600) ; le journal n'en
+  contient rien.
+  - Un échec laisse l'audio intact et permet de réessayer.
+  - Une transcription restée « en cours » au redémarrage passe en échec (`INTERRUPTED`).
+- Budget exact : `trackTranscriptionUsage` accepte un prix par minute ; l'écart avec le tarif de
+  base (0,003 $) s'ajoute au coût du mois. Les appels existants sont inchangés.
+- Interface : une transcription terminée s'ouvre passage par passage, chacun avec son
+  horodatage, et le texte peut se copier.
+- Tests : nouveau `test/recorder-transcription.test.js` (5 cas) et un cas d'interface.
+  Suite complète 3 072/3 072 ; `eval:critical` 54/54, `smoke` 99/99, `privacy` 3/3.
+- Non vérifié : un vrai appel à OpenAI avec un vrai enregistrement (payant).
+- Reste pour L8 :
+  - E.3, résumé, décisions et actions reliés à un horodatage ;
+  - E.4, export DOCX ;
+  - critère de sortie : une réunion réelle donne un DOCX fidèle.
+
 ## À trancher
 
-- Transcription du Recorder (E.2) : whisper.cpp local, ou transcription cloud avec consentement par session.
+- Rien pour l'instant.
