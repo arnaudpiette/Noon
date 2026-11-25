@@ -2066,8 +2066,34 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   - un vrai plugin avec des serveurs tiers ;
   - la consigne de plugin face au modèle réel.
 
+## 25/11/2026 — Conversation Live démarre à l'ouverture de Noon
+
+- Demande d'Arnaud : Live toujours actif à l'ouverture, avec la phrase « Salut Noon, par quoi on
+  commence aujourd'hui ? ». Faute de réponse aux questions sur le coût et sur la phrase, la
+  demande est appliquée telle qu'écrite, avec des garde-fous.
+- Réglage « Démarrer Conversation Live à l'ouverture de Noon » (Réglages → Voix et audio),
+  **activé par défaut**, désactivable. Préférence d'interface en `localStorage`
+  (`noonLiveAutoStart`), sans nouvelle IPC.
+- Règle de décision (`shouldAutoStartLive` dans `public/live-voice-core.js`, testée) :
+  - seulement dans l'application, jamais dans un navigateur ni en test, pour ne pas ouvrir de
+    micro d'office ;
+  - une fois par lancement : un rechargement de la fenêtre ne relance pas Live ;
+  - pas si le budget vocal est bloqué ;
+  - pas en Qualité Max, qui exige une confirmation de son coût.
+  - Le réveil du Mac ne rouvre jamais le micro (règle existante conservée).
+- Phrase prononcée mot pour mot par `response.create`, seulement pour la session de lancement.
+- Coût borné par la coupure existante après deux minutes sans parler (et vingt minutes au plus).
+- Conflit avec le mot de réveil « Salut Noon » vérifié : le processus principal coupe déjà
+  l'écoute du mot de réveil pendant Live (`liveVoiceActive`). Noon ne se réveille donc pas en
+  s'entendant.
+- Accueil des proches (Alexandra, Kaan, Sinan) : inchangé ; il suit l'ouverture quand la personne
+  dit qui elle est.
+- Tests : nouveau `test/live-auto-start.test.js` (4 cas). Suite complète 3 049/3 049 ;
+  `eval:critical` 54/54, `smoke` 99/99, `privacy` 3/3.
+- Non vérifié :
+  - au lancement réel de Noon.app : autorisation micro, phrase prononcée, sortie audio ;
+  - avec le mot de réveil activé.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
-- Live au lancement de Noon : démarrage automatique (micro ouvert, session payante) ou non.
-- Phrase d'ouverture de Live : « Salut Noon… » ou « Salut Arnaud… ».

@@ -19,13 +19,17 @@
     cost: document.getElementById("liveVoiceCost"),
     audio: document.getElementById("liveVoiceAudio"),
     preferenceStatus: document.getElementById("liveVoicePreferenceStatus"),
+    autoStart: document.getElementById("liveAutoStart"),
   };
 
   const STORAGE = {
     quality: "noonVoiceQuality",
     language: "noonVoiceLanguage",
     accent: "noonVoiceAccent",
+    autoStart: "noonLiveAutoStart",
   };
+  // Marque de session : un rechargement de la fenêtre ne relance pas Live, un nouveau lancement si.
+  const AUTO_START_SESSION_FLAG = "noonLiveAutoStarted";
   const STATE_LABELS = {
     disconnected: "Déconnecté",
     connecting: "Connexion…",
@@ -65,6 +69,7 @@
       this.responseStartedAt = null;
       this.executionId = null;
       this.liveMetrics = { turnCount: 0, interruptions: 0, responseLatencies: [], reconnectCount: 0 };
+      this.pendingLaunchGreeting = false;
 
       const savedQuality = localStorage.getItem(STORAGE.quality);
       elements.quality.value = savedQuality === "max" ? "max" : "mini";
@@ -95,6 +100,12 @@
         localStorage.setItem(STORAGE.accent, elements.accent.value.trim() || "none");
         void this.updateSessionInstructions(true);
       });
+      if (elements.autoStart) {
+        elements.autoStart.checked = core.liveAutoStartEnabled(localStorage.getItem(STORAGE.autoStart));
+        elements.autoStart.addEventListener("change", () => {
+          localStorage.setItem(STORAGE.autoStart, elements.autoStart.checked ? "on" : "off");
+        });
+      }
       elements.quality.addEventListener("change", () => {
         localStorage.setItem(STORAGE.quality, elements.quality.value);
         if (this.connected) {
@@ -178,6 +189,7 @@
         elements.cost.textContent =
           `${data.budget.costUSD.toFixed(2)} $ / ${data.budget.budgetUSD.toFixed(0)} $`;
         elements.cost.dataset.state = data.budget.state.toLowerCase();
+        return data.budget;
       } catch {
         // Le budget texte reste disponible si cet indicateur échoue.
       }
@@ -291,6 +303,11 @@
           this.setState("listening");
           this.touchActivity();
           this.updateSessionInstructions();
+          // Accueil d'ouverture : seulement pour la session démarrée au lancement de Noon.
+          if (this.pendingLaunchGreeting) {
+            this.pendingLaunchGreeting = false;
+            this.send(core.launchGreetingEvent());
+          }
         });
         this.channel.addEventListener("message", (event) => this.handleEvent(event));
         this.channel.addEventListener("close", () => {
@@ -676,6 +693,30 @@
   }
 
   window.noonLiveVoice = new NoonLiveVoice();
+
+  // Ouverture de Noon : Conversation Live démarre et dit la phrase d'accueil, si le réglage le
+  // permet. Le réveil du Mac, lui, ne rouvre jamais le micro (voir « resume » ci-dessous).
+  void (async () => {
+    const live = window.noonLiveVoice;
+    let alreadyStarted;
+    try { alreadyStarted = sessionStorage.getItem(AUTO_START_SESSION_FLAG) === "1"; } catch { alreadyStarted = true; }
+    const budget = await live.refreshBudget();
+    const decision = core.shouldAutoStartLive({
+      desktopApp: Boolean(window.noon),
+      enabled: core.liveAutoStartEnabled(localStorage.getItem(STORAGE.autoStart)),
+      alreadyStarted,
+      budgetState: budget?.state || null,
+      quality: elements.quality.value,
+    });
+    if (!decision.start) {
+      if (decision.reason === "BUDGET_BLOCKED") bridge.updateActivity("Budget vocal atteint : Conversation Live n’a pas démarré à l’ouverture.");
+      if (decision.reason === "MAX_QUALITY") bridge.updateActivity("Qualité Max choisie : démarre Conversation Live toi-même pour confirmer son coût.");
+      return;
+    }
+    try { sessionStorage.setItem(AUTO_START_SESSION_FLAG, "1"); } catch { /* Stockage de session indisponible. */ }
+    live.pendingLaunchGreeting = true;
+    await live.connect();
+  })();
 
   window.noon?.onSystemState((message) => {
     const state = typeof message === "string" ? message : message?.state;

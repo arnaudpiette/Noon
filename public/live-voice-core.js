@@ -30,5 +30,32 @@
     }
   }
 
-  return { cleanupRealtimeResources, reconnectDelay };
+  // Démarrage de Conversation Live à l'ouverture de Noon (demande d'Arnaud, 24/11/2026).
+  // Réglage activé par défaut ; la phrase d'accueil est celle qu'il a écrite, mot pour mot.
+  const LAUNCH_GREETING = "Salut Noon, par quoi on commence aujourd’hui ?";
+
+  function liveAutoStartEnabled(storedValue) {
+    return storedValue !== "off";
+  }
+
+  // Jamais dans un navigateur ou un test (pas de micro ouvert d'office), une seule fois par
+  // lancement, jamais si le budget vocal est bloqué, jamais en Qualité Max (elle exige une
+  // confirmation explicite de son coût).
+  function shouldAutoStartLive({ desktopApp = false, enabled = true, alreadyStarted = false, budgetState = null, quality = "mini" } = {}) {
+    if (!desktopApp) return { start: false, reason: "NOT_DESKTOP_APP" };
+    if (!enabled) return { start: false, reason: "DISABLED" };
+    if (alreadyStarted) return { start: false, reason: "ALREADY_STARTED" };
+    if (String(budgetState || "").toUpperCase() === "BLOCKED") return { start: false, reason: "BUDGET_BLOCKED" };
+    if (quality === "max") return { start: false, reason: "MAX_QUALITY" };
+    return { start: true, reason: "AUTO_START" };
+  }
+
+  function launchGreetingEvent() {
+    return {
+      type: "response.create",
+      response: { instructions: `Dis exactement cette phrase, en français, sans rien ajouter ni retirer : « ${LAUNCH_GREETING} »` },
+    };
+  }
+
+  return { LAUNCH_GREETING, cleanupRealtimeResources, launchGreetingEvent, liveAutoStartEnabled, reconnectDelay, shouldAutoStartLive };
 });
