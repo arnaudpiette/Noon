@@ -131,10 +131,22 @@ async function loadConversationIndex() {
       return;
     }
     renderConversationIndex(conversations);
+    syncTopBarTitle();
   } catch (error) {
     conversationHistoryList.textContent = "Historique indisponible.";
     updateActivity(error.message);
   }
+}
+
+// Interface V3 : la barre du haut affiche le titre de la vue ; dans le Chat, celui de la conversation
+// (l'ancien en-tête « Conversation · Mode DA » faisait doublon et disparaît, étape 4).
+function syncTopBarTitle() {
+  const topBarTitle = document.getElementById("topBarTitle");
+  if (!topBarTitle) return;
+  const conversationTitle = conversationIndexState.conversations.find((item) => item.id === currentSessionId)?.title;
+  topBarTitle.textContent = currentView === "chat"
+    ? conversationTitle || "Nouveau chat"
+    : { core: "Assistant vocal", brief: "Brief du jour", personal: "Personnel" }[currentView];
 }
 
 function switchView(viewName) {
@@ -153,9 +165,8 @@ function switchView(viewName) {
     view.classList.toggle("active", view.id === `${currentView}View`);
   });
 
-  // Interface V3, étape 3 : la barre du haut affiche le titre de la vue en cours.
-  const topBarTitle = document.getElementById("topBarTitle");
-  if (topBarTitle) topBarTitle.textContent = { core: "Assistant vocal", chat: "Chat", brief: "Brief du jour", personal: "Personnel" }[currentView];
+  syncTopBarTitle();
+  window.dispatchEvent(new CustomEvent("noon-view-change"));
 
   document.body.dataset.interactionMode = currentView;
 

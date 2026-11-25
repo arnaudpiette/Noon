@@ -982,6 +982,7 @@ async function switchConversation(sessionId) {
   }
   currentSessionId = sessionId;
   localStorage.setItem(SESSION_STORAGE_KEY, currentSessionId);
+  applyProjectMode(conversationFolderId(sessionId));
   lastFailedQuestion = null;
   retryButton.hidden = true;
   promptInput.value = "";
@@ -997,6 +998,7 @@ async function createNewConversation() {
   const targetFolderId = previousConversation?.folderId || "general";
   currentSessionId = createSessionId();
   localStorage.setItem(SESSION_STORAGE_KEY, currentSessionId);
+  applyProjectMode(targetFolderId);
   conversation.replaceChildren();
   promptInput.value = "";
   resizePromptInput();

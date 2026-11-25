@@ -1890,6 +1890,49 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
 - Non vérifié : comportement réel du modèle vocal (appel effectif de l'outil, phrase
   prononcée mot pour mot), test matériel au micro.
 
+## 25/11/2026 — Interface V3, étape 4 : atelier DEV, mode par projet, en-tête du Chat allégé
+
+- **Atelier DEV** : en mode DEV, l'aperçu (en haut) et le terminal (en bas) forment une
+  colonne à droite du chat, comme dans Claude ou Codex.
+  - La poignée verticale existante de l'aperçu sépare maintenant le chat de toute la colonne.
+  - Le champ de saisie se recentre sur la colonne du chat.
+  - Trois boutons dans la barre du haut, à gauche de DA/DEV : Terminal, Aperçu,
+    Modifications (la vue Git du terminal, dont le bouton « Git » est masqué dans l'atelier).
+  - Masquer un panneau ne ferme rien : la session du terminal continue, la page de l'aperçu
+    reste chargée (seule la vue native est cachée).
+  - Réduire et agrandir le terminal restent dans la colonne. Agrandi, il prend toute la
+    colonne et l'aperçu est caché, comme avant.
+  - En-tête du terminal compact dans l'atelier : actions sur une ligne, défilables si la
+    colonne est étroite.
+  - Sous 640 px de chat, l'ancienne disposition empilée reste en place (règles conservées).
+  - Code : `public/app/12-dev-panes-layout.js` (nouveau morceau, ajouté à `APP_PARTS`),
+    retouches ciblées de `02-dev-preview.js` et `03-dev-terminal-layout-problems.js`
+    (hauteur maximale du terminal dans la colonne).
+- **Retenu par projet Focus** (`localStorage`, préférence d'affichage seulement) :
+  - largeur de la colonne : `noonDevPreviewWidth:<focusId>`, l'ancienne largeur globale
+    servant de repli ;
+  - panneaux masqués : `noonDevPanes:<focusId>`.
+- **Mode DA/DEV par projet** : le mode choisi dans une conversation est retenu pour son
+  projet (dossier de conversations, « Général » compris) et réappliqué quand on ouvre une
+  conversation de ce projet ou qu'on en crée une. Sans mode retenu, le mode courant est
+  conservé. Stockage : `noonProjectModes`, côté interface uniquement.
+- **En-tête du Chat allégé** : « Conversation · Mode DA · Nouvelle session » disparaît
+  (doublon de la barre du haut et de « Nouveau chat »). La barre affiche le titre de la
+  conversation, ou « Nouveau chat ».
+- Tests :
+  - nouveau `test/dev-workspace-split-ui.test.js` (7 cas, dont colonne, panneaux masqués,
+    fenêtre étroite, mémoire par projet, mode par projet, titre) ;
+  - `test/sidebar-ui.test.js` adapté : il imposait le titre fixe « Chat », remplacé
+    volontairement par le titre de la conversation.
+  - Suite complète 3 014/3 014 ; `eval:critical` 54/54, `eval:smoke` 99/99.
+- Vérifié dans l'aperçu (faux serveur, Focus fictif) : 1440×900 et 1000×800, les
+  combinaisons de panneaux, réduire, agrandir, la poignée, le mode par projet.
+- Non vérifié :
+  - l'aperçu natif d'Electron positionné dans la colonne (ses bornes suivent la zone
+    d'affichage, comme avant) ;
+  - la vue Modifications avec une vraie session de terminal ;
+  - l'application packagée.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

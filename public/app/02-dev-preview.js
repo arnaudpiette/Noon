@@ -94,6 +94,18 @@ const DEV_PREVIEW_SPLITTER_WIDTH = 12;
 const DEV_PREVIEW_GAP = 12;
 const DEV_WORKSPACE_COMPOSER_GAP = 40;
 
+// Interface V3, étape 4 : atelier DEV en colonne à droite du chat (aperçu en haut, terminal en bas).
+const DEV_SIDE_TOP = 60;
+const DEV_SIDE_INSET = 14;
+const DEV_SIDE_GAP = 10;
+const DEV_SIDE_PREVIEW_MIN_HEIGHT = 200;
+
+// Panneaux masqués par l'utilisateur (boutons de la barre du haut), retenus par projet Focus.
+const devPaneVisibility = {
+  previewHidden: false,
+  terminalHidden: false,
+};
+
 let devPreviewWidth = null;
 
 const devPreviewResizeState = {
@@ -187,8 +199,18 @@ function clampDevPreviewWidth(value) {
   );
 }
 
+// Largeur de l'atelier retenue pour chaque projet Focus ; l'ancienne largeur globale sert de repli.
+function devPreviewWidthStorageKey() {
+  return currentFocusId
+    ? `${DEV_PREVIEW_WIDTH_STORAGE_KEY}:${currentFocusId}`
+    : DEV_PREVIEW_WIDTH_STORAGE_KEY;
+}
+
 function loadDevPreviewWidth() {
   return clampDevPreviewWidth(
+    localStorage.getItem(
+      devPreviewWidthStorageKey()
+    ) ||
     localStorage.getItem(
       DEV_PREVIEW_WIDTH_STORAGE_KEY
     ) ||
@@ -207,6 +229,12 @@ function applyDevPreviewWidth(
 
   chatView.style.setProperty(
     "--dev-preview-width",
+    `${devPreviewWidth}px`
+  );
+
+  // Le champ de saisie (hors de la vue Chat) se recentre sur la colonne du chat.
+  chatView.parentElement?.style.setProperty(
+    "--dev-side-width",
     `${devPreviewWidth}px`
   );
 
@@ -236,7 +264,7 @@ function applyDevPreviewWidth(
 
   if (persist) {
     localStorage.setItem(
-      DEV_PREVIEW_WIDTH_STORAGE_KEY,
+      devPreviewWidthStorageKey(),
       String(devPreviewWidth)
     );
   }
@@ -267,13 +295,21 @@ function currentDevPreviewContextKey() {
 }
 
 function syncDevPreviewResizeHandle() {
+  // En atelier, la poignée sépare le chat de toute la colonne DEV, aperçu ouvert ou non.
   const enabled =
     currentMode === "DEV" &&
-    Boolean(
-      currentFocusId &&
-      currentFocusPath
-    ) &&
-    !devPreviewPanel.hidden;
+    (
+      chatView.classList.contains(
+        "dev-split"
+      ) ||
+      (
+        Boolean(
+          currentFocusId &&
+          currentFocusPath
+        ) &&
+        !devPreviewPanel.hidden
+      )
+    );
 
   devPreviewResizeHandle.hidden =
     !enabled;
@@ -702,7 +738,8 @@ async function syncDevPreviewPanel() {
     nextContextKey;
 
   const active =
-    Boolean(nextContextKey);
+    Boolean(nextContextKey) &&
+    !devPaneVisibility.previewHidden;
 
   devPreviewPanel.hidden =
     !active;
@@ -715,6 +752,8 @@ async function syncDevPreviewPanel() {
   syncDevPreviewResizeHandle();
 
   if (!active) {
+    // Aperçu masqué par l'utilisateur : la page reste chargée mais la vue native se cache.
+    await syncDevPreviewNativeVisibility();
     return;
   }
 
@@ -1166,6 +1205,11 @@ window.addEventListener(
   "noon-context-change",
   () => {
     syncDevWorkspaceBottomInset();
+    applyDevPreviewWidth(
+      loadDevPreviewWidth(),
+      false
+    );
+    loadDevPaneVisibility();
     void syncDevPreviewPanel();
   }
 );

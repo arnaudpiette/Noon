@@ -34,6 +34,9 @@
     <symbol id="noon-i-pencil" viewBox="0 0 24 24"><path d="M15.6 4.9a2 2 0 0 1 2.8 2.8L8.5 17.6 4.5 19.5l1.9-4z"/><path d="m14 6.5 3.5 3.5"/></symbol>
     <symbol id="noon-i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V5a1.5 1.5 0 0 1 1.5-1.5h2A1.5 1.5 0 0 1 14.5 5v2M6.5 7l.8 11.2a2 2 0 0 0 2 1.8h5.4a2 2 0 0 0 2-1.8L17.5 7"/></symbol>
     <symbol id="noon-i-chevron-right" viewBox="0 0 24 24"><path d="m10 7 5 5-5 5"/></symbol>
+    <symbol id="noon-i-terminal" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="m7.5 9.5 2.5 2.5-2.5 2.5M12.5 15h4"/></symbol>
+    <symbol id="noon-i-browser" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M3.5 9h17"/><path d="M6.5 6.8h.01M8.8 6.8h.01"/></symbol>
+    <symbol id="noon-i-diff" viewBox="0 0 24 24"><circle cx="7" cy="6" r="2"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="8" r="2"/><path d="M7 8v8M17 10c0 3.5-3 4.5-8.2 6.6"/></symbol>
     <symbol id="noon-i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.3 2.4 3.4 5.2 3.4 8.5s-1.1 6.1-3.4 8.5c-2.3-2.4-3.4-5.2-3.4-8.5s1.1-6.1 3.4-8.5z"/></symbol>
   </svg>
   <main class="app">
@@ -216,6 +219,11 @@
 
         <div class="top-title"><span id="topBarTitle">Assistant vocal</span></div>
         <div class="top-tools-right">
+          <div id="devPaneToggles" class="dev-pane-toggles" role="group" aria-label="Panneaux DEV" hidden>
+            <button id="devPaneToggleTerminal" class="dev-pane-toggle" type="button" aria-pressed="true" aria-controls="devTerminalPanel" aria-label="Terminal" title="Terminal"><svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-terminal"></use></svg></button>
+            <button id="devPaneTogglePreview" class="dev-pane-toggle" type="button" aria-pressed="true" aria-controls="devPreviewPanel" aria-label="Aperçu" title="Aperçu"><svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-browser"></use></svg></button>
+            <button id="devPaneToggleChanges" class="dev-pane-toggle" type="button" aria-pressed="false" aria-controls="devSourceControlPanel" aria-label="Modifications" title="Modifications"><svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-diff"></use></svg></button>
+          </div>
           <div class="top-mode" role="group" aria-label="Mode de travail">
         <div class="mode-switch">
           <button class="mode-btn active" data-mode="DA" type="button">DA</button>

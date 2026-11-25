@@ -22,6 +22,16 @@ function defaultDevTerminalHeight() {
 }
 
 function maxDevTerminalHeight() {
+  // Atelier : le terminal partage la colonne de droite avec l'aperçu, qui garde une hauteur minimale.
+  if (chatView.classList.contains("dev-split")) {
+    const reserved = DEV_SIDE_TOP + DEV_SIDE_INSET +
+      (devPreviewPanel.hidden ? 0 : DEV_SIDE_PREVIEW_MIN_HEIGHT + DEV_SIDE_GAP);
+    return Math.max(
+      DEV_TERMINAL_MIN_HEIGHT,
+      Math.floor(chatView.getBoundingClientRect().height - reserved)
+    );
+  }
+
   const composerRect =
     devWorkspaceComposer
       ?.getBoundingClientRect?.();

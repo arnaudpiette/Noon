@@ -2900,3 +2900,60 @@ body.dev-preview-resizing *{
 .conversation-context-menu .conversation-context-menu__separator{display:block;height:1px;margin:var(--ui-s1) 6px;background:var(--ui-line)}
 .conversation-context-menu .conversation-context-menu__item.is-destructive,.conversation-context-menu .conversation-context-menu__item.is-destructive .conversation-context-menu__icon{color:#c4361f}
 .conversation-context-menu .conversation-context-menu__item.is-destructive:hover{background:rgba(196,54,31,.07)}
+
+/* ==========================================================================
+   Interface V3, étape 4 — en-tête du Chat allégé, atelier DEV à droite du chat
+   La vue Chat n'a plus d'en-tête propre : le titre de la conversation est dans la barre du haut.
+   En DEV (#chatView.dev-split), aperçu et terminal forment une colonne de largeur
+   --dev-preview-width, séparée du chat par la poignée verticale. Sélecteurs à identifiant :
+   ils priment sur les dispositions DEV précédentes, conservées pour les fenêtres étroites.
+   ========================================================================== */
+#chatView>.chat-header{display:none}
+#chatView{padding-top:64px}
+#chatView .conversation{height:calc(100vh - 168px)}
+
+.dev-pane-toggles{display:flex;align-items:center;gap:2px;pointer-events:auto}
+.dev-pane-toggles[hidden]{display:none}
+.dev-pane-toggle{display:grid;width:var(--ui-control);height:var(--ui-control);place-items:center;padding:0;border:0;border-radius:var(--ui-radius);background:transparent;color:var(--ui-text-3);cursor:pointer;transition:background-color .12s var(--ui-ease),color .12s var(--ui-ease)}
+.dev-pane-toggle:hover{background:var(--ui-hover);color:var(--ui-ink)}
+.dev-pane-toggle[aria-pressed="true"]{background:var(--ui-press);color:var(--ui-ink)}
+.dev-pane-toggle:disabled{opacity:.4;cursor:default}
+.dev-pane-toggle:disabled:hover{background:transparent;color:var(--ui-text-3)}
+.dev-pane-toggle:focus-visible{outline:none;box-shadow:var(--ui-focus)}
+
+/* Terminal masqué par l'utilisateur : la session continue, seule la place est rendue au chat. */
+#chatView.dev-terminal-user-hidden .dev-terminal-panel{display:none!important}
+#chatView.dev-terminal-user-hidden:not(.dev-split){padding-bottom:190px!important}
+#chatView.dev-terminal-user-hidden:not(.dev-split) .conversation{height:calc(100vh - 168px)!important}
+
+/* Colonne du chat */
+#chatView.dev-split{padding-bottom:110px!important}
+#chatView.dev-split .conversation{width:calc(100% - var(--dev-preview-width,46%) - 12px)!important;max-width:none!important;height:calc(100vh - 168px)!important;margin-right:auto!important}
+.workspace.dev-split .composer{left:calc((100% - var(--dev-side-width,46%) - 26px) / 2);width:min(696px,calc(100% - var(--dev-side-width,46%) - 74px))}
+
+/* Poignée verticale entre le chat et l'atelier */
+#chatView.dev-split .dev-preview-resize-handle{position:absolute;z-index:18;top:60px;right:calc(14px + var(--dev-preview-width,46%));bottom:14px;display:block;width:12px;cursor:ew-resize;touch-action:none}
+#chatView.dev-split .dev-preview-resize-handle[hidden]{display:none}
+
+/* Aperçu : haut de la colonne, ou toute la colonne si le terminal est masqué */
+#chatView.dev-split .dev-preview-panel{top:60px!important;right:14px!important;bottom:14px!important;left:auto!important;width:var(--dev-preview-width,46%)!important;min-width:0!important;border-color:var(--ui-line-strong);border-radius:12px;box-shadow:0 1px 2px rgba(20,20,19,.05)}
+#chatView.dev-split.dev-split-terminal .dev-preview-panel{bottom:calc(14px + var(--dev-terminal-height,330px) + 10px)!important}
+#chatView.dev-split.dev-split-terminal.dev-terminal-collapsed .dev-preview-panel{bottom:calc(14px + 55px + 10px)!important}
+#chatView.dev-split .dev-preview-header .label{display:none}
+
+/* Terminal : bas de la colonne, ou toute la colonne sans aperçu ou une fois agrandi */
+#chatView.dev-split .dev-terminal-panel{top:auto!important;right:14px!important;bottom:14px!important;left:auto!important;width:var(--dev-preview-width,46%)!important;max-width:none!important;height:var(--dev-terminal-height,330px)!important;border-radius:12px}
+#chatView.dev-split:not(.dev-split-preview) .dev-terminal-panel:not(.is-collapsed),#chatView.dev-split .dev-terminal-panel.is-maximized{top:60px!important;height:auto!important}
+#chatView.dev-split .dev-terminal-panel.is-collapsed{height:55px!important}
+#chatView.dev-split .dev-terminal-heading .label,#chatView.dev-split #devSourceControlToggle{display:none!important}
+/* En-tête du terminal compact dans l'atelier : une seule ligne d'actions plus discrètes. */
+#chatView.dev-split .dev-terminal-header{gap:8px;padding-right:10px;padding-left:12px}
+#chatView.dev-split .dev-terminal-heading{display:none}
+#chatView.dev-split .dev-terminal-actions{flex-wrap:nowrap;gap:6px;min-width:0;margin-left:auto}
+#chatView.dev-split .dev-terminal-action-group{gap:3px}
+#chatView.dev-split{--dev-terminal-control-height:26px;--dev-terminal-control-padding-x:8px;--dev-terminal-control-font-size:11px}
+#chatView.dev-split .dev-terminal-actions button{height:26px!important;min-height:26px!important;padding:0 8px!important;font-size:11px!important}
+#chatView.dev-split .dev-terminal-actions #devTerminalAdd,#chatView.dev-split .dev-terminal-actions #devTerminalCollapse,#chatView.dev-split .dev-terminal-actions #devTerminalMaximize{width:26px;padding:0!important}
+#chatView.dev-split .dev-terminal-profile-control select{height:26px!important;min-height:26px!important;font-size:11px!important}
+#chatView.dev-split .dev-terminal-actions{overflow-x:auto;scrollbar-width:none}
+#chatView.dev-split .dev-terminal-actions::-webkit-scrollbar{display:none}

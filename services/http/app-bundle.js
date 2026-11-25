@@ -18,6 +18,7 @@ const APP_PARTS = Object.freeze([
   "09-conversations-projects.js",
   "10-views-brief-memory.js",
   "11-recording-integrations.js",
+  "12-dev-panes-layout.js",
 ]);
 
 function appPartsDirectory(publicDirectory) { return path.join(publicDirectory, "app"); }

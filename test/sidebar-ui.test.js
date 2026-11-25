@@ -30,7 +30,8 @@ test("les vues et le mode quittent la barre du haut ou la colonne selon leur rô
   assert.match(topBar, /id="topBarTitle"/);
   assert.match(topBar, /<div class="top-mode"[\s\S]*data-mode="DA"[\s\S]*data-mode="DEV"/);
   assert.doesNotMatch(sidebar, /class="mode-btn/);
-  assert.match(app, /topBarTitle\.textContent = \{ core: "Assistant vocal", chat: "Chat", brief: "Brief du jour", personal: "Personnel" \}\[currentView\]/);
+  // Étape 4 : dans le Chat, la barre affiche le titre de la conversation au lieu de « Chat ».
+  assert.match(app, /function syncTopBarTitle\(\)[\s\S]*currentView === "chat"\s*\? conversationTitle \|\| "Nouveau chat"\s*: \{ core: "Assistant vocal", brief: "Brief du jour", personal: "Personnel" \}\[currentView\]/);
 });
 
 test("Rechercher filtre localement les chats récents", () => {
