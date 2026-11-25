@@ -63,8 +63,9 @@ function renderConversationProjects(conversations) {
     projectDetails.open = true;
     const summary = document.createElement("summary");
     const folderIcon = document.createElement("span");
-    folderIcon.className = "sidebar-line-icon sidebar-line-icon--folder";
+    folderIcon.className = "conversation-project__icon";
     folderIcon.setAttribute("aria-hidden", "true");
+    folderIcon.append(noonIcon("folder"));
     const name = document.createElement("span");
     name.className = "conversation-project__name";
     name.textContent = project.title;
@@ -151,6 +152,10 @@ function switchView(viewName) {
   views.forEach((view) => {
     view.classList.toggle("active", view.id === `${currentView}View`);
   });
+
+  // Interface V3, étape 3 : la barre du haut affiche le titre de la vue en cours.
+  const topBarTitle = document.getElementById("topBarTitle");
+  if (topBarTitle) topBarTitle.textContent = { core: "Assistant vocal", chat: "Chat", brief: "Brief du jour", personal: "Personnel" }[currentView];
 
   document.body.dataset.interactionMode = currentView;
 

@@ -22,6 +22,18 @@
     <symbol id="noon-i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V5.5M6.5 11 12 5.5l5.5 5.5"/></symbol>
     <symbol id="noon-i-mic" viewBox="0 0 24 24"><rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M6 11.5v.5a6 6 0 0 0 12 0v-.5M12 18v2.5"/></symbol>
     <symbol id="noon-i-paperclip" viewBox="0 0 24 24"><path d="M19.5 11.5 12 19a4.6 4.6 0 0 1-6.5-6.5l7.9-7.9a3.1 3.1 0 0 1 4.4 4.4l-7.9 7.9a1.5 1.5 0 0 1-2.2-2.2l7.3-7.3"/></symbol>
+    <symbol id="noon-i-compose" viewBox="0 0 24 24"><path d="M12 4.5H6.5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V12"/><path d="M17.6 3.9a1.9 1.9 0 0 1 2.6 2.6L12.5 14.2 9.5 15l.8-3z"/></symbol>
+    <symbol id="noon-i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></symbol>
+    <symbol id="noon-i-orb" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5"/></symbol>
+    <symbol id="noon-i-chat" viewBox="0 0 24 24"><path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v8.5A1.5 1.5 0 0 1 19 17h-8l-4.5 3.5V17H5a1.5 1.5 0 0 1-1.5-1.5V7A1.5 1.5 0 0 1 5 5.5z"/></symbol>
+    <symbol id="noon-i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4"/></symbol>
+    <symbol id="noon-i-user" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></symbol>
+    <symbol id="noon-i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h3.8l2 2h7.2a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></symbol>
+    <symbol id="noon-i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r=".8"/></symbol>
+    <symbol id="noon-i-chevron-down" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></symbol>
+    <symbol id="noon-i-pencil" viewBox="0 0 24 24"><path d="M15.6 4.9a2 2 0 0 1 2.8 2.8L8.5 17.6 4.5 19.5l1.9-4z"/><path d="m14 6.5 3.5 3.5"/></symbol>
+    <symbol id="noon-i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V5a1.5 1.5 0 0 1 1.5-1.5h2A1.5 1.5 0 0 1 14.5 5v2M6.5 7l.8 11.2a2 2 0 0 0 2 1.8h5.4a2 2 0 0 0 2-1.8L17.5 7"/></symbol>
+    <symbol id="noon-i-chevron-right" viewBox="0 0 24 24"><path d="m10 7 5 5-5 5"/></symbol>
     <symbol id="noon-i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.3 2.4 3.4 5.2 3.4 8.5s-1.1 6.1-3.4 8.5c-2.3-2.4-3.4-5.2-3.4-8.5s1.1-6.1 3.4-8.5z"/></symbol>
   </svg>
   <main class="app">
@@ -31,21 +43,23 @@
         <p class="brand-name">NOO<span class="brand-name__mirrored-letter">N</span></p>
       </div>
 
-      <button id="newConversationButton" class="new-conversation-button" type="button">
-        <span class="sidebar-line-icon sidebar-line-icon--compose" aria-hidden="true"></span>
-        Nouveau chat
+      <nav class="sidebar-nav" aria-label="Navigation principale">
+        <button id="newConversationButton" class="sidebar-nav__item new-conversation-button" type="button">
+        <svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-compose"></use></svg><span>Nouveau chat</span>
       </button>
+        <button id="sidebarSearchButton" class="sidebar-nav__item" type="button" aria-controls="conversationSearchInput"><svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-search"></use></svg><span>Rechercher</span></button>
+        <button class="sidebar-nav__item view-btn active" data-view="core" type="button" aria-pressed="true"><svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-orb"></use></svg><span>Assistant vocal</span></button>
+        <button class="sidebar-nav__item view-btn" data-view="chat" type="button" aria-pressed="false"><svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-chat"></use></svg><span>Chat</span></button>
+        <button class="sidebar-nav__item view-btn" data-view="brief" type="button" aria-pressed="false"><svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-sun"></use></svg><span>Brief du jour</span></button>
+        <button class="sidebar-nav__item view-btn" data-view="personal" type="button" aria-pressed="false"><svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-user"></use></svg><span>Personnel</span></button>
+        <button id="liveVoiceButton" class="sidebar-nav__item live-voice-button" type="button"><svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-mic"></use></svg><span id="liveVoiceButtonLabel">Conversation Live</span><span class="sidebar-nav__meta"><span id="liveVoiceDot" class="live-voice-dot" data-state="disconnected" aria-hidden="true"></span><span id="liveVoiceCost">0,00 $ / 11 $</span></span></button>
+        <p class="live-voice-meta sr-only" aria-labelledby="liveVoiceTitle"><span id="liveVoiceTitle">Conversation Live</span> <span id="liveVoiceStatus" class="live-voice-status" role="status" aria-live="polite">Arbor préférée · voix API temporaire prête</span></p>
+        <!-- Langue et accent restent pilotables oralement. -->
+        <input id="liveVoiceLanguage" type="hidden" value="auto">
+        <input id="liveVoiceAccent" type="hidden" value="none">
+        <audio id="liveVoiceAudio" autoplay hidden></audio>
+      </nav>
 
-      <details id="conversationHistory" class="conversation-history">
-        <summary>
-          <span>Chats</span>
-          <span id="conversationHistoryCount" class="conversation-history__count">0 conversation</span>
-          <span class="conversation-history__chevron" aria-hidden="true">⌄</span>
-        </summary>
-        <div id="conversationHistoryList" class="conversation-history__list">
-          <span class="conversation-history__empty">Aucune conversation.</span>
-        </div>
-      </details>
       <details id="conversationProjects" class="conversation-projects" open>
         <summary>
           <span>Projets</span>
@@ -56,28 +70,20 @@
           <span class="conversation-history__empty">Aucun projet.</span>
         </div>
       </details>
-      <section class="live-voice-panel" aria-labelledby="liveVoiceTitle">
-        <div class="live-voice-heading">
-          <div>
-            <span class="label">Voix temps réel</span>
-            <strong id="liveVoiceTitle">Conversation Live</strong>
-          </div>
+      <details id="conversationHistory" class="conversation-history" open>
+        <summary>
+          <span>Récents</span>
+          <span id="conversationHistoryCount" class="conversation-history__count">0 conversation</span>
+          <span class="conversation-history__chevron" aria-hidden="true">⌄</span>
+        </summary>
+        <label class="conversation-search" hidden><span class="sr-only">Rechercher dans les chats</span><svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-search"></use></svg><input id="conversationSearchInput" type="search" placeholder="Rechercher dans les chats" autocomplete="off"></label>
+        <div id="conversationHistoryList" class="conversation-history__list">
+          <span class="conversation-history__empty">Aucune conversation.</span>
         </div>
-        <button id="liveVoiceButton" class="live-voice-button" type="button">
-          <span id="liveVoiceButtonLabel">Conversation Live</span>
-        </button>
-        <div class="live-voice-indicator-row">
-          <span id="liveVoiceDot" class="live-voice-dot" data-state="disconnected" aria-hidden="true"></span>
-          <span id="liveVoiceCost">0,00 $ / 11 $</span>
-        </div>
-        <p class="live-voice-meta">
-          <span id="liveVoiceStatus" class="live-voice-status" role="status" aria-live="polite">Arbor préférée · voix API temporaire prête</span>
-        </p>
-        <!-- Langue et accent restent pilotables oralement. -->
-        <input id="liveVoiceLanguage" type="hidden" value="auto">
-        <input id="liveVoiceAccent" type="hidden" value="none">
-        <audio id="liveVoiceAudio" autoplay hidden></audio>
-      </section>
+      </details>
+
+
+
 
       <section class="side-section operations-panel">
         <button class="operations-toggle" type="button" data-panel="integrationsPanel" aria-expanded="false">Intégrations</button>
@@ -96,38 +102,7 @@
         </div>
       </section>
 
-      <section class="side-section">
-        <span class="label">Mode</span>
-        <div class="mode-switch">
-          <button class="mode-btn active" data-mode="DA" type="button">DA</button>
-          <button class="mode-btn" data-mode="DEV" type="button">DEV</button>
-        </div>
-      </section>
 
-      <section class="side-section focus-panel">
-        <span id="focusCatalogStatus" class="label">Focus</span>
-
-        <button
-          id="focusToggle"
-          class="focus-toggle"
-          type="button"
-          aria-expanded="false"
-          aria-controls="focusMenu"
-        >
-          <strong id="focusProject">Aucun Focus</strong>
-          <span class="focus-chevron" aria-hidden="true">⌄</span>
-        </button>
-
-        <div id="focusMenu" class="focus-menu" hidden>
-          <div id="focusList" class="focus-list">
-            <span class="focus-loading">Chargement…</span>
-          </div>
-          <button id="refreshProjectsButton" class="refresh-projects-button" type="button">
-            Actualiser les projets
-          </button>
-        </div>
-        <span id="focusAvailability" class="focus-availability">Chargement…</span>
-      </section>
 
       <section id="projectJournalPanel" class="project-journal-panel" hidden>
         <span class="label">Projet actif</span>
@@ -149,13 +124,6 @@
         </details>
       </section>
 
-      <section class="side-section">
-        <span class="label">Budget API</span>
-        <strong id="budgetValue" class="budget-value">Chargement…</strong>
-        <div class="budget-track" aria-hidden="true">
-          <span id="budgetProgress"></span>
-        </div>
-      </section>
 
       <section class="side-section budget-mode-panel">
         <span class="label">Mode budget</span>
@@ -185,6 +153,40 @@
         <span>100% opérationnel</span>
         <div class="system-line"></div>
       </div>
+      <footer class="sidebar-footer">
+        <section class="side-section focus-panel">
+        <span id="focusCatalogStatus" class="label">Focus</span>
+
+        <button
+          id="focusToggle"
+          class="focus-toggle"
+          type="button"
+          aria-expanded="false"
+          aria-controls="focusMenu"
+        >
+          <svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-target"></use></svg>
+          <strong id="focusProject">Aucun Focus</strong>
+          <span class="focus-chevron" aria-hidden="true"><svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-chevron-down"></use></svg></span>
+        </button>
+
+        <div id="focusMenu" class="focus-menu" hidden>
+          <div id="focusList" class="focus-list">
+            <span class="focus-loading">Chargement…</span>
+          </div>
+          <button id="refreshProjectsButton" class="refresh-projects-button" type="button">
+            Actualiser les projets
+          </button>
+        </div>
+        <span id="focusAvailability" class="focus-availability">Chargement…</span>
+      </section>
+        <section class="side-section">
+        <span class="label">Budget API</span>
+        <strong id="budgetValue" class="budget-value">Chargement…</strong>
+        <div class="budget-track" aria-hidden="true">
+          <span id="budgetProgress"></span>
+        </div>
+      </section>
+      </footer>
     </aside>
 
     <!-- Rail persistant lorsque la navigation complète est repliée. -->
@@ -193,13 +195,13 @@
         <span aria-hidden="true">N</span>
       </button>
       <button type="button" data-rail-action="new" aria-label="Nouveau chat" title="Nouveau chat">
-        <span class="sidebar-line-icon sidebar-line-icon--compose" aria-hidden="true"></span>
+        <svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-compose"></use></svg>
       </button>
       <button type="button" data-rail-action="projects" aria-label="Afficher les projets" title="Projets">
-        <span class="sidebar-line-icon sidebar-line-icon--folder" aria-hidden="true"></span>
+        <svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-folder"></use></svg>
       </button>
       <button type="button" data-rail-action="chats" aria-label="Afficher les chats" title="Chats">
-        <span class="sidebar-line-icon sidebar-line-icon--chat" aria-hidden="true"></span>
+        <svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-chat"></use></svg>
       </button>
     </nav>
 
@@ -211,18 +213,15 @@
     <!-- Espace principal : visualisation de Noon, conversation et composeur. -->
     <section class="workspace">
       <header class="top-tools">
-        <div class="view-switch" aria-label="Choisir le mode d’interaction">
-          <button class="view-btn active" data-view="core" type="button" aria-pressed="true">
-            Assistant vocal
-          </button>
-          <button class="view-btn" data-view="chat" type="button" aria-pressed="false">
-            Chat
-          </button>
-          <button class="view-btn" data-view="brief" type="button" aria-pressed="false">Brief Noon</button>
-          <button class="view-btn" data-view="personal" type="button" aria-pressed="false">Personnel</button>
-        </div>
 
+        <div class="top-title"><span id="topBarTitle">Assistant vocal</span></div>
         <div class="top-tools-right">
+          <div class="top-mode" role="group" aria-label="Mode de travail">
+        <div class="mode-switch">
+          <button class="mode-btn active" data-mode="DA" type="button">DA</button>
+          <button class="mode-btn" data-mode="DEV" type="button">DEV</button>
+        </div>
+      </div>
           <div id="connectionStatus" class="connection-status" data-state="checking" role="status" aria-live="polite" hidden>
             <span class="connection-status__dot" aria-hidden="true"></span>
             <span id="connectionStatusText">Vérification…</span>

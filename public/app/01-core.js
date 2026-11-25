@@ -319,6 +319,18 @@ const sidebarToggle = document.getElementById("sidebarToggle");
 const sidebarBackdrop = document.getElementById("sidebarBackdrop");
 const collapsedSidebarRail = document.getElementById("collapsedSidebarRail");
 const settingsButton = document.getElementById("settingsButton");
+
+// Interface V3 : picto du jeu unique (symboles <symbol id="noon-i-…"> de index.html).
+function noonIcon(name) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "noon-icon");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  use.setAttribute("href", `#noon-i-${name}`);
+  svg.append(use);
+  return svg;
+}
 const systemStatusButton = document.getElementById("systemStatusButton");
 const wakeWordEnabledInput = document.getElementById("wakeWordEnabled");
 const wakeWordStatus = document.getElementById("wakeWordStatus");

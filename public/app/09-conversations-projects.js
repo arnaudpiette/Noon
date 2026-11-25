@@ -867,6 +867,10 @@ function restoreDisplayedConversation() {
   updateActivity("Conversation précédente restaurée.");
 }
 
+// Conversation dont l'historique est réellement affiché (null au démarrage : la session restaurée
+// n'est pas encore chargée).
+let conversationHistoryLoadedFor = null;
+
 async function loadConversationHistory() {
   const params = new URLSearchParams({
     sessionId: currentSessionId,
@@ -902,6 +906,7 @@ async function loadConversationHistory() {
 
     conversation.replaceChildren();
     localStorage.removeItem(conversationStorageKey());
+    conversationHistoryLoadedFor = currentSessionId;
 
     if (data.history.length === 0) {
       addMessage(
@@ -963,7 +968,18 @@ let conversationIndexNavigationSerial = 0;
 
 async function switchConversation(sessionId) {
   conversationIndexNavigationSerial += 1;
-  if (requestInProgress || sessionId === currentSessionId) return;
+  // Bug du premier clic : au démarrage, la dernière conversation est déjà « courante » mais la
+  // vue affichée est l’Assistant vocal. Cliquer dessus ouvre maintenant le Chat au lieu de rien.
+  if (sessionId === currentSessionId) {
+    if (!requestInProgress && conversationHistoryLoadedFor !== sessionId) await loadConversationHistory();
+    switchView("chat");
+    promptInput.focus();
+    return;
+  }
+  if (requestInProgress) {
+    updateActivity("Attends la fin de la réponse avant de changer de conversation.");
+    return;
+  }
   currentSessionId = sessionId;
   localStorage.setItem(SESSION_STORAGE_KEY, currentSessionId);
   lastFailedQuestion = null;
@@ -1233,13 +1249,14 @@ function openConversationContextMenu(anchor, conversationItem) {
     icon.className = "conversation-context-menu__icon";
     icon.setAttribute("aria-hidden", "true");
     icon.classList.add(`conversation-context-menu__icon--${action.icon}`);
+    icon.append(noonIcon({ share: "share", rename: "pencil", folder: "folder", trash: "trash" }[action.icon]));
     const label = document.createElement("span");
     label.textContent = action.label;
     button.append(icon, label);
     if (action.id === "move") {
       const chevron = document.createElement("span");
       chevron.className = "conversation-context-menu__chevron";
-      chevron.textContent = "›";
+      chevron.append(noonIcon("chevron-right"));
       button.append(chevron);
     }
 
@@ -1351,5 +1368,50 @@ function renderConversationIndex(conversations = []) {
     conversationHistoryList.append(item);
 
   }
+  applyConversationSearch();
 }
+
+// Interface V3, étape 3 : « Rechercher » filtre localement les chats récents par titre.
+const conversationSearchInput = document.getElementById("conversationSearchInput");
+function normalizeSearchText(value) { return String(value || "").toLocaleLowerCase("fr").normalize("NFD").replace(/[\u0300-\u036f]/g, ""); }
+
+function applyConversationSearch() {
+  // Lu ici : la liste peut être rendue avant que ce morceau de script ait fini de s’exécuter.
+  const query = normalizeSearchText(document.getElementById("conversationSearchInput")?.value).trim();
+  let currentHeading = null;
+  let headingHasMatch = false;
+  const closeHeading = () => { if (currentHeading) currentHeading.hidden = !headingHasMatch; };
+  for (const node of conversationHistoryList.children) {
+    if (node.classList.contains("conversation-history__group")) {
+      closeHeading();
+      currentHeading = node;
+      headingHasMatch = false;
+    } else if (node.classList.contains("conversation-history__item")) {
+      const match = !query || normalizeSearchText(node.querySelector(".conversation-history__title")?.textContent).includes(query);
+      node.hidden = !match;
+      headingHasMatch ||= match;
+    }
+  }
+  closeHeading();
+}
+
+function openConversationSearch() {
+  const field = conversationSearchInput?.closest(".conversation-search");
+  if (!field) return;
+  setSidebar(true);
+  conversationHistory.open = true;
+  field.hidden = false;
+  conversationSearchInput.focus();
+  conversationSearchInput.select();
+}
+
+document.getElementById("sidebarSearchButton")?.addEventListener("click", openConversationSearch);
+conversationSearchInput?.addEventListener("input", applyConversationSearch);
+conversationSearchInput?.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  event.stopPropagation();
+  conversationSearchInput.value = "";
+  applyConversationSearch();
+  conversationSearchInput.closest(".conversation-search").hidden = true;
+});
 

@@ -1786,6 +1786,83 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
 - Non vérifié : l'application réelle avec les vraies sections du serveur, et l'application
   packagée.
 
+## 24/11/2026 — Interface V3, étape 3 : colonne de gauche simplifiée
+
+- Nouvelle colonne, de 268 px au lieu de 300 :
+  - le logo NOON ;
+  - la navigation : Nouveau chat, Rechercher, Assistant vocal, Chat, Brief du jour,
+    Personnel, Conversation Live ;
+  - les Projets, puis les Récents (ancien « Chats »), ouverts par défaut ;
+  - un pied compact : Focus et budget API.
+- Ce qui a bougé, identifiants et classes conservés (le JavaScript est relié par
+  `.view-btn`, `.mode-btn` et les identifiants) :
+  - les quatre vues quittent la barre du haut et deviennent des entrées de la colonne ;
+  - à leur place, la barre affiche le titre de la vue en cours (`#topBarTitle`) ;
+  - le mode DA/DEV quitte la colonne pour un sélecteur compact dans la barre du haut.
+    Le mode qui suit automatiquement le projet relève de l'étape 4 ;
+  - « Conversation Live » perd son gros bouton bleu et devient une entrée de navigation :
+    pastille neutre au repos, verte une fois connectée, orange en erreur ; coût affiché
+    seulement pendant une session ;
+  - le statut détaillé de Live reste annoncé aux lecteurs d'écran ;
+  - les titres de section en capitales espacées disparaissent ; Focus, chevrons et rail
+    replié reprennent le jeu de pictos de l'étape 1.
+- Nouveau : « Rechercher » ouvre un filtre local sur les Récents.
+  - Il filtre par titre, sans tenir compte des accents.
+  - Les groupes de dates vides sont masqués, et le filtre est réappliqué quand la liste se
+    rafraîchit.
+  - Échap vide et ferme le champ.
+  - Aucune requête n'est envoyée au serveur.
+- Blocs déjà masqués par le CSS (Intégrations, actions en attente, automatisations,
+  production, mode budget, activité, carte « Noon actif », journal de projet) : ils restent
+  dans le DOM, car le JavaScript les alimente. Leur contenu est accessible dans le Control
+  Center.
+- Tests :
+  - `conversation-projects-ui` adapté : il imposait « Projets après Chats », un ordre hérité
+    du point d'étape V2 et documenté nulle part. L'ordre est désormais Projets puis Récents,
+    comme dans Claude ;
+  - nouveau `test/sidebar-ui.test.js` (4 cas) : ordre de la navigation, vues et mode
+    déplacés, recherche, blocs masqués toujours présents.
+- Vérification :
+  - captures Electron de l'accueil et du Chat avec recherche ;
+  - comportements testés dans le navigateur intégré : vues et titre de la barre, mode
+    DA/DEV, recherche et Échap, colonne repliée et rail.
+- Validation :
+  - lint OK ; tests 3 000/3 000 ;
+  - évaluations : `eval:critical` 54/54, `eval:smoke` 99/99.
+- Non vérifié : l'application réelle avec de vrais chats et projets, et l'application
+  packagée. L'en-tête de la vue Chat (« Conversation · Mode DA · Nouvelle session ») fait
+  doublon avec la barre du haut : il sera revu à l'étape 4.
+
+## 24/11/2026 — Conversation qui ne s'ouvrait pas au premier clic ; rythme de la colonne
+
+- Bug signalé par Arnaud : une conversation ne s'ouvrait pas au premier clic ; il fallait
+  passer par une autre conversation.
+  - Cause : au lancement, Noon restaure l'identifiant de la dernière conversation
+    (`noonSessionId`) sans charger son historique, et affiche l'Assistant vocal.
+    `switchConversation` sortait sans rien faire pour la conversation déjà « courante ». Elle
+    sortait aussi en silence quand une réponse était en cours.
+  - Correctif (`public/app/09-conversations-projects.js`) : `conversationHistoryLoadedFor`
+    retient la conversation réellement affichée. Un clic sur la conversation courante charge
+    son historique si nécessaire, puis ouvre le Chat. Pendant une réponse, un message
+    l'indique au lieu d'ignorer le clic.
+  - Reproduit puis vérifié dans l'aperçu avec des conversations fictives : conversation
+    restaurée au premier clic, autre conversation, retour, conversation de projet.
+  - Non vérifié : un clic dans l'application réelle. Les lignes de la liste étant
+    déplaçables, un léger mouvement pendant le clic peut encore être pris pour un glisser :
+    à surveiller.
+- Rythme vertical unifié dans la colonne :
+  - lignes de 32 px pour les projets, les discussions et les menus, 34 px pour la
+    navigation principale ;
+  - titres de section de 28 px, 16 px entre deux sections ;
+  - discussions d'un projet alignées sur le nom du dossier ;
+  - « ⋮ » visible au survol seulement.
+- Menus « ⋮ » des conversations et des projets, sous-menu « Déplacer vers le projet »
+  compris : même surface, lignes de 32 px, texte en graisse normale, pictos du jeu unique
+  (`noonIcon()`, nouveaux symboles `pencil`, `trash`, `chevron-right`), rouge réservé à
+  « Supprimer ».
+- Tests : deux cas ajoutés à `test/sidebar-ui.test.js`. Suite complète 3 002/3 002 ;
+  `eval:critical` 54/54, `eval:smoke` 99/99.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

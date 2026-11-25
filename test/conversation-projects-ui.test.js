@@ -10,8 +10,9 @@ const html = fs.readFileSync(path.join(__dirname, "..", "public", "index.html"),
 const app = readAppSource();
 const css = fs.readFileSync(path.join(__dirname, "..", "public", "style.css"), "utf8");
 
-test("la section Projets suit Chats et permet une création accessible", () => {
-  assert.match(html, /id="conversationHistory"[\s\S]*id="conversationProjects"/);
+// Interface V3, étape 3 : comme dans Claude, les Projets précèdent les Récents (ancien « Chats »).
+test("la section Projets précède les Récents et permet une création accessible", () => {
+  assert.match(html, /id="conversationProjects"[\s\S]*id="conversationHistory"/);
   assert.match(html, /id="createConversationProject"[^>]*aria-label="Créer un projet"/);
   assert.match(app, /createConversationProjectButton\.addEventListener/);
 });
