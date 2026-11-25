@@ -1133,6 +1133,7 @@ const askAI = createAskAI({
   get listDirectory() { return listDirectory; },
   get localIntelligenceRuntime() { return localIntelligenceRuntime; },
   get localPermissionStore() { return localPermissionStore; },
+  get mcpPluginGuidance() { return () => mcpService.pluginGuidance?.() || ""; },
   get memoryEngine() { return memoryEngine; },
   get multiSourceSynthesisEngine() { return multiSourceSynthesisEngine; },
   get multimodalEngine() { return multimodalEngine; },

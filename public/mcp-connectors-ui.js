@@ -5,12 +5,15 @@
 // Phase 2 : outils d'écriture cochés par l'utilisateur ; chaque appel demande ensuite une
 // approbation exacte dans le chat (serveur, outil, arguments).
 // Phase 3 : serveur ajouté par URL (HTTPS, sans secret dans l'URL) ; outils différés signalés.
+// Phase 5 : plugins déclaratifs importés d'un fichier JSON local, relus avant installation.
+// Phase 6 : serveurs à jeton personnel (GitHub) : champ masqué, jamais relu.
 // Toutes les valeurs serveur sont rendues avec textContent : aucun nom de
 // serveur, d'outil ou d'erreur ne devient du HTML. Aucun jeton n'arrive ici :
 // le serveur ne renvoie que l'état et, pendant une connexion OAuth, l'URL
 // d'autorisation à ouvrir dans le navigateur.
 (function attachMcpConnectorsUi(global) {
   const BASE = "/api/mcp/servers";
+  const PLUGINS = "/api/mcp/plugins";
   const POLL_INTERVAL_MS = 2000;
   const POLL_MAX_ATTEMPTS = 150; // 5 minutes, puis arrêt explicite.
 
@@ -45,6 +48,18 @@
     MCP_SERVER_URL_SECRET: "L'adresse semble contenir un secret : retire-le, la connexion passera par l'autorisation du serveur.",
     MCP_CUSTOM_LIMIT: "Limite atteinte : 10 serveurs ajoutés par URL.",
     MCP_SERVER_DUPLICATE: "Ce serveur est déjà ajouté.",
+    MCP_TOKEN_INVALID: "Jeton invalide : colle le jeton complet, sans espace.",
+    MCP_TOKEN_REQUIRED: "Jeton d'accès requis pour ce serveur.",
+    MCP_TOKEN_REJECTED: "Jeton refusé par le serveur : il est peut-être expiré, révoqué ou trop limité.",
+    MCP_TOKEN_NOT_SUPPORTED: "Ce serveur n'utilise pas de jeton personnel.",
+    MCP_PLUGIN_INVALID: "Fichier de plugin invalide.",
+    MCP_PLUGIN_UNKNOWN_FIELD: "Le plugin contient un champ inconnu : refusé.",
+    MCP_PLUGIN_SCHEMA: "Format de plugin non reconnu (attendu : noon.plugin/1).",
+    MCP_PLUGIN_INSTRUCTIONS_TOO_LONG: "Consigne du plugin trop longue.",
+    MCP_PLUGIN_DUPLICATE: "Ce plugin est déjà installé : désinstalle-le d'abord pour le mettre à jour.",
+    MCP_PLUGIN_LIMIT: "Limite atteinte : 10 plugins.",
+    MCP_PLUGIN_UNKNOWN: "Plugin inconnu.",
+    MCP_PLUGIN_FILE_UNREADABLE: "Fichier illisible : choisis un fichier JSON de plugin Noon.",
   });
 
   const HIDDEN_REASONS = Object.freeze({
@@ -87,11 +102,15 @@
     return Object.freeze({
       list: () => request("GET", BASE),
       addCustom: (displayName, url) => request("POST", BASE, { displayName, url }),
+      listPlugins: () => request("GET", PLUGINS),
+      installPlugin: (manifest) => request("POST", PLUGINS, { manifest }),
+      uninstallPlugin: (id) => request("DELETE", `${PLUGINS}/${encodeURIComponent(id)}`),
       install: (id, options = {}) => request("POST", at(id, "install"), options),
       connect: (id) => request("POST", at(id, "connect")),
       disconnect: (id) => request("POST", at(id, "disconnect")),
       setReadOnlyTools: (id, tools) => request("PUT", at(id, "read-only-tools"), { tools }),
       setWriteTools: (id, tools) => request("PUT", at(id, "write-tools"), { tools }),
+      setToken: (id, token) => request("PUT", at(id, "token"), { token }),
       uninstall: (id) => request("DELETE", at(id)),
     });
   }
@@ -113,7 +132,8 @@
     let available = false;
     let busy = false;
     let notice = null;
-    let lastData = { catalog: [], servers: [] };
+    let lastData = { catalog: [], servers: [], plugins: [] };
+    let pluginReview = null; // manifeste lu depuis un fichier, en attente de relecture
     const drafts = new Map(); // serverId -> Set des outils cochés, non encore enregistrés
     const writeDrafts = new Map(); // serverId -> Set des outils d'écriture cochés, non encore enregistrés
     const projectRefs = new Map(); // catalogue -> identifiant de projet saisi
@@ -160,7 +180,9 @@
 
     async function refresh({ keepNotice = false } = {}) {
       const data = await api.list();
-      lastData = { catalog: Array.isArray(data.catalog) ? data.catalog : [], servers: Array.isArray(data.servers) ? data.servers : [] };
+      let plugins;
+      try { plugins = (await api.listPlugins()).plugins || []; } catch { plugins = []; }
+      lastData = { catalog: Array.isArray(data.catalog) ? data.catalog : [], servers: Array.isArray(data.servers) ? data.servers : [], plugins: Array.isArray(plugins) ? plugins : [] };
       if (!keepNotice) setNotice(null);
       render();
       return lastData;
@@ -307,6 +329,31 @@
       return box;
     }
 
+    // Jeton personnel : champ masqué, jamais pré-rempli ni relu ; vidé dès l'envoi.
+    function renderTokenField(server) {
+      const box = el("div", "mcp-connectors__token");
+      if (server.tokenHelp) box.append(el("p", "mcp-connectors__hint", server.tokenHelp));
+      const label = el("label", "mcp-connectors__project");
+      const input = el("input");
+      input.type = "password";
+      input.autocomplete = "off";
+      input.spellcheck = false;
+      input.disabled = busy;
+      label.append(el("span", "", server.status?.hasCredentials ? "Remplacer le jeton d'accès" : "Jeton d'accès personnel"), input);
+      const save = button("Enregistrer le jeton et connecter", () => {
+        const token = String(input.value || "").trim();
+        input.value = "";
+        return run(async () => { await api.setToken(server.id, token); }, { successNotice: `${server.displayName} connecté. Valide ensuite les outils à exposer.` });
+      });
+      const validate = () => { save.disabled = busy || String(input.value || "").trim().length < 20; };
+      input.addEventListener("input", validate);
+      validate();
+      const actions = el("div", "control-card__actions");
+      actions.append(save);
+      box.append(label, actions);
+      return box;
+    }
+
     function renderServer(server) {
       const card = el("article", "control-card mcp-connectors__server");
       const head = el("div", "control-card__head");
@@ -319,11 +366,13 @@
       try { meta.append(el("span", "", `Adresse : ${new URL(server.url).host}`)); } catch { /* URL du catalogue relu */ }
       if (server.projectRef) meta.append(el("span", "", `Projet : ${server.projectRef}`));
       if (server.custom) meta.append(el("span", "", "Ajouté par URL"));
-      meta.append(el("span", "", server.auth === "oauth" ? "Connexion : OAuth" : "Connexion : locale, sans jeton"));
+      meta.append(el("span", "", server.auth === "oauth" ? "Connexion : OAuth" : server.auth === "token" ? "Connexion : jeton personnel, chiffré sur ce Mac" : "Connexion : locale, sans jeton"));
       if (state === "CONNECTED") meta.append(el("span", "", `Outils proposés par le serveur : ${Number(server.status?.toolCount) || 0}`));
       card.append(meta);
       const actions = el("div", "control-card__actions");
-      if (state !== "CONNECTED" && !server.unavailable) actions.append(button(state === "AUTH_REQUIRED" ? "Relancer l'autorisation" : "Connecter", () => run(() => connect(server))));
+      const tokenServer = server.auth === "token";
+      if (tokenServer && !server.unavailable) card.append(renderTokenField(server));
+      if (state !== "CONNECTED" && !server.unavailable && (!tokenServer || server.status?.hasCredentials)) actions.append(button(state === "AUTH_REQUIRED" && !tokenServer ? "Relancer l'autorisation" : "Connecter", () => run(() => connect(server))));
       if (state === "CONNECTED" || server.status?.hasCredentials) {
         actions.append(button("Déconnecter", () => run(async () => { stopPolling(); await api.disconnect(server.id); }, { successNotice: "Déconnecté. Les jetons locaux sont supprimés ; l'accès n'est pas révoqué chez le fournisseur." })));
       }
@@ -404,6 +453,86 @@
       return card;
     }
 
+    // Lecture locale du fichier choisi : rien n'est envoyé avant la relecture et la confirmation.
+    async function readPluginFile(file) {
+      try {
+        const manifest = JSON.parse(await file.text());
+        if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) throw new Error("format");
+        pluginReview = manifest;
+        setNotice(null);
+      } catch {
+        pluginReview = null;
+        setNotice(ERROR_MESSAGES.MCP_PLUGIN_FILE_UNREADABLE, "error");
+      }
+      render();
+    }
+
+    function pluginServerLines(servers) {
+      const list = el("ul", "mcp-connectors__tool-list");
+      for (const server of Array.isArray(servers) ? servers : []) {
+        let host = String(server?.host || "");
+        if (!host) { try { host = new URL(String(server?.url)).host; } catch { host = "adresse invalide"; } }
+        const item = el("li");
+        item.append(el("span", "mcp-connectors__tool-name", String(server?.displayName || server?.key || "Serveur")), el("span", "mcp-connectors__tool-status", host));
+        list.append(item);
+      }
+      return list;
+    }
+
+    function renderPlugins() {
+      const nodes = [];
+      const grid = el("div", "control-center__grid");
+      for (const plugin of lastData.plugins) {
+        const card = el("article", "control-card mcp-connectors__plugin");
+        const head = el("div", "control-card__head");
+        head.append(el("h3", "", `${plugin.name} ${plugin.version}`));
+        card.append(head);
+        if (plugin.description) card.append(el("p", "", plugin.description));
+        card.append(pluginServerLines(plugin.servers));
+        if (plugin.instructions) card.append(el("p", "mcp-connectors__hint", `Consigne pour Noon : ${plugin.instructions}`));
+        const actions = el("div", "control-card__actions");
+        actions.append(button("Désinstaller le plugin", () => {
+          if (!ask(`Désinstaller le plugin ${plugin.name} ? Ses serveurs, leurs jetons locaux et leurs outils validés seront supprimés.`)) return Promise.resolve();
+          return run(() => api.uninstallPlugin(plugin.id), { successNotice: "Plugin désinstallé." });
+        }));
+        card.append(actions);
+        grid.append(card);
+      }
+      const importCard = el("article", "control-card mcp-connectors__plugin-import");
+      importCard.append(el("h3", "", "Importer un plugin"));
+      importCard.append(el("p", "mcp-connectors__hint", "Un plugin Noon est un fichier JSON (noon.plugin/1) qui regroupe des serveurs MCP et une consigne d'usage. Aucun code n'est exécuté ; ses outils restent à valider un par un, et chaque écriture demande ta confirmation."));
+      if (pluginReview) {
+        const review = el("div", "mcp-connectors__plugin-review");
+        review.append(el("strong", "", `${String(pluginReview.name || pluginReview.id || "Plugin")} ${String(pluginReview.version || "")}`.trim()));
+        if (pluginReview.description) review.append(el("p", "", String(pluginReview.description)));
+        review.append(el("p", "mcp-connectors__hint", "Serveurs qui seront ajoutés :"), pluginServerLines(pluginReview.mcpServers));
+        review.append(el("p", "mcp-connectors__hint", pluginReview.instructions ? `Consigne transmise à Noon : ${String(pluginReview.instructions)}` : "Aucune consigne pour Noon."));
+        const actions = el("div", "control-card__actions");
+        actions.append(
+          button("Installer ce plugin", () => {
+            const manifest = pluginReview;
+            if (!ask(`Installer le plugin ${String(manifest.name || manifest.id)} ? Ses serveurs reçoivent ce que Noon leur envoie.`)) return Promise.resolve();
+            return run(async () => { await api.installPlugin(manifest); pluginReview = null; }, { successNotice: "Plugin installé. Connecte ses serveurs puis valide leurs outils." });
+          }),
+          button("Annuler", () => { pluginReview = null; render(); return Promise.resolve(); }),
+        );
+        review.append(actions);
+        importCard.append(review);
+      } else {
+        const label = el("label", "mcp-connectors__project");
+        const input = el("input");
+        input.type = "file";
+        input.accept = "application/json,.json";
+        input.disabled = busy;
+        input.addEventListener("change", () => { const file = input.files?.[0]; if (file) void readPluginFile(file); });
+        label.append(el("span", "", "Fichier du plugin (.json)"), input);
+        importCard.append(label);
+      }
+      grid.append(importCard);
+      nodes.push(el("h3", "mcp-connectors__subtitle", "Plugins"), grid);
+      return nodes;
+    }
+
     function render() {
       if (!available) { root.hidden = true; return; }
       root.hidden = false;
@@ -435,7 +564,7 @@
       }
       const custom = el("div", "control-center__grid");
       custom.append(renderAddCustom());
-      nodes.push(el("h3", "mcp-connectors__subtitle", "Autre serveur"), custom);
+      nodes.push(el("h3", "mcp-connectors__subtitle", "Autre serveur"), custom, ...renderPlugins());
       root.replaceChildren(...nodes);
     }
 

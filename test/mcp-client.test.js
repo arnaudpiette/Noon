@@ -269,8 +269,8 @@ test("flag ON : lecture du catalogue, écriture refusée sans en-tête Noon", as
   const list = fakeResponse();
   await service.handle({ method: "GET", headers: {} }, list, { requestPath: "/api/mcp/servers" });
   assert.equal(list.statusCode, 200);
-  // Phase 2 : Supabase (limité à un projet) et Vercel (indisponible) rejoignent le catalogue.
-  assert.deepEqual(list.body.catalog.map((entry) => entry.id), ["figma", "figma-desktop", "supabase", "vercel"]);
+  // Phase 2 : Supabase (limité à un projet) et Vercel (indisponible) ; phase 6 : GitHub à jeton.
+  assert.deepEqual(list.body.catalog.map((entry) => entry.id), ["figma", "figma-desktop", "supabase", "github", "vercel"]);
   const refused = fakeResponse();
   await service.handle({ method: "POST", headers: {} }, refused, { requestPath: "/api/mcp/servers/figma/install", readJsonBody: async () => ({}) });
   assert.equal(refused.statusCode, 403);

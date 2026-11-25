@@ -2018,6 +2018,54 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   - phase 6 : migration de Figma et GitHub ;
   - piste Vercel : publier un document CIMD.
 
+## 25/11/2026 — Connecteurs MCP, phases 5 et 6 : plugins déclaratifs, GitHub par jeton personnel
+
+- **Phase 4 (serveurs locaux stdio) mise en attente**, à la demande d'Arnaud.
+  - Alternative proposée, moins risquée : Noon ne lance jamais de processus. Il se connecte
+    seulement à des serveurs MCP qui écoutent en loopback HTTP, déjà possible (Figma bureau,
+    serveur ajouté par URL en `http://127.0.0.1`). L'utilisateur ou l'application lance le
+    serveur lui-même ; un serveur stdio peut passer par un relais HTTP local de son choix.
+- **Phase 5 : plugins déclaratifs, sans code** (`services/mcp/mcp-plugins.js`, format
+  `noon.plugin/1`, voir `docs/MCP_PLUGINS.md`).
+  - Contenu : 1 à 5 serveurs MCP (mêmes règles qu'un serveur ajouté par URL) et une consigne
+    d'au plus 1 500 caractères.
+  - Pas le SDK d'extensions : il exige un module JavaScript exécuté dans Noon, ce qui
+    reviendrait au risque de la phase 4.
+  - Un plugin ne peut ni déclarer d'outils en lecture seule, ni cocher d'outils d'écriture ; un
+    champ inconnu fait refuser tout le plugin.
+  - Installation tout ou rien. Les serveurs sont rattachés au plugin (`pluginId`) et retirés avec
+    lui. 10 plugins au plus. Le fichier est revalidé au démarrage.
+  - Consigne transmise au modèle par `mcpPluginGuidance` (nouvelle dépendance de `createAskAI`),
+    présentée comme venant de l'utilisateur et subordonnée aux règles de Noon (4 000 caractères
+    au plus en tout). Seulement si un serveur du plugin est encore installé.
+  - Routes `GET`/`POST /api/mcp/plugins`, `DELETE /api/mcp/plugins/:id`, en-tête Noon exigé.
+  - Écran : import d'un fichier JSON lu localement, relu (serveurs, adresses, consigne) avant tout
+    envoi, installation sur confirmation.
+  - Pas de place de marché : le gel de la « SDK marketplace » est respecté.
+- **Phase 6 : migration progressive.**
+  - **GitHub** (`https://api.githubcopilot.com/mcp/`) : vérifié le 25/11/2026, il accepte un
+    jeton d'accès personnel de tout client, mais n'offre pas l'enregistrement dynamique OAuth.
+    - Nouveau mode d'authentification `token` : jeton saisi dans le Control Center, validé,
+      chiffré dans le coffre safeStorage (`mcp:<serveur>`), envoyé seulement en en-tête
+      `Authorization` à ce serveur.
+    - Il n'est jamais renvoyé à l'interface ni journalisé ; le champ est masqué, vidé à l'envoi,
+      et la déconnexion supprime le jeton.
+    - Un refus 401 ou 403 donne `MCP_TOKEN_REJECTED`.
+    - Capacité `REMOTE_GITHUB` (existante). Lecture seule seulement d'après `readOnlyHint`,
+      validé par l'utilisateur.
+    - Le connecteur GitHub natif reste en place : pas de bascule tant que le serveur MCP n'a pas
+      été utilisé en vrai.
+  - **Figma** : rien à migrer. Son serveur en ligne refuse Noon ; le serveur de l'application
+    de bureau (lecture) est déjà au catalogue, et l'écriture passe par le plugin Noon Bridge.
+- Tests : nouveau `test/mcp-plugins-and-token.test.js` (9 cas, dont un vrai serveur MCP de test
+  qui exige le jeton) et 3 cas dans `mcp-connectors-ui`. Adapté : liste du catalogue dans
+  `mcp-client`. Suite complète 3 045/3 045 ; `eval:critical` 54/54, `smoke` 99/99,
+  `privacy` 3/3, `extensions` 5/5, `offline` 7/7.
+- Non vérifié :
+  - un vrai jeton GitHub sur le serveur officiel ;
+  - un vrai plugin avec des serveurs tiers ;
+  - la consigne de plugin face au modèle réel.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

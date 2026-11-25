@@ -419,3 +419,60 @@ test("phase 3 : serveur ajouté par URL — lecture seule proposée d'après le 
   assert.match(readBox.textContent, /trouvé par recherche d'outils/);
   assert.match(h.root.textContent, /Ajouté par URL/);
 });
+
+// ---------- Phase 6 : jeton personnel ; phase 5 : plugins ----------
+
+test("phase 6 : serveur à jeton — champ masqué jamais pré-rempli, vidé à l'envoi, PUT token avec en-tête Noon", async () => {
+  const server = { id: "github", displayName: "GitHub (MCP officiel)", url: "https://api.githubcopilot.com/mcp/", auth: "token", dataClass: "PRIVATE", installed: true, tokenHelp: "Crée un jeton fine-grained.",
+    readOnlyTools: [], userApprovedReadOnly: [], userApprovedWriteTools: [], status: { state: "NOT_CONNECTED", lastError: null, toolCount: 0, hasCredentials: false }, tools: { exposed: [], hidden: [] } };
+  const h = harness({ responses: { list: { status: "ok", catalog: [], servers: [server] } } });
+  await h.controller.init();
+  assert.equal(buttonByText(h.root, "Connecter"), undefined, "pas de connexion sans jeton");
+  const input = find(h.root, (node) => node.tagName === "INPUT" && node.type === "password");
+  assert.ok(input);
+  assert.equal(input.value ?? "", "", "jamais pré-rempli");
+  const save = buttonByText(h.root, "Enregistrer le jeton et connecter");
+  assert.equal(save.disabled, true);
+  input.value = "github_pat_0123456789abcdef"; input.dispatch("input");
+  assert.equal(save.disabled, false);
+  save.click();
+  assert.equal(input.value, "", "champ vidé dès l'envoi");
+  await settle();
+  const put = h.calls.find((call) => call.method === "PUT");
+  assert.equal(put.url, "/api/mcp/servers/github/token");
+  assert.equal(put.headers["X-Noon-Request"], "1");
+  assert.deepEqual(put.body, { token: "github_pat_0123456789abcdef" });
+  assert.match(h.root.textContent, /jeton personnel, chiffré sur ce Mac/);
+});
+
+test("phase 5 : un plugin importé est relu (serveurs, adresses, consigne) avant tout envoi, puis installé sur confirmation", async () => {
+  const manifest = { schema: "noon.plugin/1", id: "outils-equipe", name: "Outils équipe", version: "1.0.0", instructions: "Cherche d'abord dans la documentation.", mcpServers: [{ key: "docs", displayName: "Docs", url: "https://mcp.docs.example/mcp" }] };
+  const asked = [];
+  const h = harness({ responses: { list: { status: "ok", catalog: [], servers: [] } }, confirm: (text) => { asked.push(text); return true; } });
+  await h.controller.init();
+  const fileInput = find(h.root, (node) => node.tagName === "INPUT" && node.type === "file");
+  fileInput.files = [{ text: async () => JSON.stringify(manifest) }];
+  fileInput.dispatch("change");
+  await settle();
+  assert.equal(h.calls.filter((call) => call.method === "POST").length, 0, "rien n'est envoyé à la lecture du fichier");
+  assert.match(h.root.textContent, /mcp\.docs\.example/);
+  assert.match(h.root.textContent, /Consigne transmise à Noon : Cherche d'abord dans la documentation\./);
+  buttonByText(h.root, "Installer ce plugin").click();
+  await settle();
+  assert.equal(asked.length, 1);
+  const post = h.calls.find((call) => call.method === "POST");
+  assert.equal(post.url, "/api/mcp/plugins");
+  assert.equal(post.headers["X-Noon-Request"], "1");
+  assert.deepEqual(post.body, { manifest });
+});
+
+test("phase 5 : un fichier illisible affiche une erreur, sans envoi", async () => {
+  const h = harness({ responses: { list: { status: "ok", catalog: [], servers: [] } } });
+  await h.controller.init();
+  const fileInput = find(h.root, (node) => node.tagName === "INPUT" && node.type === "file");
+  fileInput.files = [{ text: async () => "pas du json" }];
+  fileInput.dispatch("change");
+  await settle();
+  assert.match(h.root.textContent, /Fichier illisible/);
+  assert.equal(h.calls.filter((call) => call.method === "POST").length, 0);
+});

@@ -49,7 +49,7 @@ function assertAllowedUrl(rawUrl) {
 function customEntry(id, custom) {
   const url = assertAllowedUrl(custom.url);
   return Object.freeze({
-    id, displayName: custom.displayName, url: url.toString(), custom: true,
+    id, displayName: custom.displayName, url: url.toString(), custom: true, pluginId: custom.pluginId || null,
     auth: LOOPBACK_HOSTS.has(url.hostname) ? "none" : "oauth",
     remoteCapability: "REMOTE_MCP_CUSTOM", dataClass: "PRIVATE", readOnlyTools: Object.freeze([]),
     note: "Serveur ajouté par URL. N'ajoute que des serveurs de confiance : il reçoit ce que Noon lui envoie.",
@@ -117,6 +117,8 @@ function createMcpServerRegistry({ filePath = null, catalog = catalogEntry, now 
     }),
     addCustom(input) {
       const custom = validateCustomServer(input);
+      // Serveur apporté par un plugin : rattaché à lui, retiré avec lui.
+      if (input?.pluginId) custom.pluginId = String(input.pluginId);
       const customIds = Object.keys(state.servers).filter((id) => state.servers[id]?.custom);
       if (customIds.length >= MAX_CUSTOM_SERVERS) throw registryError("MCP_CUSTOM_LIMIT", `Au plus ${MAX_CUSTOM_SERVERS} serveurs ajoutés par URL.`);
       if (customIds.some((id) => state.servers[id].custom.url === custom.url)) throw registryError("MCP_SERVER_DUPLICATE", "Ce serveur est déjà ajouté.");

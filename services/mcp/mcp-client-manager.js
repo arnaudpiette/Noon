@@ -3,6 +3,8 @@
 // Sessions MCP (transport Streamable HTTP) pour les serveurs installés.
 // OAuth : premier essai avec les jetons du coffre ; si le serveur exige une
 // autorisation, on renvoie l'URL à ouvrir et un récepteur loopback termine l'échange.
+// Jeton (phase 6, ex. GitHub) : jeton personnel saisi par l'utilisateur, chiffré dans le coffre
+// safeStorage, envoyé seulement en en-tête Authorization à ce serveur ; jamais relu par l'interface.
 
 const { Client } = require("@modelcontextprotocol/sdk/client/index.js");
 const { StreamableHTTPClientTransport } = require("@modelcontextprotocol/sdk/client/streamableHttp.js");
@@ -15,6 +17,11 @@ const DEFAULT_CALL_TIMEOUT_MS = 30_000;
 const MAX_TOOL_PAGES = 10;
 
 function managerError(code, message) { return Object.assign(new Error(message), { code }); }
+const BEARER_TOKEN = /^[A-Za-z0-9_.-]{20,512}$/;
+// Refus d'authentification du serveur (jeton invalide, expiré ou révoqué).
+function isAuthRejected(error) {
+  return error instanceof UnauthorizedError || Number(error?.code) === 401 || Number(error?.code) === 403 || /\b40[13]\b/.test(String(error?.message || ""));
+}
 // Serveur local qui ne répond pas (port fermé) : l'échec vient de fetch, pas du protocole MCP.
 const UNREACHABLE_CODES = new Set(["ECONNREFUSED", "ECONNRESET", "EHOSTUNREACH", "ENOTFOUND", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"]);
 function isUnreachable(error) {
@@ -81,9 +88,15 @@ function createMcpClientManager({
     return tools;
   }
 
-  async function openSession(server, authProvider) {
+  function bearerToken(id) {
+    const value = tokenStore.get(credentialKey(id))?.bearerToken;
+    return typeof value === "string" && BEARER_TOKEN.test(value) ? value : null;
+  }
+
+  async function openSession(server, authProvider, bearer = null) {
     const client = clientFactory();
-    const transport = transportFactory(new URL(server.url), authProvider ? { authProvider } : {});
+    const options = bearer ? { requestInit: { headers: { Authorization: `Bearer ${bearer}` } } } : authProvider ? { authProvider } : {};
+    const transport = transportFactory(new URL(server.url), options);
     await client.connect(transport);
     return { client, transport };
   }
@@ -104,6 +117,15 @@ function createMcpClientManager({
     assertAvailable(server);
     assertRemoteAllowed(server);
     if (server.auth === "none") return activate(server, await openSession(server, null));
+    if (server.auth === "token") {
+      const bearer = bearerToken(server.id);
+      if (!bearer) throw managerError("MCP_TOKEN_REQUIRED", "Jeton d'accès requis pour ce serveur MCP.");
+      try { return await activate(server, await openSession(server, null, bearer)); }
+      catch (error) {
+        if (isAuthRejected(error)) { setStatus(server.id, { state: "AUTH_REQUIRED", lastError: "MCP_TOKEN_REJECTED" }); throw managerError("MCP_TOKEN_REJECTED", "Jeton refusé par le serveur MCP."); }
+        throw error;
+      }
+    }
     const redirectUrl = savedRedirectUrl(server.id);
     if (!tokenStore.get(credentialKey(server.id))?.tokens || !redirectUrl) throw managerError("MCP_AUTH_REQUIRED", "Connexion au serveur MCP requise.");
     let authorizationRequested = false;
@@ -122,7 +144,7 @@ function createMcpClientManager({
     catch (error) { setStatus(id, { state: "BLOCKED", lastError: error.code }); throw error; }
     setStatus(id, { state: "CONNECTING", lastError: null });
     try {
-      if (server.auth === "none") { const tools = await connectSilently(server); return { status: "CONNECTED", toolCount: tools.length }; }
+      if (server.auth === "none" || server.auth === "token") { const tools = await connectSilently(server); return { status: "CONNECTED", toolCount: tools.length }; }
       if (tokenStore.get(credentialKey(id))?.tokens) {
         try { const tools = await connectSilently(server); return { status: "CONNECTED", toolCount: tools.length }; }
         catch (error) { if (error.code !== "MCP_AUTH_REQUIRED") throw error; }
@@ -162,6 +184,10 @@ function createMcpClientManager({
       setStatus(id, { state: "ERROR", lastError: unreachable ? "MCP_LOCAL_SERVER_UNREACHABLE" : safeErrorCode(error) });
       emit("mcp.connect_failed", { serverId: id, errorCode: safeErrorCode(error), unreachable });
       if (unreachable) throw managerError("MCP_LOCAL_SERVER_UNREACHABLE", server.unreachableMessage || "Serveur MCP local introuvable sur ce Mac : vérifie que l'application qui le fournit est ouverte et que son serveur est activé.");
+      if (error.code === "MCP_TOKEN_REQUIRED" || error.code === "MCP_TOKEN_REJECTED") {
+        setStatus(id, { state: "AUTH_REQUIRED", lastError: error.code });
+        throw error;
+      }
       throw managerError(error.code === "MCP_AUTH_REQUIRED" ? "MCP_AUTH_REQUIRED" : "MCP_CONNECT_FAILED", "Connexion au serveur MCP impossible.");
     }
   }
@@ -193,6 +219,19 @@ function createMcpClientManager({
     return { status: "disconnected", providerRevoked: false };
   }
 
+  // Jeton saisi par l'utilisateur pour un serveur « token » : validé, chiffré, puis connexion.
+  async function setBearerToken(id, token) {
+    const server = requireServer(id);
+    if (server.auth !== "token") throw managerError("MCP_TOKEN_NOT_SUPPORTED", "Ce serveur n'utilise pas de jeton personnel.");
+    const value = String(token ?? "").trim();
+    if (!BEARER_TOKEN.test(value)) throw managerError("MCP_TOKEN_INVALID", "Jeton d'accès invalide.");
+    const previous = sessions.get(id); sessions.delete(id);
+    if (previous) { try { await previous.client.close(); } catch {} }
+    tokenStore.set(credentialKey(id), { bearerToken: value });
+    emit("mcp.token_saved", { serverId: id });
+    return connect(id);
+  }
+
   async function refreshTools(id) {
     const session = sessions.get(id);
     if (!session) return [];
@@ -210,8 +249,8 @@ function createMcpClientManager({
   }
 
   return {
-    connect, connectSilently: (id) => connectSilently(requireServer(id)), callTool, disconnect, refreshTools, closeAll,
-    status: (id) => ({ state: "NOT_CONNECTED", lastError: null, toolCount: 0, ...(status.get(id) || {}), hasCredentials: Boolean(tokenStore.get(credentialKey(id))?.tokens) }),
+    connect, connectSilently: (id) => connectSilently(requireServer(id)), callTool, disconnect, refreshTools, closeAll, setBearerToken,
+    status: (id) => ({ state: "NOT_CONNECTED", lastError: null, toolCount: 0, ...(status.get(id) || {}), hasCredentials: Boolean(tokenStore.get(credentialKey(id))?.tokens || bearerToken(id)) }),
   };
 }
 

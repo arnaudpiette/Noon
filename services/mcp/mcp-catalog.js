@@ -46,6 +46,15 @@ const MCP_CATALOG = Object.freeze([
     projectRef: Object.freeze({ param: "project_ref", pattern: "^[a-z]{20}$", label: "Identifiant du projet Supabase (20 lettres, visible dans l'URL du tableau de bord)" }),
     note: "Serveur distant officiel de Supabase, limité à un seul projet. Préfère un projet de développement : chaque écriture demande ta validation exacte.",
   }),
+  // Phase 6 (migration progressive) : serveur MCP officiel de GitHub, à côté du connecteur natif
+  // qui reste en place. Vérifié le 25/11/2026 : jeton d'accès personnel accepté de tout client,
+  // enregistrement dynamique OAuth non proposé. Les outils de lecture portent readOnlyHint.
+  Object.freeze({
+    id: "github", displayName: "GitHub (MCP officiel)", url: "https://api.githubcopilot.com/mcp/", auth: "token",
+    remoteCapability: "REMOTE_GITHUB", dataClass: "PRIVATE", readOnlyTools: Object.freeze([]),
+    tokenHelp: "Crée un jeton « fine-grained » sur github.com (Settings → Developer settings), limité aux dépôts utiles et en lecture seule si tu n'as besoin que de lire.",
+    note: "Serveur MCP officiel de GitHub. Le connecteur GitHub natif de Noon reste disponible.",
+  }),
   // Vérifié le 25/11/2026 : Vercel n'accepte que les clients qu'il a validés, ou ceux qui publient un
   // document d'identité de client (CIMD) sur une URL HTTPS. Noon n'a ni l'un ni l'autre aujourd'hui.
   Object.freeze({
