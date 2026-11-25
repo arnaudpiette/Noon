@@ -3,6 +3,7 @@
 // Assemblage du client MCP de Noon, derrière le flag `connectors.mcp` (OFF par défaut).
 // Serveurs du catalogue uniquement. Phase 1 : outils en lecture seule validés par l'utilisateur.
 // Phase 2 : outils d'écriture choisis par l'utilisateur, chaque appel soumis à approbation exacte.
+// Phase 3 : serveurs ajoutés par URL (POST /api/mcp/servers), outils différés derrière tool_search.
 
 const path = require("node:path");
 const { MCP_CATALOG } = require("./mcp-catalog");
@@ -24,7 +25,7 @@ function createMcpService({ enabled = false, dataDirectory = null, tokenStore, s
 
   function describe(server) {
     return { id: server.id, displayName: server.displayName, url: server.url, auth: server.auth, dataClass: server.dataClass, note: server.note, unavailable: server.unavailable || null,
-      projectRef: server.projectRef || null,
+      projectRef: server.projectRef || null, custom: server.custom === true,
       readOnlyTools: [...server.readOnlyTools], userApprovedReadOnly: [...server.userApprovedReadOnly], userApprovedWriteTools: [...(server.userApprovedWriteTools || [])],
       status: manager.status(server.id), tools: bridge.exposure(server.id) };
   }
@@ -47,6 +48,12 @@ function createMcpService({ enabled = false, dataDirectory = null, tokenStore, s
         return send(200, { status: "ok", catalog: MCP_CATALOG.map(({ id, displayName, url, auth, dataClass, note, unavailable, projectRef }) => ({ id, displayName, url, auth, dataClass, note, unavailable: unavailable || null, projectRef: projectRef ? { label: projectRef.label, pattern: projectRef.pattern } : null, installed: Boolean(registry.get(id)) })), servers: registry.list().map(describe) });
       }
       if (req.headers["x-noon-request"] !== "1") return send(403, { status: "error", code: "MCP_REQUEST_REFUSED", message: "Requête Noon refusée." });
+      if (req.method === "POST" && !serverId) {
+        const body = await readJsonBody(req, 4 * 1024);
+        const server = registry.addCustom({ displayName: body?.displayName, url: body?.url });
+        observability("mcp.custom_server_added", { serverId: server.id });
+        return send(200, { status: "ok", server: describe(server) });
+      }
       if (req.method === "POST" && action === "install") {
         const body = await readJsonBody(req, 4 * 1024);
         return send(200, { status: "ok", server: describe(registry.install(serverId, { projectRef: body?.projectRef })) });

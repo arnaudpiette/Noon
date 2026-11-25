@@ -384,3 +384,38 @@ test("phase 2 : la carte d'approbation du chat montre les détails exacts en tex
   assert.match(card, /text\.textContent = String\(item\?\.value \?\? ""\);/);
   assert.doesNotMatch(card, /innerHTML/);
 });
+
+// ---------- Phase 3 : serveur ajouté par URL ----------
+
+test("phase 3 : ajout d'un serveur par URL, champs gardés à la frappe, POST avec en-tête Noon", async () => {
+  const h = harness({ responses: { list: { status: "ok", catalog: [], servers: [] } } });
+  await h.controller.init();
+  const add = buttonByText(h.root, "Ajouter");
+  assert.equal(add.disabled, true, "nom et adresse requis");
+  const [name, address] = all(h.root).filter((node) => node.tagName === "INPUT");
+  name.value = "Linear"; name.dispatch("input");
+  assert.equal(add.disabled, true);
+  address.value = "https://mcp.linear.app/mcp"; address.dispatch("input");
+  assert.equal(add.disabled, false);
+  assert.equal(all(h.root).filter((node) => node.tagName === "INPUT")[0], name, "pas de nouveau rendu pendant la frappe");
+  add.click();
+  await settle();
+  const post = h.calls.find((call) => call.method === "POST");
+  assert.equal(post.url, "/api/mcp/servers");
+  assert.equal(post.headers["X-Noon-Request"], "1");
+  assert.deepEqual(post.body, { displayName: "Linear", url: "https://mcp.linear.app/mcp" });
+  assert.match(h.root.textContent, /N'ajoute que des serveurs de confiance/);
+});
+
+test("phase 3 : serveur ajouté par URL — lecture seule proposée d'après le serveur, outils différés signalés", async () => {
+  const server = { id: "custom-0a1b2c3d", displayName: "Docs", url: "https://docs.example/mcp", auth: "oauth", dataClass: "PRIVATE", custom: true, installed: true,
+    readOnlyTools: [], userApprovedReadOnly: ["search"], userApprovedWriteTools: [], status: { state: "CONNECTED", lastError: null, toolCount: 3, hasCredentials: true },
+    tools: { exposed: [{ name: "search", level: "READ", deferred: true }], hidden: [{ name: "fetch_page", level: "WRITE", reason: "READ_ONLY_NOT_APPROVED_BY_USER" }, { name: "publish", level: "WRITE", reason: "WRITE_NOT_APPROVED_BY_USER" }] } };
+  const h = harness({ responses: { list: { status: "ok", catalog: [], servers: [server] } } });
+  await h.controller.init();
+  const readBox = find(h.root, (node) => node.className === "mcp-connectors__tools");
+  const names = all(readBox).filter((node) => node.className === "mcp-connectors__tool-name").map((node) => node.textContent);
+  assert.deepEqual(names, ["fetch_page", "search"]);
+  assert.match(readBox.textContent, /trouvé par recherche d'outils/);
+  assert.match(h.root.textContent, /Ajouté par URL/);
+});

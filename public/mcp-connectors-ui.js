@@ -4,6 +4,7 @@
 // Phase 1 : serveurs du catalogue, outils en lecture seule validés un par un.
 // Phase 2 : outils d'écriture cochés par l'utilisateur ; chaque appel demande ensuite une
 // approbation exacte dans le chat (serveur, outil, arguments).
+// Phase 3 : serveur ajouté par URL (HTTPS, sans secret dans l'URL) ; outils différés signalés.
 // Toutes les valeurs serveur sont rendues avec textContent : aucun nom de
 // serveur, d'outil ou d'erreur ne devient du HTML. Aucun jeton n'arrive ici :
 // le serveur ne renvoie que l'état et, pendant une connexion OAuth, l'URL
@@ -38,6 +39,12 @@
     MCP_PROJECT_REF_INVALID: "Identifiant de projet invalide.",
     MCP_TOOL_NAME_INVALID: "Nom d'outil invalide.",
     MCP_TOOL_LIST_TOO_LONG: "Trop d'outils d'écriture cochés (50 au plus).",
+    MCP_SERVER_NAME_REQUIRED: "Donne un nom au serveur.",
+    MCP_SERVER_URL_INVALID: "Adresse de serveur invalide.",
+    MCP_SERVER_URL_INSECURE: "Un serveur distant doit utiliser HTTPS.",
+    MCP_SERVER_URL_SECRET: "L'adresse semble contenir un secret : retire-le, la connexion passera par l'autorisation du serveur.",
+    MCP_CUSTOM_LIMIT: "Limite atteinte : 10 serveurs ajoutés par URL.",
+    MCP_SERVER_DUPLICATE: "Ce serveur est déjà ajouté.",
   });
 
   const HIDDEN_REASONS = Object.freeze({
@@ -79,6 +86,7 @@
     const at = (id, action = "") => `${BASE}/${encodeURIComponent(id)}${action ? `/${action}` : ""}`;
     return Object.freeze({
       list: () => request("GET", BASE),
+      addCustom: (displayName, url) => request("POST", BASE, { displayName, url }),
       install: (id, options = {}) => request("POST", at(id, "install"), options),
       connect: (id) => request("POST", at(id, "connect")),
       disconnect: (id) => request("POST", at(id, "disconnect")),
@@ -109,6 +117,7 @@
     const drafts = new Map(); // serverId -> Set des outils cochés, non encore enregistrés
     const writeDrafts = new Map(); // serverId -> Set des outils d'écriture cochés, non encore enregistrés
     const projectRefs = new Map(); // catalogue -> identifiant de projet saisi
+    const customDraft = { displayName: "", url: "" }; // formulaire « Ajouter un serveur par URL »
     let pollToken = 0;
 
     function el(tag, className = "", text = null) {
@@ -202,10 +211,23 @@
 
     function toolStatus(server, name) {
       const tools = server.tools || {};
-      if ((tools.exposed || []).some((tool) => tool.name === name)) return "exposé à Noon";
+      const exposed = (tools.exposed || []).find((tool) => tool.name === name);
+      if (exposed) return exposed.deferred ? "exposé à Noon (trouvé par recherche d'outils)" : "exposé à Noon";
       const hidden = (tools.hidden || []).find((tool) => tool.name === name);
       if (hidden) return HIDDEN_REASONS[hidden.reason] || "masqué";
       return server.status?.state === "CONNECTED" ? "non proposé par le serveur" : "connexion requise pour vérifier";
+    }
+
+    // Serveur du catalogue : sa liste relue. Serveur ajouté par URL : les outils que le serveur
+    // annonce en lecture seule (readOnlyHint), plus ceux déjà validés.
+    function readOnlyCandidates(server) {
+      if (!server.custom) return [...(server.readOnlyTools || [])];
+      const tools = server.tools || {};
+      const names = [
+        ...(tools.exposed || []).filter((tool) => tool.level === "READ"),
+        ...(tools.hidden || []).filter((tool) => tool.reason === "READ_ONLY_NOT_APPROVED_BY_USER"),
+      ].map((tool) => String(tool.name));
+      return [...new Set([...names, ...(server.userApprovedReadOnly || [])])].sort();
     }
 
     function renderTools(server) {
@@ -214,7 +236,7 @@
       box.append(el("p", "mcp-connectors__hint", "Coche uniquement les outils que Noon peut appeler sans te demander."));
       const draft = draftFor(server);
       const list = el("ul", "mcp-connectors__tool-list");
-      for (const name of server.readOnlyTools || []) {
+      for (const name of readOnlyCandidates(server)) {
         const item = el("li");
         const label = el("label");
         const checkbox = el("input");
@@ -230,7 +252,7 @@
       const saved = new Set(server.userApprovedReadOnly || []);
       const changed = draft.size !== saved.size || [...draft].some((name) => !saved.has(name));
       box.append(button("Enregistrer les outils validés", () => run(async () => {
-        const tools = (server.readOnlyTools || []).filter((name) => draft.has(name));
+        const tools = readOnlyCandidates(server).filter((name) => draft.has(name));
         await api.setReadOnlyTools(server.id, tools);
         drafts.delete(server.id);
       }, { successNotice: "Outils validés enregistrés." }), { disabled: !changed }));
@@ -296,6 +318,7 @@
       const meta = el("div", "control-card__meta");
       try { meta.append(el("span", "", `Adresse : ${new URL(server.url).host}`)); } catch { /* URL du catalogue relu */ }
       if (server.projectRef) meta.append(el("span", "", `Projet : ${server.projectRef}`));
+      if (server.custom) meta.append(el("span", "", "Ajouté par URL"));
       meta.append(el("span", "", server.auth === "oauth" ? "Connexion : OAuth" : "Connexion : locale, sans jeton"));
       if (state === "CONNECTED") meta.append(el("span", "", `Outils proposés par le serveur : ${Number(server.status?.toolCount) || 0}`));
       card.append(meta);
@@ -348,6 +371,39 @@
       return card;
     }
 
+    function renderAddCustom() {
+      const card = el("article", "control-card mcp-connectors__custom");
+      card.append(el("h3", "", "Ajouter un serveur par URL"));
+      card.append(el("p", "mcp-connectors__hint", "N'ajoute que des serveurs de confiance : un serveur MCP reçoit ce que Noon lui envoie. Adresse HTTPS, sans clé ni jeton dedans ; la connexion passe par l'autorisation du serveur."));
+      const field = (labelText, key, type) => {
+        const label = el("label", "mcp-connectors__project");
+        const input = el("input");
+        input.type = type;
+        input.autocomplete = "off";
+        input.spellcheck = false;
+        input.value = customDraft[key];
+        input.disabled = busy;
+        input.dataset.field = key;
+        label.append(el("span", "", labelText), input);
+        card.append(label);
+        return input;
+      };
+      const name = field("Nom", "displayName", "text");
+      const address = field("Adresse du serveur MCP (https://…)", "url", "url");
+      const add = button("Ajouter", () => run(async () => {
+        await api.addCustom(customDraft.displayName.trim(), customDraft.url.trim());
+        customDraft.displayName = ""; customDraft.url = "";
+      }, { successNotice: "Serveur ajouté. Connecte-le puis valide ses outils." }));
+      // Pas de nouveau rendu à la frappe : les champs gardent le focus, seul le bouton suit.
+      const validate = () => { add.disabled = busy || !customDraft.displayName.trim() || !customDraft.url.trim(); };
+      for (const input of [name, address]) input.addEventListener("input", () => { customDraft[input.dataset.field] = input.value; validate(); });
+      validate();
+      const actions = el("div", "control-card__actions");
+      actions.append(add);
+      card.append(actions);
+      return card;
+    }
+
     function render() {
       if (!available) { root.hidden = true; return; }
       root.hidden = false;
@@ -377,7 +433,9 @@
         for (const entry of available_) grid.append(renderCatalogEntry(entry));
         nodes.push(el("h3", "mcp-connectors__subtitle", "Catalogue"), grid);
       }
-      if (!installed.length && !available_.length) nodes.push(el("div", "control-empty", "Aucun serveur MCP disponible."));
+      const custom = el("div", "control-center__grid");
+      custom.append(renderAddCustom());
+      nodes.push(el("h3", "mcp-connectors__subtitle", "Autre serveur"), custom);
       root.replaceChildren(...nodes);
     }
 

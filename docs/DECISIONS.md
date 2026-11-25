@@ -1983,6 +1983,41 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   - le flux complet dans le chat avec le modèle (appels payants) ;
   - le flag `connectors.mcp` reste OFF par défaut.
 
+## 25/11/2026 — Connecteurs MCP, phase 3 : serveur ajouté par URL, outils différés
+
+- Une partie de la phase 3 existait déjà : état du serveur, choix des outils visibles,
+  déconnexion avec suppression des jetons locaux, catalogue pré-rempli. Ajouté :
+- **Serveur ajouté par URL** (`POST /api/mcp/servers`, en-tête Noon exigé) :
+  - adresse HTTPS, ou loopback en HTTP (alors sans autorisation) ;
+  - refusés : identifiants dans l'URL, fragment, paramètre qui ressemble à un secret
+    (`key`, `token`, `secret`, `auth`, `pass`, `sig`…), car l'URL est stockée en clair dans
+    `mcp-servers.json` ;
+  - au plus 10 serveurs, sans doublon ; identifiant `custom-<8 hex>`.
+  - Noon ne déclare aucun outil en lecture seule pour ces serveurs. Un outil n'y devient
+    lecture seule que si le serveur l'annonce (`readOnlyHint`) ET que l'utilisateur le
+    valide. Valider en lecture un outil non annoncé le laisse en écriture, donc masqué ou
+    soumis à approbation.
+  - Capacité `REMOTE_MCP_CUSTOM` : bloquée en mode local uniquement ou hors ligne.
+  - Le journal note l'identifiant, jamais l'adresse.
+  - La désinstallation supprime aussi la définition du serveur.
+- **Outils différés** : au-delà de 8 outils visibles pour un serveur, ses outils sont
+  enregistrés `deferred` et envoyés avec `defer_loading` derrière `tool_search`, déjà en place
+  pour les skills rares. Sans `tool_search`, tout reste chargé, comme avant. L'écran l'indique
+  (« trouvé par recherche d'outils »).
+- Écran : section « Autre serveur » avec nom et adresse, et un avertissement de confiance ; les
+  champs ne relancent pas le rendu à la frappe. Pour ces serveurs, les outils proposés en
+  lecture seule sont ceux que le serveur annonce comme tels.
+- Tests : nouveau `test/mcp-custom-servers.test.js` (5 cas) et 2 cas dans `mcp-connectors-ui`.
+  Suite complète 3 033/3 033 ; `eval:critical` 54/54, `smoke` 99/99, `privacy` 3/3,
+  `extensions` 5/5, `offline` 7/7.
+- Non vérifié : un vrai serveur tiers ajouté par URL (OAuth, enregistrement dynamique), et
+  `tool_search` avec le modèle réel.
+- Reste pour MCP :
+  - phase 4 : serveurs locaux (stdio), seulement avec une vraie isolation ;
+  - phase 5 : plugins locaux ;
+  - phase 6 : migration de Figma et GitHub ;
+  - piste Vercel : publier un document CIMD.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

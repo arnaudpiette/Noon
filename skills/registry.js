@@ -93,6 +93,8 @@ function createSkillRegistry(skills = DEFAULT_SKILLS, { auditLog = null } = {}) 
       category: "extension", extensionId, modelToolName: exposedName, execute,
       // Facultatif : ce que la carte d'approbation affiche (titre, résumé, détails exacts).
       ...(typeof extensionSkill.approvalDisplay === "function" ? { approvalDisplay: extensionSkill.approvalDisplay } : {}),
+      // Facultatif : outil rare, différé derrière tool_search quand le fournisseur le permet.
+      ...(extensionSkill.deferred === true ? { deferred: true } : {}),
     });
     validateSkill(skill); byName.set(name, skill); modelAliases.set(exposedName, name); extensionOwners.set(name, extensionId); return skill;
   }

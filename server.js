@@ -420,6 +420,7 @@ const runtimeCapabilityRegistry = createCapabilityRegistry([
   { capabilityId: "REMOTE_FIGMA", provider: "Figma", executionLocation: "REMOTE_SERVICE", availability: "AVAILABLE", qualityClass: "FULL", requiresNetwork: true, requiresRemoteData: true, supportsLocalOnly: false },
   { capabilityId: "REMOTE_SUPABASE", provider: "Supabase", executionLocation: "REMOTE_SERVICE", availability: "AVAILABLE", qualityClass: "FULL", requiresNetwork: true, requiresRemoteData: true, supportsLocalOnly: false },
   { capabilityId: "REMOTE_VERCEL", provider: "Vercel", executionLocation: "REMOTE_SERVICE", availability: "AVAILABLE", qualityClass: "FULL", requiresNetwork: true, requiresRemoteData: true, supportsLocalOnly: false },
+  { capabilityId: "REMOTE_MCP_CUSTOM", provider: "McpCustomServer", executionLocation: "REMOTE_SERVICE", availability: "AVAILABLE", qualityClass: "FULL", requiresNetwork: true, requiresRemoteData: true, supportsLocalOnly: false },
   { capabilityId: "REMOTE_REALTIME", provider: "OpenAIRealtime", executionLocation: "REMOTE_SERVICE", availability: "AVAILABLE", qualityClass: "FULL", requiresNetwork: true, supportsLocalOnly: false },
   { capabilityId: "REMOTE_IMAGE_GENERATION", provider: "OpenAIImages", executionLocation: "REMOTE_SERVICE", availability: "AVAILABLE", qualityClass: "FULL", requiresNetwork: true, supportsLocalOnly: false },
   { capabilityId: "REMOTE_VISION", provider: "OpenAIVision", executionLocation: "REMOTE_MODEL", availability: "AVAILABLE", qualityClass: "FULL", requiresNetwork: true, supportsLocalOnly: false },
