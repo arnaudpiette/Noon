@@ -12,7 +12,9 @@
   const showVoicePolicy = (visible) => { if (voicePolicy) voicePolicy.hidden = !visible; };
   const section = document.getElementById("controlCenterSection");
   const loading = document.getElementById("controlCenterLoading");
-  const viewSelect = document.getElementById("controlCenterView");
+  // Le sélecteur « Vue : Utilisateur / Avancée » a été retiré (25/11/2026) : la vue avancée n'ajoutait
+  // aucun élément affiché. L'API garde son paramètre ; l'interface demande toujours la vue utilisateur.
+  const CONTROL_CENTER_VIEW = "USER";
   const openButton = document.getElementById("openControlCenterButton");
   const closeButton = document.getElementById("closeControlCenter");
   const refreshButton = document.getElementById("refreshControlCenter");
@@ -289,7 +291,7 @@
     hideClientPanels();
     loading.hidden = false; overview.hidden = true; section.hidden = true;
     showVoicePolicy(sectionId === "overview");
-    const query = new URLSearchParams({ view: viewSelect.value });
+    const query = new URLSearchParams({ view: CONTROL_CENTER_VIEW });
     if (force) query.set("refresh", "1");
     try {
       const url = sectionId === "overview"
@@ -316,7 +318,7 @@
   // Navigation seule, sans afficher la vue d'ensemble (ouverture directe sur un onglet).
   async function loadNavigation() {
     try {
-      const response = await fetch(`/api/control-center/overview?${new URLSearchParams({ view: viewSelect.value })}`, { cache: "no-store" });
+      const response = await fetch(`/api/control-center/overview?${new URLSearchParams({ view: CONTROL_CENTER_VIEW })}`, { cache: "no-store" });
       const data = await response.json();
       if (response.ok) renderNavigation(data.snapshot?.availableSections || []);
     } catch {}
@@ -339,7 +341,6 @@
   closeButton.addEventListener("click", () => dialog.close());
   const reload = () => (activeSection === GOAL_MODE_DEV_SECTION ? showGoalModeDev() : isClientPanel(activeSection) ? showClientPanel(activeSection) : load(activeSection, true));
   refreshButton.addEventListener("click", reload);
-  viewSelect.addEventListener("change", reload);
   dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
   window.NoonControlCenter = Object.freeze({ open, refresh: reload, setGoalModeDevAvailable, showGoalModeDev, setMcpAvailable, showMcp, setSelfDevAvailable, showSelfDev, setIphoneCompanionAvailable, setDevMissionsAvailable, setHealthAvailable, setFigmaBridgeAvailable });
 })();

@@ -2110,6 +2110,19 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
 - Tests : nouveau `test/live-voice-style-settings.test.js` (3 cas). Suite complète 3 052/3 052.
 - Non vérifié : changement de langue pendant une vraie session Live.
 
+## 25/11/2026 — Pastille de Conversation Live ronde ; sélecteur « Vue » du Control Center retiré
+
+- Pastille de Conversation Live (colonne de gauche) : elle était ovale, 9 × 6 px. La règle de la
+  colonne fixait 6 px, mais une ancienne règle lui imposait une base flex de 9 px de large.
+  Correctif : `flex:0 0 6px` et `aspect-ratio:1`.
+- Sélecteur « Vue : Utilisateur / Avancée » : la vue avancée n'ajoutait que des marqueurs
+  `[DOSSIER_LOCAL]` aux espaces de travail et la source des réglages, deux champs que l'écran
+  n'affiche pas. Aucune différence visible : retiré de l'interface (décision d'Arnaud :
+  « supprime-le s'il n'est pas utile »).
+  - L'API garde son paramètre `view` ; l'interface demande toujours `USER`.
+- Tests : un cas dans `sidebar-ui`, un dans `control-center-navigation-groups` (toutes les
+  requêtes en `view=USER`). Suite complète 3 054/3 054.
+
 ## À trancher
 
 - Rien pour l'instant.

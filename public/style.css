@@ -2794,7 +2794,8 @@ body.dev-preview-resizing *{
 .sidebar .sidebar-nav__item.view-btn.active .noon-icon{color:var(--ui-ink)}
 .sidebar .sidebar-nav__item.view-btn.active::after{position:absolute;right:12px;width:6px;height:6px;border-radius:50%;background:var(--ui-lime);box-shadow:0 0 0 2px rgba(184,249,0,.25);content:""}
 .sidebar-nav__meta{display:flex;align-items:center;gap:6px;margin-left:auto;color:var(--ui-text-3);font-size:var(--ui-fs-xs);font-weight:400}
-.sidebar .live-voice-dot{width:6px;height:6px;margin:0}
+/* Pastille ronde : la base flex de 9 px héritée l'étirait en ovale (9 × 6 px). */
+.sidebar .live-voice-dot{width:6px;height:6px;flex:0 0 6px;margin:0;aspect-ratio:1}
 .sidebar .live-voice-button[data-connected="true"]{background:var(--ui-lime-soft);color:var(--ui-ink)}
 .sidebar .live-voice-button[data-connected="true"] .noon-icon{color:var(--ui-lime-ink)}
 .sidebar .conversation-projects,.sidebar .conversation-history{margin:0 0 var(--ui-s3);padding:0;border:0;border-top:0;background:transparent}

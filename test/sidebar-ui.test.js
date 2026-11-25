@@ -59,3 +59,8 @@ test("les menus contextuels utilisent le jeu de pictos unique", () => {
   assert.match(app, /icon\.append\(noonIcon\(\{ share: "share", rename: "pencil", folder: "folder", trash: "trash" \}\[action\.icon\]\)\)/);
   for (const name of ["pencil", "trash", "chevron-right"]) assert.match(html, new RegExp(`<symbol id="noon-i-${name}"`));
 });
+
+test("la pastille de Conversation Live reste ronde (largeur, hauteur et base flex identiques)", () => {
+  const css = fs.readFileSync(path.join(__dirname, "..", "public", "style.css"), "utf8");
+  assert.match(css, /\.sidebar \.live-voice-dot\{width:6px;height:6px;flex:0 0 6px;margin:0;aspect-ratio:1\}/);
+});

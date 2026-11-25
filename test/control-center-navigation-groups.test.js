@@ -84,3 +84,20 @@ test("le picto ouvre l'onglet Réglages, actif dans la navigation", async () => 
   const active = h.navigation.querySelectorAll("button").find((button) => button.classList.contains("active"));
   assert.equal(active?.textContent, "Réglages");
 });
+
+test("le sélecteur « Vue » sans effet visible est retiré ; l'interface demande la vue utilisateur", async () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "public", "index.html"), "utf8");
+  assert.doesNotMatch(html, /id="controlCenterView"/);
+  const requested = [];
+  const ids = ["controlCenter", "controlCenterNavigation", "controlCenterOverview", "controlCenterSection",
+    "controlCenterLoading", "closeControlCenter", "refreshControlCenter", "controlCenterSettings"];
+  const nodes = Object.fromEntries(ids.map((id) => [id, new FakeElement(id === "controlCenter" ? "dialog" : "div", id)]));
+  const fetch = async (url) => { requested.push(url); return { ok: true, json: async () => ({ snapshot: { availableSections: ["approvals"], sections: {}, needsAttention: [], overallStatus: "HEALTHY" } }) }; };
+  const window = {};
+  const document = { getElementById: (id) => nodes[id] || null, createElement: (tag) => new FakeElement(tag) };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "public", "control-center.js"), "utf8"), { window, document, fetch, URLSearchParams, encodeURIComponent, Promise, Object, String, Array, Map });
+  await window.NoonControlCenter.open();
+  await settle();
+  assert.ok(requested.length > 0);
+  assert.ok(requested.every((url) => url.includes("view=USER")), requested.join(" "));
+});
