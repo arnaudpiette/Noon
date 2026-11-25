@@ -1863,6 +1863,35 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
 - Tests : deux cas ajoutés à `test/sidebar-ui.test.js`. Suite complète 3 002/3 002 ;
   `eval:critical` 54/54, `eval:smoke` 99/99.
 
+## 25/11/2026 — Conversation Live : accueil d'Alexandra, Kaan et Sinan ; protection quand un enfant parle
+
+- Demande d'Arnaud :
+  - phrase d'accueil propre à Alexandra ;
+  - phrase propre à Kaan et Sinan, gardée telle quelle quand l'un d'eux dit que c'est lui ;
+  - quand un enfant parle, aucune donnée privée.
+- Identification par déclaration seulement (« c'est Kaan »), jamais par empreinte vocale.
+  Nouvel outil Realtime `set_noon_speaker` (`services/voice/live-speakers.js`). L'outil
+  renvoie la phrase à prononcer mot pour mot (`say`).
+- Quand un enfant est déclaré, restriction côté serveur (`voice-http-routes.js`) :
+  - seuls `set_noon_speaker` et `set_noon_voice_style` restent utilisables ;
+  - `ask_noon_brain`, les projets, le Focus et le mode répondent « restricted » sans rien
+    exécuter ;
+  - les instructions de la session sont remplacées par `session.update` (`live-voice.js`) :
+    plus d'historique, de souvenirs ni de personnalité privée.
+- La restriction dure jusqu'à la fin de la session Live. Dire ensuite « c'est Arnaud » ne la
+  lève pas : il faut relancer Live.
+- Limite assumée : ce n'est pas une authentification. Elle protège d'un accès accidentel,
+  pas d'un enfant qui relance lui-même Live sans se déclarer. Les phrases familiales sont
+  désormais dans le code du dépôt.
+- Tests : `test/live-speakers.test.js` (5 cas : phrases exactes, enfant maintenu, session
+  enfant sans historique ni souvenirs, refus serveur d'`ask_noon_brain`, Alexandra sans
+  restriction). Suite complète 3 007/3 007 ; `eval:critical` 54/54, `eval:smoke` 99/99,
+  `eval:privacy` 3/3.
+- Non vérifié : comportement réel du modèle vocal (appel effectif de l'outil, phrase
+  prononcée mot pour mot), test matériel au micro.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
+- Live au lancement de Noon : démarrage automatique (micro ouvert, session payante) ou non.
+- Phrase d'ouverture de Live : « Salut Noon… » ou « Salut Arnaud… ».

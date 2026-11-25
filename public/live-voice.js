@@ -528,6 +528,11 @@
 
     applyClientAction(action) {
       if (!action) return;
+      // Un enfant parle : instructions sans historique ni souvenirs, outils réduits (voir live-speakers.js).
+      if (action.type === "restrictLiveSession") {
+        this.send({ type: "session.update", session: { type: "realtime", instructions: String(action.instructions || ""), tools: Array.isArray(action.tools) ? action.tools : [] } });
+        return;
+      }
       if (action.type === "setMode") bridge.setMode(action.mode);
       if (action.type === "setFocus") bridge.setFocus(action.project);
       if (action.type === "setVoiceStyle") {

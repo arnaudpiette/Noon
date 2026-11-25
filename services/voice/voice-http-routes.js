@@ -6,11 +6,14 @@
 // (accesseurs), ce qui préserve les variables initialisées plus tard au démarrage.
 
 const { NOT_HANDLED } = require("../http/route-result");
+const { CHILD_ALLOWED_TOOLS, createLiveSpeakerRegistry } = require("./live-speakers");
 
 const DEPENDENCIES = Object.freeze(["REALTIME_IDLE_TIMEOUT_MS","REALTIME_MAX_SESSION_MS","REALTIME_MODELS","WEB_SEARCH_DAILY_LIMIT","WEB_SEARCH_MAX_PER_REQUEST","askAI","assertRemoteVoiceAvailable","autonomousMemoryPipeline","buildIntentContext","createConversationKey","crypto","executeExplicitConversationMemoryCommand","getBudgetStatus","getConversationHistory","getValidRegisteredProjects","getVoiceBudgetStatus","intentCommandEngine","localIntelligenceRuntime","memoryEngine","modelForQuality","normalizeAccent","normalizeFocusName","normalizeFocusPath","normalizeLanguage","normalizeNoonMode","normalizeSessionId","normalizeVoiceQuality","readJsonBody","readTextBody","realtimeVoiceConfig","recentAutomaticMemoryIds","recentAutomaticMemoryReports","refreshDailyWebSearchUsage","registerRealtimeUsage","rememberConversation","rememberedRealtimeTurns","resolveFocusCatalogSelection","resolveFocusProject","resolveProject","scanRegisteredProjects","sessionContinuityEngine","touchConversation","voiceIdentity","workspaceEngine"]);
 
 function createVoiceHttpRoutes(deps) {
   for (const name of DEPENDENCIES) if (!(name in deps)) throw new TypeError(`Dépendance manquante : ${name}`);
+  // Personne déclarée dans chaque session Live (voir live-speakers.js) ; remise à zéro à chaque session.
+  const liveSpeakers = createLiveSpeakerRegistry();
   return async function handle(req, res, requestPath) {
     const {
       REALTIME_IDLE_TIMEOUT_MS,
@@ -114,6 +117,7 @@ function createVoiceHttpRoutes(deps) {
         }
 
         const sessionId = normalizeSessionId(url.searchParams.get("sessionId"));
+        liveSpeakers.start(sessionId);
         const mode = normalizeNoonMode(url.searchParams.get("mode"));
         let focus = normalizeFocusName(url.searchParams.get("focus"));
         let focusPath = normalizeFocusPath(url.searchParams.get("focusPath"));
@@ -370,6 +374,37 @@ function createVoiceHttpRoutes(deps) {
         const args = body.arguments && typeof body.arguments === "object"
           ? body.arguments
           : {};
+        const liveSessionId = normalizeSessionId(body.sessionId);
+
+        // Un enfant parle : aucun outil ne touche aux données ou réglages d'Arnaud.
+        if (liveSpeakers.isChildSession(liveSessionId) && !CHILD_ALLOWED_TOOLS.includes(name)) {
+          res.writeHead(200);
+          return res.end(JSON.stringify({
+            status: "restricted",
+            message: "Accès fermé : un enfant parle. Réponds sans aucune donnée privée d'Arnaud, avec des connaissances générales adaptées à son âge.",
+          }));
+        }
+
+        if (name === "set_noon_speaker") {
+          const declared = liveSpeakers.declare(liveSessionId, args.speaker);
+          res.writeHead(200);
+          return res.end(JSON.stringify({
+            status: "ok",
+            speaker: declared.label,
+            say: declared.kept ? null : declared.greeting,
+            restricted: declared.child,
+            message: declared.kept
+              ? "Un enfant a été identifié dans cette session : l'accès reste fermé jusqu'à la prochaine session Live."
+              : declared.greeting ? "Prononce la phrase « say » mot pour mot." : "Personne enregistrée.",
+            clientAction: declared.child
+              ? {
+                type: "restrictLiveSession",
+                instructions: realtimeVoiceConfig.buildChildInstructions({ speaker: declared }),
+                tools: realtimeVoiceConfig.childTools,
+              }
+              : null,
+          }));
+        }
 
         if (name === "set_noon_mode") {
           const mode = normalizeNoonMode(args.mode);

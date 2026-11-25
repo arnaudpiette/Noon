@@ -2,11 +2,13 @@
 
 // Configuration métier unique de Realtime. Les adapters WebRTC restent dans
 // la couche HTTP, tandis que l'identité et la mémoire passent par leurs façades.
+const { CHILD_ALLOWED_TOOLS, LIVE_SPEAKERS, childSessionInstructions, speakerRulesInstruction } = require("./live-speakers");
 const REALTIME_TOOLS = Object.freeze([
   { type: "function", name: "set_noon_mode", description: "Change le mode de Noon de manière déterministe.", parameters: { type: "object", properties: { mode: { type: "string", enum: ["DA", "DEV"] } }, required: ["mode"], additionalProperties: false } },
   { type: "function", name: "set_noon_focus", description: "Sélectionne un projet local autorisé ou retire le Focus.", parameters: { type: "object", properties: { query: { type: "string" }, clear: { type: "boolean" } }, required: ["query", "clear"], additionalProperties: false } },
   { type: "function", name: "set_noon_voice_style", description: "Change la langue verrouillée ou automatique et le style d'accent.", parameters: { type: "object", properties: { language: { type: "string" }, accent: { type: "string" } }, required: ["language", "accent"], additionalProperties: false } },
   { type: "function", name: "ask_noon_brain", description: "Délègue obligatoirement toute question, analyse, demande d’action ou déclaration d’avancement au pipeline canonique de Noon (Intent, contexte, mémoire, ModelRouter, sécurité et approvals), identique au Chat.", parameters: { type: "object", properties: { question: { type: "string" }, webSearch: { type: "boolean" } }, required: ["question", "webSearch"], additionalProperties: false } },
+  { type: "function", name: "set_noon_speaker", description: "Indique qui parle, uniquement quand la personne le dit elle-même (Alexandra, Kaan, Sinan ou Arnaud). Renvoie la phrase d'accueil à prononcer.", parameters: { type: "object", properties: { speaker: { type: "string", enum: Object.keys(LIVE_SPEAKERS) } }, required: ["speaker"], additionalProperties: false } },
   { type: "function", name: "manage_noon_projects", description: "Actualise, liste ou localise les projets détectés dans les dossiers Focus autorisés.", parameters: { type: "object", properties: { action: { type: "string", enum: ["scan", "list", "find"] }, query: { type: "string" } }, required: ["action", "query"], additionalProperties: false } },
 ]);
 
@@ -34,12 +36,21 @@ function createRealtimeVoiceConfig({ voiceIdentity, memoryEngine, buildSystemPro
       identity.styleInstructions, modeInstruction, focusInstruction,
       memoryText ? `Souvenirs locaux utiles : ${memoryText}` : "",
       "Pour chaque question, analyse, demande d’action ou déclaration d’avancement, appelle toujours ask_noon_brain avec les mots de l’utilisateur au lieu de répondre ou d’agir directement. Seuls les changements déterministes de mode, Focus ou style vocal utilisent leurs outils dédiés. Le cerveau canonique partage IntentCommandEngine, ContextBuilder, MemoryEngine, ModelRouter, SecurityPolicy, ApprovalEngine et TransactionalExecution avec le Chat. Ne déduis jamais qu’une action est terminée parce que son horaire est dépassé.",
+      speakerRulesInstruction(),
       "Confirme brièvement tout changement de langue, accent, mode ou Focus. Si l'utilisateur t'interrompt, arrête-toi immédiatement et écoute.",
       historyText ? `Contexte récent, sans le répéter :\n${historyText}` : "",
     ].filter(Boolean).join(" "));
   }
-  return { buildInstructions, tools: REALTIME_TOOLS };
+  // Session restreinte quand un enfant parle : style vocal seul, sans historique ni souvenirs.
+  function buildChildInstructions({ language = "auto", accent = "none", speaker }) {
+    const identity = voiceIdentity.resolve({ pipeline: "realtime", language, accent });
+    // Pas de buildSystemPrompt ici : ni personnalité détaillée d’Arnaud, ni charte, ni contexte.
+    return ["Tu es Noon, un assistant vocal bienveillant qui parle français.", childSessionInstructions({ ...speaker, styleInstructions: identity.styleInstructions })].join(" ");
+  }
+  return { buildInstructions, buildChildInstructions, tools: REALTIME_TOOLS, childTools: CHILD_TOOLS };
 }
+
+const CHILD_TOOLS = Object.freeze(REALTIME_TOOLS.filter((tool) => CHILD_ALLOWED_TOOLS.includes(tool.name)));
 
 function assertRemoteVoiceAvailable(runtime, capabilityId) {
   const decision = runtime.preflight({
