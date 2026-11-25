@@ -30,6 +30,7 @@ const STATIC_ASSETS = Object.freeze({
   "/dev-missions-ui.js": { file: ["dev-missions-ui.js"], headers: nosniffJs },
   "/noon-health-ui.js": { file: ["noon-health-ui.js"], headers: nosniffJs },
   "/mcp-connectors-ui.js": { file: ["mcp-connectors-ui.js"], headers: nosniffJs },
+  "/recorder-ui.js": { file: ["recorder-ui.js"], headers: nosniffJs },
   "/goal-mode-dev-ui.js": { file: ["goal-mode-dev-ui.js"], headers: plainJs },
   "/dev-terminal-profile-ui.js": { file: ["dev-terminal-profile-ui.js"], headers: { "Content-Type": JS, "Cache-Control": "no-store" } },
   "/live-voice-core.js": { file: ["live-voice-core.js"], headers: plainJs },

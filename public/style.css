@@ -2967,3 +2967,23 @@ body.dev-preview-resizing *{
 .mcp-connectors__project{display:grid;gap:4px;margin:8px 0;font-size:12px;color:var(--ui-text-2,#555)}
 .mcp-connectors__project input{height:30px;padding:0 10px;border:1px solid var(--ui-line-strong,#ddd);border-radius:8px;font:12px/1 ui-monospace,SFMono-Regular,Menlo,monospace}
 .mcp-connectors__project input[type="file"]{height:auto;max-width:100%;padding:4px 0;border:0;font:12px/1.4 inherit}
+
+/* Recorder V1 (V3-L8) : voyant d'enregistrement dans la barre du haut et panneau du Control Center. */
+.recorder-indicator{display:flex;align-items:center;gap:8px;height:30px;padding:0 4px 0 10px;border:1px solid rgba(196,54,31,.25);border-radius:999px;background:rgba(196,54,31,.06);color:var(--ui-ink,#141413);font-size:var(--ui-fs-sm,12px);font-variant-numeric:tabular-nums;pointer-events:auto}
+.recorder-indicator[hidden]{display:none}
+.recorder-indicator__dot{width:8px;height:8px;flex:0 0 8px;border-radius:50%;background:#c4361f;animation:recorderPulse 1.4s ease-in-out infinite}
+.recorder-indicator__dot[data-state="paused"]{background:#d39a00;animation:none}
+.recorder-indicator__time{white-space:nowrap;font-weight:600}
+.recorder-indicator__action{height:24px;padding:0 10px;border:0;border-radius:999px;background:rgba(20,20,19,.06);color:inherit;font:inherit;font-weight:600;cursor:pointer}
+.recorder-indicator__action:hover{background:rgba(20,20,19,.12)}
+.recorder-indicator__action:focus-visible{outline:none;box-shadow:var(--ui-focus)}
+@keyframes recorderPulse{50%{opacity:.35}}
+@media(prefers-reduced-motion:reduce){.recorder-indicator__dot{animation:none}}
+.recorder__field{display:grid;gap:4px;margin:8px 0;font-size:12px;color:var(--ui-text-2,#555)}
+.recorder__field input{height:32px;padding:0 10px;border:1px solid var(--ui-line-strong,#ddd);border-radius:8px;font:inherit;font-size:13px}
+.recorder__check{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:13px}
+.recorder__consent{margin:6px 0;padding:10px 12px;border-radius:10px;background:rgba(196,54,31,.06);font-size:12.5px}
+.recorder__consent[hidden]{display:none}
+.recorder__consent p{margin:0 0 6px}
+.recorder__hint{margin:6px 0 0;color:var(--ui-text-3,#888);font-size:12px}
+.recorder__audio{width:100%;margin-top:8px}

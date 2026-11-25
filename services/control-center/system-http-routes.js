@@ -7,7 +7,7 @@
 
 const { NOT_HANDLED } = require("../http/route-result");
 
-const DEPENDENCIES = Object.freeze(["DEFAULT_HOST","WEB_SEARCH_DAILY_LIMIT","ambientContextEngine","contextBuilder","controlCenterService","devMissionHttpRoutes","extensionRegistry","findCodexExecutable","getBudgetStatus","getVoiceBudgetStatus","localIntelligenceRuntime","mcpService","noonHealthReport","noonObservability","normalizeNoonMode","normalizeSessionId","readJsonBody","refreshDailyWebSearchUsage","reliabilityEngine","remoteLanHttpRoutes","selfDevHttpRoutes","sessionContinuityEngine"]);
+const DEPENDENCIES = Object.freeze(["DEFAULT_HOST","WEB_SEARCH_DAILY_LIMIT","ambientContextEngine","contextBuilder","controlCenterService","devMissionHttpRoutes","extensionRegistry","findCodexExecutable","getBudgetStatus","getVoiceBudgetStatus","localIntelligenceRuntime","mcpService","noonHealthReport","noonObservability","normalizeNoonMode","normalizeSessionId","readJsonBody","recorderService","refreshDailyWebSearchUsage","reliabilityEngine","remoteLanHttpRoutes","selfDevHttpRoutes","sessionContinuityEngine"]);
 
 function createSystemHttpRoutes(deps) {
   for (const name of DEPENDENCIES) if (!(name in deps)) throw new TypeError(`Dépendance manquante : ${name}`);
@@ -25,6 +25,7 @@ function createSystemHttpRoutes(deps) {
       getVoiceBudgetStatus,
       localIntelligenceRuntime,
       mcpService,
+      recorderService,
       noonHealthReport,
       noonObservability,
       normalizeNoonMode,
@@ -278,6 +279,10 @@ function createSystemHttpRoutes(deps) {
 
     if (mcpService.matches(requestPath)) {
       return mcpService.handle(req, res, { requestPath, readJsonBody });
+    }
+
+    if (recorderService.matches(requestPath)) {
+      return recorderService.handle(req, res, { requestPath, readJsonBody });
     }
 
     if (req.method === "GET" && req.url === "/api/extensions") {

@@ -2123,6 +2123,62 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
 - Tests : un cas dans `sidebar-ui`, un dans `control-center-navigation-groups` (toutes les
   requêtes en `view=USER`). Suite complète 3 054/3 054.
 
+## 25/11/2026 — V3-L1 validé : charte de caractère à 30/30
+
+- Passage `npm run eval:character -- --run` du 25/11 :
+  - charte 2026-11-22.1, modèle gpt-5.6-terra, cadrans par défaut ;
+  - 30 cas, coût réel 0,125 USD (estimé 0,235) ;
+  - seuls les cas de test inventés sont envoyés.
+- Notation par Arnaud, à partir d'une page de relecture (situation, réponse, attendu, signaux
+  d'échec) générée localement dans `.noon-evals/character/`, puis enregistrée dans le fichier du
+  passage (`gradedBy`) : **30/30 réussis, 100 %** ; verdict `PASS` (seuil 90 % sur 30 cas).
+- Réserve d'évaluation, sans effet sur la note : la réponse C2-04 (tableau de 80 lignes) est
+  coupée par la limite de 900 jetons de sortie de l'évaluation, pas par Noon.
+- Conséquences :
+  - L1 est validé ; C.1 à C.7 sont cochés dans la roadmap ;
+  - L8 (Recorder), qui ne dépend que de L1, peut démarrer ;
+  - L3 attend encore le critère de L2 (deux semaines d'usage du Brief).
+
+## 25/11/2026 — V3-L8 démarré : Recorder V1, tranche E.1 + E.5 (enregistrement local, consentement)
+
+- L8 démarre après la validation de L1 (seule dépendance). L3 attend toujours le critère de L2.
+- Flag `recorder.v1` (OFF par défaut, désactivé en validation UI et en smoke).
+- Service : `services/recorder/recorder-service.js` (routes `/api/recorder/sessions`, en-tête Noon
+  exigé pour toute écriture).
+  - Stockage : `recordings/<id>/` dans le dossier de données (dossiers 0700, fichiers 0600),
+    `meta.json` et `audio.webm`. Rien n'est envoyé sur le réseau.
+  - Sauvegarde progressive : un morceau toutes les 5 s, numéroté. Un morceau rejoué est ignoré,
+    un trou est refusé. Au plus 2 Mo par morceau et 500 Mo par enregistrement ; côté interface,
+    arrêt automatique à 4 h.
+  - Pause et reprise horodatées (`events`) ; la durée exclut les pauses. Ces repères serviront
+    aux horodatages du résumé (E.3).
+  - Une session restée active au redémarrage (plantage, Mac éteint) devient « interrompue », avec
+    l'audio conservé jusqu'au dernier morceau reçu.
+  - Un seul enregistrement actif à la fois. Suppression seulement d'un enregistrement arrêté,
+    après confirmation dans l'interface.
+  - E.5 : à plusieurs, la case « J'ai prévenu les participants, et ils sont d'accord » est
+    obligatoire, et le serveur refuse sans elle (`RECORDER_CONSENT_REQUIRED`).
+  - Journal : identifiant, taille et durée seulement, jamais le titre.
+- Interface : `public/recorder-ui.js`.
+  - Panneau « Enregistreur » dans le groupe Aujourd'hui du Control Center : nouvel
+    enregistrement, liste, lecture, suppression.
+  - Voyant dans la barre du haut, visible partout : durée, Pause/Reprendre, Arrêter.
+  - Le micro choisi dans les réglages est respecté, sans repli silencieux (décision du 21/11).
+  - Si la sauvegarde échoue deux fois de suite, l'enregistrement s'arrête avec un message
+    honnête.
+- Tests : `test/recorder-service.test.js` (6 cas, dont de vraies requêtes HTTP) et
+  `test/recorder-ui.test.js` (6 cas, avec un faux micro). Suite complète 3 066/3 066 ;
+  `eval:critical` 54/54, `smoke` 99/99, `privacy` 3/3.
+- Non vérifié :
+  - un vrai enregistrement dans Noon.app (autorisation micro, fichier lisible après pause et
+    reprise) ;
+  - l'application packagée.
+- Reste pour L8 :
+  - E.2, transcription (décision d'Arnaud attendue : whisper.cpp local ou cloud avec
+    consentement) ;
+  - E.3 (résumé horodaté) et E.4 (export DOCX, dépendance `docx` déjà présente) ;
+  - critère de sortie : une réunion réelle donne un DOCX fidèle.
+
 ## À trancher
 
-- Rien pour l'instant.
+- Transcription du Recorder (E.2) : whisper.cpp local, ou transcription cloud avec consentement par session.

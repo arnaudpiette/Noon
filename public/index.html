@@ -227,6 +227,7 @@
           <button class="mode-btn" data-mode="DEV" type="button">DEV</button>
         </div>
       </div>
+          <div id="recorderIndicator" class="recorder-indicator" role="status" aria-live="polite" hidden></div>
           <div id="connectionStatus" class="connection-status" data-state="checking" role="status" aria-live="polite" hidden>
             <span class="connection-status__dot" aria-hidden="true"></span>
             <span id="connectionStatusText">Vérification…</span>
@@ -1025,6 +1026,7 @@
           <section id="controlCenterOverview" aria-live="polite"></section>
           <section id="controlCenterSection" aria-live="polite" hidden></section>
           <div id="controlCenterGoalModeDev" class="control-center__goal-mode-dev" hidden><section id="goalModeDevPanel" class="goal-mode-dev" hidden aria-label="Goal Mode DEV"></section></div>
+          <div id="controlCenterRecorder" class="control-center__recorder" hidden><section id="recorderPanel" class="recorder" hidden aria-label="Enregistreur"></section></div>
           <div id="controlCenterMcp" class="control-center__mcp" hidden><section id="mcpConnectorsPanel" class="mcp-connectors" hidden aria-label="Connecteurs MCP"></section></div>
           <div id="controlCenterSelfDev" class="control-center__selfdev" hidden><section id="selfDevPanel" class="selfdev" hidden aria-label="SelfDev"></section></div>
           <div id="controlCenterIphone" class="control-center__iphone" hidden><section id="iphoneCompanionPanel" class="iphone-companion" hidden aria-label="Compagnon iPhone"></section></div>
@@ -1197,6 +1199,7 @@
   <script src="dev-terminal-profile-ui.js"></script>
   <script src="goal-mode-dev-ui.js"></script>
   <script src="mcp-connectors-ui.js"></script>
+  <script src="recorder-ui.js"></script>
   <script src="selfdev-ui.js"></script>
   <script src="iphone-companion-ui.js"></script>
   <script src="figma-bridge-ui.js"></script>

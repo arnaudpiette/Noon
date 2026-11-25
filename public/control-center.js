@@ -32,6 +32,7 @@
   const DEV_MISSIONS_SECTION = "dev-missions";
   const HEALTH_SECTION = "noon-health";
   const FIGMA_SECTION = "figma-bridge";
+  const RECORDER_SECTION = "recorder";
   // Étape 1 UI : les réglages (ancien menu déroulant de la barre du haut) sont un onglet du
   // Control Center, toujours disponible, ouvert directement par le picto de la barre.
   const SETTINGS_SECTION = "settings";
@@ -42,6 +43,7 @@
     [DEV_MISSIONS_SECTION]: { container: document.getElementById("controlCenterDevMissions"), available: false, refresh: () => window.NoonDevMissions?.refresh?.() },
     [HEALTH_SECTION]: { container: document.getElementById("controlCenterHealth"), available: false, refresh: () => window.NoonHealth?.refresh?.() },
     [FIGMA_SECTION]: { container: document.getElementById("controlCenterFigma"), available: false, refresh: () => window.NoonFigmaBridge?.refresh?.() },
+    [RECORDER_SECTION]: { container: document.getElementById("controlCenterRecorder"), available: false, refresh: () => window.NoonRecorder?.refresh?.() },
     [SETTINGS_SECTION]: { container: document.getElementById("controlCenterSettings"), available: true, refresh: () => Promise.resolve() },
   };
   const isClientPanel = (id) => Object.prototype.hasOwnProperty.call(clientPanels, id);
@@ -61,6 +63,7 @@
     [DEV_MISSIONS_SECTION]: "Missions DEV",
     [HEALTH_SECTION]: "Santé de Noon",
     [FIGMA_SECTION]: "Figma",
+    [RECORDER_SECTION]: "Enregistreur",
     [SETTINGS_SECTION]: "Réglages",
   });
   const actionLabels = Object.freeze({
@@ -71,7 +74,7 @@
   // « Réglages » reste en tête, sans titre ; une section non listée tombe dans « Système ».
   const NAVIGATION_GROUPS = Object.freeze([
     { id: "settings", label: null, sections: [SETTINGS_SECTION] },
-    { id: "today", label: "Aujourd’hui", sections: ["overview", "approvals", "jobs", "goals", "notifications"] },
+    { id: "today", label: "Aujourd’hui", sections: ["overview", "approvals", RECORDER_SECTION, "jobs", "goals", "notifications"] },
     { id: "connections", label: "Intégrations", sections: ["connections", MCP_SECTION, FIGMA_SECTION, IPHONE_SECTION, "devices", "sync", "extensions"] },
     { id: "memory", label: "Mémoire et confidentialité", sections: ["memory", "rules", "permissions", "privacy"] },
     { id: "dev", label: "DEV", sections: [GOAL_MODE_DEV_SECTION, DEV_MISSIONS_SECTION, SELFDEV_SECTION, "workspaces"] },
@@ -278,6 +281,8 @@
   }
   const showMcp = () => showClientPanel(MCP_SECTION);
   const setMcpAvailable = (value) => setClientPanelAvailable(MCP_SECTION, value);
+  const setRecorderAvailable = (value) => setClientPanelAvailable(RECORDER_SECTION, value);
+  const showRecorder = () => showClientPanel(RECORDER_SECTION);
   const showSelfDev = () => showClientPanel(SELFDEV_SECTION);
   const setSelfDevAvailable = (value) => setClientPanelAvailable(SELFDEV_SECTION, value);
   const setIphoneCompanionAvailable = (value) => setClientPanelAvailable(IPHONE_SECTION, value);
@@ -342,5 +347,5 @@
   const reload = () => (activeSection === GOAL_MODE_DEV_SECTION ? showGoalModeDev() : isClientPanel(activeSection) ? showClientPanel(activeSection) : load(activeSection, true));
   refreshButton.addEventListener("click", reload);
   dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
-  window.NoonControlCenter = Object.freeze({ open, refresh: reload, setGoalModeDevAvailable, showGoalModeDev, setMcpAvailable, showMcp, setSelfDevAvailable, showSelfDev, setIphoneCompanionAvailable, setDevMissionsAvailable, setHealthAvailable, setFigmaBridgeAvailable });
+  window.NoonControlCenter = Object.freeze({ open, refresh: reload, setGoalModeDevAvailable, showGoalModeDev, setMcpAvailable, showMcp, setRecorderAvailable, showRecorder, setSelfDevAvailable, showSelfDev, setIphoneCompanionAvailable, setDevMissionsAvailable, setHealthAvailable, setFigmaBridgeAvailable });
 })();

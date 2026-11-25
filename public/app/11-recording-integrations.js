@@ -586,6 +586,17 @@ if (mcpConnectorsPanel && window.NoonMcpConnectorsUi) {
   window.NoonMcpConnectors = Object.freeze({ refresh: () => mcpConnectorsUi.refresh() });
   void mcpConnectorsUi.init().then((available) => window.NoonControlCenter?.setMcpAvailable?.(available === true));
 }
+// Recorder V1 (V3-L8) : entrée « Enregistreur » visible seulement si recorder.v1 est actif (sinon 404).
+const recorderPanel = document.getElementById("recorderPanel");
+if (recorderPanel && window.NoonRecorderUi) {
+  const recorderUi = window.NoonRecorderUi.createRecorderController({
+    elements: { root: recorderPanel, indicator: document.getElementById("recorderIndicator") },
+    api: window.NoonRecorderUi.createRecorderApi({ fetchImpl: window.fetch.bind(window) }),
+    getAudioConstraints: () => window.NoonAppBridge?.getAudioConstraints?.() || true,
+  });
+  window.NoonRecorder = Object.freeze({ refresh: () => recorderUi.refresh(), isRecording: () => recorderUi.isRecording() });
+  void recorderUi.init().then((available) => window.NoonControlCenter?.setRecorderAvailable?.(available === true));
+}
 // SelfDev : entrée du Control Center visible seulement si selfdev.v1 est actif (sinon 404).
 const selfDevPanel = document.getElementById("selfDevPanel");
 if (selfDevPanel && window.NoonSelfDevUi) {

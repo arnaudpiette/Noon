@@ -152,6 +152,7 @@ const { createPersonalSearchComposition } = require("./services/search/personal-
 const { createLifecycleComposition } = require("./services/lifecycle/lifecycle-composition");
 const { createPersonalIntelligenceComposition } = require("./services/personal-intelligence/personal-intelligence-composition");
 const { createExtensionsComposition } = require("./services/extensions/extensions-composition");
+const { createRecorderService } = require("./services/recorder/recorder-service");
 const { createProgressComposition } = require("./services/observability/progress-composition");
 const { createLocalRuntimeAndJobsComposition } = require("./services/runtime/local-runtime-and-jobs-composition");
 
@@ -886,6 +887,12 @@ const { extensionRegistry, mcpService } = createExtensionsComposition({
   toolAuditLog,
   transactionalExecutionEngine,
 });
+// Recorder V1 (V3-L8) : enregistrement local des réunions, flag recorder.v1 (OFF par défaut).
+const recorderService = createRecorderService({
+  enabled: featureFlags.evaluate("recorder.v1").enabled && !UI_VALIDATION_MODE && process.env.NOON_SMOKE_TEST !== "1",
+  dataDirectory: DATA_DIRECTORY,
+  observability: (event, metadata) => toolAuditLog.append(event, metadata),
+});
 
 const specialistRegistry = createSpecialistRegistry();
 const contextCapsuleBuilder = createContextCapsuleBuilder();
@@ -1380,6 +1387,7 @@ const httpRouteDependencies = {
   get realtimeVoiceConfig() { return realtimeVoiceConfig; },
   get recentAutomaticMemoryIds() { return recentAutomaticMemoryIds; },
   get recentAutomaticMemoryReports() { return recentAutomaticMemoryReports; },
+  get recorderService() { return recorderService; },
   get refreshDailyWebSearchUsage() { return refreshDailyWebSearchUsage; },
   get registerRealtimeUsage() { return registerRealtimeUsage; },
   get reliabilityEngine() { return reliabilityEngine; },
