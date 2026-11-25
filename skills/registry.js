@@ -91,6 +91,8 @@ function createSkillRegistry(skills = DEFAULT_SKILLS, { auditLog = null } = {}) 
       definition: Object.freeze({ type: "function", name, description: extensionSkill.description, strict: true, parameters: extensionSkill.inputSchema }),
       permissions: Object.freeze({ level: levelMap[extensionSkill.permissionLevel], explicitOrderRequired: extensionSkill.permissionLevel !== "READ", confirmationRequired: ["EXECUTE", "DESTRUCTIVE", "EXTERNAL"].includes(extensionSkill.permissionLevel), destructive: extensionSkill.permissionLevel === "DESTRUCTIVE" }),
       category: "extension", extensionId, modelToolName: exposedName, execute,
+      // Facultatif : ce que la carte d'approbation affiche (titre, résumé, détails exacts).
+      ...(typeof extensionSkill.approvalDisplay === "function" ? { approvalDisplay: extensionSkill.approvalDisplay } : {}),
     });
     validateSkill(skill); byName.set(name, skill); modelAliases.set(exposedName, name); extensionOwners.set(name, extensionId); return skill;
   }

@@ -315,3 +315,72 @@ test("câblage : script chargé avant app.js, conteneur dans le Control Center, 
   const server = readServerSource();
   assert.match(server, /"\/mcp-connectors-ui\.js": \{ file: \["mcp-connectors-ui\.js"\]/);
 });
+
+// ---------- Phase 2 : écritures validées ----------
+
+test("phase 2 : les outils d'écriture se cochent à part, avec confirmation, et partent par PUT write-tools", async () => {
+  const server = installedFigma({
+    status: { state: "CONNECTED", lastError: null, toolCount: 4, hasCredentials: true },
+    userApprovedWriteTools: [],
+    tools: { exposed: [], hidden: [
+      { name: "get_metadata", level: "WRITE", reason: "READ_ONLY_NOT_APPROVED_BY_USER" },
+      { name: "update_node", level: "WRITE", reason: "WRITE_NOT_APPROVED_BY_USER" },
+      { name: "delete_file", level: "DESTRUCTIVE", reason: "DESTRUCTIVE_HINT" },
+    ] },
+  });
+  const asked = [];
+  const h = harness({ responses: { list: { status: "ok", catalog: [], servers: [server] } }, confirm: (text) => { asked.push(text); return true; } });
+  await h.controller.init();
+  const writeBox = find(h.root, (node) => node.className === "mcp-connectors__tools mcp-connectors__tools--write");
+  assert.ok(writeBox, "section Outils d'écriture présente");
+  const labels = all(writeBox).filter((node) => node.className === "mcp-connectors__tool-name").map((node) => node.textContent);
+  assert.deepEqual(labels, ["update_node"], "ni l'outil lecture seule non validé, ni l'outil destructif");
+  assert.match(writeBox.textContent, /confirmation exacte/);
+  checkboxFor(writeBox, "update_node").checked = true;
+  checkboxFor(writeBox, "update_node").dispatch("change");
+  buttonByText(h.root, "Enregistrer les outils d'écriture").click();
+  await settle();
+  assert.equal(asked.length, 1);
+  assert.match(asked[0], /Rien ne partira sans ta confirmation exacte/);
+  const put = h.calls.find((call) => call.method === "PUT");
+  assert.equal(put.url, "/api/mcp/servers/figma/write-tools");
+  assert.equal(put.headers["X-Noon-Request"], "1");
+  assert.deepEqual(put.body, { tools: ["update_node"] });
+});
+
+test("phase 2 : écriture refusée à la confirmation → aucun PUT", async () => {
+  const server = installedFigma({ status: { state: "CONNECTED", lastError: null, toolCount: 1, hasCredentials: true }, userApprovedWriteTools: [], tools: { exposed: [], hidden: [{ name: "update_node", level: "WRITE", reason: "WRITE_NOT_APPROVED_BY_USER" }] } });
+  const h = harness({ responses: { list: { status: "ok", catalog: [], servers: [server] } }, confirm: () => false });
+  await h.controller.init();
+  const writeBox = find(h.root, (node) => node.className === "mcp-connectors__tools mcp-connectors__tools--write");
+  checkboxFor(writeBox, "update_node").checked = true;
+  checkboxFor(writeBox, "update_node").dispatch("change");
+  buttonByText(h.root, "Enregistrer les outils d'écriture").click();
+  await settle();
+  assert.equal(h.calls.filter((call) => call.method === "PUT").length, 0);
+});
+
+test("phase 2 : Supabase demande l'identifiant du projet avant d'installer", async () => {
+  const supabase = { id: "supabase", displayName: "Supabase", url: "https://mcp.supabase.com/mcp", auth: "oauth", dataClass: "PRIVATE", installed: false, projectRef: { label: "Identifiant du projet Supabase", pattern: "^[a-z]{20}$" } };
+  const h = harness({ responses: { list: { status: "ok", catalog: [supabase], servers: [] } } });
+  await h.controller.init();
+  const install = buttonByText(h.root, "Installer");
+  assert.equal(install.disabled, true, "pas d'installation sans projet valide");
+  const input = find(h.root, (node) => node.tagName === "INPUT");
+  input.value = "abcdefghijklmnopqrst";
+  input.dispatch("input");
+  assert.equal(install.disabled, false);
+  install.click();
+  await settle();
+  const post = h.calls.find((call) => call.method === "POST");
+  assert.equal(post.url, "/api/mcp/servers/supabase/install");
+  assert.deepEqual(post.body, { projectRef: "abcdefghijklmnopqrst" });
+});
+
+test("phase 2 : la carte d'approbation du chat montre les détails exacts en texte brut", () => {
+  const app = readAppSource();
+  const card = app.match(/function addApprovalCard\(approval\) \{[\s\S]*?\n\}/)?.[0] || "";
+  assert.match(card, /for \(const item of Array\.isArray\(approval\.details\) \? approval\.details : \[\]\)/);
+  assert.match(card, /text\.textContent = String\(item\?\.value \?\? ""\);/);
+  assert.doesNotMatch(card, /innerHTML/);
+});

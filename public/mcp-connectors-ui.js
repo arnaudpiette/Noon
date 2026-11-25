@@ -2,6 +2,8 @@
 
 // UI des connecteurs MCP (Control Center), derrière le flag connectors.mcp.
 // Phase 1 : serveurs du catalogue, outils en lecture seule validés un par un.
+// Phase 2 : outils d'écriture cochés par l'utilisateur ; chaque appel demande ensuite une
+// approbation exacte dans le chat (serveur, outil, arguments).
 // Toutes les valeurs serveur sont rendues avec textContent : aucun nom de
 // serveur, d'outil ou d'erreur ne devient du HTML. Aucun jeton n'arrive ici :
 // le serveur ne renvoie que l'état et, pendant une connexion OAuth, l'URL
@@ -33,6 +35,9 @@
     MCP_AUTHORIZATION_URL_INVALID: "Adresse d'autorisation invalide : connexion annulée.",
     MCP_LOCAL_SERVER_UNREACHABLE: "Serveur local introuvable sur ce Mac. Pour Figma : ouvre un fichier, passe en Dev Mode (Maj+D), puis « Enable desktop MCP server » (siège Dev ou Full requis).",
     MCP_CLIENT_NOT_ACCEPTED: "Indisponible : ce fournisseur n'accepte pas Noon sur son serveur en ligne.",
+    MCP_PROJECT_REF_INVALID: "Identifiant de projet invalide.",
+    MCP_TOOL_NAME_INVALID: "Nom d'outil invalide.",
+    MCP_TOOL_LIST_TOO_LONG: "Trop d'outils d'écriture cochés (50 au plus).",
   });
 
   const HIDDEN_REASONS = Object.freeze({
@@ -41,6 +46,7 @@
     NOT_DECLARED_READ_ONLY: "masqué : non déclaré en lecture seule",
     READ_ONLY_NOT_APPROVED_BY_USER: "non validé",
     MCP_SCHEMA_UNSUPPORTED: "masqué : paramètres non pris en charge",
+    WRITE_NOT_APPROVED_BY_USER: "écriture non autorisée",
   });
 
   function messageFor(error) {
@@ -73,10 +79,11 @@
     const at = (id, action = "") => `${BASE}/${encodeURIComponent(id)}${action ? `/${action}` : ""}`;
     return Object.freeze({
       list: () => request("GET", BASE),
-      install: (id) => request("POST", at(id, "install")),
+      install: (id, options = {}) => request("POST", at(id, "install"), options),
       connect: (id) => request("POST", at(id, "connect")),
       disconnect: (id) => request("POST", at(id, "disconnect")),
       setReadOnlyTools: (id, tools) => request("PUT", at(id, "read-only-tools"), { tools }),
+      setWriteTools: (id, tools) => request("PUT", at(id, "write-tools"), { tools }),
       uninstall: (id) => request("DELETE", at(id)),
     });
   }
@@ -100,6 +107,8 @@
     let notice = null;
     let lastData = { catalog: [], servers: [] };
     const drafts = new Map(); // serverId -> Set des outils cochés, non encore enregistrés
+    const writeDrafts = new Map(); // serverId -> Set des outils d'écriture cochés, non encore enregistrés
+    const projectRefs = new Map(); // catalogue -> identifiant de projet saisi
     let pollToken = 0;
 
     function el(tag, className = "", text = null) {
@@ -202,7 +211,7 @@
     function renderTools(server) {
       const box = el("fieldset", "mcp-connectors__tools");
       box.append(el("legend", "", "Outils en lecture seule"));
-      box.append(el("p", "mcp-connectors__hint", "Coche uniquement les outils que Noon peut appeler. Les outils d'écriture restent toujours masqués."));
+      box.append(el("p", "mcp-connectors__hint", "Coche uniquement les outils que Noon peut appeler sans te demander."));
       const draft = draftFor(server);
       const list = el("ul", "mcp-connectors__tool-list");
       for (const name of server.readOnlyTools || []) {
@@ -228,6 +237,54 @@
       return box;
     }
 
+    // Outils d'écriture proposés par le serveur (ni lecture seule, ni destructifs).
+    function writeToolNames(server) {
+      const tools = server.tools || {};
+      const names = [
+        ...(tools.exposed || []).filter((tool) => tool.level === "WRITE"),
+        ...(tools.hidden || []).filter((tool) => tool.reason === "WRITE_NOT_APPROVED_BY_USER"),
+      ].map((tool) => String(tool.name));
+      return [...new Set([...names, ...(server.userApprovedWriteTools || [])])].sort();
+    }
+
+    function renderWriteTools(server) {
+      const box = el("fieldset", "mcp-connectors__tools mcp-connectors__tools--write");
+      box.append(el("legend", "", "Outils d'écriture"));
+      box.append(el("p", "mcp-connectors__hint", "Un outil coché devient visible pour Noon, mais chaque appel attend ta confirmation exacte dans le chat (serveur, outil, arguments). Les outils destructifs restent masqués."));
+      const names = writeToolNames(server);
+      if (!names.length) {
+        box.append(el("p", "mcp-connectors__hint", server.status?.state === "CONNECTED" ? "Aucun outil d'écriture proposé par ce serveur." : "Connecte le serveur pour voir ses outils d'écriture."));
+        return box;
+      }
+      if (!writeDrafts.has(server.id)) writeDrafts.set(server.id, new Set(server.userApprovedWriteTools || []));
+      const draft = writeDrafts.get(server.id);
+      const list = el("ul", "mcp-connectors__tool-list");
+      for (const name of names) {
+        const item = el("li");
+        const label = el("label");
+        const checkbox = el("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = draft.has(name);
+        checkbox.disabled = busy;
+        checkbox.addEventListener("change", () => { if (checkbox.checked) draft.add(name); else draft.delete(name); render(); });
+        label.append(checkbox, el("span", "mcp-connectors__tool-name", name));
+        item.append(label, el("span", "mcp-connectors__tool-status", toolStatus(server, name)));
+        list.append(item);
+      }
+      box.append(list);
+      const saved = new Set(server.userApprovedWriteTools || []);
+      const added = [...draft].filter((name) => !saved.has(name));
+      const changed = added.length > 0 || [...saved].some((name) => !draft.has(name));
+      box.append(button("Enregistrer les outils d'écriture", () => {
+        if (added.length && !ask(`Autoriser Noon à proposer ${added.length} outil(s) d'écriture sur ${server.displayName} ? Rien ne partira sans ta confirmation exacte, appel par appel.`)) return Promise.resolve();
+        return run(async () => {
+          await api.setWriteTools(server.id, names.filter((name) => draft.has(name)));
+          writeDrafts.delete(server.id);
+        }, { successNotice: "Outils d'écriture enregistrés." });
+      }, { disabled: !changed }));
+      return box;
+    }
+
     function renderServer(server) {
       const card = el("article", "control-card mcp-connectors__server");
       const head = el("div", "control-card__head");
@@ -238,6 +295,7 @@
       if (server.unavailable) card.append(el("p", "mcp-connectors__unavailable", server.unavailable.message));
       const meta = el("div", "control-card__meta");
       try { meta.append(el("span", "", `Adresse : ${new URL(server.url).host}`)); } catch { /* URL du catalogue relu */ }
+      if (server.projectRef) meta.append(el("span", "", `Projet : ${server.projectRef}`));
       meta.append(el("span", "", server.auth === "oauth" ? "Connexion : OAuth" : "Connexion : locale, sans jeton"));
       if (state === "CONNECTED") meta.append(el("span", "", `Outils proposés par le serveur : ${Number(server.status?.toolCount) || 0}`));
       card.append(meta);
@@ -248,9 +306,9 @@
       }
       actions.append(button("Désinstaller", () => {
         if (!ask(`Désinstaller ${server.displayName} ? Les jetons locaux et les outils validés seront supprimés.`)) return Promise.resolve();
-        return run(async () => { stopPolling(); await api.uninstall(server.id); drafts.delete(server.id); }, { successNotice: "Serveur désinstallé." });
+        return run(async () => { stopPolling(); await api.uninstall(server.id); drafts.delete(server.id); writeDrafts.delete(server.id); }, { successNotice: "Serveur désinstallé." });
       }));
-      card.append(actions, renderTools(server));
+      card.append(actions, renderTools(server), renderWriteTools(server));
       return card;
     }
 
@@ -266,7 +324,26 @@
         return card;
       }
       const actions = el("div", "control-card__actions");
-      actions.append(button("Installer", () => run(() => api.install(entry.id), { successNotice: `${entry.displayName} installé. Connecte-le puis valide ses outils.` })));
+      // Serveur limité à un projet : l'identifiant est demandé avant l'installation.
+      const install = button("Installer", () => run(() => api.install(entry.id, entry.projectRef ? { projectRef: String(projectRefs.get(entry.id) || "").trim() } : {}), { successNotice: `${entry.displayName} installé. Connecte-le puis valide ses outils.` }));
+      if (entry.projectRef) {
+        const field = el("label", "mcp-connectors__project");
+        const input = el("input");
+        input.type = "text";
+        input.autocomplete = "off";
+        input.spellcheck = false;
+        input.value = projectRefs.get(entry.id) || "";
+        input.disabled = busy;
+        let pattern = null;
+        try { pattern = new RegExp(String(entry.projectRef.pattern)); } catch { pattern = null; }
+        const validate = () => { install.disabled = busy || !(pattern && pattern.test(input.value.trim())); };
+        // Pas de nouveau rendu à la frappe : le champ garde le focus, seul le bouton suit.
+        input.addEventListener("input", () => { projectRefs.set(entry.id, input.value); validate(); });
+        validate();
+        field.append(el("span", "", entry.projectRef.label || "Identifiant du projet"), input);
+        card.append(field);
+      }
+      actions.append(install);
       card.append(actions);
       return card;
     }
@@ -278,7 +355,7 @@
       const title = el("div");
       title.append(
         el("h2", "", "Connecteurs MCP"),
-        el("p", "", "Lecture seule. Un outil n'est exposé à Noon qu'après ta validation ; les résultats sont traités comme des données externes non fiables."),
+        el("p", "", "Un outil n'est exposé à Noon qu'après ta validation ; chaque écriture attend en plus ta confirmation exacte. Les résultats sont traités comme des données externes non fiables."),
       );
       header.append(title);
       const nodes = [header];

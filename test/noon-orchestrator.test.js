@@ -27,7 +27,7 @@ function barrier() {
   return { promise, resolve };
 }
 
-function createFixture({ responses = [], executeSkill, stream = false, maxRounds = 3, audit = null, intent = null, priorityEngine = null, observability = null, contextMetadata = {}, captureApprovalPreconditions, recheckApprovalPreconditions, recheckHardRules, recheckConnector, operationalSecurityPolicy = null, transactionalExecutionEngine = null, delegationEngine = null, normalizedIntent = null, selectModel = null, modelFallbacks = null, providerAdapters = null, providerConfiguration = () => true, reliabilityEngine = null, requestOverrides = {}, approvalManager = new ApprovalManager(), now = () => Date.now() } = {}) {
+function createFixture({ responses = [], executeSkill, stream = false, maxRounds = 3, audit = null, intent = null, priorityEngine = null, observability = null, contextMetadata = {}, captureApprovalPreconditions, recheckApprovalPreconditions, recheckHardRules, recheckConnector, operationalSecurityPolicy = null, transactionalExecutionEngine = null, delegationEngine = null, normalizedIntent = null, selectModel = null, modelFallbacks = null, providerAdapters = null, providerConfiguration = () => true, reliabilityEngine = null, requestOverrides = {}, approvalManager = new ApprovalManager(), now = () => Date.now(), approvalDisplay = null } = {}) {
   const queue = [...responses];
   const modelCalls = [];
   const contextCalls = [];
@@ -66,7 +66,7 @@ function createFixture({ responses = [], executeSkill, stream = false, maxRounds
         : name === "write_artifact"
           ? { level: "write", confirmationRequired: false, networkAccess: false }
           : { level: "external", confirmationRequired: true, networkAccess: true };
-      return { definition: { name }, permissions };
+      return { definition: { name }, permissions, ...(approvalDisplay ? { approvalDisplay } : {}) };
     },
     authorize: () => ({ allowed: true, code: "AUTHORIZED" }),
     async executeSkill(name, args, context) {
@@ -281,6 +281,43 @@ test("une action sensible est suspendue avant exécution", async () => {
   const result = await fixture.orchestrator.run(fixture.request);
   assert.equal(result.status, "approval_required");
   assert.equal(executions, 0);
+});
+
+test("la carte d'approbation reprend l'affichage fourni par le skill (connecteur MCP : serveur, outil, arguments)", async () => {
+  const fixture = createFixture({
+    responses: [response("", [toolCall("ext_mcp_supabase_apply_migration_0123456789", { sql: "create table t (id int)" })])],
+    approvalDisplay: (args) => ({
+      title: "Supabase — apply_migration",
+      summary: "Exécuter une seule fois l'outil MCP « apply_migration » sur Supabase.",
+      details: [{ label: "Serveur", value: "Supabase" }, { label: "Outil", value: "apply_migration" }, { label: "Arguments", value: JSON.stringify(args), format: "json" }],
+    }),
+    executeSkill(_name, _args, context) {
+      if (!context.confirmed) throw Object.assign(new Error("Confirmation requise"), { code: "CONFIRMATION_REQUIRED" });
+      return { ok: true };
+    },
+  });
+  const result = await fixture.orchestrator.run(fixture.request);
+  assert.equal(result.status, "approval_required");
+  assert.equal(result.approval.title, "Supabase — apply_migration");
+  assert.match(result.approval.summary, /apply_migration/);
+  assert.deepEqual(result.approval.details.map((item) => item.label), ["Serveur", "Outil", "Arguments"]);
+  assert.equal(result.approval.details[2].value, JSON.stringify({ sql: "create table t (id int)" }));
+  assert.equal(result.approval.details[2].format, "json");
+});
+
+test("un affichage d'approbation qui échoue retombe sur le résumé générique", async () => {
+  const fixture = createFixture({
+    responses: [response("", [toolCall("send_email", { to: "a@example.test", content: "X" })])],
+    approvalDisplay: () => { throw new Error("cassé"); },
+    executeSkill(_name, _args, context) {
+      if (!context.confirmed) throw Object.assign(new Error("Confirmation requise"), { code: "CONFIRMATION_REQUIRED" });
+      return { sent: true };
+    },
+  });
+  const result = await fixture.orchestrator.run(fixture.request);
+  assert.equal(result.status, "approval_required");
+  assert.match(result.approval.summary, /a@example\.test/);
+  assert.deepEqual(result.approval.details, []);
 });
 
 test("la policy centrale suspend une action sensible même si le guard legacy l’autorise", async () => {

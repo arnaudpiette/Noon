@@ -1933,6 +1933,56 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   - la vue Modifications avec une vraie session de terminal ;
   - l'application packagée.
 
+## 25/11/2026 — Connecteurs MCP, phase 2 : écritures avec approbation exacte
+
+- Pas de système parallèle : un outil MCP d'écriture coché par l'utilisateur est enregistré au
+  niveau EXTERNAL, comme l'écriture Figma du plugin. Il passe donc par le même chemin que les
+  autres écritures externes : ordre explicite, CONFIRMATION_REQUIRED, approbation exacte
+  (arguments hachés, usage unique), puis exécution transactionnelle.
+  - Défense en profondeur : l'outil refuse aussi lui-même de partir sans `confirmed`.
+  - Outils destructifs (`destructiveHint`) : jamais exposés dans cette version, même cochés.
+  - Un outil de lecture seule pas encore validé n'est pas un outil d'écriture : il reste dans
+    la liste « lecture seule ». Défaut trouvé par le nouveau test, corrigé avant l'entrée.
+- Carte d'approbation : nouveau champ facultatif `approvalDisplay(args)` sur les skills
+  d'extension, transmis par l'orchestrateur à `prepareAction`.
+  - Le moteur garde au plus 6 détails (libellé ≤ 40, valeur ≤ 4 000 caractères), en texte brut.
+  - Pour MCP : titre « Serveur — outil », serveur (et projet), outil, arguments exacts en JSON.
+  - La carte du chat les affiche avec `textContent`. Si l'affichage échoue, le résumé générique
+    reprend.
+- Journal : `mcp.write_tool_called` (serveur, outil, erreur oui/non), jamais les arguments.
+- Catalogue (vérifié dans la documentation des fournisseurs le 25/11/2026) :
+  - **Supabase** (`https://mcp.supabase.com/mcp`) : enregistrement dynamique de client
+    accepté. Installation obligatoirement limitée à un projet : `project_ref`, 20 lettres,
+    validé avant d'être ajouté à l'URL. Cela retire aussi les outils de gestion du compte.
+    Capacité `REMOTE_SUPABASE`, donc bloqué en mode local uniquement ou hors ligne.
+    `execute_sql` n'est pas en lecture seule : une requête peut écrire.
+  - **Vercel** : listé « Indisponible ». Il n'accepte que les clients validés, ou ceux qui
+    publient une identité de client (CIMD) sur une URL HTTPS ; Noon n'a ni l'un ni l'autre.
+    Piste : publier un document CIMD.
+  - **Resend** : pas ajouté. Je n'ai pas vérifié qu'il existe un serveur MCP distant officiel ;
+    un serveur local (stdio) relèverait de la phase 4.
+- Écran des connecteurs :
+  - section « Outils d'écriture » à cocher, avec une confirmation explicite avant
+    l'enregistrement ;
+  - champ « Identifiant du projet » pour Supabase ; le bouton Installer reste inactif tant
+    qu'il n'est pas valide.
+- Compatibilité : un registre `mcp-servers.json` d'avant la phase 2 se relit sans erreur
+  (aucun outil d'écriture).
+- Tests :
+  - nouveau `test/mcp-write-approval.test.js` (6 cas), contre un vrai serveur MCP de test
+    (SDK officiel). Critère de fin vérifié : refusée ne part pas, approuvée part une fois avec
+    les arguments exacts, rejouée refusée (`APPROVAL_CONSUMED`), arguments modifiés refusés
+    (`APPROVAL_ACTION_CHANGED`).
+  - 4 cas ajoutés à `mcp-connectors-ui` et 2 à `noon-orchestrator`.
+  - Adapté : `mcp-client` (liste du catalogue allongée ; les routes reçoivent `readJsonBody`
+    comme dans le vrai routeur).
+  - Suite complète 3 026/3 026. Évaluations `critical` 54/54, `smoke` 99/99, `privacy` 3/3,
+    `extensions` 5/5.
+- Non vérifié :
+  - une vraie connexion Supabase : OAuth réel, outils et annotations réels ;
+  - le flux complet dans le chat avec le modèle (appels payants) ;
+  - le flag `connectors.mcp` reste OFF par défaut.
+
 ## À trancher
 
 - Réglages langue et accent de Live : à brancher ou à retirer de l'interface.

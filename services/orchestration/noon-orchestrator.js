@@ -686,6 +686,9 @@ function createNoonOrchestrator({
         const exactInput = approvalInput(toolCall, args);
         const skill = skillRegistry.getSkillByName?.(toolCall.name);
         const preconditions = await captureApprovalPreconditions({ state, toolCall, args, skill });
+        // Affichage fourni par le skill (ex. connecteur MCP : serveur, outil, arguments exacts).
+        let display;
+        try { display = typeof skill?.approvalDisplay === "function" ? skill.approvalDisplay(args) : null; } catch { display = null; }
         const approval = approvalManager.prepareAction({
           executionId: state.executionId,
           toolCallId: toolCall.call_id,
@@ -693,6 +696,7 @@ function createNoonOrchestrator({
           operation: toolCall.name,
           normalizedArgs: args,
           target: exactInput.target,
+          ...(display ? { title: display.title, sanitizedSummary: display.summary, details: display.details } : {}),
           permissionLevel: skill?.permissions?.level || "external",
           strengthened: skill?.permissions?.destructive === true,
           contextRef: { fingerprint: state.context.metadata?.contextFingerprint || null, policyVersion: error.policyDecision?.policyVersion || operationalSecurityPolicy?.version?.() || null },

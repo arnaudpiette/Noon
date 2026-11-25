@@ -92,6 +92,19 @@ function humanSummary({ skillName, operation, args, target }) {
   return `${action}${target ? ` sur ${String(target).slice(0, 240)}` : ""}.`;
 }
 
+// Détails affichés sur la carte d'approbation : quelques lignes bornées, texte brut uniquement.
+function approvalDetails(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 6)
+    .filter((item) => item && typeof item === "object")
+    .map((item) => ({
+      label: String(item.label ?? "").slice(0, 40),
+      value: String(item.value ?? "").slice(0, 4000),
+      ...(item.format === "json" ? { format: "json" } : {}),
+    }))
+    .filter((item) => item.label);
+}
+
 function publicApproval(record) {
   return {
     id: record.id,
@@ -107,6 +120,7 @@ function publicApproval(record) {
     title: record.title,
     summary: record.summary,
     consequences: record.summary,
+    details: approvalDetails(record.details),
     permissionLevel: record.permissionLevel,
     policyVersion: record.contextRef?.policyVersion || null,
     riskLevel: record.riskLevel,
@@ -213,6 +227,7 @@ function createApprovalEngine({
       title: String(input.title || "Validation requise").slice(0, 160),
       summary: String(input.sanitizedSummary || input.summary || humanSummary({ skillName, operation, args: normalizedArgs, target })).slice(0, 1000),
       riskLevel: input.riskLevel || (input.strengthened ? "high" : "medium"),
+      details: approvalDetails(input.details),
       createdAt: new Date(createdMs).toISOString(),
       expiresAt: new Date(createdMs + Math.max(1, Number(input.ttlMs) || ttlMs)).toISOString(),
       status: "pending", resumeToken, resumeTokenHash: tokenHash(resumeToken),

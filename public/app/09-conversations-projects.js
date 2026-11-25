@@ -703,7 +703,19 @@ function addApprovalCard(approval) {
     });
     actions.append(button);
   }
-  card.append(title, summary, meta, actions);
+  // Détails exacts fournis par Noon (ex. connecteur MCP : serveur, outil, arguments envoyés).
+  const details = document.createElement("dl");
+  details.className = "message-approval__details";
+  for (const item of Array.isArray(approval.details) ? approval.details : []) {
+    const term = document.createElement("dt");
+    term.textContent = String(item?.label || "");
+    const value = document.createElement("dd");
+    const text = item?.format === "json" ? document.createElement("pre") : document.createElement("span");
+    text.textContent = String(item?.value ?? "");
+    value.append(text);
+    details.append(term, value);
+  }
+  card.append(title, summary, ...(details.childElementCount ? [details] : []), meta, actions);
   conversation.append(card);
   conversation.scrollTop = conversation.scrollHeight;
   return card;

@@ -269,16 +269,17 @@ test("flag ON : lecture du catalogue, écriture refusée sans en-tête Noon", as
   const list = fakeResponse();
   await service.handle({ method: "GET", headers: {} }, list, { requestPath: "/api/mcp/servers" });
   assert.equal(list.statusCode, 200);
-  assert.deepEqual(list.body.catalog.map((entry) => entry.id), ["figma", "figma-desktop"]);
+  // Phase 2 : Supabase (limité à un projet) et Vercel (indisponible) rejoignent le catalogue.
+  assert.deepEqual(list.body.catalog.map((entry) => entry.id), ["figma", "figma-desktop", "supabase", "vercel"]);
   const refused = fakeResponse();
-  await service.handle({ method: "POST", headers: {} }, refused, { requestPath: "/api/mcp/servers/figma/install" });
+  await service.handle({ method: "POST", headers: {} }, refused, { requestPath: "/api/mcp/servers/figma/install", readJsonBody: async () => ({}) });
   assert.equal(refused.statusCode, 403);
   const installed = fakeResponse();
-  await service.handle({ method: "POST", headers: { "x-noon-request": "1" } }, installed, { requestPath: "/api/mcp/servers/figma/install" });
+  await service.handle({ method: "POST", headers: { "x-noon-request": "1" } }, installed, { requestPath: "/api/mcp/servers/figma/install", readJsonBody: async () => ({}) });
   assert.equal(installed.statusCode, 200);
   assert.equal(installed.body.server.status.state, "NOT_CONNECTED");
   const unknown = fakeResponse();
-  await service.handle({ method: "POST", headers: { "x-noon-request": "1" } }, unknown, { requestPath: "/api/mcp/servers/inconnu/install" });
+  await service.handle({ method: "POST", headers: { "x-noon-request": "1" } }, unknown, { requestPath: "/api/mcp/servers/inconnu/install", readJsonBody: async () => ({}) });
   assert.equal(unknown.statusCode, 400);
   assert.equal(unknown.body.code, "MCP_SERVER_UNKNOWN");
   await service.closeAll();

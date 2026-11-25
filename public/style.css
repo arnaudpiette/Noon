@@ -2957,3 +2957,11 @@ body.dev-preview-resizing *{
 #chatView.dev-split .dev-terminal-profile-control select{height:26px!important;min-height:26px!important;font-size:11px!important}
 #chatView.dev-split .dev-terminal-actions{overflow-x:auto;scrollbar-width:none}
 #chatView.dev-split .dev-terminal-actions::-webkit-scrollbar{display:none}
+
+/* Carte d'approbation : détails exacts (serveur, outil, arguments) en texte brut. */
+.message-approval__details{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 12px;margin:8px 0;font-size:12px}
+.message-approval__details dt{color:var(--ui-text-3,#888);font-weight:600}
+.message-approval__details dd{min-width:0;margin:0;color:var(--ui-text,#222)}
+.message-approval__details pre{max-height:220px;margin:0;overflow:auto;padding:8px 10px;border-radius:8px;background:rgba(20,20,19,.045);font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word}
+.mcp-connectors__project{display:grid;gap:4px;margin:8px 0;font-size:12px;color:var(--ui-text-2,#555)}
+.mcp-connectors__project input{height:30px;padding:0 10px;border:1px solid var(--ui-line-strong,#ddd);border-radius:8px;font:12px/1 ui-monospace,SFMono-Regular,Menlo,monospace}
