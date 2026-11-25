@@ -57,9 +57,6 @@
         <button class="sidebar-nav__item view-btn" data-view="personal" type="button" aria-pressed="false"><svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-user"></use></svg><span>Personnel</span></button>
         <button id="liveVoiceButton" class="sidebar-nav__item live-voice-button" type="button"><svg class="noon-icon" aria-hidden="true" focusable="false"><use href="#noon-i-mic"></use></svg><span id="liveVoiceButtonLabel">Conversation Live</span><span class="sidebar-nav__meta"><span id="liveVoiceDot" class="live-voice-dot" data-state="disconnected" aria-hidden="true"></span><span id="liveVoiceCost">0,00 $ / 11 $</span></span></button>
         <p class="live-voice-meta sr-only" aria-labelledby="liveVoiceTitle"><span id="liveVoiceTitle">Conversation Live</span> <span id="liveVoiceStatus" class="live-voice-status" role="status" aria-live="polite">Arbor préférée · voix API temporaire prête</span></p>
-        <!-- Langue et accent restent pilotables oralement. -->
-        <input id="liveVoiceLanguage" type="hidden" value="auto">
-        <input id="liveVoiceAccent" type="hidden" value="none">
         <audio id="liveVoiceAudio" autoplay hidden></audio>
       </nav>
 
@@ -1053,6 +1050,22 @@
             </label>
               <label class="setting-line"><input id="liveAutoStart" type="checkbox" aria-describedby="liveAutoStartHelp"><span>Démarrer Conversation Live à l’ouverture de Noon</span></label>
               <p id="liveAutoStartHelp" class="setting-help">Noon dit « Salut Noon, par quoi on commence aujourd’hui ? ». Ouvre le micro et une session vocale payante, coupée après deux minutes sans parler. Jamais en Qualité Max, ni au réveil du Mac.</p>
+              <label class="setting-field"><span>Langue de Conversation Live</span>
+                <select id="liveVoiceLanguage">
+                  <option value="auto">Automatique</option>
+                  <option value="fr-FR">Français</option>
+                  <option value="en-US">Anglais</option>
+                  <option value="es-ES">Espagnol</option>
+                  <option value="es-MX">Espagnol (Mexique)</option>
+                  <option value="pt-BR">Portugais (Brésil)</option>
+                  <option value="ru-RU">Russe</option>
+                  <option value="ja-JP">Japonais</option>
+                  <option value="zh-CN">Chinois</option>
+                  <option value="nl-NL">Néerlandais</option>
+                </select>
+              </label>
+              <label class="setting-field"><span>Accent de Conversation Live</span><input id="liveVoiceAccent" type="text" maxlength="60" autocomplete="off" placeholder="Aucun" aria-describedby="liveVoiceStyleHelp"></label>
+              <p id="liveVoiceStyleHelp" class="setting-help">Aussi réglables à la voix pendant Live (« parle en anglais », « prends un accent québécois »). Laisser l’accent vide pour aucun accent.</p>
               <label class="setting-field">
               <span>Vitesse de la voix</span>
               <select id="voiceRate">

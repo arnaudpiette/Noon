@@ -74,7 +74,10 @@
       const savedQuality = localStorage.getItem(STORAGE.quality);
       elements.quality.value = savedQuality === "max" ? "max" : "mini";
       elements.language.value = localStorage.getItem(STORAGE.language) || "auto";
-      elements.accent.value = localStorage.getItem(STORAGE.accent) || "";
+      // « none » (aucun accent) s'affiche comme un champ vide ; une langue inconnue revient à Automatique.
+      const savedAccent = localStorage.getItem(STORAGE.accent) || "";
+      elements.accent.value = savedAccent === "none" ? "" : savedAccent;
+      if (elements.language.value !== (localStorage.getItem(STORAGE.language) || "auto")) elements.language.value = "auto";
       this.bindEvents();
       this.refreshContext();
       this.refreshBudget();

@@ -2094,6 +2094,22 @@ Entrée rédigée après coup, lors de l'intégration : tranche faite par Codex 
   - au lancement réel de Noon.app : autorisation micro, phrase prononcée, sortie audio ;
   - avec le mot de réveil activé.
 
+## 25/11/2026 — Langue et accent de Live visibles dans les Réglages
+
+- Constat : ils étaient déjà branchés. L'outil oral `set_noon_voice_style` les change, ils sont
+  conservés et envoyés à la session. Mais depuis l'étape 3 de l'interface, ce n'étaient plus que
+  deux champs cachés : impossible de voir ou de remettre à zéro une session restée « en
+  anglais » autrement qu'à la voix.
+- Décision : les brancher dans Réglages → Voix et audio.
+  - Une liste des 10 langues reconnues par le serveur (`SUPPORTED_LANGUAGES`, Automatique
+    compris) et un champ d'accent (vide = aucun).
+  - Mêmes identifiants (`liveVoiceLanguage`, `liveVoiceAccent`) : le module Live, ses écouteurs
+    et le réglage oral fonctionnent sans changement.
+- « none » s'affiche comme un champ vide ; une langue enregistrée inconnue revient à
+  Automatique.
+- Tests : nouveau `test/live-voice-style-settings.test.js` (3 cas). Suite complète 3 052/3 052.
+- Non vérifié : changement de langue pendant une vraie session Live.
+
 ## À trancher
 
-- Réglages langue et accent de Live : à brancher ou à retirer de l'interface.
+- Rien pour l'instant.
